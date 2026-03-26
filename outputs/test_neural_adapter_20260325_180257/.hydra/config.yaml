@@ -1,0 +1,83 @@
+env:
+  name: metadrive_base
+  env_id: MetaDriveEnv
+  config:
+    use_render: false
+    horizon: 500
+    traffic_density: 0.0
+    start_seed: 5
+    num_scenarios: 1
+    random_spawn_lane_index: false
+    discrete_action: false
+    log_level: 50
+  observation:
+    type: lidar_state
+  action:
+    type: continuous
+    low: -1.0
+    high: 1.0
+    shape:
+    - 2
+  policy_mode:
+    enabled: false
+    agent_policy: env_input_policy
+    action_check: true
+    low: -1.0
+    high: 1.0
+agent:
+  name: td3
+  sb3:
+    algorithm: TD3
+    policy: MlpPolicy
+    verbose: 1
+    learning_starts: 10000
+    batch_size: 256
+    buffer_size: 100000
+    train_freq: 1
+    gradient_steps: 1
+    learning_rate: 0.001
+    gamma: 0.99
+    tau: 0.005
+planner:
+  name: td3_mlp
+  policy_kwargs:
+    net_arch:
+    - 256
+    - 256
+preprocessor:
+  name: identity
+  cast_to_float32: true
+  flatten_if_needed: false
+adapter:
+  name: neural_adapter
+  clip: true
+  low: -1.0
+  high: 1.0
+  expected_shape:
+  - 2
+  hidden_dim: 64
+  learning_rate: 0.001
+  batch_size: 64
+  update_interval: 1
+  buffer_capacity: 10000
+reward:
+  name: scalar_default
+  mode: scalar
+  attach_info: false
+experiment:
+  name: test_neural_adapter
+  total_timesteps: 8000
+  log_interval: 500
+  eval_interval: 4000
+  eval_episodes: 3
+  eval_deterministic: true
+  save_interval: 4000
+  curriculum:
+    enabled: false
+seed: 42
+device: auto
+run_name: ${experiment.name}_${now:%Y%m%d_%H%M%S}
+checkpoint_path: null
+paths:
+  logs_dir: logs
+  checkpoints_dir: checkpoints

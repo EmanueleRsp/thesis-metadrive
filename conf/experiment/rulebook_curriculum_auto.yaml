@@ -1,0 +1,68 @@
+name: rulebook_curriculum_auto
+
+total_timesteps: 300000
+log_interval: 1000
+eval_interval: 25000
+eval_episodes: 10
+eval_deterministic: true
+save_interval: 50000
+
+curriculum:
+  enabled: true
+  mode: auto
+  fixed_stage: stage1
+  stages:
+    - name: stage1
+      env:
+        map: "S"
+        traffic_density: 0.0
+        start_seed: 5
+        num_scenarios: 1
+        random_lane_width: false
+        random_lane_num: false
+        random_agent_model: false
+    - name: stage2
+      env:
+        map: 3
+        traffic_density: 0.0
+        start_seed: 1000
+        num_scenarios: 100
+        random_lane_width: true
+        random_lane_num: true
+        random_agent_model: false
+    - name: stage3
+      env:
+        map: 5
+        traffic_density: 0.08
+        start_seed: 3000
+        num_scenarios: 300
+        random_lane_width: true
+        random_lane_num: true
+        random_agent_model: true
+    - name: stage4
+      env:
+        map: 5
+        traffic_density: 0.1
+        start_seed: 10000
+        num_scenarios: 1000
+        random_lane_width: true
+        random_lane_num: true
+        random_agent_model: true
+      eval_env:
+        start_seed: 20000
+        num_scenarios: 300
+  promotion:
+    consecutive_evals: 3
+    warmup_evals: 2
+    min_stage_steps: 25000
+    no_demotion: true
+    gates:
+      safety:
+        collision_rate_max: 0.05
+        top_rule_violation_rate_max: 0.02
+        out_of_road_rate_max: 0.03
+      task:
+        success_rate_min: 0.8
+        route_completion_min: 0.85
+      quality:
+        mean_reward_min: -5.0

@@ -1,0 +1,4 @@
+- preset_test=rulebook_hybrid_calibration
+- checkpoint_path=checkpoints/test_rulebook_hybrid_calibration_td3.zip
+- experiment.eval_episodes=1
+- env.config.horizon=50

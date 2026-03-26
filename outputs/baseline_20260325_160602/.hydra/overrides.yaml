@@ -1,0 +1,3 @@
+- experiment.total_timesteps=5
+- experiment.eval_episodes=1
+- device=cpu

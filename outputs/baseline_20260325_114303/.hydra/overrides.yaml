@@ -1,0 +1,3 @@
+- experiment=baseline
+- device=cuda
+- checkpoint_path=checkpoints/baseline_td3.zip

@@ -1,0 +1,6 @@
+name: direct_action
+clip: true
+low: -1.0
+high: 1.0
+validate_shape: true
+expected_shape: [2]

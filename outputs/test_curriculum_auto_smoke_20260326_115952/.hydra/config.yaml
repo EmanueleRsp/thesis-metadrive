@@ -1,0 +1,115 @@
+env:
+  name: metadrive_base
+  env_id: MetaDriveEnv
+  config:
+    use_render: false
+    horizon: 80
+    traffic_density: 0.0
+    start_seed: 5
+    num_scenarios: 1
+    random_spawn_lane_index: false
+    discrete_action: false
+    log_level: 50
+  observation:
+    type: lidar_state
+  action:
+    type: continuous
+    low: -1.0
+    high: 1.0
+    shape:
+    - 2
+  policy_mode:
+    enabled: false
+    agent_policy: env_input_policy
+    action_check: true
+    low: -1.0
+    high: 1.0
+agent:
+  name: td3
+  sb3:
+    algorithm: TD3
+    policy: MlpPolicy
+    verbose: 1
+    learning_starts: 10000
+    batch_size: 256
+    buffer_size: 100000
+    train_freq: 1
+    gradient_steps: 1
+    learning_rate: 0.001
+    gamma: 0.99
+    tau: 0.005
+planner:
+  name: td3_mlp
+  policy_kwargs:
+    net_arch:
+    - 256
+    - 256
+preprocessor:
+  name: identity
+  cast_to_float32: true
+  flatten_if_needed: false
+adapter:
+  name: direct_action
+  clip: true
+  low: -1.0
+  high: 1.0
+  validate_shape: true
+  expected_shape:
+  - 2
+reward:
+  name: scalar_default
+  mode: scalar
+  attach_info: false
+experiment:
+  name: test_curriculum_auto_smoke
+  total_timesteps: 220
+  log_interval: 110
+  eval_interval: 110
+  eval_episodes: 1
+  eval_deterministic: true
+  save_interval: 600
+  curriculum:
+    enabled: true
+    mode: auto
+    fixed_stage: stage1
+    stages:
+    - name: stage1
+      env:
+        map: S
+        traffic_density: 0.0
+        start_seed: 5
+        num_scenarios: 1
+        random_lane_width: false
+        random_lane_num: false
+        random_agent_model: false
+    - name: stage2
+      env:
+        map: C
+        traffic_density: 0.0
+        start_seed: 7
+        num_scenarios: 1
+        random_lane_width: false
+        random_lane_num: false
+        random_agent_model: false
+    promotion:
+      consecutive_evals: 1
+      warmup_evals: 0
+      min_stage_steps: 110
+      no_demotion: true
+      gates:
+        safety:
+          collision_rate_max: 1.0
+          top_rule_violation_rate_max: 1.0
+          out_of_road_rate_max: 1.0
+        task:
+          success_rate_min: 0.0
+          route_completion_min: 0.0
+        quality:
+          mean_reward_min: -1000000.0
+seed: 42
+device: auto
+run_name: ${experiment.name}_${now:%Y%m%d_%H%M%S}
+checkpoint_path: null
+paths:
+  logs_dir: logs
+  checkpoints_dir: checkpoints

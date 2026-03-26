@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - override /adapter: neural_adapter
+  - override /experiment: test/neural_adapter
+
+env:
+  policy_mode:
+    enabled: false

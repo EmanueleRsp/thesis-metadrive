@@ -1,0 +1,10 @@
+# @package _global_
+defaults:
+  - override /adapter: direct_action
+  - override /reward: hybrid_rulebook
+  - override /rulebook: baseline_v3
+  - override /experiment: test/rulebook_hybrid_direct
+
+env:
+  policy_mode:
+    enabled: false

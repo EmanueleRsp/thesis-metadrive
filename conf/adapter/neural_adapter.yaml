@@ -1,0 +1,10 @@
+name: neural_adapter
+clip: true
+low: -1.0
+high: 1.0
+expected_shape: [2]
+hidden_dim: 64
+learning_rate: 0.001
+batch_size: 64
+update_interval: 1
+buffer_capacity: 10000

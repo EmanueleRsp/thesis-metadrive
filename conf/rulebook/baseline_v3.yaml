@@ -1,0 +1,21 @@
+name: baseline_v3
+mode: ex_post
+rules:
+  - name: vru_collision_energy
+    priority: 0
+  - name: vehicle_collision_energy
+    priority: 1
+  - name: drivable_area
+    priority: 2
+  - name: wrong_way
+    priority: 3
+  - name: speed_limit
+    priority: 4
+  - name: lane_centering
+    priority: 5
+  - name: goal_progress
+    priority: 6
+  - name: longitudinal_accel
+    priority: 7
+  - name: lateral_accel
+    priority: 8

@@ -1,0 +1,8 @@
+- experiment.total_timesteps=12000
+- experiment.eval_episodes=1
+- experiment.log_interval=2000
+- device=cpu
+- adapter=policy_adapter
+- adapter.action_check=false
+- env.policy_mode.enabled=true
+- env.policy_mode.agent_policy=thesis_policy_bridge

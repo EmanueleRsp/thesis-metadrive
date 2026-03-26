@@ -1,0 +1,11 @@
+name: baseline
+mode: ex_post
+rules:
+  - name: vehicle_collision_energy
+    priority: 0
+  - name: drivable_area
+    priority: 1
+  - name: wrong_way
+    priority: 2
+  - name: goal_progress
+    priority: 3

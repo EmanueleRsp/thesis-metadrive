@@ -1,0 +1,25 @@
+defaults:
+  - env: metadrive_base
+  - agent: td3
+  - planner: td3_mlp
+  - preprocessor: identity
+  - adapter: direct_action
+  - reward: scalar_default
+  - optional rulebook: null
+  - experiment: baseline
+  - optional preset_run: null
+  - optional preset_test: null
+  - _self_
+
+seed: 42
+device: auto
+run_name: ${experiment.name}_${now:%Y%m%d_%H%M%S}
+checkpoint_path: null
+
+paths:
+  logs_dir: logs
+  checkpoints_dir: checkpoints
+
+hydra:
+  run:
+    dir: outputs/${run_name}

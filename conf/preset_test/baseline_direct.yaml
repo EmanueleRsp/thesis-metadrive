@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - override /adapter: direct_action
+  - override /experiment: test/baseline_direct
+
+env:
+  policy_mode:
+    enabled: false

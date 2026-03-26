@@ -1,0 +1,7 @@
+name: policy_adapter
+policy_name: EnvInputPolicy
+action_check: true
+clip: true
+low: -1.0
+high: 1.0
+expected_shape: [2]

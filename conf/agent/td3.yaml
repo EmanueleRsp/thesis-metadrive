@@ -1,0 +1,14 @@
+name: td3
+
+sb3:
+  algorithm: TD3
+  policy: MlpPolicy
+  verbose: 1
+  learning_starts: 10000
+  batch_size: 256
+  buffer_size: 100000
+  train_freq: 1
+  gradient_steps: 1
+  learning_rate: 0.001
+  gamma: 0.99
+  tau: 0.005
