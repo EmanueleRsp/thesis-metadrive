@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import logging
 import time
 from datetime import datetime
 
 import random
 from pathlib import Path
+from typing import Any
 
 import hydra
 import numpy as np
@@ -79,6 +82,47 @@ def _seed_env_spaces(env, seed: int) -> None:
         observation_space.seed(seed)
 
 
+def _json_default(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    return str(value)
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, default=_json_default))
+        f.write("\n")
+
+
+def _setup_file_logger(name: str, log_file: Path, level: int = logging.INFO) -> logging.Logger:
+    logger = logging.getLogger(f"thesis_rl.evaluate.{name}.{log_file}")
+    logger.setLevel(level)
+    logger.propagate = False
+    logger.handlers.clear()
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    formatter = logging.Formatter(
+        fmt="[%(asctime)s] [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    return logger
+
+
+def _log_event(events_path: Path, event: str, **fields: Any) -> None:
+    payload = {
+        "event": event,
+        "time": datetime.now().isoformat(timespec="seconds"),
+    }
+    payload.update(fields)
+    _append_jsonl(events_path, payload)
+
+
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     print("=== EVALUATION CONFIG ===")
@@ -88,6 +132,24 @@ def main(cfg: DictConfig) -> None:
     artifacts_dir = Path(str(cfg.paths.artifacts_dir))
     save_run_metadata(cfg, artifacts_dir)
     start_time = time.time()
+    logs_dir = Path(str(cfg.paths.logs_dir))
+    eval_log_path = logs_dir / "eval.log"
+    errors_log_path = logs_dir / "errors.log"
+    events_log_path = logs_dir / "events.jsonl"
+
+    eval_logger = _setup_file_logger("eval", eval_log_path, level=logging.INFO)
+    errors_logger = _setup_file_logger("errors", errors_log_path, level=logging.WARNING)
+
+    update_run_metadata(
+        artifacts_dir,
+        {
+            "logs": {
+                "eval": str(eval_log_path),
+                "errors": str(errors_log_path),
+                "events": str(events_log_path),
+            }
+        },
+    )
 
     try:
 
@@ -105,6 +167,21 @@ def main(cfg: DictConfig) -> None:
         ckpt = Path(str(checkpoint_path))
         if not ckpt.exists():
             raise FileNotFoundError(f"Checkpoint not found: {ckpt}")
+        eval_logger.info(
+            "Eval run started | checkpoint=%s | seed=%d | episodes=%d | deterministic=%s",
+            str(ckpt),
+            run_seed,
+            int(cfg.experiment.eval_episodes),
+            bool(cfg.experiment.eval_deterministic),
+        )
+        _log_event(
+            events_log_path,
+            "eval_run_started",
+            checkpoint_path=str(ckpt),
+            seed=run_seed,
+            eval_episodes=int(cfg.experiment.eval_episodes),
+            deterministic=bool(cfg.experiment.eval_deterministic),
+        )
 
         curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
         eval_env_overrides, eval_stage_name = _resolve_eval_env_overrides(curriculum_cfg)
@@ -121,6 +198,13 @@ def main(cfg: DictConfig) -> None:
         if eval_stage_name is not None:
             print(f"Evaluation curriculum stage: {eval_stage_name}")
         print(f"Evaluation scenario start_seed: {eval_env_overrides['start_seed']}")
+        _log_event(
+            events_log_path,
+            "evaluation_started",
+            stage=eval_stage_name or "baseline",
+            start_seed=int(eval_env_overrides["start_seed"]),
+            checkpoint_path=str(ckpt),
+        )
 
         preprocessor = build_preprocessor(cfg)
         adapter = build_adapter(
@@ -139,21 +223,47 @@ def main(cfg: DictConfig) -> None:
         )
 
         print(f"Evaluation metrics: {metrics}")
+        eval_logger.info(
+            "Evaluation finished | stage=%s | metrics=%s",
+            eval_stage_name or "baseline",
+            metrics,
+        )
+        _log_event(
+            events_log_path,
+            "evaluation_finished",
+            stage=eval_stage_name or "baseline",
+            metrics=metrics,
+        )
         env.close()
+        duration_seconds = round(time.time() - start_time, 2)
+        eval_logger.info("Eval run completed | duration_seconds=%.2f", duration_seconds)
+        _log_event(
+            events_log_path,
+            "eval_run_completed",
+            duration_seconds=duration_seconds,
+        )
 
         # Update metadata
         update_run_metadata(artifacts_dir, {
             "status": "completed",
             "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "duration_seconds": round(time.time() - start_time, 2),
+            "duration_seconds": duration_seconds,
         })
     
     except Exception as e:
+        duration_seconds = round(time.time() - start_time, 2)
+        errors_logger.exception("Evaluation failed | error=%s", str(e))
+        _log_event(
+            events_log_path,
+            "eval_run_failed",
+            error=str(e),
+            duration_seconds=duration_seconds,
+        )
         update_run_metadata(artifacts_dir, {
             "status": "failed",
             "error": str(e),
             "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "duration_seconds": round(time.time() - start_time, 2),
+            "duration_seconds": duration_seconds,
         })
         raise
 

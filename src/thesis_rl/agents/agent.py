@@ -58,7 +58,7 @@ class Agent:
         deterministic: bool = False,
         log_interval: int = 1000,
         reset_seed: int | None = None,
-    ) -> None:
+    ) -> dict[str, float | int]:
         '''Train the agent in the given environment for a specified number of timesteps.
         Args:
             env: The environment to train in. Must have `reset()` and `step()` methods.
@@ -68,6 +68,8 @@ class Agent:
             deterministic: Whether to use deterministic actions during training.
             log_interval: Interval (in timesteps) at which to log training metrics.
             reset_seed: Optional seed for environment reset at the start of training.
+        Returns:
+            Dictionary with chunk-level summary metrics (episodes, moving averages, update stats, fps).
         '''
 
         ###################
@@ -275,6 +277,18 @@ class Agent:
         # Finalize training lifecycle
         lifecycle.end_training()
         self.adapter.end_training()
+        elapsed = max(time.time() - start_time, 1e-9)
+        return {
+            "episodes": int(episodes),
+            "ep_len_mean": float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0,
+            "ep_rew_mean": float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0,
+            "actor_loss": float(getattr(lifecycle, "last_actor_loss", float("nan"))),
+            "critic_loss": float(getattr(lifecycle, "last_critic_loss", float("nan"))),
+            "learning_rate": float(getattr(lifecycle, "last_learning_rate", float("nan"))),
+            "n_updates": int(getattr(lifecycle, "update_count", 0)),
+            "fps": float(chunk_timesteps / elapsed),
+            "elapsed_seconds": float(elapsed),
+        }
 
     def predict(self, observation: Any, deterministic: bool = False):
         processed_obs = self.preprocessor(observation)
@@ -288,21 +302,16 @@ class Agent:
         n_eval_episodes: int,
         deterministic: bool = False,
         base_seed: int | None = None,
-    ) -> dict[str, float]:
+        return_episode_metrics: bool = False,
+    ) -> dict[str, Any]:
         '''Evaluate the agent in the given environment for a specified number of episodes.
         Args:
             env: The environment to evaluate in. Must have `reset()` and `step()` methods.
             n_eval_episodes: Number of episodes to evaluate for.
             deterministic: Whether to use deterministic actions during evaluation.
         Returns:
-            mean_reward: Average episode return over evaluation episodes.
-            std_reward: Standard deviation of episode returns.
-            mean_rule_saturation_max: Average of maximum rule saturation ratios observed per episode.
-            collision_rate: Proportion of episodes with at least one collision.
-            out_of_road_rate: Proportion of episodes with at least one out-of-road event.
-            success_rate: Proportion of episodes that ended in success (arrived at destination).
-            route_completion: Average route completion ratio across episodes.
-            top_rule_violation_rate: Average proportion of steps with top rule violation across episodes.
+            Aggregate metrics for the full evaluation set. If `return_episode_metrics=True`,
+            the output also includes a `per_episode` section with raw episode vectors.
         '''
         # Validate `n_eval_episodes`
         if int(n_eval_episodes) <= 0:
@@ -370,7 +379,7 @@ class Agent:
             else:
                 episode_top_rule_violation_rate.append(0.0)
 
-        return {
+        metrics: dict[str, Any] = {
             "mean_reward": float(np.mean(episode_returns)),
             "std_reward": float(np.std(episode_returns)),
             "mean_rule_saturation_max": float(np.mean(episode_saturation_max)),
@@ -382,6 +391,17 @@ class Agent:
             "route_completion": float(np.mean(episode_route_completion)),
             "top_rule_violation_rate": float(np.mean(episode_top_rule_violation_rate)),
         }
+        if return_episode_metrics:
+            metrics["per_episode"] = {
+                "returns": episode_returns,
+                "saturation_max": episode_saturation_max,
+                "collision": episode_collision,
+                "out_of_road": episode_out_of_road,
+                "success": episode_success,
+                "route_completion": episode_route_completion,
+                "top_rule_violation_rate": episode_top_rule_violation_rate,
+            }
+        return metrics
 
     @staticmethod
     def _extract_saturation_summary(step_info: Any) -> tuple[str, float] | None:

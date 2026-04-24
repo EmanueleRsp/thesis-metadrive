@@ -16,7 +16,7 @@
   >Done: routed component logs to Live monitor.
 
 - [ ] Update result visualization so training/evaluation outputs are easier to inspect after runs:
-    - [ ] Logs
+    - [x] Logs
     - [ ] Checkpoints
     - [ ] Videos
     - [ ] Csv
