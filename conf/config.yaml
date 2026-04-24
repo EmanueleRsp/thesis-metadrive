@@ -20,6 +20,7 @@ paths:
   videos_dir: ${paths.run_dir}/videos
   csv_dir: ${paths.run_dir}/csv
   plots_dir: ${paths.run_dir}/plots
+  artifacts_dir: ${paths.run_dir}/artifacts
 checkpoint_path: null   # Optional path to a checkpoint to load for resuming training or evaluation.
 
 # Hydra stuff

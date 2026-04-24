@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+from datetime import datetime
+
 import random
 from pathlib import Path
 
@@ -18,6 +21,7 @@ from thesis_rl.runtime.builders import (
     build_preprocessor,
     load_planner,
 )
+from thesis_rl.runtime.metadata import save_run_metadata, update_run_metadata
 
 
 def _apply_eval_scenario_seed_split(
@@ -77,56 +81,81 @@ def _seed_env_spaces(env, seed: int) -> None:
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def main(cfg: DictConfig) -> None:
-    print("=== EVAL CONFIG ===")
+    print("=== EVALUATION CONFIG ===")
     print(OmegaConf.to_yaml(cfg))
-    run_seed = int(cfg.seed)
-    _set_global_seed(run_seed)
 
-    checkpoint_path = cfg.checkpoint_path
-    if checkpoint_path is None:
-        raise ValueError(
-            "checkpoint_path is required. Example: "
-            "uv run python -m thesis_rl.evaluate checkpoint_path=checkpoints/baseline_td3.zip"
+    # Save metadata for this run (config, git info, etc.)
+    artifacts_dir = Path(str(cfg.paths.artifacts_dir))
+    save_run_metadata(cfg, artifacts_dir)
+    start_time = time.time()
+
+    try:
+
+        # Set seeds
+        run_seed = int(cfg.seed)
+        _set_global_seed(run_seed)
+
+        checkpoint_path = cfg.checkpoint_path
+        if checkpoint_path is None:
+            raise ValueError(
+                "checkpoint_path is required. Example: "
+                "uv run python -m thesis_rl.evaluate checkpoint_path=checkpoints/baseline_td3.zip"
+            )
+
+        ckpt = Path(str(checkpoint_path))
+        if not ckpt.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {ckpt}")
+
+        curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
+        eval_env_overrides, eval_stage_name = _resolve_eval_env_overrides(curriculum_cfg)
+        eval_env_overrides = _apply_eval_scenario_seed_split(
+            base_run_seed=run_seed,
+            eval_env_overrides=eval_env_overrides,
+            cfg=cfg,
         )
 
-    ckpt = Path(str(checkpoint_path))
-    if not ckpt.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt}")
+        env = build_env(cfg, eval_env_overrides)
+        _seed_env_spaces(env, run_seed)
+        print(f"Observation space: {env.observation_space}")
+        print(f"Action space: {env.action_space}")
+        if eval_stage_name is not None:
+            print(f"Evaluation curriculum stage: {eval_stage_name}")
+        print(f"Evaluation scenario start_seed: {eval_env_overrides['start_seed']}")
 
-    curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
-    eval_env_overrides, eval_stage_name = _resolve_eval_env_overrides(curriculum_cfg)
-    eval_env_overrides = _apply_eval_scenario_seed_split(
-        base_run_seed=run_seed,
-        eval_env_overrides=eval_env_overrides,
-        cfg=cfg,
-    )
+        preprocessor = build_preprocessor(cfg)
+        adapter = build_adapter(
+            cfg,
+            adapter_space_kwargs(env.action_space),
+        )
+        planner = load_planner(cfg, checkpoint_path=str(ckpt), env=env)
+        agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
+        agent.load_adapter(checkpoint_path=ckpt, strict=True)
 
-    env = build_env(cfg, eval_env_overrides)
-    _seed_env_spaces(env, run_seed)
-    print(f"Observation space: {env.observation_space}")
-    print(f"Action space: {env.action_space}")
-    if eval_stage_name is not None:
-        print(f"Evaluation curriculum stage: {eval_stage_name}")
-    print(f"Evaluation scenario start_seed: {eval_env_overrides['start_seed']}")
+        metrics = agent.evaluate(
+            env=env,
+            n_eval_episodes=int(cfg.experiment.eval_episodes),
+            deterministic=bool(cfg.experiment.eval_deterministic),
+            base_seed=run_seed + 10_000,
+        )
 
-    preprocessor = build_preprocessor(cfg)
-    adapter = build_adapter(
-        cfg,
-        adapter_space_kwargs(env.action_space),
-    )
-    planner = load_planner(cfg, checkpoint_path=str(ckpt), env=env)
-    agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
-    agent.load_adapter(checkpoint_path=ckpt, strict=True)
+        print(f"Evaluation metrics: {metrics}")
+        env.close()
 
-    metrics = agent.evaluate(
-        env=env,
-        n_eval_episodes=int(cfg.experiment.eval_episodes),
-        deterministic=bool(cfg.experiment.eval_deterministic),
-        base_seed=run_seed + 10_000,
-    )
-
-    print(f"Evaluation metrics: {metrics}")
-    env.close()
+        # Update metadata
+        update_run_metadata(artifacts_dir, {
+            "status": "completed",
+            "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_seconds": round(time.time() - start_time, 2),
+        })
+    
+    except Exception as e:
+        update_run_metadata(artifacts_dir, {
+            "status": "failed",
+            "error": str(e),
+            "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_seconds": round(time.time() - start_time, 2),
+        })
+        raise
 
 
 if __name__ == "__main__":

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+from datetime import datetime
+
 from dataclasses import asdict
 import random
 from pathlib import Path
@@ -20,6 +23,7 @@ from thesis_rl.runtime.builders import (
     build_planner,
     build_preprocessor,
 )
+from thesis_rl.runtime.metadata import save_run_metadata, update_run_metadata
 
 
 def _required_curriculum_metrics(curriculum_cfg: CurriculumConfig) -> list[str]:
@@ -75,172 +79,195 @@ def main(cfg: DictConfig) -> None:
     print("=== TRAIN CONFIG ===")
     print(OmegaConf.to_yaml(cfg))
 
-    run_seed = int(cfg.seed)
-    _set_global_seed(run_seed)
+    # Save metadata for this run (config, git info, etc.)
+    artifacts_dir = Path(str(cfg.paths.artifacts_dir))
+    save_run_metadata(cfg, artifacts_dir)
+    start_time = time.time()
 
-    ###################
-    ###### SETUP ######
-    ###################
-    
-    # Curriculum manager
-    curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
-    curriculum_manager: CurriculumManager | None = None
-    current_train_overrides: dict[str, Any] | None = None
-    if curriculum_cfg.enabled and curriculum_cfg.stages:
-        curriculum_manager = CurriculumManager(curriculum_cfg)
-        current_train_overrides = curriculum_manager.get_env_config(evaluation=False)
+    try:
 
-    # Environment
-    env = build_env(cfg, current_train_overrides)
-    _seed_env_spaces(env, run_seed)
-    print(f"Observation space: {env.observation_space}")
-    print(f"Action space: {env.action_space}")
+        run_seed = int(cfg.seed)
+        _set_global_seed(run_seed)
 
-    # Agent
-    preprocessor = build_preprocessor(cfg)
-    adapter = build_adapter(
-        cfg,
-        adapter_space_kwargs(env.action_space),
-    )
-    planner = build_planner(cfg, env, seed=run_seed)
-    agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
-
-    # Training and evaluation params
-    total_timesteps = int(cfg.experiment.total_timesteps)
-    log_interval = int(cfg.experiment.get("log_interval", 1000))
-    eval_interval = int(cfg.experiment.get("eval_interval", total_timesteps))
-    if eval_interval <= 0:
-        eval_interval = total_timesteps
-
-    ##################
-    ###### LOOP ######
-    ##################
-
-    # Training loop with periodic evaluation and optional curriculum progression
-    remaining = total_timesteps
-    while remaining > 0:
-
-        # Stage info and chunk size 
-        chunk_steps = min(eval_interval, remaining)
-        current_stage_name = "baseline"
-        if curriculum_manager is not None:
-            current_stage_name = curriculum_manager.get_current_stage().name
-        print(
-            f"Training chunk on stage '{current_stage_name}': "
-            f"steps={chunk_steps}, remaining_after={remaining - chunk_steps}"
-        )
-
-        ###### TRAINING ######
-
-        # Agent training
-        agent.train(
-            env=env,
-            chunk_timesteps=chunk_steps,
-            global_total_timesteps=total_timesteps,
-            global_steps_done=total_timesteps - remaining,
-            deterministic=False,
-            log_interval=log_interval,
-            reset_seed=run_seed + (total_timesteps - remaining),
-        )
-        remaining -= chunk_steps
-
-        # Record training steps in curriculum manager for potential stage progression
-        if curriculum_manager is not None:
-            curriculum_manager.record_train_steps(chunk_steps)
-
-        # MetaDrive uses a global engine singleton: close training env before creating eval env.
-        env.close()
+        ###################
+        ###### SETUP ######
+        ###################
         
-        ###### EVALUATION ######
+        # Curriculum manager
+        curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
+        curriculum_manager: CurriculumManager | None = None
+        current_train_overrides: dict[str, Any] | None = None
+        if curriculum_cfg.enabled and curriculum_cfg.stages:
+            curriculum_manager = CurriculumManager(curriculum_cfg)
+            current_train_overrides = curriculum_manager.get_env_config(evaluation=False)
 
-        # Config setup
-        eval_env_overrides = None
-        if curriculum_manager is not None:
-            eval_env_overrides = curriculum_manager.get_env_config(evaluation=True)
-        
         # Environment
-        eval_env = build_env(cfg, eval_env_overrides)
-        _seed_env_spaces(eval_env, run_seed + 100_000 + (total_timesteps - remaining))
-        planner.set_env(eval_env)   # Update planner's env reference
+        env = build_env(cfg, current_train_overrides)
+        _seed_env_spaces(env, run_seed)
+        print(f"Observation space: {env.observation_space}")
+        print(f"Action space: {env.action_space}")
+
+        # Agent
+        preprocessor = build_preprocessor(cfg)
+        adapter = build_adapter(
+            cfg,
+            adapter_space_kwargs(env.action_space),
+        )
+        planner = build_planner(cfg, env, seed=run_seed)
+        agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
+
+        # Training and evaluation params
+        total_timesteps = int(cfg.experiment.total_timesteps)
+        log_interval = int(cfg.experiment.get("log_interval", 1000))
+        eval_interval = int(cfg.experiment.get("eval_interval", total_timesteps))
+        if eval_interval <= 0:
+            eval_interval = total_timesteps
+
+        ##################
+        ###### LOOP ######
+        ##################
+
+        # Training loop with periodic evaluation and optional curriculum progression
+        remaining = total_timesteps
+        while remaining > 0:
+
+            # Stage info and chunk size 
+            chunk_steps = min(eval_interval, remaining)
+            current_stage_name = "baseline"
+            if curriculum_manager is not None:
+                current_stage_name = curriculum_manager.get_current_stage().name
+            print(
+                f"Training chunk on stage '{current_stage_name}': "
+                f"steps={chunk_steps}, remaining_after={remaining - chunk_steps}"
+            )
+
+            ###### TRAINING ######
+
+            # Agent training
+            agent.train(
+                env=env,
+                chunk_timesteps=chunk_steps,
+                global_total_timesteps=total_timesteps,
+                global_steps_done=total_timesteps - remaining,
+                deterministic=False,
+                log_interval=log_interval,
+                reset_seed=run_seed + (total_timesteps - remaining),
+            )
+            remaining -= chunk_steps
+
+            # Record training steps in curriculum manager for potential stage progression
+            if curriculum_manager is not None:
+                curriculum_manager.record_train_steps(chunk_steps)
+
+            # MetaDrive uses a global engine singleton: close training env before creating eval env.
+            env.close()
+            
+            ###### EVALUATION ######
+
+            # Config setup
+            eval_env_overrides = None
+            if curriculum_manager is not None:
+                eval_env_overrides = curriculum_manager.get_env_config(evaluation=True)
+            
+            # Environment
+            eval_env = build_env(cfg, eval_env_overrides)
+            _seed_env_spaces(eval_env, run_seed + 100_000 + (total_timesteps - remaining))
+            planner.set_env(eval_env)   # Update planner's env reference
+
+            # Evaluation
+            metrics = agent.evaluate(
+                env=eval_env,
+                n_eval_episodes=int(cfg.experiment.eval_episodes),
+                deterministic=bool(cfg.experiment.eval_deterministic),
+                base_seed=run_seed + 200_000 + (total_timesteps - remaining),
+            )
+            eval_env.close()
+            print(f"Evaluation metrics after chunk: {metrics}")
+
+            ###### CURRICULUM PROGRESSION ######
+
+            # If no curriculum, just rebuild the env
+            if curriculum_manager is None:
+                env = build_env(cfg, current_train_overrides)
+                _seed_env_spaces(env, run_seed + 300_000 + (total_timesteps - remaining))
+                planner.set_env(env)
+                continue
+
+            # Metrics check
+            if curriculum_cfg.mode.lower() == "auto":
+                missing_metrics = _missing_curriculum_metrics(metrics, curriculum_cfg)
+                if missing_metrics:
+                    raise ValueError(
+                        "Curriculum auto mode requires metrics: "
+                        f"{missing_metrics}. "
+                        "Implement metric extraction in Agent.evaluate before enabling auto mode."
+                    )
+
+            # Record eval metrics
+            curriculum_manager.record_eval_metrics(metrics)
+
+            # Check for promotion and update env config if promoted
+            if curriculum_manager.promote():
+                previous_stage = current_stage_name
+                next_stage = curriculum_manager.get_current_stage().name
+                print(f"Curriculum promoted: {previous_stage} -> {next_stage}")
+                current_train_overrides = curriculum_manager.get_env_config(evaluation=False)
+
+            # Rebuild env with new config (if changed) and update planner's env reference
+            env = build_env(cfg, current_train_overrides)
+            _seed_env_spaces(env, run_seed + 400_000 + (total_timesteps - remaining))
+            planner.set_env(env)    # Update planner's env reference
+
+        ##########################
+        ###### FINALIZATION ######
+        ##########################
+
+        # Save agent checkpoints
+        checkpoints_dir = Path(str(cfg.paths.checkpoints_dir))
+        checkpoints_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_path = checkpoints_dir / f"{cfg.experiment.name}"
+        agent.save(ckpt_path)
+        adapter_ckpt_path = agent.adapter_checkpoint_path(ckpt_path)
+
+        ###### FINAL EVAL ######
+
+        # Environment
+        env.close()
+        final_eval_env_overrides = None
+        if curriculum_manager is not None:
+            final_eval_env_overrides = curriculum_manager.get_env_config(evaluation=True)
+        eval_env = build_env(cfg, final_eval_env_overrides)
+        _seed_env_spaces(eval_env, run_seed + 500_000)
 
         # Evaluation
         metrics = agent.evaluate(
             env=eval_env,
             n_eval_episodes=int(cfg.experiment.eval_episodes),
             deterministic=bool(cfg.experiment.eval_deterministic),
-            base_seed=run_seed + 200_000 + (total_timesteps - remaining),
+            base_seed=run_seed + 600_000,
         )
+        print(f"Evaluation metrics after training: {metrics}")
+        print(f"Checkpoint saved at: {ckpt_path}.zip")
+        if bool(getattr(adapter, "requires_training", False)):
+            print(f"Adapter checkpoint saved at: {adapter_ckpt_path}")
+
         eval_env.close()
-        print(f"Evaluation metrics after chunk: {metrics}")
 
-        ###### CURRICULUM PROGRESSION ######
-
-        # If no curriculum, just rebuild the env
-        if curriculum_manager is None:
-            env = build_env(cfg, current_train_overrides)
-            _seed_env_spaces(env, run_seed + 300_000 + (total_timesteps - remaining))
-            planner.set_env(env)
-            continue
-
-        # Metrics check
-        if curriculum_cfg.mode.lower() == "auto":
-            missing_metrics = _missing_curriculum_metrics(metrics, curriculum_cfg)
-            if missing_metrics:
-                raise ValueError(
-                    "Curriculum auto mode requires metrics: "
-                    f"{missing_metrics}. "
-                    "Implement metric extraction in Agent.evaluate before enabling auto mode."
-                )
-
-        # Record eval metrics
-        curriculum_manager.record_eval_metrics(metrics)
-
-        # Check for promotion and update env config if promoted
-        if curriculum_manager.promote():
-            previous_stage = current_stage_name
-            next_stage = curriculum_manager.get_current_stage().name
-            print(f"Curriculum promoted: {previous_stage} -> {next_stage}")
-            current_train_overrides = curriculum_manager.get_env_config(evaluation=False)
-
-        # Rebuild env with new config (if changed) and update planner's env reference
-        env = build_env(cfg, current_train_overrides)
-        _seed_env_spaces(env, run_seed + 400_000 + (total_timesteps - remaining))
-        planner.set_env(env)    # Update planner's env reference
-
-    ##########################
-    ###### FINALIZATION ######
-    ##########################
-
-    # Save agent checkpoints
-    checkpoints_dir = Path(str(cfg.paths.checkpoints_dir))
-    checkpoints_dir.mkdir(parents=True, exist_ok=True)
-    ckpt_path = checkpoints_dir / f"{cfg.experiment.name}"
-    agent.save(ckpt_path)
-    adapter_ckpt_path = agent.adapter_checkpoint_path(ckpt_path)
-
-    ###### FINAL EVAL ######
-
-    # Environment
-    env.close()
-    final_eval_env_overrides = None
-    if curriculum_manager is not None:
-        final_eval_env_overrides = curriculum_manager.get_env_config(evaluation=True)
-    eval_env = build_env(cfg, final_eval_env_overrides)
-    _seed_env_spaces(eval_env, run_seed + 500_000)
-
-    # Evaluation
-    metrics = agent.evaluate(
-        env=eval_env,
-        n_eval_episodes=int(cfg.experiment.eval_episodes),
-        deterministic=bool(cfg.experiment.eval_deterministic),
-        base_seed=run_seed + 600_000,
-    )
-    print(f"Evaluation metrics after training: {metrics}")
-    print(f"Checkpoint saved at: {ckpt_path}.zip")
-    if bool(getattr(adapter, "requires_training", False)):
-        print(f"Adapter checkpoint saved at: {adapter_ckpt_path}")
-
-    eval_env.close()
+        # Update metadata
+        update_run_metadata(artifacts_dir, {
+            "status": "completed",
+            "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_seconds": round(time.time() - start_time, 2),
+        })
+    
+    except Exception as e:
+        update_run_metadata(artifacts_dir, {
+            "status": "failed",
+            "error": str(e),
+            "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_seconds": round(time.time() - start_time, 2),
+        })
+        raise
 
 
 if __name__ == "__main__":

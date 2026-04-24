@@ -15,7 +15,13 @@
 - [x] Route component-level logs to monitor during Live monitoring so `rich` progress output stays clean (console: warning/error only).
   >Done: routed component logs to Live monitor.
 
-- [ ] Update result visualization so training/evaluation outputs are easier to inspect after runs.
+- [ ] Update result visualization so training/evaluation outputs are easier to inspect after runs:
+    - [ ] Logs
+    - [ ] Checkpoints
+    - [ ] Videos
+    - [ ] Csv
+    - [ ] Plots
+    - [x] Artifacts
 - [ ] Decide whether `step_info` logging should support configurable keys for debugging instead of hard-coded fields only.
 
 ### Analysis Tasks
