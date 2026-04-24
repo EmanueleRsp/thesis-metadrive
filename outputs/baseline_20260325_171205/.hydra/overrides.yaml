@@ -1,8 +1,0 @@
-- experiment.total_timesteps=5
-- experiment.eval_episodes=1
-- experiment.log_interval=5
-- device=cpu
-- adapter=policy_adapter
-- adapter.action_check=false
-- env.policy_mode.enabled=true
-- env.policy_mode.agent_policy=thesis_policy_bridge

@@ -1,3 +1,0 @@
-name: td3_mlp
-policy_kwargs:
-  net_arch: [256, 256]

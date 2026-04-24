@@ -1,25 +1,29 @@
+name: baseline
 defaults:
-  - env: metadrive_base
-  - agent: td3
-  - planner: td3_mlp
-  - preprocessor: identity
-  - adapter: direct_action
-  - reward: scalar_default
-  - optional rulebook: null
+  - env: metadrive          # 'metadrive'
+  - preprocessor: identity  # 'identity'
+  - planner: sb3_td3        # 'sb3_td3' | ...
+  - adapter: identity       # 'identity'
+  - reward: scalar_default  # 'scalar_default' | 'rulebook'
   - experiment: baseline
-  - optional preset_run: null
-  - optional preset_test: null
+  - curriculum: disabled    # 'disabled' | 'stages'
   - _self_
 
 seed: 42
 device: auto
-run_name: ${experiment.name}_${now:%Y%m%d_%H%M%S}
-checkpoint_path: null
 
+# Results and logging
 paths:
-  logs_dir: logs
-  checkpoints_dir: checkpoints
+  run_dir: outputs/${name}/seed_${seed}/${now:%Y%m%d_%H%M%S}
+  logs_dir: ${paths.run_dir}/logs
+  checkpoints_dir: ${paths.run_dir}/checkpoints    # Directory to save model checkpoints during training.
+  videos_dir: ${paths.run_dir}/videos
+  csv_dir: ${paths.run_dir}/csv
+  plots_dir: ${paths.run_dir}/plots
+checkpoint_path: null   # Optional path to a checkpoint to load for resuming training or evaluation.
 
+# Hydra stuff
 hydra:
   run:
-    dir: outputs/${run_name}
+    dir: ${paths.run_dir}
+  output_subdir: hydra

@@ -1,83 +1,86 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import hydra
+import numpy as np
+import torch
 from omegaconf import DictConfig, OmegaConf
 
-from thesis_rl.adapters.base import BaseAdapter
-from thesis_rl.adapters.direct_action import DirectActionAdapter
-from thesis_rl.adapters.neural_adapter import NeuralAdapter
-from thesis_rl.adapters.policy_adapter import PolicyAdapter
 from thesis_rl.agents.agent import Agent
-from thesis_rl.agents.planner_agent import Td3PlannerBackend
-from thesis_rl.envs.factory import make_env
-from thesis_rl.envs.wrappers import RuleRewardWrapper
-from thesis_rl.preprocessors.identity import IdentityPreprocessor
-from thesis_rl.reward.reward_manager import HybridRulebookRewardManager
+from thesis_rl.curriculum.config import CurriculumConfig
+from thesis_rl.curriculum.manager import CurriculumManager
+from thesis_rl.runtime.builders import (
+    adapter_space_kwargs,
+    build_adapter,
+    build_env,
+    build_preprocessor,
+    load_planner,
+)
 
 
-def _build_preprocessor(cfg: DictConfig) -> IdentityPreprocessor:
-    if cfg.preprocessor.name != "identity":
-        raise ValueError(f"Unsupported preprocessor: {cfg.preprocessor.name}")
-    return IdentityPreprocessor(cast_to_float32=bool(cfg.preprocessor.cast_to_float32))
+def _apply_eval_scenario_seed_split(
+    *,
+    base_run_seed: int,
+    eval_env_overrides: dict[str, object] | None,
+    cfg: DictConfig,
+) -> dict[str, object]:
+    """Return env overrides with deterministic disjoint scenario seed for evaluation.
+
+    We keep runtime RNG seeded from `cfg.seed`, but shift MetaDrive scenario pool
+    (`start_seed`) so evaluation scenarios are disjoint from training scenarios.
+    """
+    overrides = dict(eval_env_overrides or {})
+    base_start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
+    scenario_offset = 1_000_000 + int(base_run_seed) * 10_000
+    overrides["start_seed"] = int(base_start_seed) + scenario_offset
+    return overrides
 
 
-def _build_adapter(cfg: DictConfig) -> BaseAdapter:
-    name = str(cfg.adapter.name)
-    common_kwargs = {
-        "low": float(cfg.adapter.low),
-        "high": float(cfg.adapter.high),
-        "clip": bool(cfg.adapter.clip),
-        "expected_shape": tuple(cfg.adapter.expected_shape),
-    }
+def _resolve_eval_env_overrides(curriculum_cfg: CurriculumConfig) -> tuple[dict[str, object] | None, str | None]:
+    """Resolve evaluation env overrides and selected stage name from curriculum config.
 
-    if name == "direct_action":
-        return DirectActionAdapter(**common_kwargs)
+    Evaluation is standalone (no persisted curriculum state), so when curriculum mode is
+    `auto` we evaluate on the last configured stage by convention.
+    """
+    if not (curriculum_cfg.enabled and curriculum_cfg.stages):
+        return None, None
 
-    if name == "neural_adapter":
-        return NeuralAdapter(
-            **common_kwargs,
-            hidden_dim=int(cfg.adapter.get("hidden_dim", 64)),
-            learning_rate=float(cfg.adapter.get("learning_rate", 1e-3)),
-            batch_size=int(cfg.adapter.get("batch_size", 64)),
-            update_interval=int(cfg.adapter.get("update_interval", 1)),
-            buffer_capacity=int(cfg.adapter.get("buffer_capacity", 10000)),
-            device=str(cfg.device),
-        )
+    mode = str(curriculum_cfg.mode).lower()
+    if mode == "auto":
+        stage = curriculum_cfg.stages[-1]
+        merged = dict(stage.env)
+        merged.update(stage.eval_env)
+        return merged, stage.name
 
-    if name == "policy_adapter":
-        return PolicyAdapter(
-            **common_kwargs,
-            policy_name=str(cfg.adapter.get("policy_name", "EnvInputPolicy")),
-            action_check=bool(cfg.adapter.get("action_check", True)),
-        )
-
-    raise ValueError(f"Unsupported adapter: {name}")
+    curriculum_manager = CurriculumManager(curriculum_cfg)
+    return curriculum_manager.get_env_config(evaluation=True), curriculum_manager.get_current_stage().name
 
 
-def _maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
-    if str(cfg.reward.mode) != "hybrid":
-        return env
+def _set_global_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
-    if cfg.get("rulebook") is None:
-        raise ValueError("reward.mode=hybrid requires a rulebook config")
 
-    manager = HybridRulebookRewardManager.from_configs(
-        cfg_reward=cfg.reward,
-        cfg_rulebook=cfg.rulebook,
-    )
-    return RuleRewardWrapper(
-        env=env,
-        reward_manager=manager,
-        attach_info=bool(cfg.reward.get("attach_info", True)),
-    )
+def _seed_env_spaces(env, seed: int) -> None:
+    action_space = getattr(env, "action_space", None)
+    if action_space is not None and hasattr(action_space, "seed"):
+        action_space.seed(seed)
+    observation_space = getattr(env, "observation_space", None)
+    if observation_space is not None and hasattr(observation_space, "seed"):
+        observation_space.seed(seed)
 
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     print("=== EVAL CONFIG ===")
     print(OmegaConf.to_yaml(cfg))
+    run_seed = int(cfg.seed)
+    _set_global_seed(run_seed)
 
     checkpoint_path = cfg.checkpoint_path
     if checkpoint_path is None:
@@ -90,14 +93,28 @@ def main(cfg: DictConfig) -> None:
     if not ckpt.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt}")
 
-    env = make_env(cfg.env)
-    env = _maybe_wrap_env_with_reward_manager(env, cfg)
+    curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
+    eval_env_overrides, eval_stage_name = _resolve_eval_env_overrides(curriculum_cfg)
+    eval_env_overrides = _apply_eval_scenario_seed_split(
+        base_run_seed=run_seed,
+        eval_env_overrides=eval_env_overrides,
+        cfg=cfg,
+    )
+
+    env = build_env(cfg, eval_env_overrides)
+    _seed_env_spaces(env, run_seed)
     print(f"Observation space: {env.observation_space}")
     print(f"Action space: {env.action_space}")
+    if eval_stage_name is not None:
+        print(f"Evaluation curriculum stage: {eval_stage_name}")
+    print(f"Evaluation scenario start_seed: {eval_env_overrides['start_seed']}")
 
-    preprocessor = _build_preprocessor(cfg)
-    adapter = _build_adapter(cfg)
-    planner = Td3PlannerBackend.load(checkpoint_path=ckpt, env=env, device=str(cfg.device))
+    preprocessor = build_preprocessor(cfg)
+    adapter = build_adapter(
+        cfg,
+        adapter_space_kwargs(env.action_space),
+    )
+    planner = load_planner(cfg, checkpoint_path=str(ckpt), env=env)
     agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
     agent.load_adapter(checkpoint_path=ckpt, strict=True)
 
@@ -105,6 +122,7 @@ def main(cfg: DictConfig) -> None:
         env=env,
         n_eval_episodes=int(cfg.experiment.eval_episodes),
         deterministic=bool(cfg.experiment.eval_deterministic),
+        base_seed=run_seed + 10_000,
     )
 
     print(f"Evaluation metrics: {metrics}")

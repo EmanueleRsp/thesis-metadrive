@@ -41,8 +41,9 @@ def _effective_radius(state: dict[str, Any], default: float = 1.0) -> float:
 
 
 def _ego_speed(state: dict[str, Any]) -> float | None:
-    if "speed" in state:
-        return float(state["speed"])
+    # Strict m/s source for physics-based rules (collision energy, dynamics).
+    if "speed_m_s" in state:
+        return float(state["speed_m_s"])
     if "velocity" in state:
         v = _xy(state["velocity"])
         return float(np.linalg.norm(v)) if v is not None else None
@@ -119,11 +120,18 @@ def _get_mass(state: dict[str, Any], vru_default: float = 70.0, vehicle_default:
     return vru_default if _is_vru(state) else vehicle_default
 
 
+def _neighbor_id(state: dict[str, Any]) -> str | None:
+    entity_id = state.get("entity_id")
+    if isinstance(entity_id, str) and entity_id:
+        return entity_id
+    return None
+
+
 def check_vru_collision_energy(rule_eval_input: RuleEvalInput) -> tuple[bool, float]:
     ego_state = dict(rule_eval_input.ego_state)
     neighbors = [dict(n) for n in rule_eval_input.neighbors]
     prev_ego_state = rule_eval_input.prev_ego_state
-    prev_neighbors = rule_eval_input.prev_neighbors
+    prev_neighbors_by_id = dict(rule_eval_input.prev_neighbors_by_id or {})
 
     ego_poly = _get_polygon(ego_state)
     ego_pos = _ego_pos(ego_state)
@@ -133,7 +141,7 @@ def check_vru_collision_energy(rule_eval_input: RuleEvalInput) -> tuple[bool, fl
     max_ke_delta = 0.0
     has_vru_contact = False
 
-    for idx, neighbor in enumerate(neighbors):
+    for neighbor in neighbors:
         if not _is_vru(neighbor):
             continue
 
@@ -162,9 +170,11 @@ def check_vru_collision_energy(rule_eval_input: RuleEvalInput) -> tuple[bool, fl
         ke_vru_now = 0.5 * vru_mass * (vru_vel**2)
         total_ke_now = ke_ego_now + 0.5 * ke_vru_now
 
-        if prev_ego_state is not None and prev_neighbors is not None and idx < len(prev_neighbors):
+        neighbor_id = _neighbor_id(neighbor)
+        prev_neighbor = prev_neighbors_by_id.get(neighbor_id) if neighbor_id is not None else None
+        if prev_ego_state is not None and prev_neighbor is not None:
             prev_ego_vel = _ego_speed(dict(prev_ego_state))
-            prev_vru_vel = _ego_speed(dict(prev_neighbors[idx]))
+            prev_vru_vel = _ego_speed(dict(prev_neighbor))
             if prev_ego_vel is not None and prev_vru_vel is not None:
                 ke_ego_prev = 0.5 * ego_mass * (prev_ego_vel**2)
                 ke_vru_prev = 0.5 * vru_mass * (prev_vru_vel**2)
@@ -172,6 +182,7 @@ def check_vru_collision_energy(rule_eval_input: RuleEvalInput) -> tuple[bool, fl
                 max_ke_delta = max(max_ke_delta, total_ke_now - total_ke_prev)
                 continue
 
+        # Safe fallback when temporal match is unavailable: use current contact energy only.
         max_ke_delta = max(max_ke_delta, total_ke_now)
 
     if not has_vru_contact:
@@ -183,7 +194,7 @@ def check_vehicle_collision_energy(rule_eval_input: RuleEvalInput) -> tuple[bool
     ego_state = dict(rule_eval_input.ego_state)
     neighbors = [dict(n) for n in rule_eval_input.neighbors]
     prev_ego_state = rule_eval_input.prev_ego_state
-    prev_neighbors = rule_eval_input.prev_neighbors
+    prev_neighbors_by_id = dict(rule_eval_input.prev_neighbors_by_id or {})
 
     ego_poly = _get_polygon(ego_state)
     ego_pos = _ego_pos(ego_state)
@@ -193,7 +204,7 @@ def check_vehicle_collision_energy(rule_eval_input: RuleEvalInput) -> tuple[bool
     max_ke_delta = 0.0
     has_vehicle_contact = False
 
-    for idx, neighbor in enumerate(neighbors):
+    for neighbor in neighbors:
         if _is_vru(neighbor):
             continue
 
@@ -220,14 +231,17 @@ def check_vehicle_collision_energy(rule_eval_input: RuleEvalInput) -> tuple[bool
         other_mass = _get_mass(neighbor)
         ke_now = 0.5 * ego_mass * (ego_vel**2) + 0.5 * other_mass * (other_vel**2)
 
-        if prev_ego_state is not None and prev_neighbors is not None and idx < len(prev_neighbors):
+        neighbor_id = _neighbor_id(neighbor)
+        prev_neighbor = prev_neighbors_by_id.get(neighbor_id) if neighbor_id is not None else None
+        if prev_ego_state is not None and prev_neighbor is not None:
             prev_ego_vel = _ego_speed(dict(prev_ego_state))
-            prev_other_vel = _ego_speed(dict(prev_neighbors[idx]))
+            prev_other_vel = _ego_speed(dict(prev_neighbor))
             if prev_ego_vel is not None and prev_other_vel is not None:
                 ke_prev = 0.5 * ego_mass * (prev_ego_vel**2) + 0.5 * other_mass * (prev_other_vel**2)
                 max_ke_delta = max(max_ke_delta, ke_now - ke_prev)
                 continue
 
+        # Safe fallback when temporal match is unavailable: use current contact energy only.
         max_ke_delta = max(max_ke_delta, ke_now)
 
     if not has_vehicle_contact:
@@ -297,15 +311,10 @@ def check_speed_limit(rule_eval_input: RuleEvalInput) -> tuple[bool, float]:
     if speed_limit is None:
         return False, _MISSING_DATA_MARGIN
 
-    if "speed" in ego_state:
-        ego_speed = float(ego_state["speed"])
-    elif "velocity" in ego_state:
-        velocity = _xy(ego_state["velocity"])
-        if velocity is None:
-            return False, _MISSING_DATA_MARGIN
-        ego_speed = float(np.linalg.norm(velocity))
-    else:
+    # Strict km/h source for speed-limit rule.
+    if "speed" not in ego_state:
         return False, _MISSING_DATA_MARGIN
+    ego_speed = float(ego_state["speed"])
 
     margin = float(speed_limit) - ego_speed
     return margin < 0.0, margin
@@ -315,9 +324,7 @@ def check_longitudinal_accel(rule_eval_input: RuleEvalInput) -> tuple[bool, floa
     ego_state = dict(rule_eval_input.ego_state)
     a_long: float | None = None
 
-    if "accel" in ego_state:
-        a_long = float(ego_state["accel"])
-    elif isinstance(ego_state.get("acceleration"), dict):
+    if isinstance(ego_state.get("acceleration"), dict):
         accel_dict = ego_state["acceleration"]
         if "longitudinal" in accel_dict:
             a_long = float(accel_dict["longitudinal"])

@@ -31,6 +31,8 @@ def _resolve_agent_policy(policy_name: str):
 
 def make_env(cfg_env: Any):
     """Create a MetaDrive environment from Hydra env config."""
+
+    # try to import metadrive, and raise a clear error if it's not installed
     try:
         from metadrive import MetaDriveEnv
     except ModuleNotFoundError as exc:  # pragma: no cover
@@ -38,14 +40,15 @@ def make_env(cfg_env: Any):
             "metadrive is not installed. Run `uv sync` before training/evaluation."
         ) from exc
 
+    # Convert Hydra config to plain dict for env initialization
     env_cfg = _to_plain_dict(cfg_env.config)
 
+    # Handle policy mode configuration if enabled
     policy_mode_cfg = _to_plain_dict(getattr(cfg_env, "policy_mode", {}))
     if policy_mode_cfg.get("enabled", False):
         env_cfg["action_check"] = bool(policy_mode_cfg.get("action_check", True))
         policy_name = str(policy_mode_cfg.get("agent_policy", "env_input_policy"))
         agent_policy_cls = _resolve_agent_policy(policy_name)
-
         if policy_name.lower() == "thesis_policy_bridge":
             agent_policy_cls.POLICY_LOW = float(policy_mode_cfg.get("low", -1.0))
             agent_policy_cls.POLICY_HIGH = float(policy_mode_cfg.get("high", 1.0))

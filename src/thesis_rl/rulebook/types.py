@@ -21,6 +21,7 @@ class RuleEvalInput:
     local_to_global: Any | None = None
     prev_ego_state: Mapping[str, Any] | None = None
     prev_neighbors: Sequence[Mapping[str, Any]] | None = None
+    prev_neighbors_by_id: Mapping[str, Mapping[str, Any]] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

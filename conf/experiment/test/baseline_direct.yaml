@@ -1,9 +1,0 @@
-name: test_baseline_direct
-total_timesteps: 5000
-log_interval: 500
-eval_interval: 2500
-eval_episodes: 3
-eval_deterministic: true
-save_interval: 2500
-curriculum:
-  enabled: false

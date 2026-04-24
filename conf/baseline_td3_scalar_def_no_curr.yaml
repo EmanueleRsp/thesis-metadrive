@@ -1,0 +1,5 @@
+name: baseline_td3_scalardefault_no_curriculum
+
+defaults:
+  - config
+  - _self_

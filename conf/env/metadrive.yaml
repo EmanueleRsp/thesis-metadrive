@@ -1,0 +1,31 @@
+name: metadrive
+env_id: MetaDriveEnv
+
+# Main environment configuration
+config:
+  use_render: false
+  horizon: 500
+  traffic_density: 0.08
+  start_seed: 0
+  num_scenarios: 50
+  random_spawn_lane_index: true
+  log_level: 50
+
+# Default observation type:
+# LidarStateObservation
+# More on https://metadrive.readthedocs.io/en/latest/observation.html#lidarstateobservation
+
+# Action space is continuous by default:
+# Box with shape (2,) and values in [-1, 1] for steering and throttle
+# More on https://metadrive-simulator.readthedocs.io/en/latest/action.html
+
+###### Additional configuration for the env-side adapter ######
+# For converting agent actions to env actions
+# More on https://metadrive-simulator.readthedocs.io/en/latest/action.html#policy
+# [Note: not yet revised, keep on enabled:false]
+policy_mode:
+  enabled: false
+  agent_policy: env_input_policy
+  action_check: true
+  low: -1.0
+  high: 1.0

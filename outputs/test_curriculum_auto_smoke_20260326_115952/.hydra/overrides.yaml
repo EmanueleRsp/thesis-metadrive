@@ -1,6 +1,0 @@
-- preset_test=curriculum_auto_smoke
-- env.config.horizon=80
-- experiment.total_timesteps=220
-- experiment.eval_interval=110
-- experiment.log_interval=110
-- experiment.curriculum.promotion.min_stage_steps=110

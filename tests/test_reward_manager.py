@@ -149,7 +149,7 @@ def test_scalarization_matches_closed_form_reference() -> None:
     exponents = np.asarray([2, 1], dtype=np.float64)
     sigmoid = 1.0 / (1.0 + np.exp(-30.0 * rho))
     expected_rule = float(np.sum((2.01**exponents) * sigmoid + (rho / n)))
-    expected_final = float(1.0 * env_reward + 0.2 * expected_rule)
+    expected_final = float((1.0 * env_reward + 0.2 * expected_rule) / (1.0 + 0.2))
 
     assert np.isclose(result.scalar_rule_reward, expected_rule, rtol=1e-10, atol=1e-10)
     assert np.isclose(result.final_reward, expected_final, rtol=1e-10, atol=1e-10)

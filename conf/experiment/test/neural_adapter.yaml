@@ -1,9 +1,0 @@
-name: test_neural_adapter
-total_timesteps: 8000
-log_interval: 500
-eval_interval: 4000
-eval_episodes: 3
-eval_deterministic: true
-save_interval: 4000
-curriculum:
-  enabled: false

@@ -18,22 +18,20 @@ def _passing_metrics() -> dict[str, float]:
         "out_of_road_rate": 0.01,
         "success_rate": 0.9,
         "route_completion": 0.9,
-        "mean_reward": 1.0,
+        "success_rate_std": 0.01,
+        "collision_rate_std": 0.01,
     }
 
 
-def test_curriculum_config_parses_from_baseline_experiment() -> None:
+def test_curriculum_config_parses_from_curriculum_group() -> None:
     with initialize_config_dir(version_base=None, config_dir=str(CONF_DIR)):
-        cfg = compose(config_name="config")
+        cfg = compose(config_name="config", overrides=["curriculum=disabled", "reward=scalar_default"])
 
-    curriculum = CurriculumConfig.from_experiment_cfg(cfg.experiment)
+    curriculum = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
 
     assert curriculum.enabled is False
     assert curriculum.mode == "fixed"
-    assert len(curriculum.stages) == 4
-    assert curriculum.stages[0].name == "stage1"
-    assert curriculum.stages[3].eval_env["start_seed"] == 20000
-    assert curriculum.promotion.consecutive_evals == 3
+    assert len(curriculum.stages) == 0
 
 
 def test_curriculum_manager_fixed_mode_uses_selected_stage_and_no_promotion() -> None:
@@ -69,7 +67,7 @@ def test_curriculum_manager_auto_promotion_requires_warmup_steps_and_consecutive
             "promotion": {
                 "consecutive_evals": 2,
                 "warmup_evals": 1,
-                "min_stage_steps": 10,
+                "default_min_stage_steps": 10,
             },
         }
     )
@@ -97,7 +95,8 @@ def test_curriculum_manager_resets_consecutive_counter_on_failed_gate() -> None:
             "promotion": {
                 "consecutive_evals": 2,
                 "warmup_evals": 0,
-                "min_stage_steps": 0,
+                "default_min_stage_steps": 0,
+                "per_stage": {"stage1": {"min_stage_steps": 0}},
             },
         }
     )
@@ -125,6 +124,7 @@ def test_curriculum_manager_eval_env_overrides_train_env() -> None:
                     "eval_env": {"start_seed": 20000, "num_scenarios": 300},
                 }
             ],
+            "promotion": {"default_min_stage_steps": 1},
         }
     )
     manager = CurriculumManager(config)

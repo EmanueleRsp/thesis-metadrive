@@ -1,0 +1,98 @@
+name: stages
+# enabled:
+# 'true' to enable curriculum learning, 
+# 'false' to disable and train on default env config
+enabled: true
+# Mode: 
+# 'auto' for automatic progression based on performance, 
+# 'fixed' for manual stage selection.
+mode: auto         
+# fixed_stage: if mode is 'fixed', this specifies the stage to train on.   
+fixed_stage: stage1
+stages:
+  - name: stage1
+    env:
+      map: "S"
+      traffic_density: 0.01
+      start_seed: 0
+      num_scenarios: 20
+      random_lane_width: false
+      random_lane_num: false
+      random_agent_model: false
+    eval_env:
+      start_seed: 100000
+      num_scenarios: 100
+  - name: stage2
+    env:
+      map: 3
+      traffic_density: 0.01
+      start_seed: 1000
+      num_scenarios: 100
+      random_lane_width: true
+      random_lane_num: false
+      random_agent_model: false
+    eval_env:
+      start_seed: 101000
+      num_scenarios: 200
+  - name: stage3
+    env:
+      map: 5
+      traffic_density: 0.05
+      start_seed: 3000
+      num_scenarios: 300
+      random_lane_width: true
+      random_lane_num: true
+      random_agent_model: false
+    eval_env:
+      start_seed: 103000
+      num_scenarios: 300
+  - name: stage4
+    env:
+      map: 5
+      traffic_density: 0.08
+      start_seed: 6000
+      num_scenarios: 500
+      random_lane_width: true
+      random_lane_num: true
+      random_agent_model: true
+    eval_env:
+      start_seed: 106000
+      num_scenarios: 300
+  - name: stage5
+    env:
+      map: 5
+      traffic_density: 0.1
+      start_seed: 10000
+      num_scenarios: 1000
+      random_lane_width: true
+      random_lane_num: true
+      random_agent_model: true
+    eval_env:
+      start_seed: 20000
+      num_scenarios: 300
+promotion:
+  consecutive_evals: 3
+  warmup_evals: 2
+  default_min_stage_steps: 25000
+  per_stage:
+    stage1:
+      min_stage_steps: 15000
+    stage2:
+      min_stage_steps: 25000
+    stage3:
+      min_stage_steps: 40000
+    stage4:
+      min_stage_steps: 60000
+    stage5:
+      min_stage_steps: 80000
+  gates:
+    safety:
+      collision_rate_max: 0.05
+      top_rule_violation_rate_max: 0.02
+      out_of_road_rate_max: 0.03
+    task:
+      success_rate_min: 0.8
+      route_completion_min: 0.85
+    stability:
+      success_rate_std_max: 0.1
+      collision_rate_std_max: 0.03

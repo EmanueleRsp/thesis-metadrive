@@ -30,6 +30,7 @@ class _DummyVehicle:
         self.position = np.asarray(position, dtype=np.float32)
         self.velocity = np.asarray([speed, 0.0], dtype=np.float32)
         self.speed = float(speed)
+        self.speed_km_h = float(speed) * 3.6
         self.heading_theta = 0.2
         self.steering = 0.1
         self.throttle_brake = 0.0

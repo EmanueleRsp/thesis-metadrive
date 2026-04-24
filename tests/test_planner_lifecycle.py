@@ -1,94 +1,83 @@
-"""Test planner training lifecycle protocol."""
+"""Tests for TD3 planner lifecycle integration."""
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
+import gymnasium as gym
 import numpy as np
 import pytest
+from omegaconf import OmegaConf
 
 from thesis_rl.agents.planner_agent import Td3PlannerBackend
 from thesis_rl.agents.planner_lifecycle import Td3Lifecycle
-from thesis_rl.envs.factory import make_env
+from thesis_rl.agents.types import Transition
 
 
 @pytest.fixture
 def cfg_agent():
-    """Minimal agent config for testing."""
-    from omegaconf import OmegaConf
+    return OmegaConf.create({})
 
-    return OmegaConf.create({
-        "sb3": {
+
+@pytest.fixture
+def cfg_planner():
+    return OmegaConf.create(
+        {
             "policy": "MlpPolicy",
-            "learning_starts": 100,
-            "batch_size": 64,
-            "buffer_size": 10000,
-            "train_freq": 2,
+            "learning_starts": 5,
+            "batch_size": 8,
+            "buffer_size": 2000,
+            "train_freq": 1,
             "gradient_steps": 1,
             "learning_rate": 1e-3,
             "gamma": 0.99,
             "tau": 0.005,
             "verbose": 0,
+            "action_noise_type": "normal",
+            "action_noise_sigma": 0.1,
+            "action_noise_mean": 0.0,
+            "policy_kwargs": {"net_arch": [32, 32]},
         }
-    })
-
-
-@pytest.fixture
-def cfg_planner():
-    """Minimal planner config for testing."""
-    from omegaconf import OmegaConf
-
-    return OmegaConf.create({
-        "policy_kwargs": {
-            "net_arch": [64, 64],
-        }
-    })
+    )
 
 
 @pytest.fixture
 def env():
-    """Minimal MetaDrive environment."""
-    from omegaconf import OmegaConf
-
-    cfg_env = {
-        "num_scenarios": 1,
-        "horizon": 50,
-        "vehicle_config": {
-            "lidar": {
-                "num_lasers": 12,
-                "distance": 20,
-            }
-        },
-        "use_render": False,
-        "image_observation": False,
-    }
-    env_instance = make_env(OmegaConf.create({"config": cfg_env}))
+    env_instance = gym.make("Pendulum-v1")
     try:
         yield env_instance
     finally:
         env_instance.close()
 
 
+def _make_transition(
+    lifecycle: Td3Lifecycle,
+    obs: np.ndarray,
+    action: np.ndarray,
+    reward: float,
+    terminated: bool,
+    truncated: bool,
+    next_obs: np.ndarray,
+) -> Transition:
+    terminal_obs = next_obs if (terminated or truncated) else None
+    return Transition(
+        observation=np.asarray(obs, dtype=np.float32),
+        env_action=np.asarray(action, dtype=np.float32),
+        buffer_action=lifecycle.to_buffer_action(np.asarray(action, dtype=np.float32)),
+        scalar_reward=float(reward),
+        terminated=bool(terminated),
+        truncated=bool(truncated),
+        next_observation=np.asarray(next_obs, dtype=np.float32),
+        terminal_observation=np.asarray(terminal_obs, dtype=np.float32) if terminal_obs is not None else None,
+        info={},
+    )
+
+
 def test_get_lifecycle_returns_protocol(cfg_agent, cfg_planner, env):
-    """Test that get_lifecycle() returns a valid lifecycle."""
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu")
+    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu", seed=123)
     lifecycle = planner.get_lifecycle()
 
     assert isinstance(lifecycle, Td3Lifecycle)
-    assert hasattr(lifecycle, "begin_training")
-    assert hasattr(lifecycle, "act")
-    assert hasattr(lifecycle, "observe_transition")
-    assert hasattr(lifecycle, "maybe_update")
-    assert hasattr(lifecycle, "end_training")
-
-
-def test_lifecycle_protocol_implemented(cfg_agent, cfg_planner, env):
-    """Test that Td3Lifecycle fully implements BasePlannerLifecycle protocol."""
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu")
-    lifecycle = planner.get_lifecycle()
-
-    # Check protocol conformance
     assert callable(lifecycle.begin_training)
     assert callable(lifecycle.act)
     assert callable(lifecycle.observe_transition)
@@ -96,120 +85,89 @@ def test_lifecycle_protocol_implemented(cfg_agent, cfg_planner, env):
     assert callable(lifecycle.end_training)
 
 
-def test_lifecycle_training_loop(cfg_agent, cfg_planner, env):
-    """Test a minimal training loop using lifecycle interface."""
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu")
+def test_lifecycle_training_loop_collects_replay(cfg_agent, cfg_planner, env):
+    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu", seed=123)
     lifecycle = planner.get_lifecycle()
+    lifecycle.begin_training(chunk_timesteps=40, global_total_timesteps=100, global_steps_done=0)
 
-    # Begin training
-    lifecycle.begin_training()
-
-    obs, _ = env.reset()
-    total_steps = 200
-
-    for _ in range(total_steps):
-        # Act
+    obs, _ = env.reset(seed=123)
+    for _ in range(40):
         action = lifecycle.act(obs, deterministic=False)
-        assert isinstance(action, np.ndarray)
-
-        # Step environment
-        next_obs, reward, done, truncated, info = env.step(action)
-
-        # Observe transition
-        lifecycle.observe_transition(
-            observation=obs,
-            action=action,
-            reward=float(reward),
-            done=bool(done),
-            next_observation=next_obs,
-        )
-
-        # Maybe update
+        next_obs, reward, terminated, truncated, _ = env.step(action)
+        transition = _make_transition(lifecycle, obs, action, reward, terminated, truncated, next_obs)
+        lifecycle.observe_transition(transition)
         lifecycle.maybe_update()
-
         obs = next_obs
-        if done or truncated:
+        if terminated or truncated:
+            lifecycle.on_episode_end()
             obs, _ = env.reset()
 
-    # End training
     lifecycle.end_training()
 
-    # Verify that replay buffer accumulated steps
     assert lifecycle.replay_buffer.size() > 0
 
 
 def test_lifecycle_act_returns_valid_action(cfg_agent, cfg_planner, env):
-    """Test that lifecycle.act() returns properly shaped actions."""
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu")
+    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu", seed=123)
     lifecycle = planner.get_lifecycle()
-    lifecycle.begin_training()
+    lifecycle.begin_training(chunk_timesteps=1, global_total_timesteps=10, global_steps_done=0)
 
-    obs, _ = env.reset()
+    obs, _ = env.reset(seed=123)
     action = lifecycle.act(obs, deterministic=False)
 
-    # TD3 continuous action space should be 1D array
     assert isinstance(action, np.ndarray)
-    assert action.dtype == np.float32
     assert action.shape == env.action_space.shape
+    assert np.all(action <= env.action_space.high + 1e-6)
+    assert np.all(action >= env.action_space.low - 1e-6)
 
 
-def test_lifecycle_step_counters(cfg_agent, cfg_planner, env):
-    """Test that lifecycle correctly tracks step and update counts."""
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu")
+def test_lifecycle_step_and_update_counters_progress(cfg_agent, cfg_planner, env):
+    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu", seed=123)
     lifecycle = planner.get_lifecycle()
-
-    lifecycle.begin_training()
+    lifecycle.begin_training(chunk_timesteps=30, global_total_timesteps=200, global_steps_done=50)
     assert lifecycle.step_count == 0
     assert lifecycle.update_count == 0
 
-    obs, _ = env.reset()
-
-    # Simulate 150 steps (100 learning_starts + 50 updates)
-    for _ in range(150):
+    obs, _ = env.reset(seed=123)
+    for _ in range(30):
         action = lifecycle.act(obs, deterministic=False)
-        next_obs, reward, done, truncated, _ = env.step(action)
-
-        lifecycle.observe_transition(obs, action, float(reward), bool(done), next_obs)
+        next_obs, reward, terminated, truncated, _ = env.step(action)
+        lifecycle.observe_transition(
+            _make_transition(lifecycle, obs, action, reward, terminated, truncated, next_obs)
+        )
         lifecycle.maybe_update()
-
         obs = next_obs
-        if done or truncated:
+        if terminated or truncated:
+            lifecycle.on_episode_end()
             obs, _ = env.reset()
 
-    # step_count should be 150
-    assert lifecycle.step_count == 150
-    # update_count depends on learning_starts and train_freq
-    # With learning_starts=100 and train_freq=2, we expect ~25 updates
+    assert lifecycle.step_count == 30
     assert lifecycle.update_count > 0
 
 
-def test_lifecycle_save_load_compatibility(cfg_agent, cfg_planner, env):
-    """Test that lifecycle-trained checkpoints can be loaded."""
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu")
+def test_lifecycle_save_load_compatibility(cfg_agent, cfg_planner, env, tmp_path: Path):
+    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu", seed=123)
     lifecycle = planner.get_lifecycle()
+    lifecycle.begin_training(chunk_timesteps=12, global_total_timesteps=50, global_steps_done=0)
 
-    # Train with lifecycle
-    lifecycle.begin_training()
-    obs, _ = env.reset()
-    for _ in range(100):
+    obs, _ = env.reset(seed=123)
+    for _ in range(12):
         action = lifecycle.act(obs, deterministic=False)
-        next_obs, reward, done, truncated, _ = env.step(action)
-        lifecycle.observe_transition(obs, action, float(reward), bool(done), next_obs)
+        next_obs, reward, terminated, truncated, _ = env.step(action)
+        lifecycle.observe_transition(
+            _make_transition(lifecycle, obs, action, reward, terminated, truncated, next_obs)
+        )
         lifecycle.maybe_update()
         obs = next_obs
-        if done or truncated:
+        if terminated or truncated:
+            lifecycle.on_episode_end()
             obs, _ = env.reset()
-    lifecycle.end_training()
 
-    # Save checkpoint
-    with tempfile.TemporaryDirectory() as tmpdir:
-        checkpoint_path = Path(tmpdir) / "test_checkpoint.zip"
-        planner.save(checkpoint_path)
+    checkpoint_path = tmp_path / "test_checkpoint.zip"
+    planner.save(checkpoint_path)
 
-        # Load and verify
-        loaded_planner = Td3PlannerBackend.load(checkpoint_path, env, device="cpu")
-        loaded_lifecycle = loaded_planner.get_lifecycle()
+    loaded_planner = Td3PlannerBackend.load(checkpoint_path, env, device="cpu")
+    loaded_lifecycle = loaded_planner.get_lifecycle()
 
-        # Loaded lifecycle should work
-        assert isinstance(loaded_lifecycle, Td3Lifecycle)
-        assert loaded_lifecycle.step_count == 0  # Reset on load
+    assert isinstance(loaded_lifecycle, Td3Lifecycle)
+    assert loaded_lifecycle.step_count == 0

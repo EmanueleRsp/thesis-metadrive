@@ -1,0 +1,7 @@
+name: baseline_td3_rulebook_curriculum
+
+defaults:
+  - config
+  - override /reward: rulebook
+  - override /curriculum: stages
+  - _self_

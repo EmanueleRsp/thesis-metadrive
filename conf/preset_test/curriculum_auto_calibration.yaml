@@ -1,8 +1,0 @@
-# @package _global_
-defaults:
-  - override /adapter: direct_action
-  - override /experiment: test/curriculum_auto_calibration
-
-env:
-  policy_mode:
-    enabled: false

@@ -35,6 +35,7 @@ class HybridRulebookRewardManager(BaseRewardManager):
         self._step = 0
         self._prev_ego_state: dict[str, Any] | None = None
         self._prev_neighbors: list[dict[str, Any]] | None = None
+        self._prev_neighbors_by_id: dict[str, dict[str, Any]] | None = None
         self._rule_eval_counts: dict[str, int] = {}
         self._rule_saturation_counts: dict[str, int] = {}
 
@@ -44,10 +45,13 @@ class HybridRulebookRewardManager(BaseRewardManager):
         cfg_reward: DictConfig,
         cfg_rulebook: DictConfig,
     ) -> "HybridRulebookRewardManager":
+        '''Create reward manager from reward and rulebook configs.'''
+        # Validate and convert rulebook config to dict
         rulebook_cfg = OmegaConf.to_container(cfg_rulebook, resolve=True)
         if not isinstance(rulebook_cfg, dict):
             raise ValueError("rulebook config must resolve to a mapping")
 
+        # Create rule evaluator from config
         evaluator = ScenicRulesEvaluator.from_config(rulebook_cfg)
         scales_cfg = dict(cfg_reward.get("scales", {}))
 
@@ -65,11 +69,16 @@ class HybridRulebookRewardManager(BaseRewardManager):
         self._step = 0
         self._prev_ego_state = None
         self._prev_neighbors = None
+        self._prev_neighbors_by_id = None
         self._rule_eval_counts = {}
         self._rule_saturation_counts = {}
 
     def compute(self, env_reward: float, info: dict[str, Any]) -> RewardComputationResult:
+        '''Compute final reward and rule outputs from env reward and info dict.'''
+        # Increment step
         self._step += 1
+        
+        # Build rule evaluation input and evaluate rules
         rule_eval_input = self._build_rule_eval_input(info)
         rule_vector = self.evaluator.evaluate(rule_eval_input)
 
@@ -92,11 +101,29 @@ class HybridRulebookRewardManager(BaseRewardManager):
                 step_saturated_rules.append(name)
 
         bounded_arr = np.asarray(bounded_values, dtype=np.float64)
-        exponents = np.arange(n_rules, 0, -1, dtype=np.float64)
+        priorities = np.asarray(rule_vector.priorities, dtype=np.int64)
+        if priorities.shape[0] != n_rules:
+            raise ValueError(
+                "Rule priorities length mismatch: "
+                f"{priorities.shape[0]} priorities for {n_rules} rules."
+            )
+
+        # Lower numeric priority means higher importance (loaded sorted by priority asc).
+        # Convert priorities into positive exponents so higher-priority rules get larger weights.
+        max_priority = int(np.max(priorities)) if n_rules > 0 else 0
+        exponents = (max_priority - priorities + 1).astype(np.float64)
         sigmoid = 1.0 / (1.0 + np.exp(-self.c * bounded_arr))
         scalar_rule_reward = float(np.sum((self.a**exponents) * sigmoid + (bounded_arr / n_rules)))
 
-        final_reward = float(self.lambda_env * float(env_reward) + self.lambda_rule * scalar_rule_reward)
+        weight_sum = self.lambda_env + self.lambda_rule
+        if weight_sum <= 0.0:
+            raise ValueError(
+                "Invalid reward weights: lambda_env + lambda_rule must be > 0. "
+                f"Got lambda_env={self.lambda_env}, lambda_rule={self.lambda_rule}."
+            )
+        final_reward = float(
+            (self.lambda_env * float(env_reward) + self.lambda_rule * scalar_rule_reward) / weight_sum
+        )
 
         rule_components = {
             name: float(margins[idx])
@@ -115,6 +142,13 @@ class HybridRulebookRewardManager(BaseRewardManager):
 
         self._prev_ego_state = dict(rule_eval_input.ego_state)
         self._prev_neighbors = [dict(item) for item in rule_eval_input.neighbors]
+        self._prev_neighbors_by_id = {
+            entity_id: dict(item)
+            for item in rule_eval_input.neighbors
+            if isinstance(item, Mapping)
+            for entity_id in [item.get("entity_id")]
+            if isinstance(entity_id, str) and entity_id
+        }
 
         return RewardComputationResult(
             final_reward=final_reward,
@@ -148,6 +182,7 @@ class HybridRulebookRewardManager(BaseRewardManager):
             speed_limit=self._extract_speed_limit(info),
             prev_ego_state=self._prev_ego_state,
             prev_neighbors=self._prev_neighbors,
+            prev_neighbors_by_id=self._prev_neighbors_by_id,
             metadata={"timestamp": info.get("episode_length", self._step)},
         )
 
