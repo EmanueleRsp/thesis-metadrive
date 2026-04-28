@@ -1,0 +1,27 @@
+enabled: false
+
+# `offline_replay`: select episodes first and render in a second pass.
+# `live_final_eval`: record directly during final evaluation (future option).
+mode: offline_replay
+
+format: gif
+fps: 20
+
+record_intermediate_evals: false
+record_final_eval: true
+max_final_videos: 5
+
+selection:
+  best: true
+  median: true
+  worst_ev: true
+  collision: true
+  out_of_road: true
+
+topdown:
+  screen_size: [800, 800]
+  scaling: 4
+  semantic_map: false
+  window: false
+  screen_record: true
+

@@ -18,7 +18,7 @@
 - [ ] Update result visualization so training/evaluation outputs are easier to inspect after runs:
     - [x] Logs
     - [ ] Checkpoints
-    - [ ] Videos
+    - [x] Videos
     - [x] Csv
     - [x] Plots
     - [x] Tables
@@ -76,6 +76,7 @@
 
 - [ ] Improve curriculum learning mechanism (e.g., more advanced progression logic, optional demotion, richer stage adaptation policies).
 - [ ] Review and refine `neural_adapter` and `policy_adapter` configs/behavior (cleanup legacy notes, validate defaults, and align docs/comments with current architecture).
+- [ ] Add optional per-frame overlay in generated replay GIFs/videos (e.g., algorithm, seed, stage, episode id, reward, route completion, error value, violated rules) for presentation/debug readability.
 
 ---
 
@@ -91,6 +92,45 @@
   4. [ ] Rulebook validation: curriculum ON, rulebook scalar reward enabled.
      - [ ] During rulebook validation, enable `reward.rule_margin_log_path` and verify per-step `rule_components` logs are produced and usable for scale/saturation tuning.
   5. [ ] Compare runs and sanity-check key metrics/logs (success, collision/out_of_road, route completion, rule saturation).
+
+- [ ] Validate results-generation and analysis pipeline end-to-end.
+  Validation checklist:
+  1. [ ] CSV production per run: verify all required files are produced (`train_chunks.csv`, `evals.csv`, `eval_episodes.csv`, `promotions.csv`, `rule_metrics.csv`, `final_eval.csv`).
+  2. [ ] CSV schema/header validation: verify columns match `docs/csv_evaluation_objectives.md` (including V2 fields).
+  3. [ ] CSV granularity validation:
+     - [ ] `train_chunks.csv`: 1 row per training chunk.
+     - [ ] `evals.csv`: 1 row per aggregated evaluation.
+     - [ ] `eval_episodes.csv`: N rows per evaluation (N = eval episodes).
+     - [ ] `promotions.csv`: rows only for curriculum events.
+     - [ ] `rule_metrics.csv`: 1 row per rule per evaluation.
+     - [ ] `final_eval.csv`: 1 row per run.
+  4. [ ] Key identifiers completeness: verify non-null `algorithm`, `seed`, `run_id`, `stage`, `stage_index`, `global_step`.
+  5. [ ] Run metadata and selection filters:
+     - [ ] verify completed-run filtering (`status=completed`);
+     - [ ] verify `analysis.include_in_comparison` filtering;
+     - [ ] verify dedupe policy (latest run for same comparison key);
+     - [ ] verify warnings for missing expected seeds.
+  6. [ ] Aggregation validation: verify `analysis/aggregated/*_all_runs.csv` are produced and contain only protocol-compatible runs.
+  7. [ ] Tables validation:
+     - [ ] verify mandatory tables are generated (`csv` + `md`);
+     - [ ] verify `mean ± 95% CI` computation;
+     - [ ] verify behavior with 1 seed (warning/no crash).
+  8. [ ] Plot validation:
+     - [ ] verify all mandatory `.png` plots are generated;
+     - [ ] verify learning curves use `global_step` on x-axis;
+     - [ ] verify curriculum promotion markers are rendered;
+     - [ ] verify no crash on partial datasets.
+  9. [ ] Video pipeline validation:
+     - [ ] verify episode selection outputs (`video_selection.json`, `video_index.csv`);
+     - [ ] verify replay render outputs GIFs;
+     - [ ] verify `eval_episodes.csv.video_path` update;
+     - [ ] verify replay fidelity fields and `replay_match` warnings;
+     - [ ] verify graceful handling of missing checkpoint/dependencies.
+  10. [ ] Orchestrator CLI validation:
+      - [ ] `run_analysis --only aggregate|tables|plots|all`;
+      - [ ] `--no-videos` and `--video-max`;
+      - [ ] idempotency check (re-run does not corrupt outputs).
+  11. [ ] Reproducibility check: same inputs -> stable aggregated numbers/tables/plots across repeated analysis runs.
 
 ### Phase 2: Lexicographic RL Algorithms
 

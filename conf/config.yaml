@@ -9,6 +9,8 @@ defaults:
 
   - reward: scalar_default  # 'scalar_default' | 'rulebook'
   - curriculum: disabled    # 'disabled' | 'stages'
+  
+  - video: default
 
   - _self_
 
@@ -28,7 +30,7 @@ paths:
   csv_dir: ${paths.run_dir}/csv
   artifacts_dir: ${paths.run_dir}/artifacts
 
-checkpoint_path: null   # Optional path to a checkpoint to load for resuming training or evaluation.
+checkpoint_path: ${paths.checkpoints_dir}/final.zip  # Path to save the final model checkpoint after training.
 
 # Hydra stuff
 hydra:

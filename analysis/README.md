@@ -10,6 +10,8 @@ Questa cartella contiene gli script post-run per aggregare risultati multi-seed 
 - `make_curriculum_tables.py`: genera tabella curriculum/sample-efficiency in `csv` e `md`.
 - `make_rulebook_tables.py`: genera tabelle rulebook compliance globali e per-regola in `csv` e `md`.
 - `make_plots.py`: genera i grafici comparativi principali in formato immagine (`.png`).
+- `select_video_episodes.py`: seleziona episodi rappresentativi da `eval_episodes.csv` e crea `video_selection.json` + `video_index.csv`.
+- `render_selected_videos.py`: replay offline su episodi selezionati, render GIF in `videos/final_eval/` e verifica fidelity (`original_*` vs `replay_*`) in `video_index.csv`.
 
 ## Uso rapido
 
@@ -22,6 +24,8 @@ Parametri principali:
 - `--outputs-root`: root delle run (default: `outputs`)
 - `--analysis-root`: root output analisi (default: `analysis`)
 - `--only`: `all | aggregate | tables | plots`
+- `--no-videos`: disabilita la fase video (in `--only all` i video sono abilitati di default)
+- `--video-max`: numero massimo di video selezionati per run (default 5)
 - `--seed-list`: lista seed ufficiale (default `0..9`)
 - `--total-timesteps`, `--eval-episodes`, `--final-eval-episodes`: filtri protocollo opzionali
 
@@ -57,4 +61,40 @@ analysis/plots/
   safety_performance_tradeoff.png
   rule_metrics_violation_rate_by_rule.png
   episode_error_distribution_boxplot.png
+
+videos/metadata/ (per singola run)
+  video_selection.json
+  video_index.csv
+
+videos/final_eval/ (per singola run)
+  eval_XXXX_ep_XXXX_<tag>.gif
 ```
+
+## Video Replay Fidelity
+
+La pipeline video e pensata in due fasi:
+
+1. `select_video_episodes.py` seleziona gli episodi rappresentativi da `eval_episodes.csv`.
+2. `render_selected_videos.py` fa replay deterministico (checkpoint + `scenario_seed`) e genera le GIF.
+
+Durante il render aggiorna:
+
+- `videos/metadata/video_index.csv` con metadati e confronto `original` vs `replay`.
+- `csv/eval_episodes.csv` impostando `video_path` per gli episodi renderizzati.
+
+Campi fidelity principali in `video_index.csv`:
+
+- `original_reward`, `replay_reward`, `reward_abs_diff`
+- `original_route_completion`, `replay_route_completion`, `route_completion_abs_diff`
+- `original_error_value`, `replay_error_value`, `error_value_abs_diff`
+- `original_success/collision/out_of_road`, `replay_*`, `*_match`
+- `replay_match`
+
+Regola corrente per `replay_match=true`:
+
+- match esatto dei booleani (`success`, `collision`, `out_of_road`)
+- `reward_abs_diff <= 1e-2`
+- `route_completion_abs_diff <= 1e-3`
+- `error_value_abs_diff <= 1e-3`
+
+Se il replay non matcha, viene stampato warning (`[video][warn] replay mismatch ...`), ma il video viene comunque salvato.

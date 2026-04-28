@@ -184,7 +184,7 @@ def aggregate_runs(
     eval_episodes: str | None = None,
     final_eval_episodes: str | None = None,
     expected_seeds: list[int] | None = None,
-) -> None:
+) -> list[RunInfo]:
     expected_seeds = expected_seeds or list(range(10))
     aggregated_dir = analysis_root / "aggregated"
     aggregated_dir.mkdir(parents=True, exist_ok=True)
@@ -223,6 +223,46 @@ def aggregate_runs(
             writer.writerows(rows)
         print(f"Wrote {len(rows)} rows -> {output_path}")
 
+    selected_runs_path = aggregated_dir / "selected_runs.csv"
+    with selected_runs_path.open("w", encoding="utf-8", newline="") as handle:
+        fieldnames = [
+            "run_dir",
+            "run_name",
+            "algorithm",
+            "reward_mode",
+            "curriculum_name",
+            "experiment_group",
+            "seed",
+            "timestamp_dir",
+            "metadata_status",
+            "include_in_comparison",
+            "total_timesteps",
+            "eval_episodes",
+            "final_eval_episodes",
+        ]
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for run in runs:
+            writer.writerow(
+                {
+                    "run_dir": str(run.run_dir),
+                    "run_name": run.run_name,
+                    "algorithm": run.algorithm,
+                    "reward_mode": run.reward_mode,
+                    "curriculum_name": run.curriculum_name,
+                    "experiment_group": run.experiment_group,
+                    "seed": run.seed,
+                    "timestamp_dir": run.timestamp_dir,
+                    "metadata_status": run.metadata_status,
+                    "include_in_comparison": run.include_in_comparison,
+                    "total_timesteps": run.total_timesteps,
+                    "eval_episodes": run.eval_episodes,
+                    "final_eval_episodes": run.final_eval_episodes,
+                }
+            )
+    print(f"Wrote {len(runs)} rows -> {selected_runs_path}")
+    return runs
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Aggregate latest completed runs per experiment/algorithm/reward/curriculum/seed.")
@@ -235,7 +275,7 @@ def main() -> None:
     args = parser.parse_args()
 
     seed_list = [int(item.strip()) for item in str(args.seed_list).split(",") if item.strip()]
-    aggregate_runs(
+    _ = aggregate_runs(
         outputs_root=Path(args.outputs_root),
         analysis_root=Path(args.analysis_root),
         total_timesteps=args.total_timesteps,
