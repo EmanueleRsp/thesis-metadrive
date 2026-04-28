@@ -1,5 +1,3 @@
-name: baseline_td3_scalardefault_curriculum
-
 defaults:
   - config
   - override /curriculum: stages

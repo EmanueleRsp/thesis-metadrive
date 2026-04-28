@@ -1,5 +1,3 @@
-name: baseline_td3_rulebook_curriculum
-
 defaults:
   - config
   - override /reward: rulebook

@@ -1,26 +1,33 @@
-name: baseline
+name: PLN_${hydra:runtime.choices.planner}_REW_${hydra:runtime.choices.reward}_CUR_${hydra:runtime.choices.curriculum}
 defaults:
   - env: metadrive          # 'metadrive'
+  - experiment: default
+
   - preprocessor: identity  # 'identity'
   - planner: sb3_td3        # 'sb3_td3' | ...
   - adapter: identity       # 'identity'
+
   - reward: scalar_default  # 'scalar_default' | 'rulebook'
-  - experiment: baseline
   - curriculum: disabled    # 'disabled' | 'stages'
+
   - _self_
 
 seed: 42
 device: auto
 
+analysis:
+  include_in_comparison: true
+  experiment_group: EXP_${experiment.name}_CUR_${curriculum.name}_REW_${reward.name}
+
 # Results and logging
 paths:
-  run_dir: outputs/${name}/seed_${seed}/${now:%Y%m%d_%H%M%S}
+  run_dir: outputs/${analysis.experiment_group}/${planner.name}/seed_${seed}/${now:%Y%m%d_%H%M%S}
   logs_dir: ${paths.run_dir}/logs
   checkpoints_dir: ${paths.run_dir}/checkpoints    # Directory to save model checkpoints during training.
   videos_dir: ${paths.run_dir}/videos
   csv_dir: ${paths.run_dir}/csv
-  plots_dir: ${paths.run_dir}/plots
   artifacts_dir: ${paths.run_dir}/artifacts
+
 checkpoint_path: null   # Optional path to a checkpoint to load for resuming training or evaluation.
 
 # Hydra stuff

@@ -98,9 +98,17 @@ class Agent:
         episodes = 0
         episode_len = 0
         episode_scalar_reward = 0.0
+        episode_success = False
+        episode_collision = False
+        episode_out_of_road = False
+        episode_route_completion = 0.0
         # Use deques to track recent episode lengths and rewards for moving average metrics
         recent_episode_lens: deque[int] = deque(maxlen=100)
         recent_episode_rewards: deque[float] = deque(maxlen=100)
+        chunk_episode_success: list[float] = []
+        chunk_episode_collision: list[float] = []
+        chunk_episode_out_of_road: list[float] = []
+        chunk_episode_route_completion: list[float] = []
         event_logs: deque[str] = deque(maxlen=8)
         monitor_log_handler = _LiveEventLogHandler(event_logs)
         monitor_logger_names = (
@@ -189,6 +197,13 @@ class Agent:
                     terminated = bool(done or truncated)
                     episode_len += 1
                     episode_scalar_reward += float(scalar_reward)
+                    episode_success = episode_success or self._extract_success(step_info)
+                    episode_collision = episode_collision or self._extract_collision(step_info)
+                    episode_out_of_road = episode_out_of_road or self._extract_out_of_road(step_info)
+                    episode_route_completion = max(
+                        episode_route_completion,
+                        self._extract_route_completion(step_info),
+                    )
 
                     # Record transition
                     next_processed_obs = self.preprocessor(next_obs)
@@ -224,10 +239,18 @@ class Agent:
                         episodes += 1
                         recent_episode_lens.append(episode_len)
                         recent_episode_rewards.append(episode_scalar_reward)
+                        chunk_episode_success.append(1.0 if episode_success else 0.0)
+                        chunk_episode_collision.append(1.0 if episode_collision else 0.0)
+                        chunk_episode_out_of_road.append(1.0 if episode_out_of_road else 0.0)
+                        chunk_episode_route_completion.append(float(episode_route_completion))
 
                         # Reset episode tracking variables
                         episode_len = 0
                         episode_scalar_reward = 0.0
+                        episode_success = False
+                        episode_collision = False
+                        episode_out_of_road = False
+                        episode_route_completion = 0.0
 
                         # Reset environment and preprocessor state for next episode
                         self.preprocessor.reset()
@@ -278,10 +301,34 @@ class Agent:
         lifecycle.end_training()
         self.adapter.end_training()
         elapsed = max(time.time() - start_time, 1e-9)
+        ep_success_rate = (
+            float(np.mean(chunk_episode_success))
+            if chunk_episode_success
+            else None
+        )
+        ep_collision_rate = (
+            float(np.mean(chunk_episode_collision))
+            if chunk_episode_collision
+            else None
+        )
+        ep_out_of_road_rate = (
+            float(np.mean(chunk_episode_out_of_road))
+            if chunk_episode_out_of_road
+            else None
+        )
+        ep_route_completion_mean = (
+            float(np.mean(chunk_episode_route_completion))
+            if chunk_episode_route_completion
+            else None
+        )
         return {
             "episodes": int(episodes),
             "ep_len_mean": float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0,
             "ep_rew_mean": float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0,
+            "ep_success_rate": ep_success_rate,
+            "ep_collision_rate": ep_collision_rate,
+            "ep_out_of_road_rate": ep_out_of_road_rate,
+            "ep_route_completion_mean": ep_route_completion_mean,
             "actor_loss": float(getattr(lifecycle, "last_actor_loss", float("nan"))),
             "critic_loss": float(getattr(lifecycle, "last_critic_loss", float("nan"))),
             "learning_rate": float(getattr(lifecycle, "last_learning_rate", float("nan"))),
@@ -303,6 +350,7 @@ class Agent:
         deterministic: bool = False,
         base_seed: int | None = None,
         return_episode_metrics: bool = False,
+        error_priority_base: float = 2.01,
     ) -> dict[str, Any]:
         '''Evaluate the agent in the given environment for a specified number of episodes.
         Args:
@@ -325,6 +373,15 @@ class Agent:
         episode_success: list[float] = []
         episode_route_completion: list[float] = []
         episode_top_rule_violation_rate: list[float] = []
+        episode_lengths: list[int] = []
+        episode_timeout: list[float] = []
+        episode_error_values: list[float] = []
+        episode_violation_patterns: list[str] = []
+        episode_violated_rule_names: list[str] = []
+        all_rule_names: set[str] = set()
+        rule_priority_by_name: dict[str, int] = {}
+        per_rule_episode_min_margins: dict[str, list[float]] = {}
+        per_rule_violation_count: dict[str, int] = {}
 
         # Loop over evaluation episodes
         for episode_idx in range(n_eval_episodes):
@@ -346,6 +403,7 @@ class Agent:
             ep_route_completion = 0.0
             ep_step_count = 0
             ep_top_rule_violating_steps = 0
+            ep_rule_min_margin: dict[str, float] = {}
 
             # Loop until episode ends
             while not (done or truncated):
@@ -366,6 +424,14 @@ class Agent:
                 ep_route_completion = max(ep_route_completion, self._extract_route_completion(step_info))
                 if self._has_top_rule_violation(step_info):
                     ep_top_rule_violating_steps += 1
+                for rule_name, rule_priority, margin in self._extract_rule_margins(step_info):
+                    all_rule_names.add(rule_name)
+                    if rule_name not in rule_priority_by_name:
+                        rule_priority_by_name[rule_name] = int(rule_priority)
+                    ep_rule_min_margin[rule_name] = min(
+                        float(ep_rule_min_margin.get(rule_name, float("inf"))),
+                        float(margin),
+                    )
 
             # Record episode metrics
             episode_returns.append(ep_return)
@@ -374,10 +440,75 @@ class Agent:
             episode_out_of_road.append(1.0 if ep_out_of_road else 0.0)
             episode_success.append(1.0 if ep_success else 0.0)
             episode_route_completion.append(ep_route_completion)
+            episode_lengths.append(ep_step_count)
+            episode_timeout.append(1.0 if bool(truncated) else 0.0)
             if ep_step_count > 0:
                 episode_top_rule_violation_rate.append(ep_top_rule_violating_steps / ep_step_count)
             else:
                 episode_top_rule_violation_rate.append(0.0)
+
+            violated_in_episode: list[tuple[str, int]] = []
+            for rule_name, min_margin in ep_rule_min_margin.items():
+                per_rule_episode_min_margins.setdefault(rule_name, []).append(float(min_margin))
+                if float(min_margin) < 0.0:
+                    per_rule_violation_count[rule_name] = int(per_rule_violation_count.get(rule_name, 0) + 1)
+                    violated_in_episode.append((rule_name, int(rule_priority_by_name.get(rule_name, 0))))
+
+            if violated_in_episode:
+                violated_in_episode.sort(key=lambda item: (item[1], item[0]))
+                violation_pattern = "+".join(name for name, _prio in violated_in_episode)
+                episode_violated_rule_names.append(violation_pattern)
+            else:
+                violation_pattern = "none"
+                episode_violated_rule_names.append("none")
+            episode_violation_patterns.append(violation_pattern)
+
+            if ep_rule_min_margin:
+                p_max = max(int(rule_priority_by_name.get(name, 0)) for name in ep_rule_min_margin)
+                ev_episode = 0.0
+                for rule_name, min_margin in ep_rule_min_margin.items():
+                    priority = int(rule_priority_by_name.get(rule_name, 0))
+                    weight = float(error_priority_base) ** float(p_max - priority)
+                    ev_episode += weight * max(0.0, -float(min_margin))
+                episode_error_values.append(float(ev_episode))
+            else:
+                episode_error_values.append(0.0)
+
+        counterexample_rate = (
+            float(np.mean([1.0 if pattern != "none" else 0.0 for pattern in episode_violation_patterns]))
+            if episode_violation_patterns
+            else 0.0
+        )
+        violated_rules_ratio = (
+            float(sum(1 for rule in all_rule_names if int(per_rule_violation_count.get(rule, 0)) > 0))
+            / float(max(len(all_rule_names), 1))
+        )
+        unique_violation_patterns = int(len(set(episode_violation_patterns)))
+
+        per_rule_rows: list[dict[str, Any]] = []
+        for rule_name in sorted(all_rule_names, key=lambda name: (rule_priority_by_name.get(name, 0), name)):
+            margins = per_rule_episode_min_margins.get(rule_name, [])
+            if margins:
+                mean_margin = float(np.mean(margins))
+                min_margin = float(np.min(margins))
+                max_margin = float(np.max(margins))
+            else:
+                mean_margin = 0.0
+                min_margin = 0.0
+                max_margin = 0.0
+            violation_count = int(per_rule_violation_count.get(rule_name, 0))
+            per_rule_rows.append(
+                {
+                    "rule_name": rule_name,
+                    "rule_priority": int(rule_priority_by_name.get(rule_name, 0)),
+                    "violated": bool(violation_count > 0),
+                    "violation_rate": float(violation_count / max(len(episode_returns), 1)),
+                    "violation_count": violation_count,
+                    "mean_margin": mean_margin,
+                    "min_margin": min_margin,
+                    "max_margin": max_margin,
+                }
+            )
 
         metrics: dict[str, Any] = {
             "mean_reward": float(np.mean(episode_returns)),
@@ -390,6 +521,12 @@ class Agent:
             "success_rate_std": float(np.std(episode_success)),
             "route_completion": float(np.mean(episode_route_completion)),
             "top_rule_violation_rate": float(np.mean(episode_top_rule_violation_rate)),
+            "avg_error_value": float(np.mean(episode_error_values)) if episode_error_values else 0.0,
+            "max_error_value": float(np.max(episode_error_values)) if episode_error_values else 0.0,
+            "counterexample_rate": counterexample_rate,
+            "violated_rules_ratio": float(violated_rules_ratio),
+            "unique_violation_patterns": unique_violation_patterns,
+            "per_rule": per_rule_rows,
         }
         if return_episode_metrics:
             metrics["per_episode"] = {
@@ -400,8 +537,30 @@ class Agent:
                 "success": episode_success,
                 "route_completion": episode_route_completion,
                 "top_rule_violation_rate": episode_top_rule_violation_rate,
+                "episode_length": episode_lengths,
+                "timeout": episode_timeout,
+                "error_value": episode_error_values,
+                "violation_pattern": episode_violation_patterns,
+                "violated_rules": episode_violated_rule_names,
             }
         return metrics
+
+    @staticmethod
+    def _extract_rule_margins(step_info: Any) -> list[tuple[str, int, float]]:
+        if not isinstance(step_info, dict):
+            return []
+        names = step_info.get("rule_metadata", {}).get("rule_names") if isinstance(step_info.get("rule_metadata"), dict) else None
+        priorities = step_info.get("rule_metadata", {}).get("priorities") if isinstance(step_info.get("rule_metadata"), dict) else None
+        margins = step_info.get("rule_reward_vector")
+        if not isinstance(names, list) or not isinstance(priorities, list):
+            return []
+        if not isinstance(margins, (list, tuple, np.ndarray)):
+            return []
+        size = min(len(names), len(priorities), len(margins))
+        rows: list[tuple[str, int, float]] = []
+        for idx in range(size):
+            rows.append((str(names[idx]), int(priorities[idx]), float(margins[idx])))
+        return rows
 
     @staticmethod
     def _extract_saturation_summary(step_info: Any) -> tuple[str, float] | None:

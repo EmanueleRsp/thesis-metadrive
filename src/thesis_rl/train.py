@@ -25,6 +25,7 @@ from thesis_rl.runtime.builders import (
     build_planner,
     build_preprocessor,
 )
+from thesis_rl.runtime.csv_recorder import CSVRecorder
 from thesis_rl.runtime.metadata import save_run_metadata, update_run_metadata
 
 
@@ -57,6 +58,53 @@ def _missing_curriculum_metrics(
 ) -> list[str]:
     required = _required_curriculum_metrics(curriculum_cfg)
     return [name for name in required if name not in metrics]
+
+
+def _min_stage_steps(curriculum_cfg: CurriculumConfig, stage_name: str) -> int | None:
+    stage_cfg = curriculum_cfg.promotion.per_stage_min_steps.get(stage_name)
+    if stage_cfg is not None:
+        return int(stage_cfg)
+    if curriculum_cfg.promotion.default_min_stage_steps > 0:
+        return int(curriculum_cfg.promotion.default_min_stage_steps)
+    return None
+
+
+def _append_rule_metrics_rows(
+    recorder: CSVRecorder,
+    *,
+    base_fields: dict[str, Any],
+    eval_id: int,
+    chunk_id: int,
+    stage: str,
+    stage_index: int,
+    global_step: int,
+    metrics: dict[str, Any],
+) -> None:
+    rows = metrics.get("per_rule", [])
+    if not isinstance(rows, list):
+        return
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        recorder.append_row(
+            "rule_metrics.csv",
+            {
+                **base_fields,
+                "eval_id": eval_id,
+                "chunk_id": chunk_id,
+                "stage": stage,
+                "stage_index": stage_index,
+                "global_step": global_step,
+                "rule_name": row.get("rule_name"),
+                "rule_priority": row.get("rule_priority"),
+                "violated": row.get("violated"),
+                "violation_rate": row.get("violation_rate"),
+                "violation_count": row.get("violation_count"),
+                "mean_margin": row.get("mean_margin"),
+                "min_margin": row.get("min_margin"),
+                "max_margin": row.get("max_margin"),
+            },
+        )
 
 
 def _set_global_seed(seed: int) -> None:
@@ -127,6 +175,16 @@ def main(cfg: DictConfig) -> None:
     save_run_metadata(cfg, artifacts_dir)
     start_time = time.time()
     logs_dir = Path(str(cfg.paths.logs_dir))
+    csv_dir = Path(str(cfg.paths.csv_dir))
+    recorder = CSVRecorder(csv_dir)
+    run_id = Path(str(cfg.paths.run_dir)).name
+    base_csv_fields = {
+        "algorithm": str(cfg.planner.name),
+        "reward_mode": str(cfg.reward.mode),
+        "curriculum_name": str(cfg.curriculum.name),
+        "seed": int(cfg.seed),
+        "run_id": run_id,
+    }
     train_log_path = logs_dir / "train.log"
     eval_log_path = logs_dir / "eval.log"
     curriculum_log_path = logs_dir / "curriculum.log"
@@ -233,8 +291,10 @@ def main(cfg: DictConfig) -> None:
             # Stage info and chunk size 
             chunk_steps = min(eval_interval, remaining)
             current_stage_name = "baseline"
+            current_stage_index = 0
             if curriculum_manager is not None:
                 current_stage_name = curriculum_manager.get_current_stage().name
+                current_stage_index = int(curriculum_manager.stage_index)
             steps_start = total_timesteps - remaining
             steps_end = steps_start + chunk_steps
             print(
@@ -293,6 +353,32 @@ def main(cfg: DictConfig) -> None:
                 global_step=current_global_step,
                 summary=chunk_summary,
             )
+            recorder.append_row(
+                "train_chunks.csv",
+                {
+                    **base_csv_fields,
+                    "chunk_id": chunk_id,
+                    "stage": current_stage_name,
+                    "stage_index": current_stage_index,
+                    "steps_start": steps_start,
+                    "steps_end": steps_end,
+                    "global_step": current_global_step,
+                    "chunk_steps": chunk_steps,
+                    "episodes": int(chunk_summary.get("episodes", 0)),
+                    "ep_rew_mean": float(chunk_summary.get("ep_rew_mean", 0.0)),
+                    "ep_len_mean": float(chunk_summary.get("ep_len_mean", 0.0)),
+                    "ep_success_rate": chunk_summary.get("ep_success_rate"),
+                    "ep_collision_rate": chunk_summary.get("ep_collision_rate"),
+                    "ep_out_of_road_rate": chunk_summary.get("ep_out_of_road_rate"),
+                    "ep_route_completion_mean": chunk_summary.get("ep_route_completion_mean"),
+                    "actor_loss": float(chunk_summary.get("actor_loss", 0.0)),
+                    "critic_loss": float(chunk_summary.get("critic_loss", 0.0)),
+                    "learning_rate": float(chunk_summary.get("learning_rate", 0.0)),
+                    "n_updates": int(chunk_summary.get("n_updates", 0)),
+                    "fps": float(chunk_summary.get("fps", 0.0)),
+                    "elapsed_seconds": float(chunk_summary.get("elapsed_seconds", 0.0)),
+                },
+            )
 
             # Record training steps in curriculum manager for potential stage progression
             if curriculum_manager is not None:
@@ -335,6 +421,8 @@ def main(cfg: DictConfig) -> None:
                 n_eval_episodes=int(cfg.experiment.eval_episodes),
                 deterministic=bool(cfg.experiment.eval_deterministic),
                 base_seed=run_seed + 200_000 + (total_timesteps - remaining),
+                return_episode_metrics=True,
+                error_priority_base=float(cfg.reward.get("a", 2.01)),
             )
             eval_env.close()
             print(f"Evaluation metrics after chunk: {metrics}")
@@ -354,10 +442,93 @@ def main(cfg: DictConfig) -> None:
                 metrics=metrics,
             )
 
+            per_episode = metrics.get("per_episode", {})
+            episode_returns = list(per_episode.get("returns", []))
+            episode_lengths = list(per_episode.get("episode_length", []))
+            episode_success = list(per_episode.get("success", []))
+            episode_collision = list(per_episode.get("collision", []))
+            episode_out_of_road = list(per_episode.get("out_of_road", []))
+            episode_timeout = list(per_episode.get("timeout", []))
+            episode_route_completion = list(per_episode.get("route_completion", []))
+            episode_top_rule_violation_rate = list(per_episode.get("top_rule_violation_rate", []))
+            episode_error_value = list(per_episode.get("error_value", []))
+            episode_violated_rules = list(per_episode.get("violated_rules", []))
+            episode_violation_pattern = list(per_episode.get("violation_pattern", []))
+            eval_base_seed = run_seed + 200_000 + (total_timesteps - remaining)
+            episode_count = len(episode_returns)
+            for episode_idx in range(episode_count):
+                scenario_seed = int(eval_base_seed + episode_idx)
+                recorder.append_row(
+                    "eval_episodes.csv",
+                    {
+                        **base_csv_fields,
+                        "eval_id": eval_id,
+                        "episode_id": episode_idx + 1,
+                        "stage": current_stage_name,
+                        "stage_index": current_stage_index,
+                        "global_step": current_global_step,
+                        "scenario_seed": scenario_seed,
+                        "scenario_id": f"seed_{scenario_seed}",
+                        "deterministic": bool(cfg.experiment.eval_deterministic),
+                        "reward": float(episode_returns[episode_idx]),
+                        "episode_length": int(episode_lengths[episode_idx]) if episode_idx < len(episode_lengths) else None,
+                        "success": float(episode_success[episode_idx]) if episode_idx < len(episode_success) else None,
+                        "collision": float(episode_collision[episode_idx]) if episode_idx < len(episode_collision) else None,
+                        "out_of_road": float(episode_out_of_road[episode_idx]) if episode_idx < len(episode_out_of_road) else None,
+                        "timeout": float(episode_timeout[episode_idx]) if episode_idx < len(episode_timeout) else None,
+                        "route_completion": float(episode_route_completion[episode_idx]) if episode_idx < len(episode_route_completion) else None,
+                        "top_rule_violation_rate": float(episode_top_rule_violation_rate[episode_idx]) if episode_idx < len(episode_top_rule_violation_rate) else None,
+                        "error_value": float(episode_error_value[episode_idx]) if episode_idx < len(episode_error_value) else None,
+                        "violated_rules": str(episode_violated_rules[episode_idx]) if episode_idx < len(episode_violated_rules) else None,
+                        "violation_pattern": str(episode_violation_pattern[episode_idx]) if episode_idx < len(episode_violation_pattern) else None,
+                        "video_path": None,
+                    },
+                )
+
             ###### CURRICULUM PROGRESSION ######
 
             # If no curriculum, just rebuild the env
             if curriculum_manager is None:
+                recorder.append_row(
+                    "evals.csv",
+                    {
+                        **base_csv_fields,
+                        "eval_id": eval_id,
+                        "chunk_id": chunk_id,
+                        "stage": current_stage_name,
+                        "stage_index": current_stage_index,
+                        "global_step": current_global_step,
+                        "eval_episodes": int(cfg.experiment.eval_episodes),
+                        "deterministic": bool(cfg.experiment.eval_deterministic),
+                        "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                        "std_reward": float(metrics.get("std_reward", 0.0)),
+                        "mean_rule_saturation_max": float(metrics.get("mean_rule_saturation_max", 0.0)),
+                        "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                        "collision_rate_std": float(metrics.get("collision_rate_std", 0.0)),
+                        "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                        "success_rate": float(metrics.get("success_rate", 0.0)),
+                        "success_rate_std": float(metrics.get("success_rate_std", 0.0)),
+                        "route_completion": float(metrics.get("route_completion", 0.0)),
+                        "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                        "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                        "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                        "counterexample_rate": float(metrics.get("counterexample_rate", 0.0)),
+                        "violated_rules_ratio": float(metrics.get("violated_rules_ratio", 0.0)),
+                        "unique_violation_patterns": int(metrics.get("unique_violation_patterns", 0)),
+                        "promoted": False,
+                        "next_stage": current_stage_name,
+                    },
+                )
+                _append_rule_metrics_rows(
+                    recorder,
+                    base_fields=base_csv_fields,
+                    eval_id=eval_id,
+                    chunk_id=chunk_id,
+                    stage=current_stage_name,
+                    stage_index=current_stage_index,
+                    global_step=current_global_step,
+                    metrics=metrics,
+                )
                 env = build_env(cfg, current_train_overrides)
                 _seed_env_spaces(env, run_seed + 300_000 + (total_timesteps - remaining))
                 planner.set_env(env)
@@ -389,12 +560,24 @@ def main(cfg: DictConfig) -> None:
                     )
 
             # Record eval metrics
-            curriculum_manager.record_eval_metrics(metrics)
+            passed_eval_gates = curriculum_manager.record_eval_metrics(metrics)
+            stage_gates = curriculum_cfg.promotion.gates
+            gate_success_pass = float(metrics.get("success_rate", float("-inf"))) >= float(stage_gates.task.success_rate_min)
+            gate_collision_pass = float(metrics.get("collision_rate", float("inf"))) <= float(stage_gates.safety.collision_rate_max)
+            gate_out_of_road_pass = float(metrics.get("out_of_road_rate", float("inf"))) <= float(stage_gates.safety.out_of_road_rate_max)
+            gate_top_rule_pass = float(metrics.get("top_rule_violation_rate", float("inf"))) <= float(stage_gates.safety.top_rule_violation_rate_max)
+            gate_route_completion_pass = float(metrics.get("route_completion", float("-inf"))) >= float(stage_gates.task.route_completion_min)
 
             # Check for promotion and update env config if promoted
+            next_stage_name = current_stage_name
+            pre_promotion_stage_steps_done = int(curriculum_manager.stage_steps_done)
+            pre_promotion_consecutive_passes = int(curriculum_manager.consecutive_passes)
+            pre_promotion_min_stage_steps = _min_stage_steps(curriculum_cfg, current_stage_name)
+
             if curriculum_manager.promote():
                 previous_stage = current_stage_name
                 next_stage = curriculum_manager.get_current_stage().name
+                next_stage_name = next_stage
                 print(f"Curriculum promoted: {previous_stage} -> {next_stage}")
                 current_train_overrides = curriculum_manager.get_env_config(evaluation=False)
                 curriculum_logger.info(
@@ -412,6 +595,30 @@ def main(cfg: DictConfig) -> None:
                     global_step=current_global_step,
                     eval_id=eval_id,
                 )
+                recorder.append_row(
+                    "promotions.csv",
+                    {
+                        **base_csv_fields,
+                        "event_type": "promoted",
+                        "from_stage": previous_stage,
+                        "to_stage": next_stage,
+                        "from_stage_index": current_stage_index,
+                        "to_stage_index": int(curriculum_manager.stage_index),
+                        "eval_id": eval_id,
+                        "chunk_id": chunk_id,
+                        "global_step": current_global_step,
+                        "stage_steps_done": pre_promotion_stage_steps_done,
+                        "stage_steps_min_required": pre_promotion_min_stage_steps,
+                        "passed_eval_gates": bool(passed_eval_gates),
+                        "consecutive_passes": pre_promotion_consecutive_passes,
+                        "success_rate": float(metrics.get("success_rate", 0.0)),
+                        "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                        "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                        "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                        "route_completion": float(metrics.get("route_completion", 0.0)),
+                        "reason": "promotion_gates_satisfied",
+                    },
+                )
             else:
                 curriculum_logger.info(
                     "Gate check | stage=%s | eval_id=%d | promoted=false",
@@ -426,6 +633,61 @@ def main(cfg: DictConfig) -> None:
                     global_step=current_global_step,
                     promoted=False,
                 )
+
+            recorder.append_row(
+                "evals.csv",
+                {
+                    **base_csv_fields,
+                    "eval_id": eval_id,
+                    "chunk_id": chunk_id,
+                    "stage": current_stage_name,
+                    "stage_index": current_stage_index,
+                    "global_step": current_global_step,
+                    "eval_episodes": int(cfg.experiment.eval_episodes),
+                    "deterministic": bool(cfg.experiment.eval_deterministic),
+                    "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                    "std_reward": float(metrics.get("std_reward", 0.0)),
+                    "mean_rule_saturation_max": float(metrics.get("mean_rule_saturation_max", 0.0)),
+                    "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                    "collision_rate_std": float(metrics.get("collision_rate_std", 0.0)),
+                    "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                    "success_rate": float(metrics.get("success_rate", 0.0)),
+                    "success_rate_std": float(metrics.get("success_rate_std", 0.0)),
+                    "route_completion": float(metrics.get("route_completion", 0.0)),
+                    "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                    "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                    "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                    "counterexample_rate": float(metrics.get("counterexample_rate", 0.0)),
+                    "violated_rules_ratio": float(metrics.get("violated_rules_ratio", 0.0)),
+                    "unique_violation_patterns": int(metrics.get("unique_violation_patterns", 0)),
+                    "success_rate_min": float(stage_gates.task.success_rate_min),
+                    "collision_rate_max": float(stage_gates.safety.collision_rate_max),
+                    "out_of_road_rate_max": float(stage_gates.safety.out_of_road_rate_max),
+                    "top_rule_violation_rate_max": float(stage_gates.safety.top_rule_violation_rate_max),
+                    "route_completion_min": float(stage_gates.task.route_completion_min),
+                    "gate_success_pass": bool(gate_success_pass),
+                    "gate_collision_pass": bool(gate_collision_pass),
+                    "gate_out_of_road_pass": bool(gate_out_of_road_pass),
+                    "gate_top_rule_pass": bool(gate_top_rule_pass),
+                    "gate_route_completion_pass": bool(gate_route_completion_pass),
+                    "passed_eval_gates": bool(passed_eval_gates),
+                    "consecutive_passes": pre_promotion_consecutive_passes,
+                    "warmup_evals_required": int(curriculum_cfg.promotion.warmup_evals),
+                    "consecutive_evals_required": int(curriculum_cfg.promotion.consecutive_evals),
+                    "promoted": bool(next_stage_name != current_stage_name),
+                    "next_stage": next_stage_name,
+                },
+            )
+            _append_rule_metrics_rows(
+                recorder,
+                base_fields=base_csv_fields,
+                eval_id=eval_id,
+                chunk_id=chunk_id,
+                stage=current_stage_name,
+                stage_index=current_stage_index,
+                global_step=current_global_step,
+                metrics=metrics,
+            )
 
             # Rebuild env with new config (if changed) and update planner's env reference
             env = build_env(cfg, current_train_overrides)
@@ -456,9 +718,11 @@ def main(cfg: DictConfig) -> None:
         # Evaluation
         metrics = agent.evaluate(
             env=eval_env,
-            n_eval_episodes=int(cfg.experiment.eval_episodes),
+            n_eval_episodes=int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
             deterministic=bool(cfg.experiment.eval_deterministic),
             base_seed=run_seed + 600_000,
+            return_episode_metrics=True,
+            error_priority_base=float(cfg.reward.get("a", 2.01)),
         )
         print(f"Evaluation metrics after training: {metrics}")
         print(f"Checkpoint saved at: {ckpt_path}.zip")
@@ -496,6 +760,121 @@ def main(cfg: DictConfig) -> None:
             global_step=total_timesteps,
             metrics=metrics,
             final=True,
+        )
+        final_stage_name = (
+            curriculum_manager.get_current_stage().name
+            if curriculum_manager is not None
+            else "baseline"
+        )
+        final_stage_index = int(curriculum_manager.stage_index) if curriculum_manager is not None else 0
+        final_eval_id = eval_id + 1
+        recorder.append_row(
+            "evals.csv",
+            {
+                **base_csv_fields,
+                "eval_id": final_eval_id,
+                "chunk_id": chunk_id,
+                "stage": final_stage_name,
+                "stage_index": final_stage_index,
+                "global_step": total_timesteps,
+                "eval_episodes": int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
+                "deterministic": bool(cfg.experiment.eval_deterministic),
+                "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                "std_reward": float(metrics.get("std_reward", 0.0)),
+                "mean_rule_saturation_max": float(metrics.get("mean_rule_saturation_max", 0.0)),
+                "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                "collision_rate_std": float(metrics.get("collision_rate_std", 0.0)),
+                "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                "success_rate": float(metrics.get("success_rate", 0.0)),
+                "success_rate_std": float(metrics.get("success_rate_std", 0.0)),
+                "route_completion": float(metrics.get("route_completion", 0.0)),
+                "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                "counterexample_rate": float(metrics.get("counterexample_rate", 0.0)),
+                "violated_rules_ratio": float(metrics.get("violated_rules_ratio", 0.0)),
+                "unique_violation_patterns": int(metrics.get("unique_violation_patterns", 0)),
+                "promoted": False,
+                "next_stage": final_stage_name,
+            },
+        )
+        _append_rule_metrics_rows(
+            recorder,
+            base_fields=base_csv_fields,
+            eval_id=final_eval_id,
+            chunk_id=chunk_id,
+            stage=final_stage_name,
+            stage_index=final_stage_index,
+            global_step=total_timesteps,
+            metrics=metrics,
+        )
+        per_episode = metrics.get("per_episode", {})
+        episode_returns = list(per_episode.get("returns", []))
+        episode_lengths = list(per_episode.get("episode_length", []))
+        episode_success = list(per_episode.get("success", []))
+        episode_collision = list(per_episode.get("collision", []))
+        episode_out_of_road = list(per_episode.get("out_of_road", []))
+        episode_timeout = list(per_episode.get("timeout", []))
+        episode_route_completion = list(per_episode.get("route_completion", []))
+        episode_top_rule_violation_rate = list(per_episode.get("top_rule_violation_rate", []))
+        episode_error_value = list(per_episode.get("error_value", []))
+        episode_violated_rules = list(per_episode.get("violated_rules", []))
+        episode_violation_pattern = list(per_episode.get("violation_pattern", []))
+        final_eval_base_seed = run_seed + 600_000
+        for episode_idx in range(len(episode_returns)):
+            scenario_seed = int(final_eval_base_seed + episode_idx)
+            recorder.append_row(
+                "eval_episodes.csv",
+                {
+                    **base_csv_fields,
+                    "eval_id": final_eval_id,
+                    "episode_id": episode_idx + 1,
+                    "stage": final_stage_name,
+                    "stage_index": final_stage_index,
+                    "global_step": total_timesteps,
+                    "scenario_seed": scenario_seed,
+                    "scenario_id": f"seed_{scenario_seed}",
+                    "deterministic": bool(cfg.experiment.eval_deterministic),
+                    "reward": float(episode_returns[episode_idx]),
+                    "episode_length": int(episode_lengths[episode_idx]) if episode_idx < len(episode_lengths) else None,
+                    "success": float(episode_success[episode_idx]) if episode_idx < len(episode_success) else None,
+                    "collision": float(episode_collision[episode_idx]) if episode_idx < len(episode_collision) else None,
+                    "out_of_road": float(episode_out_of_road[episode_idx]) if episode_idx < len(episode_out_of_road) else None,
+                    "timeout": float(episode_timeout[episode_idx]) if episode_idx < len(episode_timeout) else None,
+                    "route_completion": float(episode_route_completion[episode_idx]) if episode_idx < len(episode_route_completion) else None,
+                    "top_rule_violation_rate": float(episode_top_rule_violation_rate[episode_idx]) if episode_idx < len(episode_top_rule_violation_rate) else None,
+                    "error_value": float(episode_error_value[episode_idx]) if episode_idx < len(episode_error_value) else None,
+                    "violated_rules": str(episode_violated_rules[episode_idx]) if episode_idx < len(episode_violated_rules) else None,
+                    "violation_pattern": str(episode_violation_pattern[episode_idx]) if episode_idx < len(episode_violation_pattern) else None,
+                    "video_path": None,
+                },
+            )
+        recorder.append_row(
+            "final_eval.csv",
+            {
+                **base_csv_fields,
+                "total_timesteps": total_timesteps,
+                "final_stage": final_stage_name,
+                "final_stage_index": final_stage_index,
+                "final_stage_reached": bool(curriculum_manager.is_finished()) if curriculum_manager is not None else True,
+                "final_eval_episodes": int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
+                "deterministic": bool(cfg.experiment.eval_deterministic),
+                "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                "std_reward": float(metrics.get("std_reward", 0.0)),
+                "mean_rule_saturation_max": float(metrics.get("mean_rule_saturation_max", 0.0)),
+                "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                "collision_rate_std": float(metrics.get("collision_rate_std", 0.0)),
+                "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                "success_rate": float(metrics.get("success_rate", 0.0)),
+                "success_rate_std": float(metrics.get("success_rate_std", 0.0)),
+                "route_completion": float(metrics.get("route_completion", 0.0)),
+                "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                "counterexample_rate": float(metrics.get("counterexample_rate", 0.0)),
+                "violated_rules_ratio": float(metrics.get("violated_rules_ratio", 0.0)),
+                "unique_violation_patterns": int(metrics.get("unique_violation_patterns", 0)),
+            },
         )
 
         eval_env.close()

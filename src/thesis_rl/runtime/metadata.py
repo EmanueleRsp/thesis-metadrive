@@ -42,6 +42,10 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
     metadata = {
         "name": _cfg_get(cfg, "name"),
         "algorithm": _cfg_get(cfg, "planner.name", default="unknown"),
+        "reward_mode": _cfg_get(cfg, "reward.mode", default="unknown"),
+        "curriculum_name": _cfg_get(cfg, "curriculum.name", default="unknown"),
+        "experiment_group": _cfg_get(cfg, "analysis.experiment_group"),
+        "include_in_comparison": bool(_cfg_get(cfg, "analysis.include_in_comparison", True)),
         "seed": _cfg_get(cfg, "seed"),
         "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "total_timesteps": _cfg_get(cfg, "experiment.total_timesteps"),

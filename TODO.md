@@ -19,10 +19,16 @@
     - [x] Logs
     - [ ] Checkpoints
     - [ ] Videos
-    - [ ] Csv
-    - [ ] Plots
+    - [x] Csv
+    - [x] Plots
+    - [x] Tables
     - [x] Artifacts
 - [ ] Decide whether `step_info` logging should support configurable keys for debugging instead of hard-coded fields only.
+- [x] Implement analysis pipeline for multi-run comparison:
+    - [x] Aggregate CSV outputs across runs/seeds into `analysis/aggregated/*_all_runs.csv`.
+    - [x] Define and enforce run validity filters (completed run, matching budget/protocol, non-debug).
+    - [x] Generate final comparison tables (`mean ± 95% CI`) from aggregated outputs.
+    - [x] Generate mandatory comparison plots from aggregated outputs.
 
 ### Analysis Tasks
 
@@ -63,7 +69,7 @@
 
 ### Cleanup Candidates
 
-- [ ] Remove stale comments once the corresponding analysis tasks are completed.
+- [x] Remove stale comments once the corresponding analysis tasks are completed.
 - [x] Review whether TODOs currently embedded in code should be reduced after they are captured in this file.
 
 ### Possible Improvements (Not Needed Now)
@@ -83,6 +89,7 @@
   2. [ ] Baseline validation: curriculum OFF, scalar native reward only (validate core agent/planner/adapter path).
   3. [ ] Curriculum validation: curriculum ON, scalar native reward only.
   4. [ ] Rulebook validation: curriculum ON, rulebook scalar reward enabled.
+     - [ ] During rulebook validation, enable `reward.rule_margin_log_path` and verify per-step `rule_components` logs are produced and usable for scale/saturation tuning.
   5. [ ] Compare runs and sanity-check key metrics/logs (success, collision/out_of_road, route completion, rule saturation).
 
 ### Phase 2: Lexicographic RL Algorithms
