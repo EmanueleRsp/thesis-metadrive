@@ -1,6 +1,6 @@
 # TODO
 
-## Baseline and refactor
+## Phase 0: Refactor and Analysis
 
 ### Code Tasks
 
@@ -15,15 +15,14 @@
 - [x] Route component-level logs to monitor during Live monitoring so `rich` progress output stays clean (console: warning/error only).
   >Done: routed component logs to Live monitor.
 
-- [ ] Update result visualization so training/evaluation outputs are easier to inspect after runs:
+- [x] Update result visualization so training/evaluation outputs are easier to inspect after runs:
     - [x] Logs
-    - [ ] Checkpoints
+    - [x] Checkpoints
     - [x] Videos
     - [x] Csv
     - [x] Plots
     - [x] Tables
     - [x] Artifacts
-- [ ] Decide whether `step_info` logging should support configurable keys for debugging instead of hard-coded fields only.
 - [x] Implement analysis pipeline for multi-run comparison:
     - [x] Aggregate CSV outputs across runs/seeds into `analysis/aggregated/*_all_runs.csv`.
     - [x] Define and enforce run validity filters (completed run, matching budget/protocol, non-debug).
@@ -74,17 +73,19 @@
 
 ### Possible Improvements (Not Needed Now)
 
-- [ ] Improve curriculum learning mechanism (e.g., more advanced progression logic, optional demotion, richer stage adaptation policies).
-- [ ] Review and refine `neural_adapter` and `policy_adapter` configs/behavior (cleanup legacy notes, validate defaults, and align docs/comments with current architecture).
+- [ ] Decide whether `step_info` logging should support configurable keys for debugging instead of hard-coded fields only.
 - [ ] Add optional per-frame overlay in generated replay GIFs/videos (e.g., algorithm, seed, stage, episode id, reward, route completion, error value, violated rules) for presentation/debug readability.
 
+#### Others
+
+- [ ] Improve curriculum learning mechanism (e.g., more advanced progression logic, optional demotion, richer stage adaptation policies).
+- [ ] Review and refine `neural_adapter` and `policy_adapter` configs/behavior (cleanup legacy notes, validate defaults, and align docs/comments with current architecture).
+  
 ---
 
-## Next Phases (After Current Refactor)
+## Phase 1: Full Validation
 
-### Phase 1: Full Validation
-
-- [ ] Plan and execute complete validation of the refactored pipeline.
+### 1. Plan and execute complete validation of the refactored pipeline.
   Validation checklist:
   1. [ ] Smoke test end-to-end: short run to verify train + eval + checkpoint save/load all work.
   2. [ ] Baseline validation: curriculum OFF, scalar native reward only (validate core agent/planner/adapter path).
@@ -93,7 +94,7 @@
      - [ ] During rulebook validation, enable `reward.rule_margin_log_path` and verify per-step `rule_components` logs are produced and usable for scale/saturation tuning.
   5. [ ] Compare runs and sanity-check key metrics/logs (success, collision/out_of_road, route completion, rule saturation).
 
-- [ ] Validate results-generation and analysis pipeline end-to-end.
+### 2. Validate results-generation and analysis pipeline end-to-end.
   Validation checklist:
   1. [ ] CSV production per run: verify all required files are produced (`train_chunks.csv`, `evals.csv`, `eval_episodes.csv`, `promotions.csv`, `rule_metrics.csv`, `final_eval.csv`).
   2. [ ] CSV schema/header validation: verify columns match `docs/csv_evaluation_objectives.md` (including V2 fields).
@@ -132,10 +133,44 @@
       - [ ] idempotency check (re-run does not corrupt outputs).
   11. [ ] Reproducibility check: same inputs -> stable aggregated numbers/tables/plots across repeated analysis runs.
 
-### Phase 2: Lexicographic RL Algorithms
+### 3. Validate checkpointing and resume pipeline end-to-end.
+  Validation checklist:
+  1. [ ] Verify `checkpoints/latest.zip` is created after first chunk and updated on subsequent chunks.
+  2. [ ] Verify best checkpoints are created/updated when criteria improve:
+     - [ ] `checkpoints/best/best_lexicographic.zip`
+     - [ ] `checkpoints/best/best_lexicographic_rulebook.zip` (strict)
+     - [ ] `checkpoints/best/best_thresholded_lexicographic_rulebook.zip` (thresholded)
+  3. [ ] Verify periodic checkpoints are created at `checkpoint.periodic_interval_steps`.
+  4. [ ] Verify periodic retention policy keeps only `checkpoint.keep_last_periodic` latest files.
+  5. [ ] Verify `checkpoints/final.zip` is produced at end of training.
+  6. [ ] Verify checkpoint metadata integrity:
+     - [ ] `checkpoints/metadata/checkpoint_index.csv` rows are coherent (type/path/step/reason/timestamp).
+     - [ ] `checkpoints/metadata/best_checkpoints.yaml` correctly points to current best/final checkpoints.
+  7. [ ] Verify `csv/final_eval.csv` includes correct:
+     - [ ] `checkpoint_path`
+     - [ ] `checkpoint_type`
+     - [ ] `checkpoint_global_step`
+  8. [ ] Verify video replay uses explicit configured checkpoint (`video.replay_checkpoint`) and not ambiguous latest selection.
+  9. [ ] Verify resume artifacts are produced with latest checkpoint:
+     - [ ] `checkpoints/latest_replay_buffer.pkl`
+     - [ ] `checkpoints/latest_training_state.yaml`
+     - [ ] `checkpoints/latest_rng_state.pkl`
+  10. [ ] Verify resume flow restores and continues correctly:
+      - [ ] planner checkpoint + adapter;
+      - [ ] replay buffer;
+      - [ ] training counters (`global_steps_done`, `chunk_id`, `eval_id`);
+      - [ ] curriculum state (`stage_index`, `stage_steps_done`, `consecutive_passes`, `eval_count_at_stage`);
+      - [ ] RNG state (python/numpy/torch/cuda when available).
+  11. [ ] Verify fail-fast behavior for invalid resume configs (missing checkpoint/state files).
+
+---
+
+## Phase 2: Lexicographic RL Algorithms
 
 - [ ] Implement lexicographic algorithms identified in the literature (define exact implementation checklist at execution time).
 
-### Phase 3: Rule Semantics Unification for TLRL
+---
+
+## Phase 3: Rule Semantics Unification for TLRL
 
 - [ ] Evaluate and possibly redesign selected rules as constraint-like margins with uniform semantics across all rules.

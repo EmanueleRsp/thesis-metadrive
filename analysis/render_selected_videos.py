@@ -49,6 +49,32 @@ def _find_checkpoint(run_dir: Path) -> Path:
     return candidates[-1]
 
 
+def _resolve_replay_checkpoint(run_dir: Path, cfg: Any) -> Path:
+    replay_spec = str(cfg.video.get("replay_checkpoint", "final")).strip()
+    if replay_spec == "final":
+        ckpt = run_dir / "checkpoints" / "final.zip"
+        if ckpt.exists():
+            return ckpt
+        raise FileNotFoundError(f"Configured replay checkpoint not found: {ckpt}")
+    if replay_spec == "latest":
+        ckpt = run_dir / "checkpoints" / "latest.zip"
+        if ckpt.exists():
+            return ckpt
+        raise FileNotFoundError(f"Configured replay checkpoint not found: {ckpt}")
+    if replay_spec == "best_lexicographic":
+        ckpt = run_dir / "checkpoints" / "best" / "best_lexicographic.zip"
+        if ckpt.exists():
+            return ckpt
+        raise FileNotFoundError(f"Configured replay checkpoint not found: {ckpt}")
+
+    explicit = Path(replay_spec)
+    if not explicit.is_absolute():
+        explicit = run_dir / replay_spec
+    if explicit.exists():
+        return explicit
+    raise FileNotFoundError(f"Configured replay checkpoint path not found: {explicit}")
+
+
 def _resolve_eval_overrides_for_stage(cfg: Any, stage_name: str) -> dict[str, Any] | None:
     curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
     if not (curriculum_cfg.enabled and curriculum_cfg.stages):
@@ -154,7 +180,7 @@ def render_selected_videos(run_dir: Path) -> None:
         raise FileNotFoundError(f"Missing Hydra config snapshot: {hydra_cfg_path}")
     cfg = OmegaConf.load(hydra_cfg_path)
 
-    checkpoint_path = _find_checkpoint(run_dir)
+    checkpoint_path = _resolve_replay_checkpoint(run_dir, cfg)
     fps = int(cfg.video.get("fps", 20))
     topdown_cfg = cfg.video.get("topdown", {})
 

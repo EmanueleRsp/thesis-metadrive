@@ -70,6 +70,13 @@ videos/final_eval/ (per singola run)
   eval_XXXX_ep_XXXX_<tag>.gif
 ```
 
+Checkpoint/resume artifacts (per singola run):
+
+- `checkpoints/latest.zip`
+- `checkpoints/latest_replay_buffer.pkl`
+- `checkpoints/latest_training_state.yaml`
+- `checkpoints/latest_rng_state.pkl`
+
 ## Video Replay Fidelity
 
 La pipeline video e pensata in due fasi:
@@ -98,3 +105,9 @@ Regola corrente per `replay_match=true`:
 - `error_value_abs_diff <= 1e-3`
 
 Se il replay non matcha, viene stampato warning (`[video][warn] replay mismatch ...`), ma il video viene comunque salvato.
+
+Checkpoint di replay:
+
+- configurabile da `conf/video/default.yaml` con `video.replay_checkpoint`.
+- valori supportati: `final`, `latest`, `best_lexicographic`, oppure un path esplicito.
+- default consigliato/protocollo: `final`.

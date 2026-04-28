@@ -54,6 +54,7 @@ class RuleRewardWrapper(gym.Wrapper):
         self._append_rule_margin_log(info_dict=info_dict, env_reward=float(env_reward), result=result)
 
         if self.attach_info:
+            info_dict["env_reward"] = float(env_reward)
             info_dict["rule_reward_vector"] = result.rule_reward_vector
             info_dict["rule_bounded_vector"] = result.rule_bounded_vector
             info_dict["rule_components"] = result.rule_components

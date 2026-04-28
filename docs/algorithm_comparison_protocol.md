@@ -39,11 +39,17 @@ Metriche principali per ranking finale:
 Metriche secondarie:
 
 - `mean_reward`, `std_reward`
+- `mean_env_reward`, `std_env_reward` (reward nativo MetaDrive)
+- `mean_scalar_rule_reward`, `std_scalar_rule_reward` (reward scalarizzato rulebook)
 - `episode_length_mean/std`
 
 Nota:
 
 - In presenza di trade-off, safety/compliance ha precedenza su reward globale.
+- In analisi/report vanno sempre mostrati in parallelo:
+  - reward finale policy (`mean_reward`);
+  - reward nativo ambiente (`mean_env_reward`);
+  - reward scalarizzato rulebook (`mean_scalar_rule_reward`, se disponibile).
 
 ## 4) Sample efficiency e curriculum progression
 
@@ -108,6 +114,8 @@ Campi minimi:
 - `top_rule_violation_rate` (o equivalente)
 - `route_completion`
 - `mean_reward`
+- `mean_env_reward`
+- `mean_scalar_rule_reward` (quando `reward.mode=rulebook`)
 
 Formato:
 
@@ -192,7 +200,9 @@ analysis:
 Disponibilita' V2 attuale:
 
 - `evals.csv`: include anche `avg_error_value`, `max_error_value`, `counterexample_rate`, `violated_rules_ratio`, `unique_violation_patterns`.
+- `evals.csv`: include anche tripletta reward aggregata (`mean_reward`, `mean_env_reward`, `mean_scalar_rule_reward` + std).
 - `eval_episodes.csv`: include `scenario_seed`, `scenario_id`, `error_value`, `violated_rules`, `violation_pattern`, `video_path` (opzionale, puo' essere `null`).
+- `eval_episodes.csv`: include anche `env_reward`, `scalar_rule_reward`, `rule_rewards_by_rule` per analisi per-episodio/per-regola.
 
 ## 11) Protocollo final evaluation
 

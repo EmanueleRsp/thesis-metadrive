@@ -4,6 +4,8 @@ import json
 import logging
 import time
 from datetime import datetime
+import csv
+import pickle
 
 from dataclasses import asdict
 import random
@@ -24,9 +26,188 @@ from thesis_rl.runtime.builders import (
     build_env,
     build_planner,
     build_preprocessor,
+    load_planner,
 )
 from thesis_rl.runtime.csv_recorder import CSVRecorder
 from thesis_rl.runtime.metadata import save_run_metadata, update_run_metadata
+
+
+CHECKPOINT_INDEX_FIELDS = [
+    "checkpoint_path",
+    "type",
+    "global_step",
+    "chunk_id",
+    "eval_id",
+    "stage",
+    "stage_index",
+    "success_rate",
+    "collision_rate",
+    "out_of_road_rate",
+    "top_rule_violation_rate",
+    "route_completion",
+    "mean_reward",
+    "avg_error_value",
+    "max_error_value",
+    "reason",
+    "timestamp",
+]
+
+
+def _append_checkpoint_index_row(index_path: Path, row: dict[str, Any]) -> None:
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    file_exists = index_path.exists()
+    with index_path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CHECKPOINT_INDEX_FIELDS)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow({key: row.get(key) for key in CHECKPOINT_INDEX_FIELDS})
+
+
+def _checkpoint_rel(run_dir: Path, checkpoint_stem_path: Path) -> str:
+    zip_path = checkpoint_stem_path.with_suffix(".zip")
+    return str(zip_path.relative_to(run_dir)).replace("\\", "/")
+
+
+def _lexicographic_eval_key(metrics: dict[str, Any]) -> tuple[float, float, float, float, float, float, float]:
+    return (
+        float(metrics.get("collision_rate", float("inf"))),
+        float(metrics.get("out_of_road_rate", float("inf"))),
+        float(metrics.get("avg_error_value", float("inf"))),
+        float(metrics.get("top_rule_violation_rate", float("inf"))),
+        -float(metrics.get("success_rate", float("-inf"))),
+        -float(metrics.get("route_completion", float("-inf"))),
+        -float(metrics.get("mean_reward", float("-inf"))),
+    )
+
+
+def _rulebook_strict_key(metrics: dict[str, Any]) -> tuple[float, ...]:
+    rows = metrics.get("per_rule", [])
+    if not isinstance(rows, list) or not rows:
+        return (float("inf"),)
+    ordered = sorted(
+        [row for row in rows if isinstance(row, dict)],
+        key=lambda row: (int(row.get("rule_priority", 0)), str(row.get("rule_name", ""))),
+    )
+    # Strict: compare raw margin even when both are >= 0 (higher margin is better).
+    return tuple(-float(row.get("min_margin", 0.0)) for row in ordered)
+
+
+def _rulebook_thresholded_key(metrics: dict[str, Any]) -> tuple[float, ...]:
+    rows = metrics.get("per_rule", [])
+    if not isinstance(rows, list) or not rows:
+        return (float("inf"),)
+    ordered = sorted(
+        [row for row in rows if isinstance(row, dict)],
+        key=lambda row: (int(row.get("rule_priority", 0)), str(row.get("rule_name", ""))),
+    )
+    key: list[float] = []
+    for row in ordered:
+        margin = float(row.get("min_margin", 0.0))
+        # Thresholded: any margin >= 0 is considered equally satisfied.
+        if margin >= 0.0:
+            key.extend([0.0, 0.0])
+        else:
+            # First value separates satisfied vs violated, second compares violation severity.
+            key.extend([1.0, -margin])
+    return tuple(key)
+
+
+def _write_best_checkpoints_yaml(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(config=OmegaConf.create(payload), f=str(path))
+
+
+def _prune_old_periodic_checkpoints(periodic_dir: Path, keep_last: int) -> None:
+    keep_n = max(int(keep_last), 0)
+    zip_files = sorted(
+        [path for path in periodic_dir.glob("step_*.zip") if path.is_file()],
+        key=lambda path: path.name,
+    )
+    if keep_n <= 0:
+        to_remove = zip_files
+    else:
+        to_remove = zip_files[:-keep_n]
+    for zip_path in to_remove:
+        stem = zip_path.with_suffix("")
+        adapter_path = stem.parent / f"{stem.name}.adapter.pt"
+        if zip_path.exists():
+            zip_path.unlink()
+        if adapter_path.exists():
+            adapter_path.unlink()
+
+
+def _save_training_state(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(config=OmegaConf.create(payload), f=str(path))
+
+
+def _load_training_state(path: Path) -> dict[str, Any]:
+    loaded = OmegaConf.load(path)
+    return dict(OmegaConf.to_container(loaded, resolve=True))
+
+
+def _planner_model(planner: Any) -> Any | None:
+    model = getattr(planner, "model", None)
+    if model is not None:
+        return model
+    return getattr(planner, "sb3_model", None)
+
+
+def _save_replay_buffer_if_available(planner: Any, path: Path) -> bool:
+    model = _planner_model(planner)
+    if model is None or not hasattr(model, "save_replay_buffer"):
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    model.save_replay_buffer(str(path))
+    return True
+
+
+def _load_replay_buffer_if_available(planner: Any, path: Path) -> bool:
+    if not path.exists():
+        return False
+    model = _planner_model(planner)
+    if model is None or not hasattr(model, "load_replay_buffer"):
+        return False
+    model.load_replay_buffer(str(path))
+    return True
+
+
+def _save_rng_state(path: Path) -> None:
+    payload: dict[str, Any] = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state().cpu().numpy().tolist(),
+        "cuda": None,
+    }
+    if torch.cuda.is_available():
+        payload["cuda"] = [state.cpu().numpy().tolist() for state in torch.cuda.get_rng_state_all()]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as handle:
+        pickle.dump(payload, handle)
+
+
+def _load_rng_state(path: Path) -> bool:
+    if not path.exists():
+        return False
+    with path.open("rb") as handle:
+        payload = pickle.load(handle)
+    if not isinstance(payload, dict):
+        return False
+
+    py_state = payload.get("python")
+    np_state = payload.get("numpy")
+    torch_state = payload.get("torch")
+    cuda_state = payload.get("cuda")
+
+    if py_state is not None:
+        random.setstate(py_state)
+    if np_state is not None:
+        np.random.set_state(np_state)
+    if torch_state is not None:
+        torch.set_rng_state(torch.tensor(torch_state, dtype=torch.uint8))
+    if cuda_state is not None and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all([torch.tensor(state, dtype=torch.uint8, device="cpu") for state in cuda_state])
+    return True
 
 
 def _required_curriculum_metrics(curriculum_cfg: CurriculumConfig) -> list[str]:
@@ -185,6 +366,33 @@ def main(cfg: DictConfig) -> None:
         "seed": int(cfg.seed),
         "run_id": run_id,
     }
+    run_dir = Path(str(cfg.paths.run_dir))
+    checkpoints_dir = Path(str(cfg.paths.checkpoints_dir))
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    checkpoints_best_dir = checkpoints_dir / "best"
+    checkpoints_best_dir.mkdir(parents=True, exist_ok=True)
+    checkpoints_periodic_dir = checkpoints_dir / "periodic"
+    checkpoints_periodic_dir.mkdir(parents=True, exist_ok=True)
+    checkpoints_metadata_dir = checkpoints_dir / "metadata"
+    checkpoints_metadata_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_index_path = checkpoints_metadata_dir / "checkpoint_index.csv"
+    best_checkpoints_yaml_path = checkpoints_metadata_dir / "best_checkpoints.yaml"
+    latest_checkpoint_stem = checkpoints_dir / "latest"
+    final_checkpoint_stem = checkpoints_dir / "final"
+    best_lex_checkpoint_stem = checkpoints_best_dir / "best_lexicographic"
+    best_lex_key: tuple[float, float, float, float, float, float, float] | None = None
+    best_lex_payload: dict[str, Any] = {}
+    best_rulebook_strict_key: tuple[float, ...] | None = None
+    best_rulebook_strict_payload: dict[str, Any] = {}
+    best_rulebook_thresholded_key: tuple[float, ...] | None = None
+    best_rulebook_thresholded_payload: dict[str, Any] = {}
+    best_rulebook_strict_checkpoint_stem = checkpoints_best_dir / "best_lexicographic_rulebook"
+    best_rulebook_thresholded_checkpoint_stem = (
+        checkpoints_best_dir / "best_thresholded_lexicographic_rulebook"
+    )
+    latest_replay_buffer_path = checkpoints_dir / "latest_replay_buffer.pkl"
+    latest_training_state_path = checkpoints_dir / "latest_training_state.yaml"
+    latest_rng_state_path = checkpoints_dir / "latest_rng_state.pkl"
     train_log_path = logs_dir / "train.log"
     eval_log_path = logs_dir / "eval.log"
     curriculum_log_path = logs_dir / "curriculum.log"
@@ -213,6 +421,24 @@ def main(cfg: DictConfig) -> None:
 
         run_seed = int(cfg.seed)
         _set_global_seed(run_seed)
+        resume_cfg = cfg.checkpoint.get("resume", {})
+        resume_enabled = bool(resume_cfg.get("enabled", False))
+        resume_run_dir_cfg = resume_cfg.get("run_dir")
+        resume_run_dir = (
+            Path(str(resume_run_dir_cfg))
+            if resume_run_dir_cfg not in (None, "", "null")
+            else run_dir
+        )
+        resume_checkpoint_name = str(resume_cfg.get("checkpoint_name", "latest"))
+        resume_checkpoint_stem = resume_run_dir / "checkpoints" / resume_checkpoint_name
+        resume_checkpoint_zip = resume_checkpoint_stem.with_suffix(".zip")
+        resume_replay_buffer_path = resume_run_dir / "checkpoints" / "latest_replay_buffer.pkl"
+        resume_training_state_path = resume_run_dir / "checkpoints" / "latest_training_state.yaml"
+        resume_rng_state_path = resume_run_dir / "checkpoints" / "latest_rng_state.pkl"
+        resume_state: dict[str, Any] | None = None
+        resume_global_steps_done = 0
+        resume_chunk_id = 0
+        resume_eval_id = 0
 
         ###################
         ###### SETUP ######
@@ -224,7 +450,36 @@ def main(cfg: DictConfig) -> None:
         current_train_overrides: dict[str, Any] | None = None
         if curriculum_cfg.enabled and curriculum_cfg.stages:
             curriculum_manager = CurriculumManager(curriculum_cfg)
+            if resume_enabled:
+                if not resume_training_state_path.exists():
+                    raise FileNotFoundError(
+                        f"Resume enabled but training state is missing: {resume_training_state_path}"
+                    )
+                resume_state = _load_training_state(resume_training_state_path)
+                curriculum_state = resume_state.get("curriculum", {})
+                if isinstance(curriculum_state, dict):
+                    curriculum_manager._stage_idx = int(  # noqa: SLF001
+                        curriculum_state.get("stage_index", curriculum_manager.stage_index)
+                    )
+                    curriculum_manager._stage_steps_done = int(  # noqa: SLF001
+                        curriculum_state.get("stage_steps_done", curriculum_manager.stage_steps_done)
+                    )
+                    curriculum_manager._eval_count_at_stage = int(  # noqa: SLF001
+                        curriculum_state.get("eval_count_at_stage", curriculum_manager.eval_count_at_stage)
+                    )
+                    curriculum_manager._consecutive_passes = int(  # noqa: SLF001
+                        curriculum_state.get("consecutive_passes", curriculum_manager.consecutive_passes)
+                    )
+                    curriculum_manager._last_eval_passed = bool(  # noqa: SLF001
+                        curriculum_state.get("last_eval_passed", False)
+                    )
             current_train_overrides = curriculum_manager.get_env_config(evaluation=False)
+        elif resume_enabled:
+            if not resume_training_state_path.exists():
+                raise FileNotFoundError(
+                    f"Resume enabled but training state is missing: {resume_training_state_path}"
+                )
+            resume_state = _load_training_state(resume_training_state_path)
 
         # Environment
         env = build_env(cfg, current_train_overrides)
@@ -238,8 +493,26 @@ def main(cfg: DictConfig) -> None:
             cfg,
             adapter_space_kwargs(env.action_space),
         )
-        planner = build_planner(cfg, env, seed=run_seed)
+        if resume_enabled:
+            if not resume_checkpoint_zip.exists():
+                raise FileNotFoundError(
+                    f"Resume enabled but checkpoint is missing: {resume_checkpoint_zip}"
+                )
+            planner = load_planner(cfg, checkpoint_path=str(resume_checkpoint_zip), env=env)
+        else:
+            planner = build_planner(cfg, env, seed=run_seed)
         agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
+        if resume_enabled:
+            agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
+            _load_replay_buffer_if_available(planner, resume_replay_buffer_path)
+            if bool(resume_cfg.get("restore_rng_state", True)):
+                _load_rng_state(resume_rng_state_path)
+            if resume_state is None and resume_training_state_path.exists():
+                resume_state = _load_training_state(resume_training_state_path)
+            if resume_state is not None:
+                resume_global_steps_done = int(resume_state.get("global_steps_done", 0))
+                resume_chunk_id = int(resume_state.get("chunk_id", 0))
+                resume_eval_id = int(resume_state.get("eval_id", 0))
 
         # Training and evaluation params
         total_timesteps = int(cfg.experiment.total_timesteps)
@@ -276,15 +549,35 @@ def main(cfg: DictConfig) -> None:
             eval_episodes=int(cfg.experiment.eval_episodes),
             stage=stage_name,
         )
+        if resume_enabled:
+            train_logger.info(
+                "Resume enabled | checkpoint=%s | state=%s | replay_buffer=%s | rng_state=%s | resumed_global_steps=%d | resumed_chunk_id=%d | resumed_eval_id=%d",
+                str(resume_checkpoint_zip),
+                str(resume_training_state_path),
+                str(resume_replay_buffer_path),
+                str(resume_rng_state_path),
+                int(resume_global_steps_done),
+                int(resume_chunk_id),
+                int(resume_eval_id),
+            )
+            _log_event(
+                events_log_path,
+                "run_resumed",
+                checkpoint=str(resume_checkpoint_zip),
+                state=str(resume_training_state_path),
+                resumed_global_steps=int(resume_global_steps_done),
+                resumed_chunk_id=int(resume_chunk_id),
+                resumed_eval_id=int(resume_eval_id),
+            )
 
         ##################
         ###### LOOP ######
         ##################
 
         # Training loop with periodic evaluation and optional curriculum progression
-        remaining = total_timesteps
-        chunk_id = 0
-        eval_id = 0
+        remaining = max(0, total_timesteps - resume_global_steps_done)
+        chunk_id = int(resume_chunk_id)
+        eval_id = int(resume_eval_id)
         while remaining > 0:
             chunk_id += 1
 
@@ -454,6 +747,9 @@ def main(cfg: DictConfig) -> None:
             episode_error_value = list(per_episode.get("error_value", []))
             episode_violated_rules = list(per_episode.get("violated_rules", []))
             episode_violation_pattern = list(per_episode.get("violation_pattern", []))
+            episode_env_returns = list(per_episode.get("env_returns", []))
+            episode_scalar_rule_returns = list(per_episode.get("scalar_rule_returns", []))
+            episode_rule_rewards_by_rule = list(per_episode.get("rule_rewards_by_rule", []))
             eval_base_seed = run_seed + 200_000 + (total_timesteps - remaining)
             episode_count = len(episode_returns)
             for episode_idx in range(episode_count):
@@ -471,6 +767,9 @@ def main(cfg: DictConfig) -> None:
                         "scenario_id": f"seed_{scenario_seed}",
                         "deterministic": bool(cfg.experiment.eval_deterministic),
                         "reward": float(episode_returns[episode_idx]),
+                        "env_reward": float(episode_env_returns[episode_idx]) if episode_idx < len(episode_env_returns) else None,
+                        "scalar_rule_reward": float(episode_scalar_rule_returns[episode_idx]) if episode_idx < len(episode_scalar_rule_returns) and episode_scalar_rule_returns[episode_idx] is not None else None,
+                        "rule_rewards_by_rule": json.dumps(episode_rule_rewards_by_rule[episode_idx], ensure_ascii=True) if episode_idx < len(episode_rule_rewards_by_rule) else None,
                         "episode_length": int(episode_lengths[episode_idx]) if episode_idx < len(episode_lengths) else None,
                         "success": float(episode_success[episode_idx]) if episode_idx < len(episode_success) else None,
                         "collision": float(episode_collision[episode_idx]) if episode_idx < len(episode_collision) else None,
@@ -647,6 +946,10 @@ def main(cfg: DictConfig) -> None:
                     "deterministic": bool(cfg.experiment.eval_deterministic),
                     "mean_reward": float(metrics.get("mean_reward", 0.0)),
                     "std_reward": float(metrics.get("std_reward", 0.0)),
+                    "mean_env_reward": float(metrics.get("mean_env_reward", 0.0)),
+                    "std_env_reward": float(metrics.get("std_env_reward", 0.0)),
+                    "mean_scalar_rule_reward": float(metrics.get("mean_scalar_rule_reward", 0.0)) if metrics.get("mean_scalar_rule_reward") is not None else None,
+                    "std_scalar_rule_reward": float(metrics.get("std_scalar_rule_reward", 0.0)) if metrics.get("std_scalar_rule_reward") is not None else None,
                     "mean_rule_saturation_max": float(metrics.get("mean_rule_saturation_max", 0.0)),
                     "collision_rate": float(metrics.get("collision_rate", 0.0)),
                     "collision_rate_std": float(metrics.get("collision_rate_std", 0.0)),
@@ -689,6 +992,213 @@ def main(cfg: DictConfig) -> None:
                 metrics=metrics,
             )
 
+            # Save best checkpoint according to lexicographic safety-first ordering.
+            save_best_lex = bool(cfg.checkpoint.get("save_best_lexicographic", True))
+            candidate_key = _lexicographic_eval_key(metrics)
+            if save_best_lex and (best_lex_key is None or candidate_key < best_lex_key):
+                agent.save(best_lex_checkpoint_stem)
+                best_lex_key = candidate_key
+                best_lex_payload = {
+                    "path": _checkpoint_rel(run_dir, best_lex_checkpoint_stem),
+                    "global_step": int(current_global_step),
+                    "chunk_id": int(chunk_id),
+                    "eval_id": int(eval_id),
+                    "stage": str(current_stage_name),
+                    "stage_index": int(current_stage_index),
+                    "success_rate": float(metrics.get("success_rate", 0.0)),
+                    "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                    "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                    "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                    "route_completion": float(metrics.get("route_completion", 0.0)),
+                    "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                    "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                    "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                }
+                _write_best_checkpoints_yaml(
+                    best_checkpoints_yaml_path,
+                    {"best_lexicographic": best_lex_payload},
+                )
+                _append_checkpoint_index_row(
+                    checkpoint_index_path,
+                    {
+                        "checkpoint_path": _checkpoint_rel(run_dir, best_lex_checkpoint_stem),
+                        "type": "best_lexicographic",
+                        "global_step": int(current_global_step),
+                        "chunk_id": int(chunk_id),
+                        "eval_id": int(eval_id),
+                        "stage": str(current_stage_name),
+                        "stage_index": int(current_stage_index),
+                        "success_rate": float(metrics.get("success_rate", 0.0)),
+                        "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                        "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                        "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                        "route_completion": float(metrics.get("route_completion", 0.0)),
+                        "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                        "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                        "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                        "reason": "improved_lexicographic",
+                        "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    },
+                )
+
+            save_best_rulebook_strict = bool(
+                cfg.checkpoint.get("save_best_lexicographic_rulebook", True)
+            )
+            strict_key = _rulebook_strict_key(metrics)
+            if save_best_rulebook_strict and (best_rulebook_strict_key is None or strict_key < best_rulebook_strict_key):
+                agent.save(best_rulebook_strict_checkpoint_stem)
+                best_rulebook_strict_key = strict_key
+                best_rulebook_strict_payload = {
+                    "path": _checkpoint_rel(run_dir, best_rulebook_strict_checkpoint_stem),
+                    "global_step": int(current_global_step),
+                    "chunk_id": int(chunk_id),
+                    "eval_id": int(eval_id),
+                    "stage": str(current_stage_name),
+                    "stage_index": int(current_stage_index),
+                    "rulebook_mode": "strict",
+                }
+                _append_checkpoint_index_row(
+                    checkpoint_index_path,
+                    {
+                        "checkpoint_path": _checkpoint_rel(run_dir, best_rulebook_strict_checkpoint_stem),
+                        "type": "best_lexicographic_rulebook",
+                        "global_step": int(current_global_step),
+                        "chunk_id": int(chunk_id),
+                        "eval_id": int(eval_id),
+                        "stage": str(current_stage_name),
+                        "stage_index": int(current_stage_index),
+                        "success_rate": float(metrics.get("success_rate", 0.0)),
+                        "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                        "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                        "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                        "route_completion": float(metrics.get("route_completion", 0.0)),
+                        "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                        "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                        "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                        "reason": "improved_rulebook_strict",
+                        "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    },
+                )
+
+            save_best_rulebook_thresholded = bool(
+                cfg.checkpoint.get("save_best_thresholded_lexicographic_rulebook", True)
+            )
+            thresholded_key = _rulebook_thresholded_key(metrics)
+            if save_best_rulebook_thresholded and (
+                best_rulebook_thresholded_key is None or thresholded_key < best_rulebook_thresholded_key
+            ):
+                agent.save(best_rulebook_thresholded_checkpoint_stem)
+                best_rulebook_thresholded_key = thresholded_key
+                best_rulebook_thresholded_payload = {
+                    "path": _checkpoint_rel(run_dir, best_rulebook_thresholded_checkpoint_stem),
+                    "global_step": int(current_global_step),
+                    "chunk_id": int(chunk_id),
+                    "eval_id": int(eval_id),
+                    "stage": str(current_stage_name),
+                    "stage_index": int(current_stage_index),
+                    "rulebook_mode": "thresholded",
+                }
+                _append_checkpoint_index_row(
+                    checkpoint_index_path,
+                    {
+                        "checkpoint_path": _checkpoint_rel(run_dir, best_rulebook_thresholded_checkpoint_stem),
+                        "type": "best_thresholded_lexicographic_rulebook",
+                        "global_step": int(current_global_step),
+                        "chunk_id": int(chunk_id),
+                        "eval_id": int(eval_id),
+                        "stage": str(current_stage_name),
+                        "stage_index": int(current_stage_index),
+                        "success_rate": float(metrics.get("success_rate", 0.0)),
+                        "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                        "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                        "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                        "route_completion": float(metrics.get("route_completion", 0.0)),
+                        "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                        "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                        "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                        "reason": "improved_rulebook_thresholded",
+                        "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    },
+                )
+
+            # Save latest checkpoint every chunk (overwrite).
+            if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
+                agent.save(latest_checkpoint_stem)
+                _save_replay_buffer_if_available(planner, latest_replay_buffer_path)
+                latest_state_payload = {
+                    "global_steps_done": int(current_global_step),
+                    "chunk_id": int(chunk_id),
+                    "eval_id": int(eval_id),
+                    "remaining_steps": int(total_timesteps - current_global_step),
+                    "curriculum": {
+                        "enabled": bool(curriculum_manager is not None),
+                        "stage_index": int(curriculum_manager.stage_index) if curriculum_manager is not None else 0,
+                        "stage_steps_done": int(curriculum_manager.stage_steps_done) if curriculum_manager is not None else 0,
+                        "eval_count_at_stage": int(curriculum_manager.eval_count_at_stage) if curriculum_manager is not None else 0,
+                        "consecutive_passes": int(curriculum_manager.consecutive_passes) if curriculum_manager is not None else 0,
+                        "last_eval_passed": bool(curriculum_manager._last_eval_passed) if curriculum_manager is not None else False,  # noqa: SLF001
+                    },
+                    "seed": int(run_seed),
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                }
+                _save_training_state(latest_training_state_path, latest_state_payload)
+                if bool(cfg.checkpoint.get("save_rng_state", True)):
+                    _save_rng_state(latest_rng_state_path)
+                _append_checkpoint_index_row(
+                    checkpoint_index_path,
+                    {
+                        "checkpoint_path": _checkpoint_rel(run_dir, latest_checkpoint_stem),
+                        "type": "latest",
+                        "global_step": int(current_global_step),
+                        "chunk_id": int(chunk_id),
+                        "eval_id": int(eval_id),
+                        "stage": str(current_stage_name),
+                        "stage_index": int(current_stage_index),
+                        "success_rate": float(metrics.get("success_rate", 0.0)),
+                        "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                        "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                        "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                        "route_completion": float(metrics.get("route_completion", 0.0)),
+                        "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                        "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                        "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                        "reason": "chunk_end_latest",
+                        "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    },
+                )
+
+            if bool(cfg.checkpoint.get("save_periodic", True)):
+                periodic_interval = int(cfg.checkpoint.get("periodic_interval_steps", 0))
+                if periodic_interval > 0 and (current_global_step % periodic_interval == 0):
+                    periodic_stem = checkpoints_periodic_dir / f"step_{current_global_step:08d}"
+                    agent.save(periodic_stem)
+                    _append_checkpoint_index_row(
+                        checkpoint_index_path,
+                        {
+                            "checkpoint_path": _checkpoint_rel(run_dir, periodic_stem),
+                            "type": "periodic",
+                            "global_step": int(current_global_step),
+                            "chunk_id": int(chunk_id),
+                            "eval_id": int(eval_id),
+                            "stage": str(current_stage_name),
+                            "stage_index": int(current_stage_index),
+                            "success_rate": float(metrics.get("success_rate", 0.0)),
+                            "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                            "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                            "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                            "route_completion": float(metrics.get("route_completion", 0.0)),
+                            "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                            "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                            "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                            "reason": "periodic_interval",
+                            "timestamp": datetime.now().isoformat(timespec="seconds"),
+                        },
+                    )
+                    _prune_old_periodic_checkpoints(
+                        checkpoints_periodic_dir,
+                        keep_last=int(cfg.checkpoint.get("keep_last_periodic", 4)),
+                    )
+
             # Rebuild env with new config (if changed) and update planner's env reference
             env = build_env(cfg, current_train_overrides)
             _seed_env_spaces(env, run_seed + 400_000 + (total_timesteps - remaining))
@@ -698,12 +1208,43 @@ def main(cfg: DictConfig) -> None:
         ###### FINALIZATION ######
         ##########################
 
-        # Save agent checkpoints
-        checkpoints_dir = Path(str(cfg.paths.checkpoints_dir))
-        checkpoints_dir.mkdir(parents=True, exist_ok=True)
-        ckpt_path = checkpoints_dir / f"{cfg.experiment.name}"
-        agent.save(ckpt_path)
-        adapter_ckpt_path = agent.adapter_checkpoint_path(ckpt_path)
+        # Save final checkpoint used as official final evaluation checkpoint.
+        if not bool(cfg.checkpoint.get("save_final", True)):
+            raise ValueError("checkpoint.save_final must be true: final evaluation requires final checkpoint.")
+        agent.save(final_checkpoint_stem)
+        final_adapter_ckpt_path = agent.adapter_checkpoint_path(final_checkpoint_stem)
+        _append_checkpoint_index_row(
+            checkpoint_index_path,
+            {
+                "checkpoint_path": _checkpoint_rel(run_dir, final_checkpoint_stem),
+                "type": "final",
+                "global_step": int(total_timesteps),
+                "chunk_id": int(chunk_id),
+                "eval_id": int(eval_id),
+                "stage": (
+                    curriculum_manager.get_current_stage().name
+                    if curriculum_manager is not None
+                    else "baseline"
+                ),
+                "stage_index": int(curriculum_manager.stage_index) if curriculum_manager is not None else 0,
+                "reason": "training_completed",
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+        final_entry = {
+            "path": _checkpoint_rel(run_dir, final_checkpoint_stem),
+            "global_step": int(total_timesteps),
+        }
+        best_payload_out: dict[str, Any] = {"final": final_entry}
+        if best_lex_payload:
+            best_payload_out["best_lexicographic"] = best_lex_payload
+        if best_rulebook_strict_payload:
+            best_payload_out["best_lexicographic_rulebook"] = best_rulebook_strict_payload
+        if best_rulebook_thresholded_payload:
+            best_payload_out["best_thresholded_lexicographic_rulebook"] = (
+                best_rulebook_thresholded_payload
+            )
+        _write_best_checkpoints_yaml(best_checkpoints_yaml_path, best_payload_out)
 
         ###### FINAL EVAL ######
 
@@ -725,21 +1266,22 @@ def main(cfg: DictConfig) -> None:
             error_priority_base=float(cfg.reward.get("a", 2.01)),
         )
         print(f"Evaluation metrics after training: {metrics}")
-        print(f"Checkpoint saved at: {ckpt_path}.zip")
-        train_logger.info("Checkpoint saved | path=%s.zip", ckpt_path)
+        print(f"Final checkpoint saved at: {final_checkpoint_stem}.zip")
+        train_logger.info("Checkpoint saved | path=%s.zip", final_checkpoint_stem)
         _log_event(
             events_log_path,
             "checkpoint_saved",
-            path=f"{ckpt_path}.zip",
+            path=f"{final_checkpoint_stem}.zip",
             global_step=total_timesteps,
+            checkpoint_type="final",
         )
         if bool(getattr(adapter, "requires_training", False)):
-            print(f"Adapter checkpoint saved at: {adapter_ckpt_path}")
-            train_logger.info("Adapter checkpoint saved | path=%s", adapter_ckpt_path)
+            print(f"Adapter checkpoint saved at: {final_adapter_ckpt_path}")
+            train_logger.info("Adapter checkpoint saved | path=%s", final_adapter_ckpt_path)
             _log_event(
                 events_log_path,
                 "checkpoint_saved",
-                path=str(adapter_ckpt_path),
+                path=str(final_adapter_ckpt_path),
                 global_step=total_timesteps,
                 checkpoint_kind="adapter",
             )
@@ -781,6 +1323,10 @@ def main(cfg: DictConfig) -> None:
                 "deterministic": bool(cfg.experiment.eval_deterministic),
                 "mean_reward": float(metrics.get("mean_reward", 0.0)),
                 "std_reward": float(metrics.get("std_reward", 0.0)),
+                "mean_env_reward": float(metrics.get("mean_env_reward", 0.0)),
+                "std_env_reward": float(metrics.get("std_env_reward", 0.0)),
+                "mean_scalar_rule_reward": float(metrics.get("mean_scalar_rule_reward", 0.0)) if metrics.get("mean_scalar_rule_reward") is not None else None,
+                "std_scalar_rule_reward": float(metrics.get("std_scalar_rule_reward", 0.0)) if metrics.get("std_scalar_rule_reward") is not None else None,
                 "mean_rule_saturation_max": float(metrics.get("mean_rule_saturation_max", 0.0)),
                 "collision_rate": float(metrics.get("collision_rate", 0.0)),
                 "collision_rate_std": float(metrics.get("collision_rate_std", 0.0)),
@@ -820,6 +1366,9 @@ def main(cfg: DictConfig) -> None:
         episode_error_value = list(per_episode.get("error_value", []))
         episode_violated_rules = list(per_episode.get("violated_rules", []))
         episode_violation_pattern = list(per_episode.get("violation_pattern", []))
+        episode_env_returns = list(per_episode.get("env_returns", []))
+        episode_scalar_rule_returns = list(per_episode.get("scalar_rule_returns", []))
+        episode_rule_rewards_by_rule = list(per_episode.get("rule_rewards_by_rule", []))
         final_eval_base_seed = run_seed + 600_000
         for episode_idx in range(len(episode_returns)):
             scenario_seed = int(final_eval_base_seed + episode_idx)
@@ -836,6 +1385,9 @@ def main(cfg: DictConfig) -> None:
                     "scenario_id": f"seed_{scenario_seed}",
                     "deterministic": bool(cfg.experiment.eval_deterministic),
                     "reward": float(episode_returns[episode_idx]),
+                    "env_reward": float(episode_env_returns[episode_idx]) if episode_idx < len(episode_env_returns) else None,
+                    "scalar_rule_reward": float(episode_scalar_rule_returns[episode_idx]) if episode_idx < len(episode_scalar_rule_returns) and episode_scalar_rule_returns[episode_idx] is not None else None,
+                    "rule_rewards_by_rule": json.dumps(episode_rule_rewards_by_rule[episode_idx], ensure_ascii=True) if episode_idx < len(episode_rule_rewards_by_rule) else None,
                     "episode_length": int(episode_lengths[episode_idx]) if episode_idx < len(episode_lengths) else None,
                     "success": float(episode_success[episode_idx]) if episode_idx < len(episode_success) else None,
                     "collision": float(episode_collision[episode_idx]) if episode_idx < len(episode_collision) else None,
@@ -861,6 +1413,10 @@ def main(cfg: DictConfig) -> None:
                 "deterministic": bool(cfg.experiment.eval_deterministic),
                 "mean_reward": float(metrics.get("mean_reward", 0.0)),
                 "std_reward": float(metrics.get("std_reward", 0.0)),
+                "mean_env_reward": float(metrics.get("mean_env_reward", 0.0)),
+                "std_env_reward": float(metrics.get("std_env_reward", 0.0)),
+                "mean_scalar_rule_reward": float(metrics.get("mean_scalar_rule_reward", 0.0)) if metrics.get("mean_scalar_rule_reward") is not None else None,
+                "std_scalar_rule_reward": float(metrics.get("std_scalar_rule_reward", 0.0)) if metrics.get("std_scalar_rule_reward") is not None else None,
                 "mean_rule_saturation_max": float(metrics.get("mean_rule_saturation_max", 0.0)),
                 "collision_rate": float(metrics.get("collision_rate", 0.0)),
                 "collision_rate_std": float(metrics.get("collision_rate_std", 0.0)),
@@ -874,6 +1430,9 @@ def main(cfg: DictConfig) -> None:
                 "counterexample_rate": float(metrics.get("counterexample_rate", 0.0)),
                 "violated_rules_ratio": float(metrics.get("violated_rules_ratio", 0.0)),
                 "unique_violation_patterns": int(metrics.get("unique_violation_patterns", 0)),
+                "checkpoint_path": _checkpoint_rel(run_dir, final_checkpoint_stem),
+                "checkpoint_type": "final",
+                "checkpoint_global_step": int(total_timesteps),
             },
         )
 

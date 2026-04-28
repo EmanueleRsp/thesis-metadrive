@@ -32,6 +32,22 @@ paths:
 
 checkpoint_path: ${paths.checkpoints_dir}/final.zip  # Path to save the final model checkpoint after training.
 
+checkpoint:
+  save_latest_each_chunk: true
+  save_final: true
+  save_best_lexicographic: true
+  save_best_lexicographic_rulebook: true
+  save_best_thresholded_lexicographic_rulebook: true
+  save_periodic: true
+  periodic_interval_steps: 250000
+  keep_last_periodic: 4
+  save_rng_state: true
+  resume:
+    enabled: false
+    run_dir: null            # if null, resume from current run_dir
+    checkpoint_name: latest  # latest | final | <custom-stem-under-checkpoints>
+    restore_rng_state: true
+
 # Hydra stuff
 hydra:
   run:

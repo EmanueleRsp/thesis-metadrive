@@ -71,7 +71,7 @@ Scopo: curva principale di performance e gate curriculum.
 Colonne V1.5:
 
 ```csv
-algorithm,reward_mode,curriculum_name,seed,run_id,eval_id,chunk_id,stage,stage_index,global_step,eval_episodes,deterministic,mean_reward,std_reward,mean_rule_saturation_max,collision_rate,collision_rate_std,out_of_road_rate,success_rate,success_rate_std,route_completion,top_rule_violation_rate,success_rate_min,collision_rate_max,out_of_road_rate_max,top_rule_violation_rate_max,route_completion_min,gate_success_pass,gate_collision_pass,gate_out_of_road_pass,gate_top_rule_pass,gate_route_completion_pass,passed_eval_gates,consecutive_passes,warmup_evals_required,consecutive_evals_required,promoted,next_stage
+algorithm,reward_mode,curriculum_name,seed,run_id,eval_id,chunk_id,stage,stage_index,global_step,eval_episodes,deterministic,mean_reward,std_reward,mean_env_reward,std_env_reward,mean_scalar_rule_reward,std_scalar_rule_reward,mean_rule_saturation_max,collision_rate,collision_rate_std,out_of_road_rate,success_rate,success_rate_std,route_completion,top_rule_violation_rate,success_rate_min,collision_rate_max,out_of_road_rate_max,top_rule_violation_rate_max,route_completion_min,gate_success_pass,gate_collision_pass,gate_out_of_road_pass,gate_top_rule_pass,gate_route_completion_pass,passed_eval_gates,consecutive_passes,warmup_evals_required,consecutive_evals_required,promoted,next_stage
 ```
 
 Note:
@@ -101,13 +101,17 @@ Scopo: analisi distribuzionale, worst-case, best/median/worst episode.
 Colonne V1.5:
 
 ```csv
-algorithm,reward_mode,curriculum_name,seed,run_id,eval_id,episode_id,stage,stage_index,global_step,deterministic,reward,episode_length,success,collision,out_of_road,timeout,route_completion,top_rule_violation_rate
+algorithm,reward_mode,curriculum_name,seed,run_id,eval_id,episode_id,stage,stage_index,global_step,deterministic,reward,env_reward,scalar_rule_reward,rule_rewards_by_rule,episode_length,success,collision,out_of_road,timeout,route_completion,top_rule_violation_rate
 ```
 
 Note:
 
 - In V1.5 non imponiamo ancora `scenario_id/scenario_seed/video_path` perche' non sono stabilizzati nel payload episodio corrente.
 - La colonna `top_rule_violation_rate` per episodio e' derivata dai dati per-episodio gia' disponibili in `Agent.evaluate(..., return_episode_metrics=True)`.
+- `reward` = reward finale usato dall'agente in eval (dopo eventuale wrapping rulebook).
+- `env_reward` = reward nativo MetaDrive (sempre tracciato).
+- `scalar_rule_reward` = contributo scalarizzato rulebook (presente quando disponibile nel wrapper rulebook).
+- `rule_rewards_by_rule` = JSON per episodio con contributo/margine cumulato per ciascuna regola.
 
 Colonne V2 aggiunte:
 
@@ -169,6 +173,7 @@ Stato implementazione V2:
 
 - `rule_metrics.csv`: implementato.
 - `final_eval.csv`: implementato.
+- `evals.csv`/`final_eval.csv`: includono tripletta reward aggregata (`mean_reward`, `mean_env_reward`, `mean_scalar_rule_reward` e rispettive std; i campi rulebook possono essere null fuori da `reward.mode=rulebook`).
 - Colonne V2 aggregate in `evals.csv` (`avg_error_value`, `max_error_value`, `counterexample_rate`, `violated_rules_ratio`, `unique_violation_patterns`): implementate.
 - Colonne V2 episodio in `eval_episodes.csv` (`scenario_seed`, `scenario_id`, `error_value`, `violated_rules`, `violation_pattern`, `video_path`): implementate.
 

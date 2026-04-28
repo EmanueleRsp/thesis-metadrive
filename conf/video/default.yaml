@@ -10,6 +10,7 @@ fps: 20
 record_intermediate_evals: false
 record_final_eval: true
 max_final_videos: 5
+replay_checkpoint: final  # final | latest | best_lexicographic | <relative-or-absolute-path>
 
 selection:
   best: true
@@ -24,4 +25,3 @@ topdown:
   semantic_map: false
   window: false
   screen_record: true
-

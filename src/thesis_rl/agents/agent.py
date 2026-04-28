@@ -378,6 +378,9 @@ class Agent:
         episode_error_values: list[float] = []
         episode_violation_patterns: list[str] = []
         episode_violated_rule_names: list[str] = []
+        episode_env_returns: list[float] = []
+        episode_scalar_rule_returns: list[float | None] = []
+        episode_rule_rewards_by_rule: list[dict[str, float]] = []
         all_rule_names: set[str] = set()
         rule_priority_by_name: dict[str, int] = {}
         per_rule_episode_min_margins: dict[str, list[float]] = {}
@@ -404,6 +407,10 @@ class Agent:
             ep_step_count = 0
             ep_top_rule_violating_steps = 0
             ep_rule_min_margin: dict[str, float] = {}
+            ep_rule_reward_sum_by_rule: dict[str, float] = {}
+            ep_env_return = 0.0
+            ep_scalar_rule_return = 0.0
+            ep_has_scalar_rule_reward = False
 
             # Loop until episode ends
             while not (done or truncated):
@@ -412,6 +419,18 @@ class Agent:
                 obs, scalar_reward, done, truncated, step_info = env.step(action)
                 ep_return += float(scalar_reward)
                 ep_step_count += 1
+                if isinstance(step_info, dict):
+                    env_reward = step_info.get("env_reward")
+                    if isinstance(env_reward, (int, float, np.floating)):
+                        ep_env_return += float(env_reward)
+                    else:
+                        ep_env_return += float(scalar_reward)
+                    scalar_rule_reward = step_info.get("scalar_rule_reward")
+                    if isinstance(scalar_rule_reward, (int, float, np.floating)):
+                        ep_scalar_rule_return += float(scalar_rule_reward)
+                        ep_has_scalar_rule_reward = True
+                else:
+                    ep_env_return += float(scalar_reward)
 
                 # Extract rule violation and saturation info from `step_info` for episode-level metrics
                 sat_summary = self._extract_saturation_summary(step_info)
@@ -428,6 +447,9 @@ class Agent:
                     all_rule_names.add(rule_name)
                     if rule_name not in rule_priority_by_name:
                         rule_priority_by_name[rule_name] = int(rule_priority)
+                    ep_rule_reward_sum_by_rule[rule_name] = float(
+                        ep_rule_reward_sum_by_rule.get(rule_name, 0.0) + float(margin)
+                    )
                     ep_rule_min_margin[rule_name] = min(
                         float(ep_rule_min_margin.get(rule_name, float("inf"))),
                         float(margin),
@@ -442,6 +464,11 @@ class Agent:
             episode_route_completion.append(ep_route_completion)
             episode_lengths.append(ep_step_count)
             episode_timeout.append(1.0 if bool(truncated) else 0.0)
+            episode_env_returns.append(float(ep_env_return))
+            episode_scalar_rule_returns.append(
+                float(ep_scalar_rule_return) if ep_has_scalar_rule_reward else None
+            )
+            episode_rule_rewards_by_rule.append(dict(sorted(ep_rule_reward_sum_by_rule.items())))
             if ep_step_count > 0:
                 episode_top_rule_violation_rate.append(ep_top_rule_violating_steps / ep_step_count)
             else:
@@ -510,9 +537,23 @@ class Agent:
                 }
             )
 
+        scalar_rule_available_values = [value for value in episode_scalar_rule_returns if value is not None]
+
         metrics: dict[str, Any] = {
             "mean_reward": float(np.mean(episode_returns)),
             "std_reward": float(np.std(episode_returns)),
+            "mean_env_reward": float(np.mean(episode_env_returns)) if episode_env_returns else 0.0,
+            "std_env_reward": float(np.std(episode_env_returns)) if episode_env_returns else 0.0,
+            "mean_scalar_rule_reward": (
+                float(np.mean(scalar_rule_available_values))
+                if scalar_rule_available_values
+                else None
+            ),
+            "std_scalar_rule_reward": (
+                float(np.std(scalar_rule_available_values))
+                if scalar_rule_available_values
+                else None
+            ),
             "mean_rule_saturation_max": float(np.mean(episode_saturation_max)),
             "collision_rate": float(np.mean(episode_collision)),
             "collision_rate_std": float(np.std(episode_collision)),
@@ -531,6 +572,9 @@ class Agent:
         if return_episode_metrics:
             metrics["per_episode"] = {
                 "returns": episode_returns,
+                "env_returns": episode_env_returns,
+                "scalar_rule_returns": episode_scalar_rule_returns,
+                "rule_rewards_by_rule": episode_rule_rewards_by_rule,
                 "saturation_max": episode_saturation_max,
                 "collision": episode_collision,
                 "out_of_road": episode_out_of_road,
