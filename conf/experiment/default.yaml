@@ -1,5 +1,5 @@
 name: default
-total_timesteps: 1000000
+total_timesteps: 100000
 log_interval: 1000
 eval_interval: 25000
 eval_episodes: 50

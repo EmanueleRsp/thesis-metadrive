@@ -56,7 +56,7 @@ class BasePlannerLifecycle(Protocol):
         """
         ...
 
-    def maybe_update(self) -> None:
+    def maybe_update(self, collected_steps: int = 1) -> None:
         """Conditionally update policy (gradient steps, buffer sampling, etc.).
 
         Called after each transition. Implementation decides whether to perform
@@ -68,7 +68,7 @@ class BasePlannerLifecycle(Protocol):
         """Convert an environment action into the replay-buffer action representation."""
         ...
 
-    def on_episode_end(self) -> None:
+    def on_episode_end(self, indices: list[int] | np.ndarray | None = None) -> None:
         """Handle end-of-episode lifecycle state, such as resetting exploration noise."""
         ...
 
@@ -99,10 +99,13 @@ class Td3Lifecycle:
         self.replay_buffer = self.sb3_model.replay_buffer
         self.step_count = 0
         self.update_count = 0
+        self.gradient_step_count = 0
         self.chunk_timesteps: int | None = None
         self.global_total_timesteps: int | None = None
         self.global_steps_done: int = 0
         self.num_timesteps: int = 0
+        self._num_timesteps_at_start: int = 0
+        self.collected_transitions: int = 0
         self.last_actor_loss = float("nan")
         self.last_critic_loss = float("nan")
         self.last_learning_rate = float("nan")
@@ -158,6 +161,7 @@ class Td3Lifecycle:
 
         self.step_count = 0
         self.update_count = 0
+        self.gradient_step_count = 0
         self.chunk_timesteps = chunk_timesteps
         self.global_total_timesteps = global_total_timesteps
         self.global_steps_done = global_steps_done
@@ -171,6 +175,8 @@ class Td3Lifecycle:
         if not hasattr(self.sb3_model, "num_timesteps"):
             self.sb3_model.num_timesteps = 0
         self.num_timesteps = int(self.sb3_model.num_timesteps)
+        self._num_timesteps_at_start = int(self.sb3_model.num_timesteps)
+        self.collected_transitions = 0
         self._validate_sb3_components()
         self._validate_train_freq()
         self.on_episode_end()
@@ -243,6 +249,78 @@ class Td3Lifecycle:
         # Keep SB3 timestep counter consistent when bypassing learn().
         self.num_timesteps += 1
         self.sb3_model.num_timesteps += 1
+        self.collected_transitions += 1
+
+    def act_batch(
+        self,
+        observations: np.ndarray,
+        deterministic: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return env actions and replay-buffer actions for a vectorized rollout step."""
+        if self._policy is None or self._action_noise is None:
+            raise RuntimeError("TD3 lifecycle was not initialized correctly; call begin_training() first.")
+
+        obs_batch = np.asarray(observations, dtype=np.float32)
+        n_envs = int(obs_batch.shape[0])
+        self._policy.set_training_mode(False)
+
+        if deterministic:
+            env_actions, _ = self.sb3_model.predict(obs_batch, deterministic=True)
+            env_actions = np.asarray(env_actions, dtype=np.float32)
+            buffer_actions = np.asarray(self._policy.scale_action(env_actions), dtype=np.float32)
+            return env_actions, np.clip(buffer_actions, -1.0, 1.0).astype(np.float32)
+
+        self.sb3_model._last_obs = obs_batch
+        env_actions, buffer_actions = self.sb3_model._sample_action(
+            int(self.sb3_model.learning_starts),
+            self._action_noise,
+            n_envs,
+        )
+        return (
+            np.asarray(env_actions, dtype=np.float32),
+            np.asarray(buffer_actions, dtype=np.float32),
+        )
+
+    def observe_transition_batch(
+        self,
+        observations: np.ndarray,
+        buffer_actions: np.ndarray,
+        rewards: np.ndarray,
+        dones: np.ndarray,
+        next_observations: np.ndarray,
+        infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> None:
+        """Add a vectorized transition batch to SB3's replay buffer."""
+        obs_batch = np.asarray(observations, dtype=np.float32)
+        next_obs_batch = np.asarray(next_observations, dtype=np.float32).copy()
+        action_batch = np.asarray(buffer_actions, dtype=np.float32)
+        reward_batch = np.asarray(rewards, dtype=np.float32)
+        done_batch = np.asarray(dones, dtype=np.float32)
+        replay_infos: list[dict[str, Any]] = []
+
+        for idx, info in enumerate(infos):
+            replay_info = dict(info)
+            replay_info.setdefault("TimeLimit.truncated", False)
+            terminal_observation = replay_info.get("terminal_observation")
+            if bool(done_batch[idx]) and terminal_observation is not None:
+                terminal_obs = np.asarray(terminal_observation, dtype=np.float32)
+                replay_info["terminal_observation"] = terminal_obs
+                next_obs_batch[idx] = terminal_obs
+            replay_infos.append(replay_info)
+
+        self.replay_buffer.add(
+            obs=obs_batch,
+            action=action_batch,
+            reward=reward_batch,
+            done=done_batch,
+            next_obs=next_obs_batch,
+            infos=replay_infos,
+        )
+
+        collected = int(obs_batch.shape[0])
+        self.num_timesteps += collected
+        self.sb3_model.num_timesteps += collected
+        self.collected_transitions += collected
 
     def to_buffer_action(self, env_action: np.ndarray) -> np.ndarray:
         """Map env-space action to SB3 TD3 replay-buffer action representation."""
@@ -253,27 +331,28 @@ class Td3Lifecycle:
         scaled = self._policy.scale_action(action)
         return np.clip(np.asarray(scaled, dtype=np.float32), -1.0, 1.0)
 
-    def maybe_update(self) -> None:
+    def maybe_update(self, collected_steps: int = 1) -> None:
         """Conditionally update TD3 policy (every 2 steps, after learning_starts)."""
         # TD3 hyperparameters from SB3
         learning_starts = self.sb3_model.learning_starts
         train_freq = self.sb3_model.train_freq
 
         # Only update if we have enough data
-        if self.replay_buffer.size() < learning_starts:
-            self.step_count += 1
+        if self.num_timesteps < learning_starts:
+            self.step_count += int(collected_steps)
             return
 
         # TD3 update frequency (default: every 2 steps)
         if self.step_count % train_freq.frequency == 0:
             if self.global_total_timesteps and self.global_total_timesteps > 0:
-                global_step = self.global_steps_done + self.step_count
+                global_step = self.global_steps_done + self.collected_transitions
                 self.sb3_model._current_progress_remaining = max(
                     1.0 - (global_step / float(self.global_total_timesteps)),
                     0.0,
                 )
+            grad_steps = int(self.sb3_model.gradient_steps)
             self.sb3_model.train(
-                gradient_steps=int(self.sb3_model.gradient_steps),
+                gradient_steps=grad_steps,
                 batch_size=int(self.sb3_model.batch_size),
             )
 
@@ -285,14 +364,21 @@ class Td3Lifecycle:
                 logger_values.get("train/learning_rate", float("nan"))
             )
             self.update_count += 1
+            self.gradient_step_count += max(grad_steps, 0)
 
-        self.step_count += 1
+        self.step_count += int(collected_steps)
 
-    def on_episode_end(self) -> None:
+    def on_episode_end(self, indices: list[int] | np.ndarray | None = None) -> None:
         """Reset TD3 action noise between episodes when configured."""
         if self._action_noise is None:
             raise RuntimeError("TD3 lifecycle action noise is unavailable; call begin_training() first.")
-        self._action_noise.reset()
+        if indices is None:
+            self._action_noise.reset()
+            return
+        try:
+            self._action_noise.reset(indices=list(indices))
+        except TypeError:
+            self._action_noise.reset()
 
     def end_training(self) -> None:
         """Finalize training (SB3 has no explicit cleanup needed)."""

@@ -41,6 +41,7 @@ class CSVRecorder:
             "actor_loss_ema",
             "critic_loss_ema",
             "learning_rate",
+            "update_calls",
             "n_updates",
             "fps",
             "elapsed_seconds",

@@ -68,6 +68,7 @@ def print_run_setup(
     metadata_path: Path,
     hydra_config_path: Path,
     checkpoint_path: str | None = None,
+    extra_rows: list[tuple[str, str]] | None = None,
 ) -> None:
     table = Table(title=title, expand=False)
     table.add_column("Field", style="cyan", no_wrap=True)
@@ -88,6 +89,8 @@ def print_run_setup(
     ]
     if checkpoint_path is not None:
         rows.insert(1, ("Checkpoint", checkpoint_path))
+    if extra_rows:
+        rows.extend(extra_rows)
 
     for field, value in rows:
         table.add_row(field, value)

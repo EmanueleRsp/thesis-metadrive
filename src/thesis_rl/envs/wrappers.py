@@ -317,18 +317,39 @@ class RuleRewardWrapper(gym.Wrapper):
         }
 
     def _extract_dt(self, base_env: Any) -> float | None:
-        cfg = getattr(base_env, "config", None)
-        if isinstance(cfg, Mapping):
-            step_size = self._safe_float(cfg.get("physics_world_step_size"))
-            decision_repeat = self._safe_float(cfg.get("decision_repeat"))
+        def _dt_from_cfg(cfg_obj: Any) -> float | None:
+            if cfg_obj is None:
+                return None
+            step_size = None
+            decision_repeat = None
+            policy_frequency = None
+            if isinstance(cfg_obj, Mapping):
+                step_size = self._safe_float(cfg_obj.get("physics_world_step_size"))
+                decision_repeat = self._safe_float(cfg_obj.get("decision_repeat"))
+                policy_frequency = self._safe_float(cfg_obj.get("policy_frequency"))
+            else:
+                step_size = self._safe_float(getattr(cfg_obj, "physics_world_step_size", None))
+                decision_repeat = self._safe_float(getattr(cfg_obj, "decision_repeat", None))
+                policy_frequency = self._safe_float(getattr(cfg_obj, "policy_frequency", None))
+
             if step_size is not None:
                 if decision_repeat is not None and decision_repeat > 0:
                     return float(step_size * decision_repeat)
                 return float(step_size)
-
-            policy_frequency = self._safe_float(cfg.get("policy_frequency"))
             if policy_frequency is not None and policy_frequency > 0:
                 return float(1.0 / policy_frequency)
+            return None
+
+        cfg = getattr(base_env, "config", None)
+        dt = _dt_from_cfg(cfg)
+        if dt is not None:
+            return dt
+
+        engine = getattr(base_env, "engine", None)
+        if engine is not None:
+            dt = _dt_from_cfg(getattr(engine, "global_config", None))
+            if dt is not None:
+                return dt
 
         self._warn_once(
             "missing_dt_for_acceleration",
@@ -522,7 +543,7 @@ class RuleRewardWrapper(gym.Wrapper):
         neighbors = info_dict.get("neighbors")
         neighbor_count = len(neighbors) if isinstance(neighbors, list) else 0
 
-        self._logger.info(
+        self._logger.debug(
             "Rulebook input availability | top available=%s missing=%s | ego available=%s missing=%s | neighbors=%d",
             top_available,
             top_missing,

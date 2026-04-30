@@ -16,6 +16,7 @@ import hydra
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
+from stable_baselines3.common.vec_env import VecEnv
 
 from thesis_rl.agents.agent import Agent
 from thesis_rl.curriculum.config import CurriculumConfig
@@ -26,7 +27,10 @@ from thesis_rl.runtime.builders import (
     build_env,
     build_planner,
     build_preprocessor,
+    build_train_env,
+    is_vectorized_training_enabled,
     load_planner,
+    set_planner_env_if_compatible,
 )
 from thesis_rl.runtime.console import print_evaluation_summary, print_run_setup
 from thesis_rl.runtime.csv_recorder import CSVRecorder
@@ -180,6 +184,21 @@ def _load_replay_buffer_if_available(planner: Any, path: Path) -> bool:
     return True
 
 
+def _validate_replay_buffer_n_envs(planner: Any) -> None:
+    model = _planner_model(planner)
+    replay_buffer = getattr(model, "replay_buffer", None)
+    if model is None or replay_buffer is None:
+        return
+    model_n_envs = int(getattr(model, "n_envs", 1))
+    buffer_n_envs = int(getattr(replay_buffer, "n_envs", model_n_envs))
+    if model_n_envs != buffer_n_envs:
+        raise ValueError(
+            "Loaded replay buffer was created with a different number of envs: "
+            f"model.n_envs={model_n_envs}, replay_buffer.n_envs={buffer_n_envs}. "
+            "Resume with the same env.vectorized.num_envs or start a fresh run."
+        )
+
+
 def _save_rng_state(path: Path) -> None:
     payload: dict[str, Any] = {
         "python": random.getstate(),
@@ -302,12 +321,6 @@ def main(cfg: DictConfig) -> None:
     artifacts_dir = Path(str(cfg.paths.artifacts_dir))
     metadata_path = save_run_metadata(cfg, artifacts_dir)
     hydra_config_path = Path(str(cfg.paths.run_dir)) / "hydra" / "config.yaml"
-    print_run_setup(
-        title="Training Run",
-        cfg=cfg,
-        metadata_path=metadata_path,
-        hydra_config_path=hydra_config_path,
-    )
     start_time = time.time()
     logs_dir = Path(str(cfg.paths.logs_dir))
     csv_dir = Path(str(cfg.paths.csv_dir))
@@ -435,11 +448,12 @@ def main(cfg: DictConfig) -> None:
                 )
             resume_state = _load_training_state(resume_training_state_path)
 
+        vectorized_training = is_vectorized_training_enabled(cfg)
+
         # Environment
-        env = build_env(cfg, current_train_overrides)
+        env = build_train_env(cfg, current_train_overrides)
         seed_env_spaces(env, run_seed)
-        print(f"Observation space: {env.observation_space}")
-        print(f"Action space: {env.action_space}")
+        train_env_count = int(env.num_envs) if isinstance(env, VecEnv) else 1
 
         # Agent
         preprocessor = build_preprocessor(cfg)
@@ -447,6 +461,19 @@ def main(cfg: DictConfig) -> None:
             cfg,
             adapter_space_kwargs(env.action_space),
         )
+        planner_seed: int | None = run_seed
+        if (
+            vectorized_training
+            and str(cfg.env.get("name", "")).lower() == "metadrive"
+        ):
+            # SB3 BaseAlgorithm.set_random_seed() calls VecEnv.seed(seed), which assigns
+            # worker seeds as (seed + rank). That conflicts with MetaDrive per-worker
+            # scenario partitions (start_seed/num_scenarios), causing out-of-range asserts.
+            planner_seed = None
+            train_logger.info(
+                "Planner seed disabled for vectorized MetaDrive to avoid VecEnv reseeding conflicts."
+            )
+
         if resume_enabled:
             if not resume_checkpoint_zip.exists():
                 raise FileNotFoundError(
@@ -454,13 +481,28 @@ def main(cfg: DictConfig) -> None:
                 )
             planner = load_planner(cfg, checkpoint_path=str(resume_checkpoint_zip), env=env)
         else:
-            planner = build_planner(cfg, env, seed=run_seed)
+            planner = build_planner(cfg, env, seed=planner_seed)
+        planner_model = _planner_model(planner)
+        planner_device = str(getattr(planner_model, "device", cfg.device))
+        print_run_setup(
+            title="Training Run",
+            cfg=cfg,
+            metadata_path=metadata_path,
+            hydra_config_path=hydra_config_path,
+            extra_rows=[
+                ("Observation space", str(env.observation_space)),
+                ("Action space", str(env.action_space)),
+                ("Vectorized training envs", str(train_env_count)),
+                ("Planner device", planner_device),
+            ],
+        )
         # Read EMA alpha from planner config if available
         ema_alpha_cfg = float(cfg.planner.get("monitor_ema_alpha", 0.1)) if hasattr(cfg, "planner") else 0.1
         agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg)
         if resume_enabled:
             agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
             _load_replay_buffer_if_available(planner, resume_replay_buffer_path)
+            _validate_replay_buffer_n_envs(planner)
             if bool(resume_cfg.get("restore_rng_state", True)):
                 _load_rng_state(resume_rng_state_path)
             if resume_state is None and resume_training_state_path.exists():
@@ -803,7 +845,8 @@ def main(cfg: DictConfig) -> None:
                 )
 
             # Agent training
-            chunk_summary = agent.train(
+            train_fn = agent.train_vectorized if vectorized_training else agent.train
+            chunk_summary = train_fn(
                 env=env,
                 chunk_timesteps=chunk_steps,
                 global_total_timesteps=total_timesteps,
@@ -812,12 +855,15 @@ def main(cfg: DictConfig) -> None:
                 log_interval=log_interval,
                 reset_seed_fn=train_reset_seed_for_episode,
             )
-            remaining -= chunk_steps
-            current_global_step = total_timesteps - remaining
+            actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
+            remaining = max(0, remaining - actual_chunk_steps)
+            current_global_step = min(total_timesteps, total_timesteps - remaining)
+            steps_end = current_global_step
             train_logger.info(
                 (
                     "Chunk finished | chunk_id=%d | stage=%s | global_step=%d | "
-                    "episodes=%d | mean_return=%.3f | mean_len=%.2f | fps=%.1f | n_updates=%d"
+                    "episodes=%d | mean_return=%.3f | mean_len=%.2f | fps=%.1f | "
+                    "update_calls=%d | n_updates=%d"
                 ),
                 chunk_id,
                 current_stage_name,
@@ -826,6 +872,7 @@ def main(cfg: DictConfig) -> None:
                 float(chunk_summary.get("ep_rew_mean", 0.0)),
                 float(chunk_summary.get("ep_len_mean", 0.0)),
                 float(chunk_summary.get("fps", 0.0)),
+                int(chunk_summary.get("update_calls", 0)),
                 int(chunk_summary.get("n_updates", 0)),
             )
             log_event(
@@ -846,7 +893,7 @@ def main(cfg: DictConfig) -> None:
                     "steps_start": steps_start,
                     "steps_end": steps_end,
                     "global_step": current_global_step,
-                    "chunk_steps": chunk_steps,
+                    "chunk_steps": actual_chunk_steps,
                     "episodes": int(chunk_summary.get("episodes", 0)),
                     "ep_rew_mean": float(chunk_summary.get("ep_rew_mean", 0.0)),
                     "ep_rew_std": float(chunk_summary.get("ep_rew_std", 0.0)),
@@ -866,6 +913,7 @@ def main(cfg: DictConfig) -> None:
                     "critic_loss_ema": float(chunk_summary.get("critic_loss_ema", 0.0)),
                     "critic_loss": float(chunk_summary.get("critic_loss", 0.0)),
                     "learning_rate": float(chunk_summary.get("learning_rate", 0.0)),
+                    "update_calls": int(chunk_summary.get("update_calls", 0)),
                     "n_updates": int(chunk_summary.get("n_updates", 0)),
                     "fps": float(chunk_summary.get("fps", 0.0)),
                     "elapsed_seconds": float(chunk_summary.get("elapsed_seconds", 0.0)),
@@ -877,7 +925,7 @@ def main(cfg: DictConfig) -> None:
 
             # Record training steps in curriculum manager for potential stage progression
             if curriculum_manager is not None:
-                curriculum_manager.record_train_steps(chunk_steps)
+                curriculum_manager.record_train_steps(actual_chunk_steps)
 
             # MetaDrive uses a global engine singleton: close training env before creating eval env.
             env.close()
@@ -901,7 +949,7 @@ def main(cfg: DictConfig) -> None:
             # Environment
             eval_env = build_env(cfg, eval_env_overrides)
             seed_env_spaces(eval_env, run_seed + 100_000 + (total_timesteps - remaining))
-            planner.set_env(eval_env)   # Update planner's env reference
+            set_planner_env_if_compatible(planner, eval_env)
 
             # Evaluation
             eval_id += 1
@@ -1063,9 +1111,9 @@ def main(cfg: DictConfig) -> None:
                     current_stage_index=current_stage_index,
                     metrics=metrics,
                 )
-                env = build_env(cfg, current_train_overrides)
+                env = build_train_env(cfg, current_train_overrides)
                 seed_env_spaces(env, run_seed + 300_000 + (total_timesteps - remaining))
-                planner.set_env(env)
+                set_planner_env_if_compatible(planner, env)
                 continue
 
             # Metrics check
@@ -1239,9 +1287,9 @@ def main(cfg: DictConfig) -> None:
             )
 
             # Rebuild env with new config (if changed) and update planner's env reference
-            env = build_env(cfg, current_train_overrides)
+            env = build_train_env(cfg, current_train_overrides)
             seed_env_spaces(env, run_seed + 400_000 + (total_timesteps - remaining))
-            planner.set_env(env)    # Update planner's env reference
+            set_planner_env_if_compatible(planner, env)    # Update planner's env reference
 
         ##########################
         ###### FINALIZATION ######

@@ -9,6 +9,9 @@ __pycache__/
 # Codex
 *.codex
 
+# VSCode
+*.code-workspace
+
 # Output
 outputs/*
 

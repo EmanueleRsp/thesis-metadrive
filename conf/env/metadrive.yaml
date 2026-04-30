@@ -13,7 +13,14 @@ config:
   random_lane_width: true
   random_lane_num: true
   random_agent_model: true
+  physics_world_step_size: 0.02
+  decision_repeat: 5
   log_level: 50
+
+vectorized:
+  enabled: true
+  num_envs: 10
+  start_method: forkserver
 
 # Default observation type:
 # LidarStateObservation

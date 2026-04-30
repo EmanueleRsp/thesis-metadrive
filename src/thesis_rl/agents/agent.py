@@ -20,6 +20,7 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 from rich.table import Table
+from stable_baselines3.common.vec_env import VecEnv
 
 from thesis_rl.preprocessors.base import BasePreprocessor
 from thesis_rl.agents.base import BasePlanner
@@ -135,10 +136,9 @@ class Agent:
         chunk_episode_route_completion: list[float] = []
         event_logs: deque[str] = deque(maxlen=8)
         monitor_log_handler = _LiveEventLogHandler(event_logs)
-        monitor_logger_names = (
-            "thesis_rl.envs.wrappers",
-            "thesis_rl.rulebook.evaluator",
-        )
+        # Avoid log-stream interference with Rich Live in multiprocessing/PTY contexts.
+        # Keep live metrics table, but do not attach runtime loggers to the event panel.
+        monitor_logger_names: tuple[str, ...] = ()
         monitor_logger_restore_state: list[tuple[logging.Logger, int, bool]] = []
 
         progress = Progress(
@@ -169,7 +169,8 @@ class Agent:
             latest_actor_loss: float,
             latest_critic_loss: float,
             latest_learning_rate: float,
-            total_updates: int,
+            total_update_calls: int,
+            total_gradient_steps: int,
             latest_actor_loss_ema: float,
             latest_critic_loss_ema: float,
         ) -> Table:
@@ -183,12 +184,11 @@ class Agent:
             table.add_row("Elapsed (s)", str(int(elapsed_seconds)))
             table.add_row("ep_len_mean", f"{mean_episode_len:.2f} ± {std_episode_len:.2f}")
             table.add_row("ep_rew_mean", f"{mean_episode_reward:.2f} ± {std_episode_reward:.2f}")
-            table.add_row("actor_loss", f"{latest_actor_loss:.3g}")
-            table.add_row("critic_loss", f"{latest_critic_loss:.3g}")
             table.add_row("actor_loss_ema", f"{latest_actor_loss_ema:.3g}")
             table.add_row("critic_loss_ema", f"{latest_critic_loss_ema:.3g}")
             table.add_row("learning_rate", f"{latest_learning_rate:.3g}")
-            table.add_row("n_updates", str(total_updates))
+            table.add_row("update_calls", str(total_update_calls))
+            table.add_row("n_updates", str(total_gradient_steps))
             return table
 
         def _build_logs_panel(logs: deque[str]) -> Panel:
@@ -211,7 +211,12 @@ class Agent:
             logger.addHandler(monitor_log_handler)
 
         try:
-            with Live(refresh_per_second=8, screen=False) as live:
+            with Live(
+                refresh_per_second=8,
+                screen=False,
+                redirect_stdout=False,
+                redirect_stderr=False,
+            ) as live:
                 for step in range(1, chunk_timesteps + 1):
 
                     ###### STEP ######
@@ -345,7 +350,8 @@ class Agent:
                     actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
                     critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))
                     learning_rate = float(getattr(lifecycle, "last_learning_rate", float("nan")))
-                    n_updates = int(getattr(lifecycle, "update_count", 0))
+                    update_calls = int(getattr(lifecycle, "update_count", 0))
+                    gradient_steps_total = int(getattr(lifecycle, "gradient_step_count", 0))
 
                     # Update EMA for losses
                     raw_actor = actor_loss
@@ -374,7 +380,8 @@ class Agent:
                             latest_actor_loss=actor_loss,
                             latest_critic_loss=critic_loss,
                             latest_learning_rate=learning_rate,
-                            total_updates=n_updates,
+                            total_update_calls=update_calls,
+                            total_gradient_steps=gradient_steps_total,
                             latest_actor_loss_ema=ema_actor_loss,
                             latest_critic_loss_ema=ema_critic_loss,
                         )
@@ -454,9 +461,344 @@ class Agent:
             "actor_loss_ema": float(ema_actor_loss) if not math.isnan(ema_actor_loss) else None,
             "critic_loss_ema": float(ema_critic_loss) if not math.isnan(ema_critic_loss) else None,
             "learning_rate": float(getattr(lifecycle, "last_learning_rate", float("nan"))),
-            "n_updates": int(getattr(lifecycle, "update_count", 0)),
+            "update_calls": int(getattr(lifecycle, "update_count", 0)),
+            "n_updates": int(getattr(lifecycle, "gradient_step_count", 0)),
             "fps": float(chunk_timesteps / elapsed),
             "elapsed_seconds": float(elapsed),
+            "chunk_steps_actual": int(chunk_timesteps),
+            "train_reset_seed_first": reset_seeds_used[0] if reset_seeds_used else None,
+            "train_reset_seed_last": reset_seeds_used[-1] if reset_seeds_used else None,
+            "train_reset_seed_unique_count": len(set(reset_seeds_used)),
+        }
+
+    def train_vectorized(
+        self,
+        env: Any,
+        chunk_timesteps: int,
+        global_total_timesteps: int,
+        global_steps_done: int,
+        deterministic: bool = False,
+        log_interval: int = 1000,
+        reset_seed_fn: Callable[[int], int | None] | None = None,
+    ) -> dict[str, float | int]:
+        """Train with a SB3 VecEnv, counting timesteps as total collected transitions."""
+        n_envs = int(env.num_envs) if isinstance(env, VecEnv) else 1
+        if n_envs <= 1:
+            return self.train(
+                env=env,
+                chunk_timesteps=chunk_timesteps,
+                global_total_timesteps=global_total_timesteps,
+                global_steps_done=global_steps_done,
+                deterministic=deterministic,
+                log_interval=log_interval,
+                reset_seed_fn=reset_seed_fn,
+            )
+        if bool(getattr(self.adapter, "requires_training", False)):
+            raise ValueError("Vectorized training currently supports only stateless adapters.")
+
+        lifecycle = self.planner.get_lifecycle()
+        lifecycle.begin_training(
+            chunk_timesteps=chunk_timesteps,
+            global_total_timesteps=global_total_timesteps,
+            global_steps_done=global_steps_done,
+        )
+        self.adapter.begin_training()
+        self.preprocessor.reset()
+
+        reset_seeds_used: list[int] = []
+        if reset_seed_fn is not None:
+            first_seed = reset_seed_fn(0)
+            if first_seed is not None:
+                # For SubprocVecEnv + MetaDrive, each worker has its own scenario window
+                # [start_index, start_index + num_scenarios). Seed each worker inside its
+                # own window to keep deterministic behavior and avoid out-of-range asserts.
+                seeded = False
+                try:
+                    if hasattr(env, "env_method"):
+                        bounds = env.env_method("get_worker_seed_bounds")
+                        start_indices = [int(item[0]) for item in bounds]
+                        scenario_counts = [int(item[1]) for item in bounds]
+                    else:
+                        start_indices = [int(v) for v in env.get_attr("start_index")]
+                        scenario_counts = [int(v) for v in env.get_attr("num_scenarios")]
+                    worker_seeds: list[int] = []
+                    for rank, (start_index, count) in enumerate(zip(start_indices, scenario_counts)):
+                        if count <= 0:
+                            raise ValueError(f"Worker {rank} has invalid num_scenarios={count}.")
+                        offset = (int(first_seed) + rank - start_index) % count
+                        worker_seeds.append(int(start_index + offset))
+                    if len(worker_seeds) == n_envs and hasattr(env, "_seeds"):
+                        env._seeds = worker_seeds  # type: ignore[attr-defined]
+                        reset_seeds_used.extend(worker_seeds)
+                        seeded = True
+                except Exception as exc:
+                    logging.getLogger(__name__).warning(
+                        "Failed to assign per-worker reset seeds for vectorized env: %s", exc
+                    )
+                if not seeded:
+                    # Keep metadata visibility even if worker seeding is unavailable.
+                    reset_seeds_used.append(int(first_seed))
+        try:
+            obs = env.reset()
+        except EOFError as exc:
+            raise RuntimeError(
+                "A SubprocVecEnv worker crashed during reset(). "
+                "With MetaDrive, this is commonly caused by multiprocessing start-method incompatibility. "
+                "Use env.vectorized.start_method=spawn (forkserver may crash workers)."
+            ) from exc
+
+        start_time = time.time()
+        episodes = 0
+        collected_steps = 0
+        episode_len = np.zeros(n_envs, dtype=np.int64)
+        episode_scalar_reward = np.zeros(n_envs, dtype=np.float64)
+        episode_env_reward = np.zeros(n_envs, dtype=np.float64)
+        episode_scalar_rule_reward = np.zeros(n_envs, dtype=np.float64)
+        episode_hybrid_reward = np.zeros(n_envs, dtype=np.float64)
+        episode_has_scalar_rule_reward = np.zeros(n_envs, dtype=bool)
+        episode_has_hybrid_reward = np.zeros(n_envs, dtype=bool)
+        episode_success = np.zeros(n_envs, dtype=bool)
+        episode_collision = np.zeros(n_envs, dtype=bool)
+        episode_out_of_road = np.zeros(n_envs, dtype=bool)
+        episode_route_completion = np.zeros(n_envs, dtype=np.float64)
+
+        recent_episode_lens: deque[int] = deque(maxlen=100)
+        recent_episode_rewards: deque[float] = deque(maxlen=100)
+        recent_episode_env_rewards: deque[float] = deque(maxlen=100)
+        recent_episode_scalar_rule_rewards: deque[float] = deque(maxlen=100)
+        recent_episode_hybrid_rewards: deque[float] = deque(maxlen=100)
+        chunk_episode_success: list[float] = []
+        chunk_episode_collision: list[float] = []
+        chunk_episode_out_of_road: list[float] = []
+        chunk_episode_route_completion: list[float] = []
+        event_logs: deque[str] = deque(maxlen=8)
+        monitor_log_handler = _LiveEventLogHandler(event_logs)
+        # Avoid log-stream interference with Rich Live in multiprocessing/PTY contexts.
+        # Keep live metrics table, but do not attach runtime loggers to the event panel.
+        monitor_logger_names: tuple[str, ...] = ()
+        monitor_logger_restore_state: list[tuple[logging.Logger, int, bool]] = []
+
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeRemainingColumn(),
+            expand=True,
+        )
+        progress_task = progress.add_task("Training chunk", total=chunk_timesteps)
+        ema_alpha = float(getattr(self, "ema_alpha", 0.1))
+        ema_actor_loss: float = float("nan")
+        ema_critic_loss: float = float("nan")
+
+        def _preprocess_batch(batch: np.ndarray) -> np.ndarray:
+            return np.stack([self.preprocessor(item) for item in batch]).astype(np.float32)
+
+        def _adapt_batch(batch: np.ndarray) -> np.ndarray:
+            return np.stack([self.adapter(item) for item in batch]).astype(np.float32)
+
+        def _table() -> Table:
+            elapsed = max(time.time() - start_time, 1e-9)
+            actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
+            critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))
+            learning_rate = float(getattr(lifecycle, "last_learning_rate", float("nan")))
+            table = Table(title="Training Monitor", expand=True)
+            table.add_column("Metric", style="cyan", no_wrap=True)
+            table.add_column("Value", style="white")
+            table.add_row("Chunk steps", f"{min(collected_steps, chunk_timesteps)}/{chunk_timesteps}")
+            table.add_row("Total steps", f"{global_steps_done + collected_steps}/{global_total_timesteps}")
+            table.add_row("Vector envs", str(n_envs))
+            table.add_row("Episodes", str(episodes))
+            table.add_row("FPS", str(int(collected_steps / elapsed)))
+            table.add_row("Elapsed (s)", str(int(elapsed)))
+            ep_len_mean = float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0
+            ep_len_std = float(np.std(recent_episode_lens)) if recent_episode_lens else 0.0
+            ep_rew_mean = float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0
+            ep_rew_std = float(np.std(recent_episode_rewards)) if recent_episode_rewards else 0.0
+            table.add_row("ep_len_mean", f"{ep_len_mean:.2f} ± {ep_len_std:.2f}")
+            table.add_row("ep_rew_mean", f"{ep_rew_mean:.2f} ± {ep_rew_std:.2f}")
+            table.add_row("actor_loss_ema", f"{ema_actor_loss:.3g}")
+            table.add_row("critic_loss_ema", f"{ema_critic_loss:.3g}")
+            table.add_row("learning_rate", f"{learning_rate:.3g}")
+            table.add_row("update_calls", str(int(getattr(lifecycle, "update_count", 0))))
+            table.add_row("n_updates", str(int(getattr(lifecycle, "gradient_step_count", 0))))
+            return table
+
+        def _logs_panel() -> Panel:
+            content = "\n".join(event_logs) if event_logs else "No events yet"
+            return Panel(content, title="Events", expand=True)
+
+        for logger_name in monitor_logger_names:
+            logger = logging.getLogger(logger_name)
+            monitor_logger_restore_state.append((logger, logger.level, logger.propagate))
+            logger.setLevel(logging.INFO)
+            logger.propagate = False
+            logger.addHandler(monitor_log_handler)
+
+        try:
+            with Live(
+                refresh_per_second=8,
+                screen=False,
+                redirect_stdout=False,
+                redirect_stderr=False,
+            ) as live:
+                while collected_steps < chunk_timesteps:
+                    processed_obs = _preprocess_batch(np.asarray(obs))
+                    planner_output, buffer_actions = lifecycle.act_batch(
+                        processed_obs,
+                        deterministic=deterministic,
+                    )
+                    actions = _adapt_batch(planner_output)
+                    next_obs, rewards, dones, infos = env.step(actions)
+                    infos = [dict(info) for info in infos]
+                    rewards = np.asarray(rewards, dtype=np.float32)
+                    dones = np.asarray(dones, dtype=bool)
+                    for info in infos:
+                        terminal_observation = info.get("terminal_observation")
+                        if terminal_observation is not None:
+                            info["terminal_observation"] = self.preprocessor(terminal_observation)
+
+                    episode_len += 1
+                    episode_scalar_reward += rewards.astype(np.float64)
+                    for idx, info in enumerate(infos):
+                        env_reward = info.get("env_reward")
+                        episode_env_reward[idx] += (
+                            float(env_reward)
+                            if isinstance(env_reward, (int, float, np.floating))
+                            else float(rewards[idx])
+                        )
+                        scalar_rule_reward = info.get("scalar_rule_reward")
+                        if isinstance(scalar_rule_reward, (int, float, np.floating)):
+                            episode_scalar_rule_reward[idx] += float(scalar_rule_reward)
+                            episode_has_scalar_rule_reward[idx] = True
+                        hybrid_reward = info.get("hybrid_reward")
+                        if isinstance(hybrid_reward, (int, float, np.floating)):
+                            episode_hybrid_reward[idx] += float(hybrid_reward)
+                            episode_has_hybrid_reward[idx] = True
+                        episode_success[idx] = episode_success[idx] or self._extract_success(info)
+                        episode_collision[idx] = episode_collision[idx] or self._extract_collision(info)
+                        episode_out_of_road[idx] = episode_out_of_road[idx] or self._extract_out_of_road(info)
+                        episode_route_completion[idx] = max(
+                            float(episode_route_completion[idx]),
+                            self._extract_route_completion(info),
+                        )
+
+                    next_processed_obs = _preprocess_batch(np.asarray(next_obs))
+                    lifecycle.observe_transition_batch(
+                        observations=processed_obs,
+                        buffer_actions=buffer_actions,
+                        rewards=rewards,
+                        dones=dones,
+                        next_observations=next_processed_obs,
+                        infos=infos,
+                    )
+                    lifecycle.maybe_update()
+                    self.adapter.maybe_update()
+
+                    collected_steps += n_envs
+                    done_indices = np.flatnonzero(dones)
+                    if len(done_indices) > 0:
+                        lifecycle.on_episode_end(indices=done_indices.tolist())
+                        self.preprocessor.reset()
+                    for idx in done_indices:
+                        if episode_success[idx]:
+                            reason = "success"
+                        elif episode_collision[idx]:
+                            reason = "collision"
+                        elif episode_out_of_road[idx]:
+                            reason = "out_of_road"
+                        else:
+                            reason = "timeout"
+                        episodes += 1
+                        event_logs.appendleft(
+                            f"Episode {episodes} env={idx} ended | len={int(episode_len[idx])} "
+                            f"reward={episode_scalar_reward[idx]:.2f} | reason={reason} "
+                            f"route_completion={episode_route_completion[idx]:.2f}"
+                        )
+                        recent_episode_lens.append(int(episode_len[idx]))
+                        recent_episode_rewards.append(float(episode_scalar_reward[idx]))
+                        recent_episode_env_rewards.append(float(episode_env_reward[idx]))
+                        if episode_has_scalar_rule_reward[idx]:
+                            recent_episode_scalar_rule_rewards.append(float(episode_scalar_rule_reward[idx]))
+                        if episode_has_hybrid_reward[idx]:
+                            recent_episode_hybrid_rewards.append(float(episode_hybrid_reward[idx]))
+                        chunk_episode_success.append(1.0 if episode_success[idx] else 0.0)
+                        chunk_episode_collision.append(1.0 if episode_collision[idx] else 0.0)
+                        chunk_episode_out_of_road.append(1.0 if episode_out_of_road[idx] else 0.0)
+                        chunk_episode_route_completion.append(float(episode_route_completion[idx]))
+                        episode_len[idx] = 0
+                        episode_scalar_reward[idx] = 0.0
+                        episode_env_reward[idx] = 0.0
+                        episode_scalar_rule_reward[idx] = 0.0
+                        episode_hybrid_reward[idx] = 0.0
+                        episode_has_scalar_rule_reward[idx] = False
+                        episode_has_hybrid_reward[idx] = False
+                        episode_success[idx] = False
+                        episode_collision[idx] = False
+                        episode_out_of_road[idx] = False
+                        episode_route_completion[idx] = 0.0
+
+                    actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
+                    critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))
+                    if not math.isnan(actor_loss):
+                        ema_actor_loss = actor_loss if math.isnan(ema_actor_loss) else (
+                            ema_alpha * actor_loss + (1 - ema_alpha) * ema_actor_loss
+                        )
+                    if not math.isnan(critic_loss):
+                        ema_critic_loss = critic_loss if math.isnan(ema_critic_loss) else (
+                            ema_alpha * critic_loss + (1 - ema_alpha) * ema_critic_loss
+                        )
+
+                    progress.update(progress_task, completed=min(collected_steps, chunk_timesteps))
+                    should_render = (
+                        log_interval <= 0
+                        or collected_steps % log_interval < n_envs
+                        or collected_steps >= chunk_timesteps
+                    )
+                    if should_render:
+                        live.update(Group(progress, _table(), _logs_panel()))
+                    obs = next_obs
+        finally:
+            for logger, original_level, original_propagate in monitor_logger_restore_state:
+                logger.removeHandler(monitor_log_handler)
+                logger.setLevel(original_level)
+                logger.propagate = original_propagate
+
+        lifecycle.end_training()
+        self.adapter.end_training()
+        elapsed = max(time.time() - start_time, 1e-9)
+        ep_len_final_mean = float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0
+        ep_len_final_std = float(np.std(recent_episode_lens)) if recent_episode_lens else 0.0
+        ep_len_ci_95 = 1.96 * ep_len_final_std / np.sqrt(len(recent_episode_lens)) if len(recent_episode_lens) > 1 else 0.0
+        ep_rew_final_mean = float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0
+        ep_rew_final_std = float(np.std(recent_episode_rewards)) if recent_episode_rewards else 0.0
+        ep_rew_ci_95 = 1.96 * ep_rew_final_std / np.sqrt(len(recent_episode_rewards)) if len(recent_episode_rewards) > 1 else 0.0
+
+        return {
+            "episodes": int(episodes),
+            "ep_len_mean": ep_len_final_mean,
+            "ep_len_std": ep_len_final_std,
+            "ep_len_ci_95": float(ep_len_ci_95),
+            "ep_rew_mean": ep_rew_final_mean,
+            "ep_rew_std": ep_rew_final_std,
+            "ep_rew_ci_95": float(ep_rew_ci_95),
+            "ep_env_rew_mean": float(np.mean(recent_episode_env_rewards)) if recent_episode_env_rewards else None,
+            "ep_scalar_rule_rew_mean": float(np.mean(recent_episode_scalar_rule_rewards)) if recent_episode_scalar_rule_rewards else None,
+            "ep_hybrid_rew_mean": float(np.mean(recent_episode_hybrid_rewards)) if recent_episode_hybrid_rewards else None,
+            "ep_success_rate": float(np.mean(chunk_episode_success)) if chunk_episode_success else None,
+            "ep_collision_rate": float(np.mean(chunk_episode_collision)) if chunk_episode_collision else None,
+            "ep_out_of_road_rate": float(np.mean(chunk_episode_out_of_road)) if chunk_episode_out_of_road else None,
+            "ep_route_completion_mean": float(np.mean(chunk_episode_route_completion)) if chunk_episode_route_completion else None,
+            "actor_loss": float(getattr(lifecycle, "last_actor_loss", float("nan"))),
+            "critic_loss": float(getattr(lifecycle, "last_critic_loss", float("nan"))),
+            "actor_loss_ema": float(ema_actor_loss) if not math.isnan(ema_actor_loss) else None,
+            "critic_loss_ema": float(ema_critic_loss) if not math.isnan(ema_critic_loss) else None,
+            "learning_rate": float(getattr(lifecycle, "last_learning_rate", float("nan"))),
+            "update_calls": int(getattr(lifecycle, "update_count", 0)),
+            "n_updates": int(getattr(lifecycle, "gradient_step_count", 0)),
+            "fps": float(collected_steps / elapsed),
+            "elapsed_seconds": float(elapsed),
+            "chunk_steps_actual": int(collected_steps),
             "train_reset_seed_first": reset_seeds_used[0] if reset_seeds_used else None,
             "train_reset_seed_last": reset_seeds_used[-1] if reset_seeds_used else None,
             "train_reset_seed_unique_count": len(set(reset_seeds_used)),

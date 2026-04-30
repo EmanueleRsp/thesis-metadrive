@@ -204,7 +204,7 @@ def test_agent_train_uses_explicit_seed_function_for_episode_resets() -> None:
     agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
     env = _DummyEnv()
 
-    agent.train(
+    summary = agent.train(
         env=env,
         chunk_timesteps=3,
         global_total_timesteps=10,

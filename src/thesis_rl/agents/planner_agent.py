@@ -5,7 +5,8 @@ from typing import Any
 
 import numpy as np
 from stable_baselines3 import TD3
-from stable_baselines3.common.noise import NormalActionNoise
+from stable_baselines3.common.noise import NormalActionNoise, VectorizedActionNoise
+from stable_baselines3.common.vec_env import VecEnv
 
 from thesis_rl.agents.planner_lifecycle import BasePlannerLifecycle, Td3Lifecycle
 
@@ -51,7 +52,11 @@ class Td3PlannerBackend:
 
         mean = np.full(action_dim, mean_value, dtype=np.float32)
         sigma = np.full(action_dim, sigma_value, dtype=np.float32)
-        return NormalActionNoise(mean=mean, sigma=sigma)
+        noise = NormalActionNoise(mean=mean, sigma=sigma)
+        n_envs = int(env.num_envs) if isinstance(env, VecEnv) else 1
+        if n_envs > 1:
+            return VectorizedActionNoise(noise, n_envs=n_envs)
+        return noise
 
     @classmethod
     def build(
