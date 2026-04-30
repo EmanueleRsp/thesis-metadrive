@@ -346,6 +346,20 @@ def _log_event(events_path: Path, event: str, **fields: Any) -> None:
     _append_jsonl(events_path, payload)
 
 
+def _apply_eval_scenario_seed_split(
+    *,
+    base_run_seed: int,
+    eval_env_overrides: dict[str, object] | None,
+    cfg: DictConfig,
+) -> dict[str, object]:
+    """Return env overrides with deterministic disjoint scenario seed for evaluation."""
+    overrides = dict(eval_env_overrides or {})
+    base_start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
+    scenario_offset = 1_000_000 + int(base_run_seed) * 10_000
+    overrides["start_seed"] = int(base_start_seed) + scenario_offset
+    return overrides
+
+
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     print("=== TRAIN CONFIG ===")
@@ -1253,8 +1267,14 @@ def main(cfg: DictConfig) -> None:
         final_eval_env_overrides = None
         if curriculum_manager is not None:
             final_eval_env_overrides = curriculum_manager.get_env_config(evaluation=True)
+        final_eval_env_overrides = _apply_eval_scenario_seed_split(
+            base_run_seed=run_seed,
+            eval_env_overrides=final_eval_env_overrides,
+            cfg=cfg,
+        )
         eval_env = build_env(cfg, final_eval_env_overrides)
         _seed_env_spaces(eval_env, run_seed + 500_000)
+        print(f"Final evaluation scenario start_seed: {final_eval_env_overrides['start_seed']}")
 
         # Evaluation
         metrics = agent.evaluate(

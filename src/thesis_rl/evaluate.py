@@ -167,11 +167,12 @@ def main(cfg: DictConfig) -> None:
         ckpt = Path(str(checkpoint_path))
         if not ckpt.exists():
             raise FileNotFoundError(f"Checkpoint not found: {ckpt}")
+        eval_episodes = int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes))
         eval_logger.info(
             "Eval run started | checkpoint=%s | seed=%d | episodes=%d | deterministic=%s",
             str(ckpt),
             run_seed,
-            int(cfg.experiment.eval_episodes),
+            eval_episodes,
             bool(cfg.experiment.eval_deterministic),
         )
         _log_event(
@@ -179,7 +180,7 @@ def main(cfg: DictConfig) -> None:
             "eval_run_started",
             checkpoint_path=str(ckpt),
             seed=run_seed,
-            eval_episodes=int(cfg.experiment.eval_episodes),
+            eval_episodes=eval_episodes,
             deterministic=bool(cfg.experiment.eval_deterministic),
         )
 
@@ -217,9 +218,11 @@ def main(cfg: DictConfig) -> None:
 
         metrics = agent.evaluate(
             env=env,
-            n_eval_episodes=int(cfg.experiment.eval_episodes),
+            n_eval_episodes=eval_episodes,
             deterministic=bool(cfg.experiment.eval_deterministic),
             base_seed=run_seed + 10_000,
+            return_episode_metrics=True,
+            error_priority_base=float(cfg.reward.get("a", 2.01)),
         )
 
         print(f"Evaluation metrics: {metrics}")
