@@ -1,10 +1,8 @@
 # Validation Commands (Phase 1)
 
-Run all commands from project root:
+Start a tmux session and start a container with GPU access. Then run the following commands from the container shell to validate core training/evaluation/checkpointing behavior and CSV output contracts before scaling up to longer runs and deeper analysis.
 
-```bash
-cd /home/e.respino/main/thesis/thesis-metadrive
-```
+Run all commands from project root.
 
 Note:
 - In `conf/config.yaml` the default is `run_profile=fast`.

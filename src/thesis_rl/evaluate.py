@@ -159,6 +159,7 @@ def main(cfg: DictConfig) -> None:
             base_seed=eval_base_seed,
             return_episode_metrics=True,
             error_priority_base=float(cfg.reward.get("a", 2.01)),
+            show_progress=True,
         )
 
         print_evaluation_summary(

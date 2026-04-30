@@ -976,6 +976,7 @@ def main(cfg: DictConfig) -> None:
                 base_seed=eval_base_seed,
                 return_episode_metrics=True,
                 error_priority_base=float(cfg.reward.get("a", 2.01)),
+                show_progress=True,
             )
             eval_env.close()
             print_evaluation_summary(
@@ -1359,6 +1360,7 @@ def main(cfg: DictConfig) -> None:
             base_seed=final_eval_base_seed,
             return_episode_metrics=True,
             error_priority_base=float(cfg.reward.get("a", 2.01)),
+            show_progress=True,
         )
         final_stage_name = (
             curriculum_manager.get_current_stage().name

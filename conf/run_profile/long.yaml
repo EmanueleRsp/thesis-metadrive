@@ -1,4 +1,6 @@
-name: long
+# @package _global_
+run_profile:
+  name: long
 
 experiment:
   name: long

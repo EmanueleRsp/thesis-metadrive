@@ -1,0 +1,8 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+.hydra
+outputs
+__pycache__
+*.pyc

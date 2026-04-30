@@ -1,4 +1,6 @@
-name: medium
+# @package _global_
+run_profile:
+  name: medium
 
 experiment:
   name: medium

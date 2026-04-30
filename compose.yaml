@@ -1,0 +1,20 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: thesis-metadrive:dev
+    container_name: thesis-metadrive-dev
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    gpus: all
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - .:/workspace
+      - ./outputs:/workspace/outputs

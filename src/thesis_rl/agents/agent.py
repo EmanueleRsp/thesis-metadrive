@@ -818,6 +818,7 @@ class Agent:
         base_seed: int | None = None,
         return_episode_metrics: bool = False,
         error_priority_base: float = 2.01,
+        show_progress: bool = True,
     ) -> dict[str, Any]:
         '''Evaluate the agent in the given environment for a specified number of episodes.
         Args:
@@ -854,127 +855,148 @@ class Agent:
         per_rule_episode_min_margins: dict[str, list[float]] = {}
         per_rule_violation_count: dict[str, int] = {}
 
-        # Loop over evaluation episodes
-        for episode_idx in range(n_eval_episodes):
-            # Reset preprocessor and environment state at the start of each episode
-            self.preprocessor.reset()
-            if base_seed is not None:
-                obs, _ = env.reset(seed=int(base_seed) + episode_idx)
-            else:
-                obs, _ = env.reset()
+        progress: Progress | None = None
+        progress_task: Any | None = None
+        if show_progress:
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeRemainingColumn(),
+                transient=True,
+            )
+            progress.start()
+            progress_task = progress.add_task("Evaluation episodes", total=n_eval_episodes)
 
-            # Initialize episode tracking variables
-            done = False
-            truncated = False
-            ep_return = 0.0
-            ep_sat_max = 0.0
-            ep_collision = False
-            ep_out_of_road = False
-            ep_success = False
-            ep_route_completion = 0.0
-            ep_step_count = 0
-            ep_top_rule_violating_steps = 0
-            ep_rule_min_margin: dict[str, float] = {}
-            ep_rule_reward_sum_by_rule: dict[str, float] = {}
-            ep_env_return = 0.0
-            ep_scalar_rule_return = 0.0
-            ep_has_scalar_rule_reward = False
-            ep_hybrid_return = 0.0
-            ep_has_hybrid_reward = False
+        try:
+            # Loop over evaluation episodes
+            for episode_idx in range(n_eval_episodes):
+                # Reset preprocessor and environment state at the start of each episode
+                self.preprocessor.reset()
+                if base_seed is not None:
+                    obs, _ = env.reset(seed=int(base_seed) + episode_idx)
+                else:
+                    obs, _ = env.reset()
 
-            # Loop until episode ends
-            while not (done or truncated):
-                # Get action
-                action, _ = self.predict(obs, deterministic=deterministic)
-                obs, scalar_reward, done, truncated, step_info = env.step(action)
-                ep_return += float(scalar_reward)
-                ep_step_count += 1
-                if isinstance(step_info, dict):
-                    env_reward = step_info.get("env_reward")
-                    if isinstance(env_reward, (int, float, np.floating)):
-                        ep_env_return += float(env_reward)
+                # Initialize episode tracking variables
+                done = False
+                truncated = False
+                ep_return = 0.0
+                ep_sat_max = 0.0
+                ep_collision = False
+                ep_out_of_road = False
+                ep_success = False
+                ep_route_completion = 0.0
+                ep_step_count = 0
+                ep_top_rule_violating_steps = 0
+                ep_rule_min_margin: dict[str, float] = {}
+                ep_rule_reward_sum_by_rule: dict[str, float] = {}
+                ep_env_return = 0.0
+                ep_scalar_rule_return = 0.0
+                ep_has_scalar_rule_reward = False
+                ep_hybrid_return = 0.0
+                ep_has_hybrid_reward = False
+
+                # Loop until episode ends
+                while not (done or truncated):
+                    # Get action
+                    action, _ = self.predict(obs, deterministic=deterministic)
+                    obs, scalar_reward, done, truncated, step_info = env.step(action)
+                    ep_return += float(scalar_reward)
+                    ep_step_count += 1
+                    if isinstance(step_info, dict):
+                        env_reward = step_info.get("env_reward")
+                        if isinstance(env_reward, (int, float, np.floating)):
+                            ep_env_return += float(env_reward)
+                        else:
+                            ep_env_return += float(scalar_reward)
+                        scalar_rule_reward = step_info.get("scalar_rule_reward")
+                        if isinstance(scalar_rule_reward, (int, float, np.floating)):
+                            ep_scalar_rule_return += float(scalar_rule_reward)
+                            ep_has_scalar_rule_reward = True
+                        hybrid_reward = step_info.get("hybrid_reward")
+                        if isinstance(hybrid_reward, (int, float, np.floating)):
+                            ep_hybrid_return += float(hybrid_reward)
+                            ep_has_hybrid_reward = True
                     else:
                         ep_env_return += float(scalar_reward)
-                    scalar_rule_reward = step_info.get("scalar_rule_reward")
-                    if isinstance(scalar_rule_reward, (int, float, np.floating)):
-                        ep_scalar_rule_return += float(scalar_rule_reward)
-                        ep_has_scalar_rule_reward = True
-                    hybrid_reward = step_info.get("hybrid_reward")
-                    if isinstance(hybrid_reward, (int, float, np.floating)):
-                        ep_hybrid_return += float(hybrid_reward)
-                        ep_has_hybrid_reward = True
+
+                    # Extract rule violation and saturation info from `step_info` for episode-level metrics
+                    sat_summary = self._extract_saturation_summary(step_info)
+                    if sat_summary is not None:
+                        _sat_rule, sat_ratio = sat_summary
+                        ep_sat_max = max(ep_sat_max, sat_ratio)
+                    ep_collision = ep_collision or self._extract_collision(step_info)
+                    ep_out_of_road = ep_out_of_road or self._extract_out_of_road(step_info)
+                    ep_success = ep_success or self._extract_success(step_info)
+                    ep_route_completion = max(ep_route_completion, self._extract_route_completion(step_info))
+                    if self._has_top_rule_violation(step_info):
+                        ep_top_rule_violating_steps += 1
+                    for rule_name, rule_priority, margin in self._extract_rule_margins(step_info):
+                        all_rule_names.add(rule_name)
+                        if rule_name not in rule_priority_by_name:
+                            rule_priority_by_name[rule_name] = int(rule_priority)
+                        ep_rule_reward_sum_by_rule[rule_name] = float(
+                            ep_rule_reward_sum_by_rule.get(rule_name, 0.0) + float(margin)
+                        )
+                        ep_rule_min_margin[rule_name] = min(
+                            float(ep_rule_min_margin.get(rule_name, float("inf"))),
+                            float(margin),
+                        )
+
+                # Record episode metrics
+                episode_returns.append(ep_return)
+                episode_saturation_max.append(ep_sat_max)
+                episode_collision.append(1.0 if ep_collision else 0.0)
+                episode_out_of_road.append(1.0 if ep_out_of_road else 0.0)
+                episode_success.append(1.0 if ep_success else 0.0)
+                episode_route_completion.append(ep_route_completion)
+                episode_lengths.append(ep_step_count)
+                episode_timeout.append(1.0 if bool(truncated) else 0.0)
+                episode_env_returns.append(float(ep_env_return))
+                episode_scalar_rule_returns.append(
+                    float(ep_scalar_rule_return) if ep_has_scalar_rule_reward else None
+                )
+                episode_hybrid_returns.append(float(ep_hybrid_return) if ep_has_hybrid_reward else None)
+                episode_rule_rewards_by_rule.append(dict(sorted(ep_rule_reward_sum_by_rule.items())))
+                if ep_step_count > 0:
+                    episode_top_rule_violation_rate.append(ep_top_rule_violating_steps / ep_step_count)
                 else:
-                    ep_env_return += float(scalar_reward)
+                    episode_top_rule_violation_rate.append(0.0)
 
-                # Extract rule violation and saturation info from `step_info` for episode-level metrics
-                sat_summary = self._extract_saturation_summary(step_info)
-                if sat_summary is not None:
-                    _sat_rule, sat_ratio = sat_summary
-                    ep_sat_max = max(ep_sat_max, sat_ratio)
-                ep_collision = ep_collision or self._extract_collision(step_info)
-                ep_out_of_road = ep_out_of_road or self._extract_out_of_road(step_info)
-                ep_success = ep_success or self._extract_success(step_info)
-                ep_route_completion = max(ep_route_completion, self._extract_route_completion(step_info))
-                if self._has_top_rule_violation(step_info):
-                    ep_top_rule_violating_steps += 1
-                for rule_name, rule_priority, margin in self._extract_rule_margins(step_info):
-                    all_rule_names.add(rule_name)
-                    if rule_name not in rule_priority_by_name:
-                        rule_priority_by_name[rule_name] = int(rule_priority)
-                    ep_rule_reward_sum_by_rule[rule_name] = float(
-                        ep_rule_reward_sum_by_rule.get(rule_name, 0.0) + float(margin)
-                    )
-                    ep_rule_min_margin[rule_name] = min(
-                        float(ep_rule_min_margin.get(rule_name, float("inf"))),
-                        float(margin),
-                    )
-
-            # Record episode metrics
-            episode_returns.append(ep_return)
-            episode_saturation_max.append(ep_sat_max)
-            episode_collision.append(1.0 if ep_collision else 0.0)
-            episode_out_of_road.append(1.0 if ep_out_of_road else 0.0)
-            episode_success.append(1.0 if ep_success else 0.0)
-            episode_route_completion.append(ep_route_completion)
-            episode_lengths.append(ep_step_count)
-            episode_timeout.append(1.0 if bool(truncated) else 0.0)
-            episode_env_returns.append(float(ep_env_return))
-            episode_scalar_rule_returns.append(
-                float(ep_scalar_rule_return) if ep_has_scalar_rule_reward else None
-            )
-            episode_hybrid_returns.append(float(ep_hybrid_return) if ep_has_hybrid_reward else None)
-            episode_rule_rewards_by_rule.append(dict(sorted(ep_rule_reward_sum_by_rule.items())))
-            if ep_step_count > 0:
-                episode_top_rule_violation_rate.append(ep_top_rule_violating_steps / ep_step_count)
-            else:
-                episode_top_rule_violation_rate.append(0.0)
-
-            violated_in_episode: list[tuple[str, int]] = []
-            for rule_name, min_margin in ep_rule_min_margin.items():
-                per_rule_episode_min_margins.setdefault(rule_name, []).append(float(min_margin))
-                if float(min_margin) < 0.0:
-                    per_rule_violation_count[rule_name] = int(per_rule_violation_count.get(rule_name, 0) + 1)
-                    violated_in_episode.append((rule_name, int(rule_priority_by_name.get(rule_name, 0))))
-
-            if violated_in_episode:
-                violated_in_episode.sort(key=lambda item: (item[1], item[0]))
-                violation_pattern = "+".join(name for name, _prio in violated_in_episode)
-                episode_violated_rule_names.append(violation_pattern)
-            else:
-                violation_pattern = "none"
-                episode_violated_rule_names.append("none")
-            episode_violation_patterns.append(violation_pattern)
-
-            if ep_rule_min_margin:
-                p_max = max(int(rule_priority_by_name.get(name, 0)) for name in ep_rule_min_margin)
-                ev_episode = 0.0
+                violated_in_episode: list[tuple[str, int]] = []
                 for rule_name, min_margin in ep_rule_min_margin.items():
-                    priority = int(rule_priority_by_name.get(rule_name, 0))
-                    weight = float(error_priority_base) ** float(p_max - priority)
-                    ev_episode += weight * max(0.0, -float(min_margin))
-                episode_error_values.append(float(ev_episode))
-            else:
-                episode_error_values.append(0.0)
+                    per_rule_episode_min_margins.setdefault(rule_name, []).append(float(min_margin))
+                    if float(min_margin) < 0.0:
+                        per_rule_violation_count[rule_name] = int(per_rule_violation_count.get(rule_name, 0) + 1)
+                        violated_in_episode.append((rule_name, int(rule_priority_by_name.get(rule_name, 0))))
+
+                if violated_in_episode:
+                    violated_in_episode.sort(key=lambda item: (item[1], item[0]))
+                    violation_pattern = "+".join(name for name, _prio in violated_in_episode)
+                    episode_violated_rule_names.append(violation_pattern)
+                else:
+                    violation_pattern = "none"
+                    episode_violated_rule_names.append("none")
+                episode_violation_patterns.append(violation_pattern)
+
+                if ep_rule_min_margin:
+                    p_max = max(int(rule_priority_by_name.get(name, 0)) for name in ep_rule_min_margin)
+                    ev_episode = 0.0
+                    for rule_name, min_margin in ep_rule_min_margin.items():
+                        priority = int(rule_priority_by_name.get(rule_name, 0))
+                        weight = float(error_priority_base) ** float(p_max - priority)
+                        ev_episode += weight * max(0.0, -float(min_margin))
+                    episode_error_values.append(float(ev_episode))
+                else:
+                    episode_error_values.append(0.0)
+
+                if progress is not None and progress_task is not None:
+                    progress.advance(progress_task)
+        finally:
+            if progress is not None:
+                progress.stop()
 
         counterexample_rate = (
             float(np.mean([1.0 if pattern != "none" else 0.0 for pattern in episode_violation_patterns]))

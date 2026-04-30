@@ -1,4 +1,6 @@
-name: default
+# @package _global_
+run_profile:
+  name: default
 
 experiment:
   name: default

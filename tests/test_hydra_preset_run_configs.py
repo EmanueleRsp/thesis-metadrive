@@ -55,3 +55,12 @@ def test_reward_variants_compose() -> None:
     assert str(cfg_scalar_rulebook.reward.mode) == "scalar_rulebook"
     assert float(cfg_scalar_rulebook.reward.lambda_env) == 0.0
     assert float(cfg_scalar_rulebook.reward.lambda_rule) == 1.0
+
+
+def test_run_profile_medium_overrides_experiment_budget() -> None:
+    cfg = _compose("run_profile=medium")
+
+    assert cfg.run_profile.name == "medium"
+    assert cfg.experiment.name == "medium"
+    assert int(cfg.experiment.total_timesteps) == 350000
+    assert int(cfg.experiment.eval_episodes) == 50

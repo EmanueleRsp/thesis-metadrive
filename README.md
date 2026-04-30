@@ -55,6 +55,55 @@ For the current test and smoke-run workflow, see
 - Prefer `uv run --no-sync` for repeated train/evaluate runs after `uv sync`.
 - If the module `thesis_rl` is not found, refresh editable install with `uv pip install -e .`.
 
+## Container workflow (shared and reproducible)
+
+This repository includes:
+- `Dockerfile`: pinned base image + `uv` + locked deps via `uv.lock`
+- `compose.yaml`: standard dev container (GPU, interactive shell, persisted `outputs/`)
+
+### 1) Build and start container
+
+```bash
+docker compose up -d --build
+```
+
+### 2) Enter container shell
+
+```bash
+docker compose exec dev bash
+```
+
+### 3) Run training / evaluation
+
+```bash
+uv run --no-sync python -m thesis_rl.train
+uv run --no-sync python -m thesis_rl.evaluate
+```
+
+Examples with Hydra preset/overrides:
+
+```bash
+uv run --no-sync python -m thesis_rl.train preset=td3/td3_scalar_def_curr
+uv run --no-sync python -m thesis_rl.evaluate preset=td3/td3_scalar_def_curr
+uv run --no-sync python -m thesis_rl.train preset=td3/td3_scalar_rulebook_scale_tuning_no_curr run_profile=fast
+```
+
+### 4) Parallel runs in same container
+
+Attach from multiple terminals and run concurrent processes:
+
+```bash
+docker compose exec dev bash
+tmux new -s thesis
+```
+
+In another host terminal:
+
+```bash
+docker compose exec dev bash
+tmux attach -t thesis
+```
+
 ## Current status
 
 This is still a **starter scaffold**, not the full implementation.
@@ -65,8 +114,5 @@ The main value at this stage is:
 
 ## TODO
 
-- Add a fully container-first setup for reproducibility and portability:
-	- define a project Dockerfile with pinned system and Python dependencies
-	- remove local machine-specific wheel/path assumptions
-	- keep `uv run` workflow consistent inside the container
-	- document host GPU driver prerequisites and startup checks
+- Add startup checks for CUDA visibility and MetaDrive runtime dependencies.
+- Add optional non-interactive job profiles in `compose.yaml` for CI-style runs.
