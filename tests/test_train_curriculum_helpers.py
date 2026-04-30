@@ -4,7 +4,12 @@ from omegaconf import OmegaConf
 
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.runtime.builders import merge_env_config_with_overrides
-from thesis_rl.train import _missing_curriculum_metrics
+from thesis_rl.train import (
+    _apply_eval_scenario_seed_split,
+    _eval_base_seed_from_env_overrides,
+    _missing_curriculum_metrics,
+    _train_reset_seed_from_env_overrides,
+)
 
 
 def test_merge_env_config_with_overrides_updates_only_config_block() -> None:
@@ -72,3 +77,114 @@ def test_missing_curriculum_metrics_lists_only_absent_keys() -> None:
 
     missing = _missing_curriculum_metrics(metrics, curriculum_cfg)
     assert missing == []
+
+
+def test_eval_scenario_seed_split_returns_valid_base_seed_and_episode_window() -> None:
+    cfg = OmegaConf.create(
+        {
+            "env": {
+                "config": {
+                    "start_seed": 0,
+                    "num_scenarios": 2,
+                }
+            },
+            "scenario_splits": {
+                "stride": 1000,
+                "validation_offset": 10_000,
+                "test_offset": 20_000,
+            },
+        }
+    )
+
+    overrides = _apply_eval_scenario_seed_split(
+        base_run_seed=42,
+        eval_env_overrides=None,
+        cfg=cfg,
+        n_eval_episodes=5,
+        split="validation",
+    )
+
+    assert int(overrides["start_seed"]) == 52_000
+    assert int(overrides["num_scenarios"]) == 5
+    assert _eval_base_seed_from_env_overrides(overrides, cfg) == int(overrides["start_seed"])
+
+
+def test_eval_scenario_seed_split_keeps_validation_and_test_disjoint() -> None:
+    cfg = OmegaConf.create(
+        {
+            "env": {
+                "config": {
+                    "start_seed": 0,
+                    "num_scenarios": 50,
+                }
+            },
+            "scenario_splits": {
+                "stride": 1000,
+                "validation_offset": 10_000,
+                "test_offset": 20_000,
+            },
+        }
+    )
+
+    validation = _apply_eval_scenario_seed_split(
+        base_run_seed=42,
+        eval_env_overrides=None,
+        cfg=cfg,
+        n_eval_episodes=50,
+        split="validation",
+    )
+    test = _apply_eval_scenario_seed_split(
+        base_run_seed=42,
+        eval_env_overrides=None,
+        cfg=cfg,
+        n_eval_episodes=50,
+        split="test",
+    )
+
+    validation_start = int(validation["start_seed"])
+    validation_end = validation_start + int(validation["num_scenarios"]) - 1
+    test_start = int(test["start_seed"])
+    test_end = test_start + int(test["num_scenarios"]) - 1
+
+    assert validation_end < test_start
+    assert validation_start == 52_000
+    assert test_start == 62_000
+    assert test_end == 62_049
+
+
+def test_train_reset_seed_stays_inside_baseline_train_pool() -> None:
+    cfg = OmegaConf.create(
+        {
+            "env": {
+                "config": {
+                    "start_seed": 0,
+                    "num_scenarios": 50,
+                }
+            }
+        }
+    )
+
+    assert _train_reset_seed_from_env_overrides(None, cfg, reset_offset=0) == 0
+    assert _train_reset_seed_from_env_overrides(None, cfg, reset_offset=1) == 1
+    assert _train_reset_seed_from_env_overrides(None, cfg, reset_offset=50) == 0
+
+
+def test_train_reset_seed_stays_inside_curriculum_stage_pool() -> None:
+    cfg = OmegaConf.create(
+        {
+            "env": {
+                "config": {
+                    "start_seed": 0,
+                    "num_scenarios": 50,
+                }
+            }
+        }
+    )
+    train_overrides = {
+        "start_seed": 1000,
+        "num_scenarios": 20,
+    }
+
+    assert _train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=0) == 1000
+    assert _train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=19) == 1019
+    assert _train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=20) == 1000

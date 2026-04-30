@@ -16,6 +16,8 @@ import hydra
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
+from rich.console import Console
+from rich.table import Table
 
 from thesis_rl.agents.agent import Agent
 from thesis_rl.curriculum.config import CurriculumConfig
@@ -51,6 +53,8 @@ CHECKPOINT_INDEX_FIELDS = [
     "reason",
     "timestamp",
 ]
+
+_CONSOLE = Console()
 
 
 def _append_checkpoint_index_row(index_path: Path, row: dict[str, Any]) -> None:
@@ -346,18 +350,130 @@ def _log_event(events_path: Path, event: str, **fields: Any) -> None:
     _append_jsonl(events_path, payload)
 
 
+_DEFAULT_SCENARIO_SPLIT_STRIDE = 100_000
+_DEFAULT_SCENARIO_SPLIT_OFFSETS = {
+    "eval": 1_000_000,
+    "validation": 1_000_000,
+    "test": 2_000_000,
+}
+
+
+def _scenario_split_settings(cfg: DictConfig) -> tuple[int, dict[str, int]]:
+    split_cfg = cfg.get("scenario_splits", {})
+    stride = int(split_cfg.get("stride", _DEFAULT_SCENARIO_SPLIT_STRIDE))
+    validation_offset = int(
+        split_cfg.get("validation_offset", _DEFAULT_SCENARIO_SPLIT_OFFSETS["validation"])
+    )
+    test_offset = int(split_cfg.get("test_offset", _DEFAULT_SCENARIO_SPLIT_OFFSETS["test"]))
+    return stride, {
+        "eval": validation_offset,
+        "validation": validation_offset,
+        "test": test_offset,
+    }
+
+
 def _apply_eval_scenario_seed_split(
     *,
     base_run_seed: int,
     eval_env_overrides: dict[str, object] | None,
     cfg: DictConfig,
+    n_eval_episodes: int | None = None,
+    split: str = "eval",
 ) -> dict[str, object]:
-    """Return env overrides with deterministic disjoint scenario seed for evaluation."""
+    """Return env overrides with a deterministic disjoint MetaDrive scenario pool."""
     overrides = dict(eval_env_overrides or {})
     base_start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
-    scenario_offset = 1_000_000 + int(base_run_seed) * 10_000
+    split_stride, split_offsets = _scenario_split_settings(cfg)
+    split_name = str(split).lower()
+    if split_name not in split_offsets:
+        allowed = ", ".join(sorted(split_offsets))
+        raise ValueError(f"Unknown scenario split '{split}'. Expected one of: {allowed}.")
+
+    scenario_offset = split_offsets[split_name] + int(base_run_seed) * split_stride
     overrides["start_seed"] = int(base_start_seed) + scenario_offset
+    if n_eval_episodes is not None:
+        configured_count = int(overrides.get("num_scenarios", cfg.env.config.num_scenarios))
+        overrides["num_scenarios"] = max(configured_count, int(n_eval_episodes))
+        if base_start_seed + int(overrides["num_scenarios"]) > split_stride:
+            raise ValueError(
+                "Evaluation scenario window exceeds reserved split stride: "
+                f"split='{split_name}', base_start_seed={base_start_seed}, "
+                f"num_scenarios={overrides['num_scenarios']}, "
+                f"stride={split_stride}."
+            )
     return overrides
+
+
+def _eval_base_seed_from_env_overrides(
+    eval_env_overrides: dict[str, object],
+    cfg: DictConfig,
+) -> int:
+    """Return the first valid MetaDrive scenario seed for an evaluation env."""
+    return int(eval_env_overrides.get("start_seed", cfg.env.config.start_seed))
+
+
+def _format_metric(value: Any, digits: int = 4) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, (int, float, np.floating)):
+        value_float = float(value)
+        if np.isnan(value_float):
+            return "nan"
+        return f"{value_float:.{digits}f}"
+    return str(value)
+
+
+def _print_evaluation_summary(
+    *,
+    title: str,
+    metrics: dict[str, Any],
+    stage: str,
+    global_step: int,
+    episodes: int,
+    base_seed: int,
+    details_path: Path,
+    checkpoint_path: str | None = None,
+) -> None:
+    seed_end = int(base_seed) + max(int(episodes), 1) - 1
+    table = Table(title=title, expand=False)
+    table.add_column("Metric", style="cyan", no_wrap=True)
+    table.add_column("Value", style="white")
+
+    rows = [
+        ("Stage", stage),
+        ("Global step", str(int(global_step))),
+        ("Episodes", str(int(episodes))),
+        ("Scenario seeds", f"{int(base_seed)}..{seed_end}"),
+        ("Mean reward", _format_metric(metrics.get("mean_reward"))),
+        ("Std reward", _format_metric(metrics.get("std_reward"))),
+        ("Success rate", _format_metric(metrics.get("success_rate"))),
+        ("Collision rate", _format_metric(metrics.get("collision_rate"))),
+        ("Out-of-road rate", _format_metric(metrics.get("out_of_road_rate"))),
+        ("Route completion", _format_metric(metrics.get("route_completion"))),
+        ("Top rule violation", _format_metric(metrics.get("top_rule_violation_rate"))),
+        ("Avg error value", _format_metric(metrics.get("avg_error_value"))),
+    ]
+    if checkpoint_path is not None:
+        rows.append(("Checkpoint", checkpoint_path))
+    rows.append(("Full metrics", str(details_path)))
+
+    for metric, value in rows:
+        table.add_row(metric, value)
+    _CONSOLE.print(table)
+
+
+def _train_reset_seed_from_env_overrides(
+    train_env_overrides: dict[str, object] | None,
+    cfg: DictConfig,
+    reset_offset: int,
+) -> int:
+    """Return a deterministic training reset seed inside the configured train pool."""
+    overrides = dict(train_env_overrides or {})
+    start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
+    num_scenarios = int(overrides.get("num_scenarios", cfg.env.config.num_scenarios))
+    if num_scenarios <= 0:
+        raise ValueError(f"Training env `num_scenarios` must be > 0, got {num_scenarios}.")
+    return start_seed + (int(reset_offset) % num_scenarios)
 
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
@@ -626,6 +742,12 @@ def main(cfg: DictConfig) -> None:
 
             ###### TRAINING ######
 
+            train_reset_seed = _train_reset_seed_from_env_overrides(
+                current_train_overrides,
+                cfg,
+                reset_offset=chunk_id - 1,
+            )
+
             # Agent training
             chunk_summary = agent.train(
                 env=env,
@@ -634,7 +756,7 @@ def main(cfg: DictConfig) -> None:
                 global_steps_done=total_timesteps - remaining,
                 deterministic=False,
                 log_interval=log_interval,
-                reset_seed=run_seed + (total_timesteps - remaining),
+                reset_seed=train_reset_seed,
             )
             remaining -= chunk_steps
             current_global_step = total_timesteps - remaining
@@ -700,6 +822,15 @@ def main(cfg: DictConfig) -> None:
             eval_env_overrides = None
             if curriculum_manager is not None:
                 eval_env_overrides = curriculum_manager.get_env_config(evaluation=True)
+            eval_episode_count = int(cfg.experiment.eval_episodes)
+            eval_env_overrides = _apply_eval_scenario_seed_split(
+                base_run_seed=run_seed,
+                eval_env_overrides=eval_env_overrides,
+                cfg=cfg,
+                n_eval_episodes=eval_episode_count,
+                split="validation",
+            )
+            eval_base_seed = _eval_base_seed_from_env_overrides(eval_env_overrides, cfg)
             
             # Environment
             eval_env = build_env(cfg, eval_env_overrides)
@@ -713,7 +844,7 @@ def main(cfg: DictConfig) -> None:
                 eval_id,
                 current_stage_name,
                 current_global_step,
-                int(cfg.experiment.eval_episodes),
+                eval_episode_count,
             )
             _log_event(
                 events_log_path,
@@ -721,18 +852,27 @@ def main(cfg: DictConfig) -> None:
                 eval_id=eval_id,
                 stage=current_stage_name,
                 global_step=current_global_step,
-                episodes=int(cfg.experiment.eval_episodes),
+                episodes=eval_episode_count,
+                start_seed=eval_base_seed,
             )
             metrics = agent.evaluate(
                 env=eval_env,
-                n_eval_episodes=int(cfg.experiment.eval_episodes),
+                n_eval_episodes=eval_episode_count,
                 deterministic=bool(cfg.experiment.eval_deterministic),
-                base_seed=run_seed + 200_000 + (total_timesteps - remaining),
+                base_seed=eval_base_seed,
                 return_episode_metrics=True,
                 error_priority_base=float(cfg.reward.get("a", 2.01)),
             )
             eval_env.close()
-            print(f"Evaluation metrics after chunk: {metrics}")
+            _print_evaluation_summary(
+                title=f"Evaluation {eval_id}",
+                metrics=metrics,
+                stage=current_stage_name,
+                global_step=current_global_step,
+                episodes=eval_episode_count,
+                base_seed=eval_base_seed,
+                details_path=eval_log_path,
+            )
             eval_logger.info(
                 "Evaluation finished | eval_id=%d | stage=%s | step=%d | metrics=%s",
                 eval_id,
@@ -764,7 +904,6 @@ def main(cfg: DictConfig) -> None:
             episode_env_returns = list(per_episode.get("env_returns", []))
             episode_scalar_rule_returns = list(per_episode.get("scalar_rule_returns", []))
             episode_rule_rewards_by_rule = list(per_episode.get("rule_rewards_by_rule", []))
-            eval_base_seed = run_seed + 200_000 + (total_timesteps - remaining)
             episode_count = len(episode_returns)
             for episode_idx in range(episode_count):
                 scenario_seed = int(eval_base_seed + episode_idx)
@@ -1271,22 +1410,40 @@ def main(cfg: DictConfig) -> None:
             base_run_seed=run_seed,
             eval_env_overrides=final_eval_env_overrides,
             cfg=cfg,
+            n_eval_episodes=int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
+            split="test",
         )
+        final_eval_base_seed = _eval_base_seed_from_env_overrides(final_eval_env_overrides, cfg)
         eval_env = build_env(cfg, final_eval_env_overrides)
         _seed_env_spaces(eval_env, run_seed + 500_000)
-        print(f"Final evaluation scenario start_seed: {final_eval_env_overrides['start_seed']}")
 
         # Evaluation
         metrics = agent.evaluate(
             env=eval_env,
             n_eval_episodes=int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
             deterministic=bool(cfg.experiment.eval_deterministic),
-            base_seed=run_seed + 600_000,
+            base_seed=final_eval_base_seed,
             return_episode_metrics=True,
             error_priority_base=float(cfg.reward.get("a", 2.01)),
         )
-        print(f"Evaluation metrics after training: {metrics}")
-        print(f"Final checkpoint saved at: {final_checkpoint_stem}.zip")
+        final_stage_name = (
+            curriculum_manager.get_current_stage().name
+            if curriculum_manager is not None
+            else "baseline"
+        )
+        final_stage_index = int(curriculum_manager.stage_index) if curriculum_manager is not None else 0
+        final_eval_id = eval_id + 1
+        final_checkpoint_zip = f"{final_checkpoint_stem}.zip"
+        _print_evaluation_summary(
+            title="Final Evaluation",
+            metrics=metrics,
+            stage=final_stage_name,
+            global_step=total_timesteps,
+            episodes=int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
+            base_seed=final_eval_base_seed,
+            details_path=eval_log_path,
+            checkpoint_path=final_checkpoint_zip,
+        )
         train_logger.info("Checkpoint saved | path=%s.zip", final_checkpoint_stem)
         _log_event(
             events_log_path,
@@ -1323,13 +1480,6 @@ def main(cfg: DictConfig) -> None:
             metrics=metrics,
             final=True,
         )
-        final_stage_name = (
-            curriculum_manager.get_current_stage().name
-            if curriculum_manager is not None
-            else "baseline"
-        )
-        final_stage_index = int(curriculum_manager.stage_index) if curriculum_manager is not None else 0
-        final_eval_id = eval_id + 1
         recorder.append_row(
             "evals.csv",
             {
@@ -1389,7 +1539,6 @@ def main(cfg: DictConfig) -> None:
         episode_env_returns = list(per_episode.get("env_returns", []))
         episode_scalar_rule_returns = list(per_episode.get("scalar_rule_returns", []))
         episode_rule_rewards_by_rule = list(per_episode.get("rule_rewards_by_rule", []))
-        final_eval_base_seed = run_seed + 600_000
         for episode_idx in range(len(episode_returns)):
             scenario_seed = int(final_eval_base_seed + episode_idx)
             recorder.append_row(

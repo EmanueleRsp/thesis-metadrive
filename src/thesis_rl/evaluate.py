@@ -27,22 +27,70 @@ from thesis_rl.runtime.builders import (
 from thesis_rl.runtime.metadata import save_run_metadata, update_run_metadata
 
 
+_DEFAULT_SCENARIO_SPLIT_STRIDE = 100_000
+_DEFAULT_SCENARIO_SPLIT_OFFSETS = {
+    "eval": 1_000_000,
+    "validation": 1_000_000,
+    "test": 2_000_000,
+}
+
+
+def _scenario_split_settings(cfg: DictConfig) -> tuple[int, dict[str, int]]:
+    split_cfg = cfg.get("scenario_splits", {})
+    stride = int(split_cfg.get("stride", _DEFAULT_SCENARIO_SPLIT_STRIDE))
+    validation_offset = int(
+        split_cfg.get("validation_offset", _DEFAULT_SCENARIO_SPLIT_OFFSETS["validation"])
+    )
+    test_offset = int(split_cfg.get("test_offset", _DEFAULT_SCENARIO_SPLIT_OFFSETS["test"]))
+    return stride, {
+        "eval": validation_offset,
+        "validation": validation_offset,
+        "test": test_offset,
+    }
+
+
 def _apply_eval_scenario_seed_split(
     *,
     base_run_seed: int,
     eval_env_overrides: dict[str, object] | None,
     cfg: DictConfig,
+    n_eval_episodes: int | None = None,
+    split: str = "test",
 ) -> dict[str, object]:
-    """Return env overrides with deterministic disjoint scenario seed for evaluation.
+    """Return env overrides with a deterministic disjoint MetaDrive scenario pool.
 
     We keep runtime RNG seeded from `cfg.seed`, but shift MetaDrive scenario pool
-    (`start_seed`) so evaluation scenarios are disjoint from training scenarios.
+    (`start_seed`) so evaluation/test scenarios are disjoint from training scenarios.
     """
     overrides = dict(eval_env_overrides or {})
     base_start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
-    scenario_offset = 1_000_000 + int(base_run_seed) * 10_000
+    split_stride, split_offsets = _scenario_split_settings(cfg)
+    split_name = str(split).lower()
+    if split_name not in split_offsets:
+        allowed = ", ".join(sorted(split_offsets))
+        raise ValueError(f"Unknown scenario split '{split}'. Expected one of: {allowed}.")
+
+    scenario_offset = split_offsets[split_name] + int(base_run_seed) * split_stride
     overrides["start_seed"] = int(base_start_seed) + scenario_offset
+    if n_eval_episodes is not None:
+        configured_count = int(overrides.get("num_scenarios", cfg.env.config.num_scenarios))
+        overrides["num_scenarios"] = max(configured_count, int(n_eval_episodes))
+        if base_start_seed + int(overrides["num_scenarios"]) > split_stride:
+            raise ValueError(
+                "Evaluation scenario window exceeds reserved split stride: "
+                f"split='{split_name}', base_start_seed={base_start_seed}, "
+                f"num_scenarios={overrides['num_scenarios']}, "
+                f"stride={split_stride}."
+            )
     return overrides
+
+
+def _eval_base_seed_from_env_overrides(
+    eval_env_overrides: dict[str, object],
+    cfg: DictConfig,
+) -> int:
+    """Return the first valid MetaDrive scenario seed for an evaluation env."""
+    return int(eval_env_overrides.get("start_seed", cfg.env.config.start_seed))
 
 
 def _resolve_eval_env_overrides(curriculum_cfg: CurriculumConfig) -> tuple[dict[str, object] | None, str | None]:
@@ -190,7 +238,10 @@ def main(cfg: DictConfig) -> None:
             base_run_seed=run_seed,
             eval_env_overrides=eval_env_overrides,
             cfg=cfg,
+            n_eval_episodes=eval_episodes,
+            split="test",
         )
+        eval_base_seed = _eval_base_seed_from_env_overrides(eval_env_overrides, cfg)
 
         env = build_env(cfg, eval_env_overrides)
         _seed_env_spaces(env, run_seed)
@@ -198,12 +249,12 @@ def main(cfg: DictConfig) -> None:
         print(f"Action space: {env.action_space}")
         if eval_stage_name is not None:
             print(f"Evaluation curriculum stage: {eval_stage_name}")
-        print(f"Evaluation scenario start_seed: {eval_env_overrides['start_seed']}")
+        print(f"Evaluation scenario start_seed: {eval_base_seed}")
         _log_event(
             events_log_path,
             "evaluation_started",
             stage=eval_stage_name or "baseline",
-            start_seed=int(eval_env_overrides["start_seed"]),
+            start_seed=eval_base_seed,
             checkpoint_path=str(ckpt),
         )
 
@@ -220,7 +271,7 @@ def main(cfg: DictConfig) -> None:
             env=env,
             n_eval_episodes=eval_episodes,
             deterministic=bool(cfg.experiment.eval_deterministic),
-            base_seed=run_seed + 10_000,
+            base_seed=eval_base_seed,
             return_episode_metrics=True,
             error_priority_base=float(cfg.reward.get("a", 2.01)),
         )

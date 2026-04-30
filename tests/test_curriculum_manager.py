@@ -61,8 +61,16 @@ def test_curriculum_manager_auto_promotion_requires_warmup_steps_and_consecutive
             "enabled": True,
             "mode": "auto",
             "stages": [
-                {"name": "stage1", "env": {"map": "S"}},
-                {"name": "stage2", "env": {"map": 3}},
+                {
+                    "name": "stage1",
+                    "env": {"start_seed": 1000, "num_scenarios": 100},
+                    "eval_env": {"start_seed": 2000, "num_scenarios": 50},
+                },
+                {
+                    "name": "stage2",
+                    "env": {"start_seed": 3000, "num_scenarios": 100},
+                    "eval_env": {"start_seed": 4000, "num_scenarios": 50},
+                },
             ],
             "promotion": {
                 "consecutive_evals": 2,
@@ -89,8 +97,16 @@ def test_curriculum_manager_resets_consecutive_counter_on_failed_gate() -> None:
             "enabled": True,
             "mode": "auto",
             "stages": [
-                {"name": "stage1", "env": {"map": "S"}},
-                {"name": "stage2", "env": {"map": 3}},
+                {
+                    "name": "stage1",
+                    "env": {"start_seed": 1000, "num_scenarios": 100},
+                    "eval_env": {"start_seed": 2000, "num_scenarios": 50},
+                },
+                {
+                    "name": "stage2",
+                    "env": {"start_seed": 3000, "num_scenarios": 100},
+                    "eval_env": {"start_seed": 4000, "num_scenarios": 50},
+                },
             ],
             "promotion": {
                 "consecutive_evals": 2,

@@ -11,11 +11,20 @@ defaults:
   - curriculum: disabled    # 'disabled' | 'stages'
   
   - video: default
+  - override hydra/job_logging: disabled
 
   - _self_
 
 seed: 42
 device: auto
+
+scenario_splits:
+  # MetaDrive treats reset(seed=...) as a scenario index. Keep these pools disjoint:
+  # train uses env.config.start_seed, validation uses validation_offset, final/test uses test_offset.
+  # The stride must exceed the largest per-stage start_seed + num_scenarios window.
+  stride: 1000000
+  validation_offset: 1000000
+  test_offset: 2000000
 
 analysis:
   include_in_comparison: true

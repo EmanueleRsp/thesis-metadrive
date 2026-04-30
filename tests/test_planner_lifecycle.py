@@ -15,11 +15,6 @@ from thesis_rl.agents.types import Transition
 
 
 @pytest.fixture
-def cfg_agent():
-    return OmegaConf.create({})
-
-
-@pytest.fixture
 def cfg_planner():
     return OmegaConf.create(
         {
@@ -73,8 +68,8 @@ def _make_transition(
     )
 
 
-def test_get_lifecycle_returns_protocol(cfg_agent, cfg_planner, env):
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu", seed=123)
+def test_get_lifecycle_returns_protocol(cfg_planner, env):
+    planner = Td3PlannerBackend.build(env, cfg_planner, device="cpu", seed=123)
     lifecycle = planner.get_lifecycle()
 
     assert isinstance(lifecycle, Td3Lifecycle)
@@ -85,8 +80,8 @@ def test_get_lifecycle_returns_protocol(cfg_agent, cfg_planner, env):
     assert callable(lifecycle.end_training)
 
 
-def test_lifecycle_training_loop_collects_replay(cfg_agent, cfg_planner, env):
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu", seed=123)
+def test_lifecycle_training_loop_collects_replay(cfg_planner, env):
+    planner = Td3PlannerBackend.build(env, cfg_planner, device="cpu", seed=123)
     lifecycle = planner.get_lifecycle()
     lifecycle.begin_training(chunk_timesteps=40, global_total_timesteps=100, global_steps_done=0)
 
@@ -107,8 +102,8 @@ def test_lifecycle_training_loop_collects_replay(cfg_agent, cfg_planner, env):
     assert lifecycle.replay_buffer.size() > 0
 
 
-def test_lifecycle_act_returns_valid_action(cfg_agent, cfg_planner, env):
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu", seed=123)
+def test_lifecycle_act_returns_valid_action(cfg_planner, env):
+    planner = Td3PlannerBackend.build(env, cfg_planner, device="cpu", seed=123)
     lifecycle = planner.get_lifecycle()
     lifecycle.begin_training(chunk_timesteps=1, global_total_timesteps=10, global_steps_done=0)
 
@@ -121,8 +116,8 @@ def test_lifecycle_act_returns_valid_action(cfg_agent, cfg_planner, env):
     assert np.all(action >= env.action_space.low - 1e-6)
 
 
-def test_lifecycle_step_and_update_counters_progress(cfg_agent, cfg_planner, env):
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu", seed=123)
+def test_lifecycle_step_and_update_counters_progress(cfg_planner, env):
+    planner = Td3PlannerBackend.build(env, cfg_planner, device="cpu", seed=123)
     lifecycle = planner.get_lifecycle()
     lifecycle.begin_training(chunk_timesteps=30, global_total_timesteps=200, global_steps_done=50)
     assert lifecycle.step_count == 0
@@ -145,8 +140,8 @@ def test_lifecycle_step_and_update_counters_progress(cfg_agent, cfg_planner, env
     assert lifecycle.update_count > 0
 
 
-def test_lifecycle_save_load_compatibility(cfg_agent, cfg_planner, env, tmp_path: Path):
-    planner = Td3PlannerBackend.build(env, cfg_agent, cfg_planner, device="cpu", seed=123)
+def test_lifecycle_save_load_compatibility(cfg_planner, env, tmp_path: Path):
+    planner = Td3PlannerBackend.build(env, cfg_planner, device="cpu", seed=123)
     lifecycle = planner.get_lifecycle()
     lifecycle.begin_training(chunk_timesteps=12, global_total_timesteps=50, global_steps_done=0)
 

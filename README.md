@@ -46,6 +46,9 @@ uv run --no-sync python -m thesis_rl.train experiment=baseline device=cuda
 uv run --no-sync python -m thesis_rl.evaluate checkpoint_path=checkpoints/baseline_td3.zip device=cuda
 ```
 
+For the current test and smoke-run workflow, see
+[`docs/validation_commands.md`](docs/validation_commands.md).
+
 ## Notes for container usage
 
 - Run commands from `/workspace/thesis/thesis-metadrive`.
