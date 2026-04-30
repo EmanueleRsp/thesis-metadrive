@@ -85,6 +85,9 @@
 
 ## Phase 1: Full Validation
 
+Operational commands/checks for this phase are maintained in:
+`docs/validation_commands.md`
+
 ### 1. Plan and execute complete validation of the refactored pipeline.
   Validation checklist:
   1. [x] Smoke test end-to-end: short run to verify train + eval + checkpoint save/load all work.

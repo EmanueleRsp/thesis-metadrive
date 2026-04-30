@@ -1,8 +1,0 @@
-defaults:
-  - base_rulebook
-  - _self_
-
-name: rulebook
-mode: rulebook
-lambda_env: 0.0     # Default environment reward weight for scalar reward
-lambda_rule: 1.0    # Rulebook reward weight for scalar reward

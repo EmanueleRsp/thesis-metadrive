@@ -1,0 +1,18 @@
+name: default
+
+experiment:
+  name: default
+  total_timesteps: 600000
+  log_interval: 1000
+  eval_interval: 25000
+  eval_episodes: 50
+  final_eval_episodes: 100
+
+planner:
+  learning_starts: 10000
+  batch_size: 2048
+  gradient_steps: 10
+
+checkpoint:
+  periodic_interval_steps: 250000
+  keep_last_periodic: 4

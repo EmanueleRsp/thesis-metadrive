@@ -37,22 +37,21 @@ def test_scalar_native_config_composes_without_rulebook_fields() -> None:
 
 
 def test_reward_variants_compose() -> None:
-    cfg_rulebook = _compose("reward=rulebook", "curriculum=stages")
+    cfg_scalar_native = _compose("reward=scalar_native", "curriculum=stages")
+    cfg_scalar_default = _compose("reward=scalar_default", "curriculum=stages")
     cfg_scalar_rulebook = _compose("reward=scalar_rulebook", "curriculum=stages")
-    cfg_hybrid = _compose("reward=hybrid", "curriculum=stages")
-    cfg_lexicographic = _compose("reward=lexicographic", "curriculum=stages")
 
-    assert cfg_rulebook.reward.name == "rulebook"
-    assert str(cfg_rulebook.reward.mode) == "rulebook"
-    assert str(cfg_rulebook.reward.rulebook) == "selection"
-    assert bool(cfg_rulebook.curriculum.enabled) is True
-    assert str(cfg_rulebook.curriculum.mode) == "auto"
-    assert len(cfg_rulebook.curriculum.stages) >= 1
+    assert cfg_scalar_native.reward.name == "scalar_native"
+    assert str(cfg_scalar_native.reward.mode) == "scalar_native"
+    assert bool(cfg_scalar_native.curriculum.enabled) is True
+    assert str(cfg_scalar_native.curriculum.mode) == "auto"
+    assert len(cfg_scalar_native.curriculum.stages) >= 1
 
+    assert cfg_scalar_default.reward.name == "scalar_default"
+    assert str(cfg_scalar_default.reward.mode) == "scalar_default"
+    assert str(cfg_scalar_default.reward.rulebook) == "selection"
+    assert float(cfg_scalar_default.reward.lambda_env) == 1.0
+    assert float(cfg_scalar_default.reward.lambda_rule) == 0.0
     assert str(cfg_scalar_rulebook.reward.mode) == "scalar_rulebook"
     assert float(cfg_scalar_rulebook.reward.lambda_env) == 0.0
     assert float(cfg_scalar_rulebook.reward.lambda_rule) == 1.0
-    assert str(cfg_hybrid.reward.mode) == "hybrid"
-    assert float(cfg_hybrid.reward.lambda_env) == 1.0
-    assert float(cfg_hybrid.reward.lambda_rule) == 0.2
-    assert str(cfg_lexicographic.reward.mode) == "lexicographic"

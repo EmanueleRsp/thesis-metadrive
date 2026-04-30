@@ -1,0 +1,18 @@
+name: long
+
+experiment:
+  name: long
+  total_timesteps: 700000
+  log_interval: 1000
+  eval_interval: 25000
+  eval_episodes: 50
+  final_eval_episodes: 100
+
+planner:
+  learning_starts: 10000
+  batch_size: 1024
+  gradient_steps: 2
+
+checkpoint:
+  periodic_interval_steps: 125000
+  keep_last_periodic: 6

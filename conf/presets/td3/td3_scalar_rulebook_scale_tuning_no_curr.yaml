@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - /config
+  - override /planner: sb3_td3
+  - override /reward: scalar_rulebook
+  - override /curriculum: disabled
+  - _self_
+
+# Dedicated profile for rule-scale tuning and diagnostics.
+experiment:
+  name: scale_tuning
+
+analysis:
+  include_in_comparison: false
+
+reward:
+  include_violation_vector: true
+  rule_margin_log_path: ${paths.logs_dir}/rule_margins.jsonl

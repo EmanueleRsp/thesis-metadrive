@@ -1,0 +1,18 @@
+name: fast
+
+experiment:
+  name: fast
+  total_timesteps: 120000
+  log_interval: 1000
+  eval_interval: 10000
+  eval_episodes: 20
+  final_eval_episodes: 40
+
+planner:
+  learning_starts: 5000
+  batch_size: 512
+  gradient_steps: 2
+
+checkpoint:
+  periodic_interval_steps: 50000
+  keep_last_periodic: 3

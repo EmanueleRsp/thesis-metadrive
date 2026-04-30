@@ -1,16 +1,20 @@
 name: PLN_${hydra:runtime.choices.planner}_REW_${hydra:runtime.choices.reward}_CUR_${hydra:runtime.choices.curriculum}
+# Base composition for all runs.
+# Use a preset via `--config-name presets/...` to override groups in one shot,
+# and optionally add CLI overrides (e.g. `run_profile=medium`).
 defaults:
-  - env: metadrive          # 'metadrive'
+  - env: metadrive          # Environment family/config in `conf/env/*`
   - experiment: default
+  - run_profile: fast       # Budget/training profile in `conf/run_profile/*`
 
-  - preprocessor: identity  # 'identity'
-  - planner: sb3_td3        # 'sb3_td3' | ...
-  - adapter: identity       # 'identity'
+  - preprocessor: identity  # Observation preprocessor in `conf/preprocessor/*`
+  - planner: sb3_td3        # Planner backend in `conf/planner/*`
+  - adapter: identity       # Action adapter in `conf/adapter/*`
 
-  - reward: scalar_native   # scalar_native | scalar_default | rulebook | scalar_rulebook | hybrid | lexicographic
-  - curriculum: disabled    # 'disabled' | 'stages'
+  - reward: scalar_native   # scalar_native | scalar_default | scalar_rulebook
+  - curriculum: disabled    # disabled | stages
   
-  - video: default
+  - video: default          # Video/replay pipeline settings in `conf/video/*`
   - override hydra/job_logging: disabled
 
   - _self_
@@ -19,45 +23,48 @@ seed: 42
 device: auto
 
 scenario_splits:
-  # MetaDrive treats reset(seed=...) as a scenario index. Keep these pools disjoint:
-  # train uses env.config.start_seed, validation uses validation_offset, final/test uses test_offset.
-  # The stride must exceed the largest per-stage start_seed + num_scenarios window.
+  # MetaDrive treats reset(seed=...) as a scenario index.
+  # Keep scenario pools disjoint across train/validation/test:
+  # train starts at env.config.start_seed,
+  # validation at env.config.start_seed + validation_offset,
+  # final test at env.config.start_seed + test_offset.
+  # `stride` should be larger than any per-stage scenario window.
   stride: 1000000
   validation_offset: 1000000
   test_offset: 2000000
 
 analysis:
-  include_in_comparison: true
-  experiment_group: EXP_${experiment.name}_CUR_${curriculum.name}_REW_${reward.name}
+  include_in_comparison: true  # Set false for debug/tuning runs excluded from multi-run comparisons.
+  experiment_group: EXP_${experiment.name}_RP_${run_profile.name}_CUR_${curriculum.name}_REW_${reward.name}
 
-# Results and logging
+# Output layout for a single run.
 paths:
   run_dir: outputs/${analysis.experiment_group}/${planner.name}/seed_${seed}/${now:%Y%m%d_%H%M%S}
   logs_dir: ${paths.run_dir}/logs
-  checkpoints_dir: ${paths.run_dir}/checkpoints    # Directory to save model checkpoints during training.
+  checkpoints_dir: ${paths.run_dir}/checkpoints
   videos_dir: ${paths.run_dir}/videos
   csv_dir: ${paths.run_dir}/csv
   artifacts_dir: ${paths.run_dir}/artifacts
 
-checkpoint_path: ${paths.checkpoints_dir}/final.zip  # Path to save the final model checkpoint after training.
+checkpoint_path: ${paths.checkpoints_dir}/final.zip  # Canonical final checkpoint path.
 
 checkpoint:
-  save_latest_each_chunk: true
-  save_final: true
-  save_best_lexicographic: true
-  save_best_lexicographic_rulebook: true
-  save_best_thresholded_lexicographic_rulebook: true
-  save_periodic: true
-  periodic_interval_steps: 250000
-  keep_last_periodic: 4
-  save_rng_state: true
+  save_latest_each_chunk: true                       # Update `checkpoints/latest.zip` at each training chunk.
+  save_final: true                                   # Write `checkpoints/final.zip` at end of training.
+  save_best_lexicographic: true                      # Save best by global safety/task lexicographic key.
+  save_best_lexicographic_rulebook: true             # Save best by strict per-rule margin comparison.
+  save_best_thresholded_lexicographic_rulebook: true # Save best by thresholded per-rule comparison.
+  save_periodic: true                                # Save periodic snapshots every N global steps.
+  periodic_interval_steps: 250000                    # Global-step interval for periodic snapshots.
+  keep_last_periodic: 4                              # Retain only latest N periodic checkpoints.
+  save_rng_state: true                               # Persist RNG state for reproducible resume.
   resume:
-    enabled: false
-    run_dir: null            # if null, resume from current run_dir
-    checkpoint_name: latest  # latest | final | <custom-stem-under-checkpoints>
-    restore_rng_state: true
+    enabled: false                                    # Enable resume from an existing run directory.
+    run_dir: null                                     # Null => resume in current `paths.run_dir`.
+    checkpoint_name: latest                           # latest | final | <checkpoint stem under checkpoints/>
+    restore_rng_state: true                           # Restore python/numpy/torch RNG state if available.
 
-# Hydra stuff
+# Hydra runtime outputs.
 hydra:
   run:
     dir: ${paths.run_dir}

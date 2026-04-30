@@ -15,7 +15,7 @@ stages:
       map: "S"
       traffic_density: 0.01
       start_seed: 0
-      num_scenarios: 20
+      num_scenarios: 100
       random_lane_width: false
       random_lane_num: false
       random_agent_model: false
