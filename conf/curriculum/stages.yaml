@@ -63,7 +63,7 @@ stages:
       map: 5
       traffic_density: 0.1
       start_seed: 10000
-      num_scenarios: 1000
+      num_scenarios: 5000
       random_lane_width: true
       random_lane_num: true
       random_agent_model: true

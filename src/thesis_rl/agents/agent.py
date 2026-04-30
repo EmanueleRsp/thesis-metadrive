@@ -4,6 +4,7 @@ import logging
 import time
 import math
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,7 @@ class Agent:
         deterministic: bool = False,
         log_interval: int = 1000,
         reset_seed: int | None = None,
+        reset_seed_fn: Callable[[int], int | None] | None = None,
     ) -> dict[str, float | int]:
         '''Train the agent in the given environment for a specified number of timesteps.
         Args:
@@ -77,6 +79,8 @@ class Agent:
             deterministic: Whether to use deterministic actions during training.
             log_interval: Interval (in timesteps) at which to log training metrics.
             reset_seed: Optional seed for environment reset at the start of training.
+            reset_seed_fn: Optional callable returning the environment seed for each
+                episode reset, where index 0 is the first reset of this chunk.
         Returns:
             Dictionary with chunk-level summary metrics (episodes, moving averages, update stats, fps).
         '''
@@ -96,8 +100,11 @@ class Agent:
 
         # Reset environment and preprocessor state at the start of training
         self.preprocessor.reset()
-        if reset_seed is not None:
-            obs, _ = env.reset(seed=int(reset_seed))
+        reset_seeds_used: list[int] = []
+        first_reset_seed = reset_seed_fn(0) if reset_seed_fn is not None else reset_seed
+        if first_reset_seed is not None:
+            reset_seeds_used.append(int(first_reset_seed))
+            obs, _ = env.reset(seed=int(first_reset_seed))
         else:
             obs, _ = env.reset()
 
@@ -318,7 +325,12 @@ class Agent:
 
                         # Reset environment and preprocessor state for next episode
                         self.preprocessor.reset()
-                        obs, _ = env.reset()
+                        next_reset_seed = reset_seed_fn(episodes) if reset_seed_fn is not None else None
+                        if next_reset_seed is not None:
+                            reset_seeds_used.append(int(next_reset_seed))
+                            obs, _ = env.reset(seed=int(next_reset_seed))
+                        else:
+                            obs, _ = env.reset()
                     else:
                         obs = next_obs
 
@@ -445,6 +457,9 @@ class Agent:
             "n_updates": int(getattr(lifecycle, "update_count", 0)),
             "fps": float(chunk_timesteps / elapsed),
             "elapsed_seconds": float(elapsed),
+            "train_reset_seed_first": reset_seeds_used[0] if reset_seeds_used else None,
+            "train_reset_seed_last": reset_seeds_used[-1] if reset_seeds_used else None,
+            "train_reset_seed_unique_count": len(set(reset_seeds_used)),
         }
 
     def predict(self, observation: Any, deterministic: bool = False):

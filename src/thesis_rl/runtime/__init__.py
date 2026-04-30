@@ -16,6 +16,7 @@ from thesis_rl.runtime.seeding import (
     eval_base_seed_from_env_overrides,
     seed_env_spaces,
     set_global_seed,
+    train_episode_seed_from_env_overrides,
     train_reset_seed_from_env_overrides,
 )
 
@@ -36,5 +37,6 @@ __all__ = [
     "eval_base_seed_from_env_overrides",
     "seed_env_spaces",
     "set_global_seed",
+    "train_episode_seed_from_env_overrides",
     "train_reset_seed_from_env_overrides",
 ]

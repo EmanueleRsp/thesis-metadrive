@@ -5,10 +5,14 @@ env_id: MetaDriveEnv
 config:
   use_render: false
   horizon: 500
-  traffic_density: 0.08
-  start_seed: 0
-  num_scenarios: 50
+  map: 5
+  traffic_density: 0.1
+  start_seed: 10000
+  num_scenarios: 5000
   random_spawn_lane_index: true
+  random_lane_width: true
+  random_lane_num: true
+  random_agent_model: true
   log_level: 50
 
 # Default observation type:

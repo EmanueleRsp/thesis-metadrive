@@ -37,7 +37,7 @@ from thesis_rl.runtime.seeding import (
     eval_base_seed_from_env_overrides,
     seed_env_spaces,
     set_global_seed,
-    train_reset_seed_from_env_overrides,
+    train_episode_seed_from_env_overrides,
 )
 
 
@@ -792,11 +792,15 @@ def main(cfg: DictConfig) -> None:
 
             ###### TRAINING ######
 
-            train_reset_seed = train_reset_seed_from_env_overrides(
-                current_train_overrides,
-                cfg,
-                reset_offset=chunk_id - 1,
-            )
+            def train_reset_seed_for_episode(episode_index: int) -> int:
+                return train_episode_seed_from_env_overrides(
+                    current_train_overrides,
+                    cfg,
+                    run_seed=run_seed,
+                    chunk_id=chunk_id,
+                    episode_index=episode_index,
+                    stage_index=current_stage_index,
+                )
 
             # Agent training
             chunk_summary = agent.train(
@@ -806,7 +810,7 @@ def main(cfg: DictConfig) -> None:
                 global_steps_done=total_timesteps - remaining,
                 deterministic=False,
                 log_interval=log_interval,
-                reset_seed=train_reset_seed,
+                reset_seed_fn=train_reset_seed_for_episode,
             )
             remaining -= chunk_steps
             current_global_step = total_timesteps - remaining
@@ -865,6 +869,9 @@ def main(cfg: DictConfig) -> None:
                     "n_updates": int(chunk_summary.get("n_updates", 0)),
                     "fps": float(chunk_summary.get("fps", 0.0)),
                     "elapsed_seconds": float(chunk_summary.get("elapsed_seconds", 0.0)),
+                    "train_reset_seed_first": chunk_summary.get("train_reset_seed_first"),
+                    "train_reset_seed_last": chunk_summary.get("train_reset_seed_last"),
+                    "train_reset_seed_unique_count": chunk_summary.get("train_reset_seed_unique_count"),
                 },
             )
 

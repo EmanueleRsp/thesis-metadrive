@@ -56,12 +56,13 @@ Scopo: monitoraggio del training a blocchi (`chunk -> eval`).
 Colonne V1.5:
 
 ```csv
-algorithm,reward_mode,curriculum_name,seed,run_id,chunk_id,stage,stage_index,steps_start,steps_end,global_step,chunk_steps,episodes,ep_rew_mean,ep_len_mean,ep_success_rate,ep_collision_rate,ep_out_of_road_rate,ep_route_completion_mean,actor_loss,critic_loss,learning_rate,n_updates,fps,elapsed_seconds
+algorithm,reward_mode,curriculum_name,seed,run_id,chunk_id,stage,stage_index,steps_start,steps_end,global_step,chunk_steps,episodes,ep_rew_mean,ep_rew_std,ep_rew_ci_95,ep_env_rew_mean,ep_scalar_rule_rew_mean,ep_hybrid_rew_mean,ep_len_mean,ep_len_std,ep_len_ci_95,ep_success_rate,ep_collision_rate,ep_out_of_road_rate,ep_route_completion_mean,actor_loss,critic_loss,actor_loss_ema,critic_loss_ema,learning_rate,n_updates,fps,elapsed_seconds,train_reset_seed_first,train_reset_seed_last,train_reset_seed_unique_count
 ```
 
 Note:
 
 - Le metriche `ep_success_rate`, `ep_collision_rate`, `ep_out_of_road_rate`, `ep_route_completion_mean` sono aggregate per episodio all'interno del chunk.
+- I campi `train_reset_seed_*` tracciano la finestra di scenario seed effettivamente campionata nel chunk.
 - Se nel chunk non termina alcun episodio, questi campi possono risultare null.
 
 ### 2) `evals.csv` (una riga per evaluation aggregata)

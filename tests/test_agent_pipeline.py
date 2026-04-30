@@ -97,9 +97,10 @@ class _StatelessDummyAdapter(_TrainableDummyAdapter):
 class _DummyEnv:
     def __init__(self) -> None:
         self._step = 0
+        self.reset_kwargs: list[dict[str, object]] = []
 
     def reset(self, **kwargs):
-        _ = kwargs
+        self.reset_kwargs.append(dict(kwargs))
         self._step = 0
         return np.array([0.0, 0.0], dtype=np.float32), {}
 
@@ -181,7 +182,7 @@ def test_agent_train_uses_lifecycle_only() -> None:
     agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
     env = _DummyEnv()
 
-    agent.train(
+    summary = agent.train(
         env=env,
         chunk_timesteps=3,
         global_total_timesteps=10,
@@ -194,6 +195,29 @@ def test_agent_train_uses_lifecycle_only() -> None:
     assert planner.lifecycle.begin_called is True
     assert planner.lifecycle.end_called is True
     assert planner.lifecycle.steps == 3
+
+
+def test_agent_train_uses_explicit_seed_function_for_episode_resets() -> None:
+    preprocessor = IdentityPreprocessor()
+    planner = _DummyPlanner()
+    adapter = IdentityAdapter(low=-1.0, high=1.0, expected_shape=(2,))
+    agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
+    env = _DummyEnv()
+
+    agent.train(
+        env=env,
+        chunk_timesteps=3,
+        global_total_timesteps=10,
+        global_steps_done=0,
+        deterministic=False,
+        log_interval=0,
+        reset_seed_fn=lambda episode_idx: 100 + episode_idx,
+    )
+
+    assert env.reset_kwargs == [{"seed": 100}, {"seed": 101}]
+    assert summary["train_reset_seed_first"] == 100
+    assert summary["train_reset_seed_last"] == 101
+    assert summary["train_reset_seed_unique_count"] == 2
 
 
 def test_agent_save_saves_trainable_adapter(tmp_path: Path) -> None:

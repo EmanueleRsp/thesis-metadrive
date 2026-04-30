@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import hashlib
 import random
 
 import numpy as np
@@ -100,3 +101,27 @@ def train_reset_seed_from_env_overrides(
     if num_scenarios <= 0:
         raise ValueError(f"Training env `num_scenarios` must be > 0, got {num_scenarios}.")
     return start_seed + (int(reset_offset) % num_scenarios)
+
+
+def train_episode_seed_from_env_overrides(
+    train_env_overrides: dict[str, object] | None,
+    cfg: DictConfig,
+    *,
+    run_seed: int,
+    chunk_id: int,
+    episode_index: int,
+    stage_index: int = 0,
+) -> int:
+    """Return a deterministic pseudo-random training scenario seed inside the train pool."""
+    overrides = dict(train_env_overrides or {})
+    start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
+    num_scenarios = int(overrides.get("num_scenarios", cfg.env.config.num_scenarios))
+    if num_scenarios <= 0:
+        raise ValueError(f"Training env `num_scenarios` must be > 0, got {num_scenarios}.")
+
+    payload = f"{int(run_seed)}:{int(stage_index)}:{int(chunk_id)}:{int(episode_index)}".encode(
+        "ascii"
+    )
+    digest = hashlib.blake2b(payload, digest_size=8).digest()
+    scenario_offset = int.from_bytes(digest, byteorder="big", signed=False) % num_scenarios
+    return start_seed + scenario_offset

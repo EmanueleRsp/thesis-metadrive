@@ -44,6 +44,9 @@ class CSVRecorder:
             "n_updates",
             "fps",
             "elapsed_seconds",
+            "train_reset_seed_first",
+            "train_reset_seed_last",
+            "train_reset_seed_unique_count",
         ],
         "evals.csv": [
             "algorithm",

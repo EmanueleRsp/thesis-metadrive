@@ -7,6 +7,7 @@ from thesis_rl.runtime.builders import merge_env_config_with_overrides
 from thesis_rl.runtime.seeding import (
     apply_eval_scenario_seed_split,
     eval_base_seed_from_env_overrides,
+    train_episode_seed_from_env_overrides,
     train_reset_seed_from_env_overrides,
 )
 from thesis_rl.train import (
@@ -190,3 +191,49 @@ def test_train_reset_seed_stays_inside_curriculum_stage_pool() -> None:
     assert train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=0) == 1000
     assert train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=19) == 1019
     assert train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=20) == 1000
+
+
+def test_train_episode_seed_sampler_is_deterministic_and_inside_pool() -> None:
+    cfg = OmegaConf.create(
+        {
+            "env": {
+                "config": {
+                    "start_seed": 0,
+                    "num_scenarios": 50,
+                }
+            }
+        }
+    )
+    train_overrides = {
+        "start_seed": 1000,
+        "num_scenarios": 20,
+    }
+
+    first = train_episode_seed_from_env_overrides(
+        train_overrides,
+        cfg,
+        run_seed=42,
+        chunk_id=3,
+        episode_index=7,
+        stage_index=1,
+    )
+    second = train_episode_seed_from_env_overrides(
+        train_overrides,
+        cfg,
+        run_seed=42,
+        chunk_id=3,
+        episode_index=7,
+        stage_index=1,
+    )
+    other_episode = train_episode_seed_from_env_overrides(
+        train_overrides,
+        cfg,
+        run_seed=42,
+        chunk_id=3,
+        episode_index=8,
+        stage_index=1,
+    )
+
+    assert first == second
+    assert 1000 <= first < 1020
+    assert 1000 <= other_episode < 1020
