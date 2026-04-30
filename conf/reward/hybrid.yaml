@@ -1,0 +1,10 @@
+defaults:
+  - base_rulebook
+  - _self_
+
+name: hybrid
+mode: hybrid
+
+# Return a weighted blend of native env reward and scalarized rulebook reward.
+lambda_env: 1.0
+lambda_rule: 0.2

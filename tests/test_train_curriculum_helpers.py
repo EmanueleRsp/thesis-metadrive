@@ -4,11 +4,13 @@ from omegaconf import OmegaConf
 
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.runtime.builders import merge_env_config_with_overrides
+from thesis_rl.runtime.seeding import (
+    apply_eval_scenario_seed_split,
+    eval_base_seed_from_env_overrides,
+    train_reset_seed_from_env_overrides,
+)
 from thesis_rl.train import (
-    _apply_eval_scenario_seed_split,
-    _eval_base_seed_from_env_overrides,
     _missing_curriculum_metrics,
-    _train_reset_seed_from_env_overrides,
 )
 
 
@@ -96,7 +98,7 @@ def test_eval_scenario_seed_split_returns_valid_base_seed_and_episode_window() -
         }
     )
 
-    overrides = _apply_eval_scenario_seed_split(
+    overrides = apply_eval_scenario_seed_split(
         base_run_seed=42,
         eval_env_overrides=None,
         cfg=cfg,
@@ -106,7 +108,7 @@ def test_eval_scenario_seed_split_returns_valid_base_seed_and_episode_window() -
 
     assert int(overrides["start_seed"]) == 52_000
     assert int(overrides["num_scenarios"]) == 5
-    assert _eval_base_seed_from_env_overrides(overrides, cfg) == int(overrides["start_seed"])
+    assert eval_base_seed_from_env_overrides(overrides, cfg) == int(overrides["start_seed"])
 
 
 def test_eval_scenario_seed_split_keeps_validation_and_test_disjoint() -> None:
@@ -126,14 +128,14 @@ def test_eval_scenario_seed_split_keeps_validation_and_test_disjoint() -> None:
         }
     )
 
-    validation = _apply_eval_scenario_seed_split(
+    validation = apply_eval_scenario_seed_split(
         base_run_seed=42,
         eval_env_overrides=None,
         cfg=cfg,
         n_eval_episodes=50,
         split="validation",
     )
-    test = _apply_eval_scenario_seed_split(
+    test = apply_eval_scenario_seed_split(
         base_run_seed=42,
         eval_env_overrides=None,
         cfg=cfg,
@@ -164,9 +166,9 @@ def test_train_reset_seed_stays_inside_baseline_train_pool() -> None:
         }
     )
 
-    assert _train_reset_seed_from_env_overrides(None, cfg, reset_offset=0) == 0
-    assert _train_reset_seed_from_env_overrides(None, cfg, reset_offset=1) == 1
-    assert _train_reset_seed_from_env_overrides(None, cfg, reset_offset=50) == 0
+    assert train_reset_seed_from_env_overrides(None, cfg, reset_offset=0) == 0
+    assert train_reset_seed_from_env_overrides(None, cfg, reset_offset=1) == 1
+    assert train_reset_seed_from_env_overrides(None, cfg, reset_offset=50) == 0
 
 
 def test_train_reset_seed_stays_inside_curriculum_stage_pool() -> None:
@@ -185,6 +187,6 @@ def test_train_reset_seed_stays_inside_curriculum_stage_pool() -> None:
         "num_scenarios": 20,
     }
 
-    assert _train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=0) == 1000
-    assert _train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=19) == 1019
-    assert _train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=20) == 1000
+    assert train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=0) == 1000
+    assert train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=19) == 1019
+    assert train_reset_seed_from_env_overrides(train_overrides, cfg, reset_offset=20) == 1000

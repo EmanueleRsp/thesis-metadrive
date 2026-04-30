@@ -20,11 +20,13 @@ class RuleRewardWrapper(gym.Wrapper):
         self,
         env: gym.Env,
         reward_manager: BaseRewardManager,
+        reward_mode: str = "hybrid",
         attach_info: bool = True,
         rule_margin_log_path: str | None = None,
     ) -> None:
         super().__init__(env)
         self.reward_manager = reward_manager
+        self.reward_mode = str(reward_mode).lower()
         self.attach_info = bool(attach_info)
         self._rule_margin_log_path = Path(rule_margin_log_path) if rule_margin_log_path else None
         if self._rule_margin_log_path is not None:
@@ -51,10 +53,14 @@ class RuleRewardWrapper(gym.Wrapper):
         self._log_rulebook_input_diagnostics(info_dict)
 
         result = self.reward_manager.compute(float(env_reward), info_dict)
+        selected_reward = self._select_reward(float(env_reward), result)
         self._append_rule_margin_log(info_dict=info_dict, env_reward=float(env_reward), result=result)
 
         if self.attach_info:
             info_dict["env_reward"] = float(env_reward)
+            info_dict["hybrid_reward"] = float(result.final_reward)
+            info_dict["selected_reward"] = float(selected_reward)
+            info_dict["reward_mode"] = self.reward_mode
             info_dict["rule_reward_vector"] = result.rule_reward_vector
             info_dict["rule_bounded_vector"] = result.rule_bounded_vector
             info_dict["rule_components"] = result.rule_components
@@ -63,7 +69,20 @@ class RuleRewardWrapper(gym.Wrapper):
             if result.rule_violation_vector is not None:
                 info_dict["rule_violation_vector"] = result.rule_violation_vector
 
-        return obs, result.final_reward, terminated, truncated, info_dict
+        return obs, selected_reward, terminated, truncated, info_dict
+
+    def _select_reward(self, env_reward: float, result: Any) -> float:
+        if self.reward_mode == "scalar_default":
+            return float(env_reward)
+        if self.reward_mode in {"rulebook", "scalar_rulebook"}:
+            return float(result.scalar_rule_reward)
+        if self.reward_mode in {"hybrid", "lexicographic"}:
+            return float(result.final_reward)
+        raise ValueError(
+            "Unsupported reward mode. "
+            f"Got mode='{self.reward_mode}', expected one of: "
+            "scalar_default, rulebook, scalar_rulebook, hybrid, lexicographic."
+        )
 
     def _append_rule_margin_log(
         self,

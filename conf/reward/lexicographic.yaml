@@ -1,0 +1,12 @@
+defaults:
+  - base_rulebook
+  - _self_
+
+name: lexicographic
+mode: lexicographic
+
+# SB3 planners still require a scalar reward in the replay buffer. This mode
+# logs the full rule vector for lexicographic evaluation/checkpoint selection
+# and uses the rulebook scalarization as the training fallback.
+lambda_env: 0.0
+lambda_rule: 1.0

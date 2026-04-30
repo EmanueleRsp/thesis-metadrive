@@ -133,16 +133,21 @@ def load_planner(cfg: DictConfig, checkpoint_path: str, env: Any) -> BasePlanner
 
 def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
     mode = str(cfg.reward.mode).lower()
-
-    # Native environment scalar reward
-    if mode == "scalar_default":
+    if mode == "scalar_native":
         return env
 
-    # Rulebook-based scalar composition
-    if mode != "rulebook":
+    supported_modes = {
+        "scalar_default",
+        "rulebook",
+        "scalar_rulebook",
+        "hybrid",
+        "lexicographic",
+    }
+    if mode not in supported_modes:
         raise ValueError(
             "Unsupported reward mode. "
-            f"Got mode='{cfg.reward.mode}', expected one of: scalar_default, rulebook"
+            f"Got mode='{cfg.reward.mode}', expected one of: "
+            f"{', '.join(sorted(supported_modes))}"
         )
 
     cfg_rulebook = _load_rulebook_cfg_from_reward(cfg)
@@ -154,6 +159,7 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
     return RuleRewardWrapper(
         env=env,
         reward_manager=manager,
+        reward_mode=mode,
         attach_info=bool(cfg.reward.get("attach_info", True)),
         rule_margin_log_path=cfg.reward.get("rule_margin_log_path"),
     )

@@ -7,7 +7,7 @@ defaults:
   - planner: sb3_td3        # 'sb3_td3' | ...
   - adapter: identity       # 'identity'
 
-  - reward: scalar_default  # 'scalar_default' | 'rulebook'
+  - reward: scalar_default  # scalar_native | scalar_default | rulebook | scalar_rulebook | hybrid | lexicographic
   - curriculum: disabled    # 'disabled' | 'stages'
   
   - video: default

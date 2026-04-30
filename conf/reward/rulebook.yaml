@@ -1,32 +1,8 @@
+defaults:
+  - base_rulebook
+  - _self_
+
 name: rulebook
 mode: rulebook
-
-# Rulebook configuration file
-rulebook: selection
-
-# Hyperparameters for scalar reward computation
-a: 2.01
-c: 30.0
 lambda_env: 0.0     # Default environment reward weight for scalar reward
 lambda_rule: 1.0    # Rulebook reward weight for scalar reward
-scales:
-  vru_collision_energy: 100000.0
-  vehicle_collision_energy: 300000.0
-  drivable_area: 3.0
-  wrong_way: 0.2
-  speed_limit: 8.0
-  lane_centering: 1.5
-  goal_progress: 300.0
-  longitudinal_accel: 3.0
-  lateral_accel: 3.0
-
-#### For debugging ####
-
-# If true, expose per-rule violation magnitudes: max(0, -margin).
-include_violation_vector: false
-
-# Optional JSONL path to log per-step rule margins/components.
-rule_margin_log_path: null
-
-# Add rulebook outputs to env step info for logging/metrics.
-attach_info: true   # 'true' | 'false'

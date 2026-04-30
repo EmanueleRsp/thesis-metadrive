@@ -27,7 +27,7 @@ This short run is intended to validate train/eval/test flow, seed windows,
 checkpoint creation, logging, CSV output, and TD3 update plumbing.
 
 ```bash
-uv run --no-sync python -m thesis_rl.train --config-name td3_scalar_def_no_curr \
+uv run --no-sync python -m thesis_rl.train --config-name presets/td3_scalar_def_no_curr \
   experiment.total_timesteps=2000 \
   experiment.eval_interval=1000 \
   experiment.log_interval=100 \
@@ -51,7 +51,7 @@ Expected smoke-test signs:
 Use the same short-run overrides with the curriculum config:
 
 ```bash
-uv run --no-sync python -m thesis_rl.train --config-name td3_scalar_def_curr \
+uv run --no-sync python -m thesis_rl.train --config-name presets/td3_scalar_def_curr \
   experiment.total_timesteps=2000 \
   experiment.eval_interval=1000 \
   experiment.log_interval=100 \

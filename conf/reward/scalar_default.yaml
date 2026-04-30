@@ -1,2 +1,11 @@
+defaults:
+  - base_rulebook
+  - _self_
+
 name: scalar_default
 mode: scalar_default
+
+# Use the rulebook wrapper for diagnostics, but return the native MetaDrive
+# scalar reward to the planner/replay buffer.
+lambda_env: 1.0
+lambda_rule: 0.0

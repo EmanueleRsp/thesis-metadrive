@@ -1,0 +1,10 @@
+defaults:
+  - base_rulebook
+  - _self_
+
+name: scalar_rulebook
+mode: scalar_rulebook
+
+# Return the scalarized rulebook reward to the planner/replay buffer.
+lambda_env: 0.0
+lambda_rule: 1.0

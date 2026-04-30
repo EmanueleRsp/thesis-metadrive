@@ -80,13 +80,16 @@ class _DummyManager:
 
 def test_rule_reward_wrapper_enriches_info_and_overrides_reward() -> None:
     manager = _DummyManager()
-    env = RuleRewardWrapper(_DummyEnv(), manager, attach_info=True)
+    env = RuleRewardWrapper(_DummyEnv(), manager, reward_mode="hybrid", attach_info=True)
     _obs, _info = env.reset()
 
     _next_obs, reward, _done, _truncated, info = env.step(np.array([0.0], dtype=np.float32))
 
     assert reward == 2.5
+    assert info["env_reward"] == 1.0
     assert info["scalar_rule_reward"] == 1.5
+    assert info["hybrid_reward"] == 2.5
+    assert info["selected_reward"] == 2.5
     assert info["rule_reward_vector"] == [0.1, -0.2]
     assert info["rule_bounded_vector"] == [0.01, -0.02]
     assert info["rule_components"] == {"a": 0.1, "b": -0.2}
@@ -101,3 +104,28 @@ def test_rule_reward_wrapper_enriches_info_and_overrides_reward() -> None:
     assert manager.last_info["speed_limit"] == 50.0
     assert isinstance(manager.last_info["neighbors"], list)
     assert len(manager.last_info["neighbors"]) == 1
+
+
+def test_rule_reward_wrapper_can_return_env_reward_with_rulebook_diagnostics() -> None:
+    manager = _DummyManager()
+    env = RuleRewardWrapper(_DummyEnv(), manager, reward_mode="scalar_default", attach_info=True)
+    _obs, _info = env.reset()
+
+    _next_obs, reward, _done, _truncated, info = env.step(np.array([0.0], dtype=np.float32))
+
+    assert reward == 1.0
+    assert info["env_reward"] == 1.0
+    assert info["scalar_rule_reward"] == 1.5
+    assert info["hybrid_reward"] == 2.5
+    assert info["selected_reward"] == 1.0
+
+
+def test_rule_reward_wrapper_can_return_scalar_rulebook_reward() -> None:
+    manager = _DummyManager()
+    env = RuleRewardWrapper(_DummyEnv(), manager, reward_mode="scalar_rulebook", attach_info=True)
+    _obs, _info = env.reset()
+
+    _next_obs, reward, _done, _truncated, info = env.step(np.array([0.0], dtype=np.float32))
+
+    assert reward == 1.5
+    assert info["selected_reward"] == 1.5

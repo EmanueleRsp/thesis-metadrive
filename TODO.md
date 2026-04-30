@@ -87,7 +87,7 @@
 
 ### 1. Plan and execute complete validation of the refactored pipeline.
   Validation checklist:
-  1. [ ] Smoke test end-to-end: short run to verify train + eval + checkpoint save/load all work.
+  1. [x] Smoke test end-to-end: short run to verify train + eval + checkpoint save/load all work.
   2. [ ] Baseline validation: curriculum OFF, scalar native reward only (validate core agent/planner/adapter path).
   3. [ ] Curriculum validation: curriculum ON, scalar native reward only.
   4. [ ] Rulebook validation: curriculum ON, rulebook scalar reward enabled.
