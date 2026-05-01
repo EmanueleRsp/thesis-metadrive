@@ -85,3 +85,33 @@ def test_lane_centering_uses_ego_position_when_polygon_missing() -> None:
     assert result.names == ["lane_centering"]
     assert result.metadata["failed_rules"] == []
     assert float(result.values[0]) == pytest.approx(-1.0)
+
+
+def test_goal_progress_accepts_polygon_vertices_input() -> None:
+    cfg = {"rules": [{"name": "goal_progress", "priority": 0}]}
+    evaluator = ScenicRulesEvaluator.from_config(cfg)
+
+    # MetaDrive-style polygon payloads are plain vertex lists, not shapely objects.
+    # The rule should convert them and produce a meaningful (non-neutral) margin.
+    inputs = RuleEvalInput(
+        ego_state={
+            "polygon": [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [1.0, 1.0],
+                [0.0, 1.0],
+            ]
+        },
+        neighbors=[],
+        target_region=[
+            [10.0, 10.0],
+            [11.0, 10.0],
+            [11.0, 11.0],
+            [10.0, 11.0],
+        ],
+    )
+    result = evaluator.evaluate(inputs)
+
+    assert result.names == ["goal_progress"]
+    assert result.metadata["failed_rules"] == []
+    assert float(result.values[0]) < 0.0

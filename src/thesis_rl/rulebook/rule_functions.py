@@ -10,6 +10,26 @@ from thesis_rl.rulebook.types import RuleEvalInput
 _MISSING_DATA_MARGIN = 0.0
 
 
+def _as_geometry(value: object) -> object | None:
+    if value is None:
+        return None
+    if hasattr(value, "distance") and hasattr(value, "area"):
+        return value
+    try:
+        coords = np.asarray(value, dtype=np.float32)
+    except Exception:
+        return None
+    if coords.ndim != 2 or coords.shape[0] < 3 or coords.shape[1] < 2:
+        return None
+    try:
+        from shapely.geometry import Polygon
+
+        poly = Polygon(coords[:, :2])
+    except Exception:
+        return None
+    return poly if hasattr(poly, "distance") and hasattr(poly, "area") else None
+
+
 def _xy(value: object) -> np.ndarray | None:
     if value is None:
         return None
@@ -26,10 +46,7 @@ def _ego_pos(state: dict[str, Any]) -> np.ndarray | None:
 
 
 def _get_polygon(state: dict[str, Any]) -> object | None:
-    poly = state.get("polygon")
-    if poly is not None and hasattr(poly, "distance") and hasattr(poly, "area"):
-        return poly
-    return None
+    return _as_geometry(state.get("polygon"))
 
 
 def _effective_radius(state: dict[str, Any], default: float = 1.0) -> float:
@@ -256,12 +273,13 @@ def check_drivable_area(rule_eval_input: RuleEvalInput) -> tuple[bool, float]:
         return False, _MISSING_DATA_MARGIN
 
     ego_poly = _get_polygon(ego_state)
-    if ego_poly is not None and hasattr(drivable_area, "distance") and hasattr(drivable_area, "area"):
+    drivable_geom = _as_geometry(drivable_area)
+    if ego_poly is not None and drivable_geom is not None:
         try:
-            outside_area = float(ego_poly.difference(drivable_area).area)
+            outside_area = float(ego_poly.difference(drivable_geom).area)
         except Exception:
             outside_area = 0.0
-        dist = float(drivable_area.distance(ego_poly))
+        dist = float(drivable_geom.distance(ego_poly))
         violation = outside_area + dist**2
         return violation > 0.0, -violation
 
@@ -282,11 +300,12 @@ def check_drivable_area(rule_eval_input: RuleEvalInput) -> tuple[bool, float]:
 
 def check_wrong_way(rule_eval_input: RuleEvalInput, threshold_ratio: float = 0.0) -> tuple[bool, float]:
     ego_state = dict(rule_eval_input.ego_state)
-    opposite_carriageway = rule_eval_input.opposite_carriageway
+    opposite_carriageway = _as_geometry(rule_eval_input.opposite_carriageway)
     if opposite_carriageway is None:
         return False, _MISSING_DATA_MARGIN
 
     ego_poly = ego_state.get("polygon")
+    ego_poly = _get_polygon(ego_state)
     if ego_poly is None or not hasattr(ego_poly, "intersection") or not hasattr(ego_poly, "area"):
         return False, _MISSING_DATA_MARGIN
     if not hasattr(opposite_carriageway, "intersection") or not hasattr(opposite_carriageway, "area"):
@@ -417,7 +436,7 @@ def check_lane_centering(rule_eval_input: RuleEvalInput) -> tuple[bool, float]:
 
 def check_goal_progress(rule_eval_input: RuleEvalInput) -> tuple[bool, float]:
     ego_state = dict(rule_eval_input.ego_state)
-    target_region = rule_eval_input.target_region
+    target_region = _as_geometry(rule_eval_input.target_region)
     target_point = rule_eval_input.target_point
 
     if target_region is None and target_point is None:
@@ -451,11 +470,12 @@ def check_goal_progress(rule_eval_input: RuleEvalInput) -> tuple[bool, float]:
                 distance_to_target = float(target_region.distance(ego_poly))
             except Exception:
                 return False, _MISSING_DATA_MARGIN
-        elif isinstance(target_region, dict):
-            xmin = target_region.get("xmin")
-            xmax = target_region.get("xmax")
-            ymin = target_region.get("ymin")
-            ymax = target_region.get("ymax")
+        elif isinstance(rule_eval_input.target_region, dict):
+            target_region_dict = dict(rule_eval_input.target_region)
+            xmin = target_region_dict.get("xmin")
+            xmax = target_region_dict.get("xmax")
+            ymin = target_region_dict.get("ymin")
+            ymax = target_region_dict.get("ymax")
             if None in (xmin, xmax, ymin, ymax):
                 return False, _MISSING_DATA_MARGIN
             x = float(ego_center[0])
@@ -464,8 +484,7 @@ def check_goal_progress(rule_eval_input: RuleEvalInput) -> tuple[bool, float]:
             dy = max(float(ymin) - y, 0.0, y - float(ymax))
             distance_to_target = float(math.hypot(dx, dy))
             outside_target = 1.0 if distance_to_target > 0.0 else 0.0
-        else:
-            return False, _MISSING_DATA_MARGIN
+        # If target_region is present but unusable, we fall back to target_point below.
 
     if distance_to_target is None:
         target_xy = _xy(target_point)

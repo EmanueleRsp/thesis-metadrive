@@ -12,23 +12,23 @@ fixed_stage: stage1
 stages:
   - name: stage1
     env:
-      map: "S"
-      traffic_density: 0.01
+      map: 2
+      traffic_density: 0.005
       start_seed: 0
-      num_scenarios: 100
+      num_scenarios: 200
       random_lane_width: false
       random_lane_num: false
       random_agent_model: false
     eval_env:
       start_seed: 100000
-      num_scenarios: 100
+      num_scenarios: 200
   - name: stage2
     env:
       map: 3
       traffic_density: 0.01
       start_seed: 1000
-      num_scenarios: 100
-      random_lane_width: true
+      num_scenarios: 300
+      random_lane_width: false
       random_lane_num: false
       random_agent_model: false
     eval_env:
@@ -36,12 +36,12 @@ stages:
       num_scenarios: 200
   - name: stage3
     env:
-      map: 5
-      traffic_density: 0.05
+      map: 3
+      traffic_density: 0.01
       start_seed: 3000
       num_scenarios: 300
       random_lane_width: true
-      random_lane_num: true
+      random_lane_num: false
       random_agent_model: false
     eval_env:
       start_seed: 103000
@@ -49,12 +49,12 @@ stages:
   - name: stage4
     env:
       map: 5
-      traffic_density: 0.08
+      traffic_density: 0.05
       start_seed: 6000
       num_scenarios: 500
       random_lane_width: true
       random_lane_num: true
-      random_agent_model: true
+      random_agent_model: false
     eval_env:
       start_seed: 106000
       num_scenarios: 300
@@ -63,7 +63,7 @@ stages:
       map: 5
       traffic_density: 0.1
       start_seed: 10000
-      num_scenarios: 5000
+      num_scenarios: 1000
       random_lane_width: true
       random_lane_num: true
       random_agent_model: true
@@ -71,8 +71,8 @@ stages:
       start_seed: 20000
       num_scenarios: 300
 promotion:
-  consecutive_evals: 3
-  warmup_evals: 2
+  consecutive_evals: 2
+  warmup_evals: 1
   default_min_stage_steps: 25000
   per_stage:
     stage1:
@@ -89,10 +89,10 @@ promotion:
     safety:
       collision_rate_max: 0.05
       top_rule_violation_rate_max: 0.02
-      out_of_road_rate_max: 0.03
+      out_of_road_rate_max: 0.10
     task:
-      success_rate_min: 0.8
+      success_rate_min: 0.6
       route_completion_min: 0.85
     stability:
-      success_rate_std_max: 0.1
-      collision_rate_std_max: 0.03
+      success_rate_std_max: 0.2
+      collision_rate_std_max: 0.08

@@ -812,10 +812,6 @@ def main(cfg: DictConfig) -> None:
                 current_stage_index = int(curriculum_manager.stage_index)
             steps_start = total_timesteps - remaining
             steps_end = steps_start + chunk_steps
-            print(
-                f"Training chunk on stage '{current_stage_name}': "
-                f"steps={chunk_steps}, remaining_after={remaining - chunk_steps}"
-            )
             train_logger.info(
                 "Chunk started | chunk_id=%d | stage=%s | steps=%d->%d",
                 chunk_id,
@@ -851,6 +847,7 @@ def main(cfg: DictConfig) -> None:
                 chunk_timesteps=chunk_steps,
                 global_total_timesteps=total_timesteps,
                 global_steps_done=total_timesteps - remaining,
+                stage_name=current_stage_name,
                 deterministic=False,
                 log_interval=log_interval,
                 reset_seed_fn=train_reset_seed_for_episode,

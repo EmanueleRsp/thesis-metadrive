@@ -66,6 +66,7 @@ class Agent:
         chunk_timesteps: int,
         global_total_timesteps: int,
         global_steps_done: int,
+        stage_name: str | None = None,
         deterministic: bool = False,
         log_interval: int = 1000,
         reset_seed: int | None = None,
@@ -156,6 +157,10 @@ class Agent:
         ema_actor_loss: float = float("nan")
         ema_critic_loss: float = float("nan")
 
+        monitor_title = "Training Monitor"
+        if stage_name:
+            monitor_title = f"Training Monitor ({stage_name})"
+
         def _build_monitor_table(
             current_step: int,
             total_step: int,
@@ -174,7 +179,7 @@ class Agent:
             latest_actor_loss_ema: float,
             latest_critic_loss_ema: float,
         ) -> Table:
-            table = Table(title="Training Monitor", expand=True)
+            table = Table(title=monitor_title, expand=True)
             table.add_column("Metric", style="cyan", no_wrap=True)
             table.add_column("Value", style="white")
             table.add_row("Chunk steps", f"{chunk_step}/{chunk_timesteps}")
@@ -477,6 +482,7 @@ class Agent:
         chunk_timesteps: int,
         global_total_timesteps: int,
         global_steps_done: int,
+        stage_name: str | None = None,
         deterministic: bool = False,
         log_interval: int = 1000,
         reset_seed_fn: Callable[[int], int | None] | None = None,
@@ -489,6 +495,7 @@ class Agent:
                 chunk_timesteps=chunk_timesteps,
                 global_total_timesteps=global_total_timesteps,
                 global_steps_done=global_steps_done,
+                stage_name=stage_name,
                 deterministic=deterministic,
                 log_interval=log_interval,
                 reset_seed_fn=reset_seed_fn,
@@ -597,12 +604,16 @@ class Agent:
         def _adapt_batch(batch: np.ndarray) -> np.ndarray:
             return np.stack([self.adapter(item) for item in batch]).astype(np.float32)
 
+        monitor_title = "Training Monitor"
+        if stage_name:
+            monitor_title = f"Training Monitor ({stage_name})"
+
         def _table() -> Table:
             elapsed = max(time.time() - start_time, 1e-9)
             actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
             critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))
             learning_rate = float(getattr(lifecycle, "last_learning_rate", float("nan")))
-            table = Table(title="Training Monitor", expand=True)
+            table = Table(title=monitor_title, expand=True)
             table.add_column("Metric", style="cyan", no_wrap=True)
             table.add_column("Value", style="white")
             table.add_row("Chunk steps", f"{min(collected_steps, chunk_timesteps)}/{chunk_timesteps}")
