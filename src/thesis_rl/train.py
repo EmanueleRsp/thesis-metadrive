@@ -499,6 +499,28 @@ def main(cfg: DictConfig) -> None:
         # Read EMA alpha from planner config if available
         ema_alpha_cfg = float(cfg.planner.get("monitor_ema_alpha", 0.1)) if hasattr(cfg, "planner") else 0.1
         agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg)
+
+        def _make_eval_agent(checkpoint_stem: Path, eval_env: Any) -> tuple[Agent, str]:
+            checkpoint_zip = f"{checkpoint_stem}.zip"
+            eval_planner = load_planner(cfg, checkpoint_path=checkpoint_zip, env=eval_env)
+            return (
+                Agent(
+                    preprocessor=preprocessor,
+                    planner=eval_planner,
+                    adapter=adapter,
+                    ema_alpha=ema_alpha_cfg,
+                ),
+                checkpoint_zip,
+            )
+
+        def _cleanup_checkpoint_artifacts(checkpoint_stem: Path) -> None:
+            checkpoint_zip = checkpoint_stem.with_suffix(".zip")
+            if checkpoint_zip.exists():
+                checkpoint_zip.unlink()
+            adapter_checkpoint = Agent.adapter_checkpoint_path(checkpoint_stem)
+            if adapter_checkpoint.exists():
+                adapter_checkpoint.unlink()
+
         if resume_enabled:
             agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
             _load_replay_buffer_if_available(planner, resume_replay_buffer_path)
@@ -946,7 +968,12 @@ def main(cfg: DictConfig) -> None:
             # Environment
             eval_env = build_env(cfg, eval_env_overrides)
             seed_env_spaces(eval_env, run_seed + 100_000 + (total_timesteps - remaining))
-            set_planner_env_if_compatible(planner, eval_env)
+            eval_snapshot_stem = checkpoints_dir / "eval_snapshot"
+            agent.save(eval_snapshot_stem)
+            try:
+                eval_agent, _ = _make_eval_agent(eval_snapshot_stem, eval_env)
+            finally:
+                _cleanup_checkpoint_artifacts(eval_snapshot_stem)
 
             # Evaluation
             eval_id += 1
@@ -966,7 +993,7 @@ def main(cfg: DictConfig) -> None:
                 episodes=eval_episode_count,
                 start_seed=eval_base_seed,
             )
-            metrics = agent.evaluate(
+            metrics = eval_agent.evaluate(
                 env=eval_env,
                 n_eval_episodes=eval_episode_count,
                 deterministic=bool(cfg.experiment.eval_deterministic),
@@ -1336,8 +1363,17 @@ def main(cfg: DictConfig) -> None:
         # Environment
         env.close()
         final_eval_env_overrides = None
+        final_stage_name = "baseline"
+        final_stage_index = 0
         if curriculum_manager is not None:
-            final_eval_env_overrides = curriculum_manager.get_env_config(evaluation=True)
+            if not curriculum_cfg.stages:
+                raise ValueError("Curriculum is enabled but no stages are configured.")
+            final_stage_index = len(curriculum_cfg.stages) - 1
+            final_stage = curriculum_cfg.stages[final_stage_index]
+            final_stage_name = final_stage.name
+            final_eval_env_overrides = dict(final_stage.env)
+            if final_stage.eval_env:
+                final_eval_env_overrides.update(final_stage.eval_env)
         final_eval_env_overrides = apply_eval_scenario_seed_split(
             base_run_seed=run_seed,
             eval_env_overrides=final_eval_env_overrides,
@@ -1348,9 +1384,10 @@ def main(cfg: DictConfig) -> None:
         final_eval_base_seed = eval_base_seed_from_env_overrides(final_eval_env_overrides, cfg)
         eval_env = build_env(cfg, final_eval_env_overrides)
         seed_env_spaces(eval_env, run_seed + 500_000)
+        eval_agent, _ = _make_eval_agent(final_checkpoint_stem, eval_env)
 
         # Evaluation
-        metrics = agent.evaluate(
+        metrics = eval_agent.evaluate(
             env=eval_env,
             n_eval_episodes=int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
             deterministic=bool(cfg.experiment.eval_deterministic),
@@ -1359,12 +1396,6 @@ def main(cfg: DictConfig) -> None:
             error_priority_base=float(cfg.reward.get("a", 2.01)),
             show_progress=True,
         )
-        final_stage_name = (
-            curriculum_manager.get_current_stage().name
-            if curriculum_manager is not None
-            else "baseline"
-        )
-        final_stage_index = int(curriculum_manager.stage_index) if curriculum_manager is not None else 0
         final_eval_id = eval_id + 1
         final_checkpoint_zip = f"{final_checkpoint_stem}.zip"
         print_evaluation_summary(
@@ -1404,11 +1435,7 @@ def main(cfg: DictConfig) -> None:
             events_log_path,
             "evaluation_finished",
             eval_id=eval_id + 1,
-            stage=(
-                curriculum_manager.get_current_stage().name
-                if curriculum_manager is not None
-                else "baseline"
-            ),
+            stage=final_stage_name,
             global_step=total_timesteps,
             metrics=metrics,
             final=True,

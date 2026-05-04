@@ -66,7 +66,7 @@ stages:
       num_scenarios: 1000
       random_lane_width: true
       random_lane_num: true
-      random_agent_model: true
+      random_agent_model: false   # Adds 2 dims to observation space
     eval_env:
       start_seed: 20000
       num_scenarios: 300

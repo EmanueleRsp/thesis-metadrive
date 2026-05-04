@@ -21,6 +21,7 @@ from thesis_rl.envs.wrappers import RuleRewardWrapper
 from thesis_rl.preprocessors.base import BasePreprocessor
 from thesis_rl.preprocessors.identity import IdentityPreprocessor
 from thesis_rl.reward.reward_manager import HybridRulebookRewardManager
+from thesis_rl.runtime.seeding import set_global_seed
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -288,6 +289,15 @@ def build_train_env(cfg: DictConfig, env_overrides: dict[str, Any] | None = None
 
         def _init():
             worker_cfg = OmegaConf.create(cfg_plain)
+            # Seed worker RNGs deterministically to improve reproducibility across runs.
+            try:
+                base_worker_seed = int(worker_cfg.get("seed", 0))
+            except Exception:
+                base_worker_seed = 0
+            try:
+                set_global_seed(base_worker_seed + int(rank))
+            except Exception:
+                pass
             try:
                 env = build_env(worker_cfg, worker_overrides)
             except Exception:
@@ -316,6 +326,11 @@ def set_planner_env_if_compatible(planner: BasePlanner, env: Any) -> None:
     model = getattr(planner, "model", getattr(planner, "sb3_model", None))
     current_n_envs = getattr(model, "n_envs", None)
     next_n_envs = int(env.num_envs) if isinstance(env, VecEnv) else 1
+    
     if current_n_envs is not None and int(current_n_envs) != int(next_n_envs):
-        return
+        raise RuntimeError(
+            f"Cannot change n_envs: model has n_envs={current_n_envs}, "
+            f"env has n_envs={next_n_envs}. Recreate planner or rebuild env."
+        )
+
     planner.set_env(env)

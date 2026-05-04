@@ -6,6 +6,13 @@ import hashlib
 import random
 
 import numpy as np
+import os
+
+# Ensure CuBLAS reproducibility config is set before PyTorch/CuBLAS initialize.
+# This must be set before CUDA/cuBLAS are used; setting it here before importing
+# torch helps avoid the RuntimeError about deterministic algorithms when using CUDA >= 10.2.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
 import torch
 from omegaconf import DictConfig
 
@@ -24,6 +31,18 @@ def set_global_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    # Attempt to enable deterministic algorithms in PyTorch to improve reproducibility.
+    # Note: this can impact performance and some ops may not have deterministic implementations.
+    try:
+        torch.use_deterministic_algorithms(True)
+    except Exception:
+        # Older torch versions may not have this API; fall back to cudnn flags.
+        pass
+    try:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    except Exception:
+        pass
 
 
 def seed_env_spaces(env: Any, seed: int) -> None:

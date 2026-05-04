@@ -75,6 +75,12 @@
 
 - [ ] Decide whether `step_info` logging should support configurable keys for debugging instead of hard-coded fields only.
 - [ ] Add optional per-frame overlay in generated replay GIFs/videos (e.g., algorithm, seed, stage, episode id, reward, route completion, error value, violated rules) for presentation/debug readability.
+- [ ] Implement conditional adaptation for variable observation shapes (e.g., `random_agent_model=true` in stage5):
+  - [ ] Modify Preprocessor to extract core observation [0:259] + metadata [259:261] and pass only core to Planner.
+  - [ ] Modify Adapter to accept both planner_output and metadata (vehicle properties) to modulate actions.
+  - [ ] Ensure stage5 with `random_agent_model=true` is always reached during training (risk: if curriculum stops earlier, adapter remains untrained).
+  - [ ] Validate that planner remains input-stable (259 dims) across all curriculum stages.
+  - Note: Currently stage5 is set to `random_agent_model=false` for input consistency; this improvement would enable progressive difficulty on vehicle property randomness.
 
 #### Others
 
