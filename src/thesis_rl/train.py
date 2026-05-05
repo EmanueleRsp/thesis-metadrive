@@ -384,6 +384,13 @@ def main(cfg: DictConfig) -> None:
         },
     )
 
+    total_timesteps = int(cfg.experiment.total_timesteps)
+    current_global_step = 0
+    chunk_id = 0
+    eval_id = 0
+    current_stage_name = "baseline"
+    current_stage_index = 0
+
     try:
 
         run_seed = int(cfg.seed)
@@ -535,7 +542,6 @@ def main(cfg: DictConfig) -> None:
                 resume_eval_id = int(resume_state.get("eval_id", 0))
 
         # Training and evaluation params
-        total_timesteps = int(cfg.experiment.total_timesteps)
         log_interval = int(cfg.experiment.get("log_interval", 1000))
         eval_interval = int(cfg.experiment.get("eval_interval", total_timesteps))
         if eval_interval <= 0:
@@ -928,8 +934,8 @@ def main(cfg: DictConfig) -> None:
                     "ep_out_of_road_rate": chunk_summary.get("ep_out_of_road_rate"),
                     "ep_route_completion_mean": chunk_summary.get("ep_route_completion_mean"),
                     "actor_loss": float(chunk_summary.get("actor_loss", 0.0)),
-                    "actor_loss_ema": float(chunk_summary.get("actor_loss_ema", 0.0)),
-                    "critic_loss_ema": float(chunk_summary.get("critic_loss_ema", 0.0)),
+                    "actor_loss_ema": float(chunk_summary.get("actor_loss_ema") or 0.0),
+                    "critic_loss_ema": float(chunk_summary.get("critic_loss_ema") or 0.0),
                     "critic_loss": float(chunk_summary.get("critic_loss", 0.0)),
                     "learning_rate": float(chunk_summary.get("learning_rate", 0.0)),
                     "update_calls": int(chunk_summary.get("update_calls", 0)),
@@ -1592,6 +1598,84 @@ def main(cfg: DictConfig) -> None:
             "duration_seconds": duration_seconds,
         })
     
+    except KeyboardInterrupt:
+        duration_seconds = round(time.time() - start_time, 2)
+        train_logger.warning(
+            "Run interrupted by user (Ctrl+C) | step=%d | chunk_id=%d | eval_id=%d | stage=%s | stage_index=%d | duration_seconds=%.2f",
+            int(current_global_step),
+            int(chunk_id),
+            int(eval_id),
+            str(current_stage_name),
+            int(current_stage_index),
+            duration_seconds,
+        )
+        log_event(
+            events_log_path,
+            "run_interrupted",
+            global_step=int(current_global_step),
+            chunk_id=int(chunk_id),
+            eval_id=int(eval_id),
+            stage=str(current_stage_name),
+            stage_index=int(current_stage_index),
+            duration_seconds=duration_seconds,
+        )
+        try:
+            agent.save(latest_checkpoint_stem)
+            _save_replay_buffer_if_available(planner, latest_replay_buffer_path)
+            _save_training_state(
+                latest_training_state_path,
+                {
+                    "global_steps_done": int(current_global_step),
+                    "chunk_id": int(chunk_id),
+                    "eval_id": int(eval_id),
+                    "remaining_steps": int(max(0, total_timesteps - current_global_step)),
+                    "curriculum": {
+                        "enabled": bool(curriculum_manager is not None),
+                        "stage_index": int(curriculum_manager.stage_index) if curriculum_manager is not None else 0,
+                        "stage_steps_done": int(curriculum_manager.stage_steps_done) if curriculum_manager is not None else 0,
+                        "eval_count_at_stage": int(curriculum_manager.eval_count_at_stage) if curriculum_manager is not None else 0,
+                        "consecutive_passes": int(curriculum_manager.consecutive_passes) if curriculum_manager is not None else 0,
+                        "last_eval_passed": bool(curriculum_manager._last_eval_passed) if curriculum_manager is not None else False,  # noqa: SLF001
+                    },
+                    "seed": int(run_seed),
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                },
+            )
+            if bool(cfg.checkpoint.get("save_rng_state", True)):
+                _save_rng_state(latest_rng_state_path)
+            _append_checkpoint_index_row(
+                checkpoint_index_path,
+                {
+                    "checkpoint_path": _checkpoint_rel(run_dir, latest_checkpoint_stem),
+                    "type": "latest",
+                    "global_step": int(current_global_step),
+                    "chunk_id": int(chunk_id),
+                    "eval_id": int(eval_id),
+                    "stage": str(current_stage_name),
+                    "stage_index": int(current_stage_index),
+                    "reason": "run_interrupted",
+                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                },
+            )
+        except Exception as checkpoint_error:
+            errors_logger.warning(
+                "Interrupt checkpoint save failed | error=%s",
+                str(checkpoint_error),
+            )
+        update_run_metadata(
+            artifacts_dir,
+            {
+                "status": "interrupted",
+                "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_seconds": duration_seconds,
+                "global_step": int(current_global_step),
+                "chunk_id": int(chunk_id),
+                "eval_id": int(eval_id),
+                "stage": str(current_stage_name),
+                "stage_index": int(current_stage_index),
+            },
+        )
+        raise SystemExit(130)
     except Exception as e:
         duration_seconds = round(time.time() - start_time, 2)
         errors_logger.exception("Training failed | error=%s", str(e))

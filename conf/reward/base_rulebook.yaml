@@ -12,15 +12,15 @@ c: 30.0
 lambda_env: 0.0     # Default environment reward weight for scalar reward
 lambda_rule: 1.0    # Rulebook reward weight for scalar reward
 scales:
-  vru_collision_energy: 100000.0
-  vehicle_collision_energy: 300000.0
-  drivable_area: 3.0
-  wrong_way: 0.2
-  speed_limit: 8.0
-  lane_centering: 1.5
-  goal_progress: 300.0
-  longitudinal_accel: 3.0
-  lateral_accel: 3.0
+  # vru_collision_energy: 100000.0
+  vehicle_collision_energy: 204.92679443359376 # Tuned
+  drivable_area: 108152.42578125001 # Tuned
+  wrong_way: 1.0  # Tuned
+  # speed_limit: 8.0
+  # lane_centering: 1.5
+  goal_progress: 189029.40625 # Tuned
+  # longitudinal_accel: 3.0
+  # lateral_accel: 3.0
 
 #### For debugging ####
 

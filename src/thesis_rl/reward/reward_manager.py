@@ -85,11 +85,19 @@ class HybridRulebookRewardManager(BaseRewardManager):
         margins = rule_vector.values.astype(np.float32)
         n_rules = max(len(margins), 1)
 
+        missing_scales = [name for name in rule_vector.names if name not in self.scales]
+        if missing_scales:
+            raise ValueError(
+                "Missing scale(s) for evaluated rule(s): "
+                + ", ".join(sorted(missing_scales))
+                + ". Add them under reward.scales in the reward config."
+            )
+
         bounded_values: list[float] = []
         step_saturated_rules: list[str] = []
         for idx, name in enumerate(rule_vector.names):
             margin = float(margins[idx])
-            scale = max(float(self.scales.get(name, 1.0)), 1e-6)
+            scale = max(float(self.scales[name]), 1e-6)
             rho = float(np.tanh(margin / scale))
             bounded_values.append(rho)
 
@@ -170,6 +178,8 @@ class HybridRulebookRewardManager(BaseRewardManager):
     def _build_rule_eval_input(self, info: dict[str, Any]) -> RuleEvalInput:
         ego_state = self._extract_ego_state(info)
         neighbors = self._extract_neighbors(info)
+        rule_input_sources = info.get("rule_input_sources")
+        rule_input_available = info.get("rule_input_available")
 
         return RuleEvalInput(
             ego_state=ego_state,
@@ -183,7 +193,11 @@ class HybridRulebookRewardManager(BaseRewardManager):
             prev_ego_state=self._prev_ego_state,
             prev_neighbors=self._prev_neighbors,
             prev_neighbors_by_id=self._prev_neighbors_by_id,
-            metadata={"timestamp": info.get("episode_length", self._step)},
+            metadata={
+                "timestamp": info.get("episode_length", self._step),
+                "rule_input_sources": dict(rule_input_sources) if isinstance(rule_input_sources, Mapping) else {},
+                "rule_input_available": dict(rule_input_available) if isinstance(rule_input_available, Mapping) else {},
+            },
         )
 
     @staticmethod

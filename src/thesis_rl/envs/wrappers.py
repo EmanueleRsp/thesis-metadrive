@@ -114,6 +114,8 @@ class RuleRewardWrapper(gym.Wrapper):
         # Extract env
         base_env = getattr(self.env, "unwrapped", self.env)
         self._sync_map_cache(base_env)
+        rule_input_sources: dict[str, str] = {}
+        rule_input_available: dict[str, bool] = {}
 
         ####### EGO VEHICLE #######
         ego_vehicle = self._extract_ego_vehicle(base_env)
@@ -182,33 +184,148 @@ class RuleRewardWrapper(gym.Wrapper):
 
         if ego_state:
             info_dict["ego_state"] = ego_state
+            rule_input_available["ego_state"] = True
+            rule_input_sources["ego_state"] = "base_env.vehicle | base_env.agents"
+        else:
+            rule_input_available["ego_state"] = False
 
         lane_centerline = self._extract_lane_centerline(ego_vehicle)
         if lane_centerline is not None:
             info_dict.setdefault("lane_centerline", lane_centerline)
+            rule_input_sources["lane_centerline"] = "ego_vehicle.lane | ego_vehicle.navigation.current_ref_lanes[0]"
+            rule_input_available["lane_centerline"] = True
+        else:
+            rule_input_available["lane_centerline"] = False
 
         target_region = self._extract_target_region(ego_vehicle)
         if target_region is not None:
             info_dict.setdefault("target_region", target_region)
+            rule_input_sources["target_region"] = "ego_vehicle.navigation.final_lane.shapely_polygon | ego_vehicle.navigation.final_lane.polygon"
+            rule_input_available["target_region"] = True
+        else:
+            rule_input_available["target_region"] = False
 
         target_point = self._extract_target_point(ego_vehicle)
         if target_point is not None:
             info_dict.setdefault("target_point", target_point)
+            rule_input_sources["target_point"] = "ego_vehicle.navigation.final_lane.position(length, 0.0) | ego_vehicle.navigation.current_checkpoint"
+            rule_input_available["target_point"] = True
+        else:
+            rule_input_available["target_point"] = False
 
         speed_limit = self._extract_speed_limit(ego_vehicle, lane_centerline)
         if speed_limit is not None:
             info_dict.setdefault("speed_limit", speed_limit)
+            rule_input_sources["speed_limit"] = "lane_centerline.speed_limit | ego_vehicle.max_speed_km_h"
+            rule_input_available["speed_limit"] = True
+        else:
+            rule_input_available["speed_limit"] = False
 
         drivable_area = self._extract_drivable_area(base_env)
         if drivable_area is not None:
             info_dict.setdefault("drivable_area", drivable_area)
+            rule_input_sources["drivable_area"] = "current_map.road_network.get_all_lanes() -> lane.shapely_polygon union"
+            rule_input_available["drivable_area"] = True
+        else:
+            rule_input_available["drivable_area"] = False
 
         opposite_carriageway = self._extract_opposite_carriageway(base_env, ego_vehicle)
         if opposite_carriageway is not None:
             info_dict.setdefault("opposite_carriageway", opposite_carriageway)
+            rule_input_sources["opposite_carriageway"] = "ego_vehicle.navigation.current_road -> opposite road lane union"
+            rule_input_available["opposite_carriageway"] = True
+        else:
+            rule_input_available["opposite_carriageway"] = False
 
         if not isinstance(info_dict.get("neighbors"), list):
-            info_dict["neighbors"] = self._extract_neighbors(base_env, ego_vehicle)
+            neighbors, neighbors_source = self._extract_neighbors(base_env, ego_vehicle)
+            info_dict["neighbors"] = neighbors
+            rule_input_sources["neighbors"] = neighbors_source or "unavailable"
+            rule_input_available["neighbors"] = bool(neighbors)
+        else:
+            rule_input_available["neighbors"] = True
+            rule_input_sources["neighbors"] = "info_dict.neighbors"
+
+        info_dict["rule_input_sources"] = rule_input_sources
+        info_dict["rule_input_available"] = rule_input_available
+
+        # --- Runtime diagnostics: write a compact JSON line per step indicating
+        # presence of key inputs and small numeric samples to help debugging.
+        try:
+            debug_path = Path("outputs/runtime_info_debug.jsonl")
+            debug_path.parent.mkdir(parents=True, exist_ok=True)
+
+            top_level = [
+                "ego_state",
+                "neighbors",
+                "drivable_area",
+                "opposite_carriageway",
+                "lane_centerline",
+                "target_region",
+                "target_point",
+                "speed_limit",
+            ]
+
+            ego_keys = [
+                "position",
+                "velocity",
+                "speed",
+                "speed_m_s",
+                "yaw",
+                "steer",
+                "accel_cmd",
+                "acceleration",
+                "length",
+                "width",
+                "polygon",
+            ]
+
+            ego_state_local = info_dict.get("ego_state") if isinstance(info_dict.get("ego_state"), Mapping) else {}
+            # sample numeric values where available
+            pos_sample = None
+            pos = ego_state_local.get("position")
+            if pos is not None:
+                try:
+                    arr = list(pos)
+                    if len(arr) >= 2:
+                        pos_sample = [float(arr[0]), float(arr[1])]
+                except Exception:
+                    pos_sample = None
+
+            speed_kmh_sample = None
+            try:
+                if ego_state_local.get("speed") is not None:
+                    speed_kmh_sample = float(ego_state_local.get("speed"))
+            except Exception:
+                speed_kmh_sample = None
+
+            speed_ms_sample = None
+            try:
+                if ego_state_local.get("speed_m_s") is not None:
+                    speed_ms_sample = float(ego_state_local.get("speed_m_s"))
+            except Exception:
+                speed_ms_sample = None
+
+            neighbors = info_dict.get("neighbors")
+            neighbor_count = len(neighbors) if isinstance(neighbors, list) else 0
+
+            payload = {
+                "step": info_dict.get("episode_length") or info_dict.get("step"),
+                "top_presence": {name: (info_dict.get(name) is not None) for name in top_level},
+                "ego_presence": {name: (ego_state_local.get(name) is not None) for name in ego_keys},
+                "position": pos_sample,
+                "speed_kmh": speed_kmh_sample,
+                "speed_m_s": speed_ms_sample,
+                "neighbors_count": neighbor_count,
+                "navigation_present": (getattr(ego_vehicle, "navigation", None) is not None),
+            }
+
+            with debug_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=True))
+                handle.write("\n")
+        except Exception:
+            # Never raise from diagnostics path; log for later inspection.
+            self._logger.debug("Failed to write runtime_info_debug.jsonl diagnostics", exc_info=True)
 
     @staticmethod
     def _extract_ego_vehicle(base_env: Any) -> Any | None:
@@ -282,7 +399,7 @@ class RuleRewardWrapper(gym.Wrapper):
             return lane_speed_limit
 
         self._warn_once(
-            "missing_lane_speed_limit",
+            "speed_limit_fallback",
             "Lane speed limit is unavailable; falling back to `vehicle.max_speed_km_h` for speed-limit rule.",
         )
         return self._safe_float(getattr(ego_vehicle, "max_speed_km_h", None))
@@ -452,7 +569,7 @@ class RuleRewardWrapper(gym.Wrapper):
         self._cached_opposite_carriageway_by_road = {}
         self._cached_target_region_by_lane_id = {}
 
-    def _extract_neighbors(self, base_env: Any, ego_vehicle: Any) -> list[dict[str, Any]]:
+    def _extract_neighbors(self, base_env: Any, ego_vehicle: Any) -> tuple[list[dict[str, Any]], str | None]:
         neighbors: list[dict[str, Any]] = []
         seen_ids: set[int] = set()
 
@@ -463,13 +580,15 @@ class RuleRewardWrapper(gym.Wrapper):
                 if state is not None:
                     neighbors.append(state)
                     seen_ids.add(id(vehicle))
+            if neighbors:
+                return neighbors, "base_env.agents"
 
         engine = getattr(base_env, "engine", None)
         traffic_manager = getattr(engine, "traffic_manager", None)
         if traffic_manager is None:
             traffic_manager = getattr(base_env, "traffic_manager", None)
 
-        iterator = self._iter_traffic_vehicles(traffic_manager)
+        iterator, source_name = self._iter_traffic_vehicles(traffic_manager)
 
         for vehicle in iterator:
             if id(vehicle) in seen_ids:
@@ -478,11 +597,11 @@ class RuleRewardWrapper(gym.Wrapper):
             if state is not None:
                 neighbors.append(state)
 
-        return neighbors
+        return neighbors, source_name
 
     def _iter_traffic_vehicles(self, traffic_manager: Any):
         if traffic_manager is None:
-            return ()
+            return (), None
 
         for attr_name in ("traffic_vehicles", "vehicles", "_traffic_vehicles"):
             traffic_vehicles = getattr(traffic_manager, attr_name, None)
@@ -490,17 +609,37 @@ class RuleRewardWrapper(gym.Wrapper):
                 self._warn_once(
                     "private_traffic_vehicles",
                     "RuleRewardWrapper is using private traffic manager field `_traffic_vehicles` as fallback.",
+                    level="info",
                 )
             if isinstance(traffic_vehicles, Mapping):
-                return traffic_vehicles.values()
+                if traffic_vehicles:
+                    if attr_name != "traffic_vehicles":
+                        self._warn_once(
+                            f"traffic_manager_{attr_name}",
+                            f"RuleRewardWrapper is using traffic manager field `{attr_name}` for neighbors fallback.",
+                            level="info",
+                        )
+                    return traffic_vehicles.values(), f"traffic_manager.{attr_name}"
+                continue
             if isinstance(traffic_vehicles, (list, tuple)):
-                return traffic_vehicles
-        return ()
+                if traffic_vehicles:
+                    if attr_name != "traffic_vehicles":
+                        self._warn_once(
+                            f"traffic_manager_{attr_name}",
+                            f"RuleRewardWrapper is using traffic manager field `{attr_name}` for neighbors fallback.",
+                            level="info",
+                        )
+                    return traffic_vehicles, f"traffic_manager.{attr_name}"
+                continue
+        return (), None
 
-    def _warn_once(self, key: str, message: str) -> None:
+    def _warn_once(self, key: str, message: str, *, level: str = "warning") -> None:
         if key in self._warned_fallbacks:
             return
         self._warned_fallbacks.add(key)
+        if level == "info":
+            self._logger.info(message)
+            return
         self._logger.warning(message)
 
     def _log_rulebook_input_diagnostics(self, info_dict: dict[str, Any]) -> None:

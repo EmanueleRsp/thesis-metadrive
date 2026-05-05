@@ -35,13 +35,7 @@ What this step validates:
 
 ```bash
 uv run --no-sync python -m thesis_rl.train --config-name presets/td3/td3_scalar_def_no_curr \
-  experiment.total_timesteps=2000 \
-  experiment.eval_interval=1000 \
-  experiment.log_interval=100 \
-  experiment.eval_episodes=2 \
-  experiment.final_eval_episodes=2 \
-  planner.learning_starts=100 \
-  planner.batch_size=32
+  run_profile=smoke
 ```
 
 Expected:
@@ -154,28 +148,61 @@ Visual/manual checks:
 ## 5) Scale-Tuning Pass (rule margins -> suggested scales)
 
 What this step validates:
-- Logged rule margins can be converted into stable initial scale suggestions.
+- Logged rule margins can be converted into stable scale suggestions.
+- Sparse rules (for example collision-related) are handled with explicit coverage checks (no default fallback).
 
-Collect dedicated diagnostics run:
+Collect diagnostics logs from normal rulebook behavior:
 
 ```bash
 uv run --no-sync python -m thesis_rl.train \
   --config-name presets/td3/td3_scalar_rulebook_scale_tuning_no_curr \
-  # uses default run_profile=fast
 ```
 
-Extract suggested scales:
+Collect forced diagnostics logs to activate rare rules:
+
+```bash
+for i in $(seq 0 699); do
+  uv run --no-sync python src/thesis_rl/tools/debug/force_rule_scenarios.py \
+    --start-seed $((10000 + i)) \
+    --seed $((42 + i)) \
+    --map 5 \
+    --traffic-density 0.5 \
+    --out "src/thesis_rl/outputs/forced_rule_scenarios_${i}.json"
+done
+```
+
+Aggregate all margin logs into one dataset:
+
+```bash
+uv run --no-sync python -m thesis_rl.reward.aggregate_rule_margins \
+  --input "outputs/**/logs/rule_margins.jsonl" "outputs/debug_rule_margins_forced_scenarios.jsonl" \
+  --output outputs/scale_calibration/aggregated_rule_margins.jsonl
+```
+
+Run strict scale tuning with minimum active-sample requirements:
 
 ```bash
 uv run --no-sync python -m thesis_rl.reward.scale_tuning \
-  --input outputs/<RUN_PATH>/logs/rule_margins.jsonl \
+  --input outputs/scale_calibration/aggregated_rule_margins.jsonl \
   --percentile 90 \
-  --min-scale 1e-6
+  --min-scale 1e-6 \
+  --min-active-margin 1e-9 \
+  --min-samples 300 \
+  --strict \
+  --output-json outputs/scale_calibration/scale_report.json
+```
+
+Optional one-command loop helper (aggregate + strict check):
+
+```bash
+uv run --no-sync python src/thesis_rl/tools/debug/scale_calibration_loop.py \
+  --inputs "outputs/**/logs/rule_margins.jsonl" "outputs/debug_rule_margins_forced_scenarios.jsonl" \
+  --min-samples 300
 ```
 
 Expected:
-- Command prints a `scales:` block with one value per rule.
-- No missing-rule error (`No rule_components found in margin log`).
+- If any rule has insufficient active samples, strict tuning fails explicitly.
+- Once all rules pass coverage, `scale_report.json` contains final suggested scales and coverage stats.
 
 Then update `conf/reward/base_rulebook.yaml` (`reward.scales`) and re-run step 4 for confirmation.
 
