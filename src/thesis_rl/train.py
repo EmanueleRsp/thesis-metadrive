@@ -35,7 +35,12 @@ from thesis_rl.runtime.builders import (
 from thesis_rl.runtime.console import print_evaluation_summary, print_run_setup
 from thesis_rl.runtime.csv_recorder import CSVRecorder
 from thesis_rl.runtime.metadata import save_run_metadata, update_run_metadata
-from thesis_rl.runtime.run_logging import log_event, setup_file_logger
+from thesis_rl.runtime.run_logging import (
+    configure_logging,
+    log_event,
+    parse_log_level,
+    setup_file_logger,
+)
 from thesis_rl.runtime.seeding import (
     apply_eval_scenario_seed_split,
     eval_base_seed_from_env_overrides,
@@ -366,10 +371,40 @@ def main(cfg: DictConfig) -> None:
     errors_log_path = logs_dir / "errors.log"
     events_log_path = logs_dir / "events.jsonl"
 
-    train_logger = setup_file_logger("thesis_rl.train", "train", train_log_path, level=logging.INFO)
-    eval_logger = setup_file_logger("thesis_rl.train", "eval", eval_log_path, level=logging.INFO)
-    curriculum_logger = setup_file_logger("thesis_rl.train", "curriculum", curriculum_log_path, level=logging.INFO)
-    errors_logger = setup_file_logger("thesis_rl.train", "errors", errors_log_path, level=logging.WARNING)
+    logging_cfg = cfg.get("logging", {})
+    global_log_level = parse_log_level(logging_cfg.get("level"), default=logging.INFO)
+    file_log_level = parse_log_level(logging_cfg.get("file_level"), default=global_log_level)
+    console_log_level = parse_log_level(logging_cfg.get("console_level"), default=file_log_level)
+    configure_logging(global_log_level, console_level=console_log_level)
+
+    train_logger = setup_file_logger(
+        "thesis_rl.train",
+        "train",
+        train_log_path,
+        level=file_log_level,
+        console_level=console_log_level,
+    )
+    eval_logger = setup_file_logger(
+        "thesis_rl.train",
+        "eval",
+        eval_log_path,
+        level=file_log_level,
+        console_level=console_log_level,
+    )
+    curriculum_logger = setup_file_logger(
+        "thesis_rl.train",
+        "curriculum",
+        curriculum_log_path,
+        level=file_log_level,
+        console_level=console_log_level,
+    )
+    errors_logger = setup_file_logger(
+        "thesis_rl.train",
+        "errors",
+        errors_log_path,
+        level=parse_log_level("WARNING"),
+        console_level=console_log_level,
+    )
 
     update_run_metadata(
         artifacts_dir,

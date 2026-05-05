@@ -23,6 +23,7 @@ class RuleRewardWrapper(gym.Wrapper):
         reward_mode: str = "hybrid",
         attach_info: bool = True,
         rule_margin_log_path: str | None = None,
+        logger_level: int | str | None = None,
     ) -> None:
         super().__init__(env)
         self.reward_manager = reward_manager
@@ -32,6 +33,13 @@ class RuleRewardWrapper(gym.Wrapper):
         if self._rule_margin_log_path is not None:
             self._rule_margin_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._logger = logging.getLogger(__name__)
+        if logger_level is not None:
+            if isinstance(logger_level, int):
+                self._logger.setLevel(logger_level)
+            elif isinstance(logger_level, str):
+                parsed = getattr(logging, logger_level.strip().upper(), None)
+                if isinstance(parsed, int):
+                    self._logger.setLevel(parsed)
         self._diagnostics_emitted = False
         self._warned_fallbacks: set[str] = set()
         self._cached_map_obj_id: int | None = None

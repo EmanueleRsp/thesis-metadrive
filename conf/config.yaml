@@ -22,6 +22,14 @@ defaults:
 seed: 42
 device: auto
 
+logging:
+  # Global minimum level for thesis_rl loggers (DEBUG | INFO | WARNING | ERROR | CRITICAL)
+  level: INFO
+  # Console stream handler level for run loggers.
+  console_level: WARNING
+  # File handler default level for run loggers.
+  file_level: INFO
+
 scenario_splits:
   # MetaDrive treats reset(seed=...) as a scenario index.
   # Keep scenario pools disjoint across train/validation/test:

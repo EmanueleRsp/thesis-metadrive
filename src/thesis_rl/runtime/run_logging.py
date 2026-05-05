@@ -29,6 +29,7 @@ def setup_file_logger(
     name: str,
     log_file: Path,
     level: int = logging.INFO,
+    console_level: int | None = None,
 ) -> logging.Logger:
     logger = logging.getLogger(f"{namespace}.{name}.{log_file}")
     logger.setLevel(level)
@@ -64,10 +65,34 @@ def setup_file_logger(
     # Add colored stream handler so terminal shows errors/warnings in color
     stream_handler = logging.StreamHandler()
     # Show all levels >= INFO to console by default, but color by level
-    stream_handler.setLevel(logging.INFO)
+    stream_handler.setLevel(level if console_level is None else console_level)
     stream_handler.setFormatter(stream_formatter)
     logger.addHandler(stream_handler)
     return logger
+
+
+def parse_log_level(level: str | int | None, default: int = logging.INFO) -> int:
+    if isinstance(level, int):
+        return level
+    if level is None:
+        return default
+    if isinstance(level, str):
+        normalized = level.strip().upper()
+        if normalized.isdigit():
+            return int(normalized)
+        parsed = getattr(logging, normalized, None)
+        if isinstance(parsed, int):
+            return parsed
+    return default
+
+
+def configure_logging(global_level: int, console_level: int | None = None) -> None:
+    logging.getLogger("thesis_rl").setLevel(global_level)
+    if console_level is not None:
+        root_logger = logging.getLogger()
+        root_logger.setLevel(console_level)
+        for handler in root_logger.handlers:
+            handler.setLevel(console_level)
 
 
 def log_event(events_path: Path, event: str, **fields: Any) -> None:
