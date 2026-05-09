@@ -77,7 +77,9 @@ def print_run_setup(
     rows = [
         ("Run dir", str(cfg.paths.run_dir)),
         ("Algorithm", str(cfg.planner.name)),
-        ("Reward", str(cfg.reward.mode)),
+        ("Reward type", str(cfg.reward.type)),
+        ("Reward behavior", str(cfg.reward.behavior)),
+        ("Rulebook config", str(cfg.reward.rulebook_config)),
         ("Curriculum", str(cfg.curriculum.name)),
         ("Seed", str(int(cfg.seed))),
         ("Device", str(cfg.device)),

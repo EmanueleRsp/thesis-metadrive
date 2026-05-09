@@ -16,7 +16,63 @@ CSV_FILENAMES = (
     "final_eval.csv",
 )
 
-EXTRA_FIELDS = ("run_dir", "run_name", "seed_dir", "timestamp_dir", "metadata_status")
+FINAL_EVAL_REQUIRED_COLUMNS = (
+    "run_id",
+    "eval_type",
+    "scenario_set",
+    "algorithm",
+    "reward_type",
+    "reward_behavior",
+    "curriculum_name",
+    "curriculum_enabled",
+    "rulebook_config",
+    "seed",
+    "total_timesteps",
+    "final_eval_episodes",
+)
+
+CONTEXT_FIELDS = (
+    "run_dir",
+    "run_name",
+    "seed_dir",
+    "timestamp_dir",
+    "metadata_status",
+    "condition_id",
+    "algorithm",
+    "reward_type",
+    "reward_behavior",
+    "curriculum_name",
+    "curriculum_enabled",
+    "rulebook_config",
+    "experiment_group",
+)
+
+INFERRED_FIELDS_BY_FILE = {
+    "final_eval.csv": ("eval_type", "scenario_set", "steps_to_final_stage"),
+    "evals.csv": ("eval_type", "scenario_set"),
+    "eval_episodes.csv": ("eval_type", "scenario_set"),
+    "rule_metrics.csv": ("eval_type", "scenario_set"),
+}
+
+
+def _extend_unique(target: list[str], items: Iterable[str]) -> None:
+    seen = set(target)
+    for item in items:
+        key = str(item).strip()
+        if key == "" or key in seen:
+            continue
+        target.append(key)
+        seen.add(key)
+
+
+def _to_int(value: object) -> int | None:
+    text = str(value).strip()
+    if text == "":
+        return None
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -24,8 +80,12 @@ class RunInfo:
     run_dir: Path
     run_name: str
     algorithm: str
-    reward_mode: str
+    reward_type: str
+    reward_behavior: str
     curriculum_name: str
+    curriculum_enabled: str
+    rulebook_config: str
+    condition_id: str
     experiment_group: str
     seed: int
     timestamp_dir: str
@@ -56,14 +116,48 @@ def _iter_run_dirs(outputs_root: Path) -> Iterable[Path]:
             yield csv_dir.parent
 
 
-def _read_single_value(csv_path: Path, key: str) -> str:
+def _read_final_eval_first_row(csv_path: Path) -> dict[str, str]:
     if not csv_path.exists():
-        return ""
+        raise FileNotFoundError(f"Missing required file: {csv_path}")
+
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise ValueError(f"CSV has no header: {csv_path}")
+
+        missing_columns = [col for col in FINAL_EVAL_REQUIRED_COLUMNS if col not in reader.fieldnames]
+        if missing_columns:
+            raise ValueError(
+                f"Missing required columns in {csv_path}: {missing_columns}. "
+                "Regenerate runs with updated CSV schema."
+            )
+
         for row in reader:
-            return str(row.get(key, ""))
-    return ""
+            return {k: str(v) for k, v in row.items()}
+
+    raise ValueError(f"final_eval.csv has no data rows: {csv_path}")
+
+
+def _build_condition_id(
+    *,
+    algorithm: str,
+    reward_type: str,
+    reward_behavior: str,
+    curriculum_name: str,
+    curriculum_enabled: str,
+    rulebook_config: str,
+) -> str:
+    parts = [
+        algorithm.strip(),
+        reward_type.strip(),
+        reward_behavior.strip(),
+        curriculum_name.strip(),
+        curriculum_enabled.strip(),
+        rulebook_config.strip(),
+    ]
+    if any(part == "" for part in parts):
+        raise ValueError(f"Cannot build condition_id from empty parts: {parts}")
+    return "__".join(parts)
 
 
 def _discover_runs(outputs_root: Path) -> list[RunInfo]:
@@ -73,37 +167,73 @@ def _discover_runs(outputs_root: Path) -> list[RunInfo]:
         status = metadata.get("status", "")
         if status != "completed":
             continue
+
         include_in_comparison = str(metadata.get("include_in_comparison", "true")).lower() in {"1", "true", "yes"}
         if not include_in_comparison:
             continue
 
         final_eval_path = run_dir / "csv" / "final_eval.csv"
-        if not final_eval_path.exists():
-            continue
+        first_row = _read_final_eval_first_row(final_eval_path)
 
-        algorithm = _read_single_value(final_eval_path, "algorithm")
-        reward_mode = _read_single_value(final_eval_path, "reward_mode")
-        curriculum_name = _read_single_value(final_eval_path, "curriculum_name")
-        seed_raw = _read_single_value(final_eval_path, "seed")
-        total_timesteps = _read_single_value(final_eval_path, "total_timesteps")
-        final_eval_episodes = _read_single_value(final_eval_path, "final_eval_episodes")
-        eval_episodes = metadata.get("eval_episodes", "")
-        experiment_group = str(metadata.get("experiment_group", "")).strip()
-        if not algorithm or not seed_raw:
-            continue
+        algorithm = first_row["algorithm"].strip()
+        reward_type = first_row["reward_type"].strip()
+        reward_behavior = first_row["reward_behavior"].strip()
+        curriculum_name = first_row["curriculum_name"].strip()
+        curriculum_enabled = first_row["curriculum_enabled"].strip()
+        rulebook_config = first_row["rulebook_config"].strip()
+        seed_raw = first_row["seed"].strip()
+        total_timesteps = first_row["total_timesteps"].strip()
+        final_eval_episodes = first_row["final_eval_episodes"].strip()
+
+        required_values = {
+            "algorithm": algorithm,
+            "reward_type": reward_type,
+            "reward_behavior": reward_behavior,
+            "curriculum_name": curriculum_name,
+            "curriculum_enabled": curriculum_enabled,
+            "rulebook_config": rulebook_config,
+            "seed": seed_raw,
+        }
+        missing_values = [k for k, v in required_values.items() if v == ""]
+        if missing_values:
+            raise ValueError(
+                f"Missing required values in {final_eval_path}: {missing_values}. "
+                "No fallback is enabled in strict mode."
+            )
+
         try:
             seed = int(seed_raw)
-        except ValueError:
-            continue
+        except ValueError as exc:
+            raise ValueError(f"Invalid integer seed '{seed_raw}' in {final_eval_path}") from exc
+
+        condition_id = _build_condition_id(
+            algorithm=algorithm,
+            reward_type=reward_type,
+            reward_behavior=reward_behavior,
+            curriculum_name=curriculum_name,
+            curriculum_enabled=curriculum_enabled,
+            rulebook_config=rulebook_config,
+        )
+
+        eval_episodes = metadata.get("eval_episodes", "")
+        experiment_group = str(metadata.get("experiment_group", "")).strip()
+        if experiment_group == "":
+            raise ValueError(
+                f"Missing required metadata field 'experiment_group' in {run_dir / 'artifacts' / 'run_metadata.yaml'}"
+            )
 
         run_name = run_dir.parents[1].name if len(run_dir.parents) >= 2 else ""
         runs.append(
             RunInfo(
                 run_dir=run_dir,
-                run_name=run_name or algorithm,
+                run_name=run_name or condition_id,
                 algorithm=algorithm,
-                reward_mode=reward_mode,
+                reward_type=reward_type,
+                reward_behavior=reward_behavior,
                 curriculum_name=curriculum_name,
+                curriculum_enabled=curriculum_enabled,
+                rulebook_config=rulebook_config,
+                condition_id=condition_id,
                 experiment_group=experiment_group,
                 seed=seed,
                 timestamp_dir=run_dir.name,
@@ -117,16 +247,10 @@ def _discover_runs(outputs_root: Path) -> list[RunInfo]:
     return runs
 
 
-def _dedupe_latest_by_algorithm_seed(runs: list[RunInfo]) -> list[RunInfo]:
-    selected: dict[tuple[str, str, str, str, int], RunInfo] = {}
+def _dedupe_latest_by_condition_seed(runs: list[RunInfo]) -> list[RunInfo]:
+    selected: dict[tuple[str, str, int], RunInfo] = {}
     for run in runs:
-        key = (
-            run.experiment_group or "ungrouped",
-            run.algorithm,
-            run.reward_mode,
-            run.curriculum_name,
-            run.seed,
-        )
+        key = (run.experiment_group, run.condition_id, run.seed)
         previous = selected.get(key)
         if previous is None or run.timestamp_dir > previous.timestamp_dir:
             selected[key] = run
@@ -141,38 +265,80 @@ def _filter_protocol(
 ) -> list[RunInfo]:
     out: list[RunInfo] = []
     for run in runs:
-        if total_timesteps and run.total_timesteps and run.total_timesteps != total_timesteps:
-            continue
-        if eval_episodes and run.eval_episodes and run.eval_episodes != eval_episodes:
-            continue
-        if final_eval_episodes and run.final_eval_episodes and run.final_eval_episodes != final_eval_episodes:
-            continue
+        if total_timesteps:
+            if run.total_timesteps == "":
+                raise ValueError(f"Run missing total_timesteps but protocol filter requested: {run.run_dir}")
+            if run.total_timesteps != total_timesteps:
+                continue
+
+        if eval_episodes:
+            if run.eval_episodes == "":
+                raise ValueError(f"Run missing eval_episodes but protocol filter requested: {run.run_dir}")
+            if run.eval_episodes != eval_episodes:
+                continue
+
+        if final_eval_episodes:
+            if run.final_eval_episodes == "":
+                raise ValueError(f"Run missing final_eval_episodes but protocol filter requested: {run.run_dir}")
+            if run.final_eval_episodes != final_eval_episodes:
+                continue
         out.append(run)
     return out
 
 
 def _warn_seed_coverage(runs: list[RunInfo], expected_seeds: list[int]) -> None:
-    by_algo: dict[str, set[int]] = {}
+    by_condition: dict[str, set[int]] = {}
     for run in runs:
-        algo_key = run.experiment_group or run.run_name
-        by_algo.setdefault(algo_key, set()).add(int(run.seed))
+        by_condition.setdefault(run.condition_id, set()).add(int(run.seed))
     expected = set(expected_seeds)
-    for algo, seeds in sorted(by_algo.items()):
+    for condition_id, seeds in sorted(by_condition.items()):
         missing = sorted(expected - seeds)
         if missing:
             warnings.warn(
-                f"Algorithm '{algo}' missing seeds: {missing}. Included with warning as requested.",
+                f"Condition '{condition_id}' missing seeds: {missing}.",
                 stacklevel=2,
             )
 
 
-def _row_with_context(row: dict[str, str], run: RunInfo) -> dict[str, str]:
+def _row_with_context(row: dict[str, str], run: RunInfo, *, filename: str) -> dict[str, str]:
     out = dict(row)
+    if filename == "final_eval.csv":
+        if str(out.get("eval_type", "")).strip() == "":
+            out["eval_type"] = "final"
+        if str(out.get("scenario_set", "")).strip() == "":
+            out["scenario_set"] = "test"
+        if str(out.get("steps_to_final_stage", "")).strip() == "":
+            reached = str(out.get("final_stage_reached", "")).strip().lower() in {"true", "1", "yes"}
+            curriculum_enabled = str(run.curriculum_enabled).strip().lower() in {"true", "1", "yes"}
+            if curriculum_enabled:
+                out["steps_to_final_stage"] = "0" if reached else "-1"
+            else:
+                out["steps_to_final_stage"] = "0"
+
+    if filename in {"evals.csv", "eval_episodes.csv", "rule_metrics.csv"}:
+        step = _to_int(out.get("global_step"))
+        final_step = _to_int(run.total_timesteps)
+        is_final = step is not None and final_step is not None and step == final_step
+        eval_type_default = "final" if is_final else "intermediate"
+        scenario_set_default = "test" if is_final else "curriculum_eval"
+        if str(out.get("eval_type", "")).strip() == "":
+            out["eval_type"] = eval_type_default
+        if str(out.get("scenario_set", "")).strip() == "":
+            out["scenario_set"] = scenario_set_default
+
     out["run_dir"] = str(run.run_dir)
     out["run_name"] = run.run_name
     out["seed_dir"] = f"seed_{run.seed}"
     out["timestamp_dir"] = run.timestamp_dir
     out["metadata_status"] = run.metadata_status
+    out["condition_id"] = run.condition_id
+    out["algorithm"] = run.algorithm
+    out["reward_type"] = run.reward_type
+    out["reward_behavior"] = run.reward_behavior
+    out["curriculum_name"] = run.curriculum_name
+    out["curriculum_enabled"] = run.curriculum_enabled
+    out["rulebook_config"] = run.rulebook_config
+    out["experiment_group"] = run.experiment_group
     return out
 
 
@@ -191,7 +357,7 @@ def aggregate_runs(
 
     runs = _discover_runs(outputs_root)
     runs = _filter_protocol(runs, total_timesteps, eval_episodes, final_eval_episodes)
-    runs = _dedupe_latest_by_algorithm_seed(runs)
+    runs = _dedupe_latest_by_condition_seed(runs)
     _warn_seed_coverage(runs, expected_seeds)
 
     selected_dirs = {run.run_dir: run for run in runs}
@@ -207,20 +373,24 @@ def aggregate_runs(
             with path.open("r", encoding="utf-8", newline="") as handle:
                 reader = csv.DictReader(handle)
                 if reader.fieldnames is None:
-                    continue
-                if filename not in fieldnames_by_file:
-                    fieldnames_by_file[filename] = list(reader.fieldnames) + list(EXTRA_FIELDS)
+                    raise ValueError(f"CSV has no header: {path}")
+                fieldnames = fieldnames_by_file.setdefault(filename, [])
+                _extend_unique(fieldnames, list(reader.fieldnames))
+                _extend_unique(fieldnames, INFERRED_FIELDS_BY_FILE.get(filename, ()))
+                _extend_unique(fieldnames, list(CONTEXT_FIELDS))
                 for row in reader:
-                    collected_rows[filename].append(_row_with_context(row, run))
+                    collected_rows[filename].append(_row_with_context(row, run, filename=filename))
 
     for filename, rows in collected_rows.items():
         if not rows:
             continue
         output_path = aggregated_dir / filename.replace(".csv", "_all_runs.csv")
+        fieldnames = fieldnames_by_file[filename]
         with output_path.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames_by_file[filename])
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(rows)
+            for row in rows:
+                writer.writerow({key: row.get(key) for key in fieldnames})
         print(f"Wrote {len(rows)} rows -> {output_path}")
 
     selected_runs_path = aggregated_dir / "selected_runs.csv"
@@ -228,9 +398,13 @@ def aggregate_runs(
         fieldnames = [
             "run_dir",
             "run_name",
+            "condition_id",
             "algorithm",
-            "reward_mode",
+            "reward_type",
+            "reward_behavior",
             "curriculum_name",
+            "curriculum_enabled",
+            "rulebook_config",
             "experiment_group",
             "seed",
             "timestamp_dir",
@@ -247,9 +421,13 @@ def aggregate_runs(
                 {
                     "run_dir": str(run.run_dir),
                     "run_name": run.run_name,
+                    "condition_id": run.condition_id,
                     "algorithm": run.algorithm,
-                    "reward_mode": run.reward_mode,
+                    "reward_type": run.reward_type,
+                    "reward_behavior": run.reward_behavior,
                     "curriculum_name": run.curriculum_name,
+                    "curriculum_enabled": run.curriculum_enabled,
+                    "rulebook_config": run.rulebook_config,
                     "experiment_group": run.experiment_group,
                     "seed": run.seed,
                     "timestamp_dir": run.timestamp_dir,
@@ -265,7 +443,7 @@ def aggregate_runs(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Aggregate latest completed runs per experiment/algorithm/reward/curriculum/seed.")
+    parser = argparse.ArgumentParser(description="Aggregate latest completed runs per condition/seed.")
     parser.add_argument("--outputs-root", default="outputs")
     parser.add_argument("--analysis-root", default="analysis")
     parser.add_argument("--total-timesteps", default=None)

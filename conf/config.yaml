@@ -11,7 +11,7 @@ defaults:
   - planner: sb3_td3        # Planner backend in `conf/planner/*`
   - adapter: identity       # Action adapter in `conf/adapter/*`
 
-  - reward: scalar_native   # scalar_native | scalar_default | scalar_rulebook
+  - reward: native          # native | monitor_only | scalar_reward
   - curriculum: disabled    # disabled | stages
   
   - video: default          # Video/replay pipeline settings in `conf/video/*`

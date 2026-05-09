@@ -42,7 +42,9 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
     metadata = {
         "name": _cfg_get(cfg, "name"),
         "algorithm": _cfg_get(cfg, "planner.name", default="unknown"),
-        "reward_mode": _cfg_get(cfg, "reward.mode", default="unknown"),
+        "reward_type": _cfg_get(cfg, "reward.type", default="unknown"),
+        "reward_behavior": _cfg_get(cfg, "reward.behavior", default="unknown"),
+        "rulebook_config": _cfg_get(cfg, "reward.rulebook_config", default="none"),
         "curriculum_name": _cfg_get(cfg, "curriculum.name", default="unknown"),
         "experiment_group": _cfg_get(cfg, "analysis.experiment_group"),
         "include_in_comparison": bool(_cfg_get(cfg, "analysis.include_in_comparison", True)),

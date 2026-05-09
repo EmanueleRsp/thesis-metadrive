@@ -2,6 +2,6 @@
 defaults:
   - /config
   - override /planner: sb3_td3
-  - override /reward: scalar_rulebook
+  - override /reward: monitor_only
   - override /curriculum: stages
   - _self_

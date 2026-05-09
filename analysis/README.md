@@ -1,113 +1,177 @@
 # Analysis Pipeline
 
-Questa cartella contiene gli script post-run per aggregare risultati multi-seed e generare tabelle/plot.
+Pipeline unica per aggregare run multi-seed, generare tabelle/plot e costruire confronti A/B/C.
 
-## Script disponibili
+## Schema canonico (nuovo)
 
-- `run_analysis.py`: orchestratore unico (`aggregate + tables + plots`).
-- `aggregate_runs.py`: unisce i CSV prodotti nelle run in file aggregati `*_all_runs.csv`.
-- `make_final_tables.py`: genera tabella finale `mean ± 95% CI` in `csv` e `md`.
-- `make_curriculum_tables.py`: genera tabella curriculum/sample-efficiency in `csv` e `md`.
-- `make_rulebook_tables.py`: genera tabelle rulebook compliance globali e per-regola in `csv` e `md`.
-- `make_plots.py`: genera i grafici comparativi principali in formato immagine (`.png`).
-- `select_video_episodes.py`: seleziona episodi rappresentativi da `eval_episodes.csv` e crea `video_selection.json` + `video_index.csv`.
-- `render_selected_videos.py`: replay offline su episodi selezionati, render GIF in `videos/final_eval/` e verifica fidelity (`original_*` vs `replay_*`) in `video_index.csv`.
+Tutti i report usano questi campi:
 
-## Uso rapido
+- `reward_type`: `native` | `rulebook`
+- `reward_behavior`: `off` | `monitor_only` | `scalar_reward`
+- `rulebook_config`: `none` | `<nome file in conf/rulebook/*.yaml>`
 
-```powershell
-python -m analysis.run_analysis
+## Comandi principali
+
+```bash
+# Pipeline quantitativa completa (aggregazione + tabelle + plot core)
+python -m analysis.run_analysis --only all --no-videos
+
+# Solo aggregazione
+python -m analysis.run_analysis --only aggregate
+
+# Solo tabelle
+python -m analysis.run_analysis --only tables
+
+# Solo plot
+python -m analysis.run_analysis --only plots
 ```
 
-Parametri principali:
+## Flag più utili
 
-- `--outputs-root`: root delle run (default: `outputs`)
-- `--analysis-root`: root output analisi (default: `analysis`)
-- `--only`: `all | aggregate | tables | plots`
-- `--no-videos`: disabilita la fase video (in `--only all` i video sono abilitati di default)
-- `--video-max`: numero massimo di video selezionati per run (default 5)
-- `--seed-list`: lista seed ufficiale (default `0..9`)
-- `--total-timesteps`, `--eval-episodes`, `--final-eval-episodes`: filtri protocollo opzionali
+- `--analysis-root` default `analysis`
+- `--outputs-root` default `outputs`
+- `--comparison-dimension` `none|curriculum|reward|algorithm`
+- `--comparison-id` per rigenerare una sola comparison view
+- `--algorithm`
+- `--reward-type`
+- `--reward-behavior`
+- `--rulebook-config`
+- `--reward-granularity` `semantic|raw` (solo confronto reward)
+- `--include-effects-tables` (tabelle ablation opzionali)
+- `--include-diagnostic-plots` (plot diagnostici opzionali)
+- `--include-qualitative-pack` (manifest + GIF qualitativi su comparison views)
+- `--qualitative-max-per-category` (attualmente supportato: `1`)
 
-## Output
+## Confronti A/B/C
 
-```text
-analysis/aggregated/
-  train_chunks_all_runs.csv
-  evals_all_runs.csv
-  eval_episodes_all_runs.csv
-  promotions_all_runs.csv
-  rule_metrics_all_runs.csv
-  final_eval_all_runs.csv
+```bash
+# A) Effetto curriculum (varia SOLO curriculum)
+python -m analysis.run_analysis --only all --no-videos \
+  --comparison-dimension curriculum \
+  --algorithm sb3_td3 \
+  --reward-type native \
+  --reward-behavior monitor_only \
+  --rulebook-config selection
 
-analysis/tables/
-  final_evaluation.csv
-  final_evaluation.md
-  curriculum_efficiency.csv
-  curriculum_efficiency.md
-  rulebook_compliance.csv
-  rulebook_compliance.md
-  rule_violation_by_rule.csv
-  rule_violation_by_rule.md
+# B) Effetto reward (semantic: confronta reward_type)
+python -m analysis.run_analysis --only all --no-videos \
+  --comparison-dimension reward \
+  --algorithm sb3_td3 \
+  --curriculum-name stages \
+  --rulebook-config selection \
+  --reward-granularity semantic
 
-analysis/plots/
-  learning_success_vs_global_step.png
-  learning_collision_vs_global_step.png
-  learning_out_of_road_vs_global_step.png
-  learning_route_completion_vs_global_step.png
-  learning_rule_top_violation_vs_global_step.png
-  learning_avg_error_value_vs_global_step.png
-  curriculum_stage_index_vs_global_step.png
-  safety_performance_tradeoff.png
-  rule_metrics_violation_rate_by_rule.png
-  episode_error_distribution_boxplot.png
+# B-raw) Effetto reward (raw: confronta reward_behavior)
+python -m analysis.run_analysis --only all --no-videos \
+  --comparison-dimension reward \
+  --algorithm sb3_td3 \
+  --curriculum-name disabled \
+  --reward-type native \
+  --reward-granularity raw
 
-videos/metadata/ (per singola run)
-  video_selection.json
-  video_index.csv
-
-videos/final_eval/ (per singola run)
-  eval_XXXX_ep_XXXX_<tag>.gif
+# C) Effetto algoritmo (varia SOLO algoritmo)
+python -m analysis.run_analysis --only all --no-videos \
+  --comparison-dimension algorithm \
+  --curriculum-name stages \
+  --reward-type rulebook \
+  --reward-behavior scalar_reward \
+  --rulebook-config selection
 ```
 
-Checkpoint/resume artifacts (per singola run):
+## Pacchetto qualitativo curato
 
-- `checkpoints/latest.zip`
-- `checkpoints/latest_replay_buffer.pkl`
-- `checkpoints/latest_training_state.yaml`
-- `checkpoints/latest_rng_state.pkl`
+```bash
+python -m analysis.run_analysis --only all --no-videos \
+  --comparison-dimension curriculum \
+  --algorithm sb3_td3 \
+  --reward-type native \
+  --reward-behavior monitor_only \
+  --rulebook-config selection \
+  --include-qualitative-pack
+```
 
-## Video Replay Fidelity
+Categorie fisse:
 
-La pipeline video e pensata in due fasi:
+- `best`
+- `median`
+- `worst`
+- `rule_violation_case`
+- `curriculum_transition_case`
 
-1. `select_video_episodes.py` seleziona gli episodi rappresentativi da `eval_episodes.csv`.
-2. `render_selected_videos.py` fa replay deterministico (checkpoint + `scenario_seed`) e genera le GIF.
+## Output principali
 
-Durante il render aggiorna:
+### `analysis/aggregated/`
 
-- `videos/metadata/video_index.csv` con metadati e confronto `original` vs `replay`.
-- `csv/eval_episodes.csv` impostando `video_path` per gli episodi renderizzati.
+- `train_chunks_all_runs.csv`
+- `evals_all_runs.csv`
+- `eval_episodes_all_runs.csv`
+- `promotions_all_runs.csv`
+- `rule_metrics_all_runs.csv`
+- `final_eval_all_runs.csv`
+- `selected_runs.csv`
 
-Campi fidelity principali in `video_index.csv`:
+### `analysis/tables/` (core)
 
-- `original_reward`, `replay_reward`, `reward_abs_diff`
-- `original_route_completion`, `replay_route_completion`, `route_completion_abs_diff`
-- `original_error_value`, `replay_error_value`, `error_value_abs_diff`
-- `original_success/collision/out_of_road`, `replay_*`, `*_match`
-- `replay_match`
+- `final_evaluation.*`
+- `curriculum_efficiency.*`
+- `sample_efficiency_thresholds.*`
+- `generalization_train_vs_eval.*`
+- `rulebook_compliance.*`
+- `rule_violation_by_rule.*`
 
-Regola corrente per `replay_match=true`:
+### `analysis/plots/` (core)
 
-- match esatto dei booleani (`success`, `collision`, `out_of_road`)
-- `reward_abs_diff <= 1e-2`
-- `route_completion_abs_diff <= 1e-3`
-- `error_value_abs_diff <= 1e-3`
+- `learning_success_vs_global_step.png`
+- `learning_collision_vs_global_step.png`
+- `learning_out_of_road_vs_global_step.png`
+- `learning_route_completion_vs_global_step.png`
+- `learning_rule_top_violation_vs_global_step.png`
+- `curriculum_stage_index_vs_global_step.png`
+- `rule_metrics_violation_rate_by_rule.png`
 
-Se il replay non matcha, viene stampato warning (`[video][warn] replay mismatch ...`), ma il video viene comunque salvato.
+### `analysis/comparisons/<dimension>/<comparison_id>/`
 
-Checkpoint di replay:
+- `aggregated/*.csv`
+- `tables/*`
+- `plots/*`
+- `qualitative/video_manifest.csv` (se `--include-qualitative-pack`)
+- `qualitative/gifs/*.gif` (se `--include-qualitative-pack`)
 
-- configurabile da `conf/video/default.yaml` con `video.replay_checkpoint`.
-- valori supportati: `final`, `latest`, `best_lexicographic`, oppure un path esplicito.
-- default consigliato/protocollo: `final`.
+## Sequenza tipica end-to-end
+
+```bash
+# 1) Baseline quantitativa globale
+python -m analysis.run_analysis --only all --no-videos
+
+# 2) Confronto A (curriculum)
+python -m analysis.run_analysis --only all --no-videos \
+  --comparison-dimension curriculum \
+  --algorithm sb3_td3 \
+  --reward-type native \
+  --reward-behavior monitor_only \
+  --rulebook-config selection
+
+# 3) Confronto B (reward)
+python -m analysis.run_analysis --only all --no-videos \
+  --comparison-dimension reward \
+  --algorithm sb3_td3 \
+  --curriculum-name stages \
+  --rulebook-config selection
+
+# 4) Confronto C (algorithm)
+python -m analysis.run_analysis --only all --no-videos \
+  --comparison-dimension algorithm \
+  --curriculum-name stages \
+  --reward-type rulebook \
+  --reward-behavior scalar_reward \
+  --rulebook-config selection
+
+# 5) Pacchetto qualitativo curato
+python -m analysis.run_analysis --only all --no-videos \
+  --comparison-dimension curriculum \
+  --algorithm sb3_td3 \
+  --reward-type native \
+  --reward-behavior monitor_only \
+  --rulebook-config selection \
+  --include-qualitative-pack
+```

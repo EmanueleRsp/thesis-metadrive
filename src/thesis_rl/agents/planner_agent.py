@@ -59,6 +59,15 @@ class Td3PlannerBackend:
         return noise
 
     @classmethod
+    def _resolve_gradient_steps(cls, env: Any, cfg_planner: Any) -> int:
+        gradient_steps_cfg = cfg_planner.get("gradient_steps", "auto")
+        if isinstance(gradient_steps_cfg, str) and gradient_steps_cfg.strip().lower() == "auto":
+            train_freq = int(cfg_planner.train_freq)
+            n_envs = int(env.num_envs) if isinstance(env, VecEnv) else 1
+            return max(train_freq * n_envs, 1)
+        return int(gradient_steps_cfg)
+
+    @classmethod
     def build(
         cls,
         env: Any,
@@ -67,6 +76,7 @@ class Td3PlannerBackend:
         seed: int | None = None,
     ) -> "Td3PlannerBackend":
         planner_cfg = cfg_planner
+        resolved_gradient_steps = cls._resolve_gradient_steps(env, planner_cfg)
         model = TD3(
             policy=planner_cfg.policy,
             env=env,
@@ -74,7 +84,7 @@ class Td3PlannerBackend:
             batch_size=int(planner_cfg.batch_size),
             buffer_size=int(planner_cfg.buffer_size),
             train_freq=int(planner_cfg.train_freq),
-            gradient_steps=int(planner_cfg.gradient_steps),
+            gradient_steps=resolved_gradient_steps,
             learning_rate=float(planner_cfg.learning_rate),
             gamma=float(planner_cfg.gamma),
             tau=float(planner_cfg.tau),

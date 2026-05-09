@@ -1,0 +1,13 @@
+defaults:
+  - rulebook_defaults
+  - _self_
+
+name: monitor_only
+
+# Rulebook is active for diagnostics/metrics, but training reward stays native.
+type: native
+behavior: monitor_only
+
+# Keep native reward in replay buffer/planner updates.
+lambda_env: 1.0
+lambda_rule: 0.0

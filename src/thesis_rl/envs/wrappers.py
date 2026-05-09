@@ -20,7 +20,7 @@ class RuleRewardWrapper(gym.Wrapper):
         self,
         env: gym.Env,
         reward_manager: BaseRewardManager,
-        reward_mode: str = "hybrid",
+        reward_mode: str = "monitor_only",
         attach_info: bool = True,
         rule_margin_log_path: str | None = None,
         logger_level: int | str | None = None,
@@ -68,7 +68,7 @@ class RuleRewardWrapper(gym.Wrapper):
             info_dict["env_reward"] = float(env_reward)
             info_dict["hybrid_reward"] = float(result.final_reward)
             info_dict["selected_reward"] = float(selected_reward)
-            info_dict["reward_mode"] = self.reward_mode
+            info_dict["reward_behavior"] = self.reward_mode
             info_dict["rule_reward_vector"] = result.rule_reward_vector
             info_dict["rule_bounded_vector"] = result.rule_bounded_vector
             info_dict["rule_components"] = result.rule_components
@@ -80,16 +80,16 @@ class RuleRewardWrapper(gym.Wrapper):
         return obs, selected_reward, terminated, truncated, info_dict
 
     def _select_reward(self, env_reward: float, result: Any) -> float:
-        if self.reward_mode == "scalar_default":
+        if self.reward_mode == "monitor_only":
             return float(env_reward)
-        if self.reward_mode in {"rulebook", "scalar_rulebook"}:
+        if self.reward_mode == "scalar_reward":
             return float(result.scalar_rule_reward)
         if self.reward_mode in {"hybrid", "lexicographic"}:
             return float(result.final_reward)
         raise ValueError(
             "Unsupported reward mode. "
             f"Got mode='{self.reward_mode}', expected one of: "
-            "scalar_default, rulebook, scalar_rulebook, hybrid, lexicographic."
+            "monitor_only, scalar_reward, hybrid, lexicographic."
         )
 
     def _append_rule_margin_log(

@@ -1,0 +1,12 @@
+defaults:
+  - rulebook_defaults
+  - _self_
+
+name: scalar_reward
+
+# Rulebook scalar reward drives learning.
+type: rulebook
+behavior: scalar_reward
+
+lambda_env: 0.0
+lambda_rule: 1.0

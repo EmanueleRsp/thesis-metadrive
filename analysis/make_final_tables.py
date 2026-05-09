@@ -19,6 +19,18 @@ FINAL_METRICS = (
     "counterexample_rate",
 )
 
+REQUIRED_COLUMNS = (
+    "condition_id",
+    "algorithm",
+    "reward_type",
+    "reward_behavior",
+    "curriculum_name",
+    "rulebook_config",
+    "eval_type",
+    "scenario_set",
+    "seed",
+)
+
 
 def _to_float(value: Any) -> float | None:
     if value is None:
@@ -58,31 +70,71 @@ def build_final_tables(aggregated_dir: Path, tables_dir: Path) -> None:
 
     tables_dir.mkdir(parents=True, exist_ok=True)
     grouped: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    by_algo_n: dict[str, set[str]] = defaultdict(set)
+    by_condition_seed: dict[str, set[str]] = defaultdict(set)
+    descriptors: dict[str, dict[str, str]] = {}
 
     with source.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise ValueError(f"CSV has no header: {source}")
+
+        missing_cols = [c for c in REQUIRED_COLUMNS if c not in reader.fieldnames]
+        if missing_cols:
+            raise ValueError(f"Missing required columns in {source}: {missing_cols}")
+
         for row in reader:
-            algo = str(row.get("algorithm", "")).strip()
+            condition_id = str(row.get("condition_id", "")).strip()
+            if condition_id == "":
+                raise ValueError(f"Empty condition_id in {source}")
+
+            for col in REQUIRED_COLUMNS:
+                if str(row.get(col, "")).strip() == "":
+                    raise ValueError(f"Empty required field '{col}' for condition '{condition_id}' in {source}")
+
             seed = str(row.get("seed", "")).strip()
-            if not algo:
-                continue
-            if seed:
-                by_algo_n[algo].add(seed)
+            by_condition_seed[condition_id].add(seed)
+
+            desc = {
+                "condition_id": condition_id,
+                "algorithm": str(row["algorithm"]).strip(),
+                "reward_type": str(row["reward_type"]).strip(),
+                "reward_behavior": str(row["reward_behavior"]).strip(),
+                "curriculum": str(row["curriculum_name"]).strip(),
+                "rulebook_config": str(row["rulebook_config"]).strip(),
+                "eval_type": str(row["eval_type"]).strip(),
+                "scenario_set": str(row["scenario_set"]).strip(),
+            }
+            previous = descriptors.get(condition_id)
+            if previous is None:
+                descriptors[condition_id] = desc
+            elif previous != desc:
+                raise ValueError(f"Inconsistent descriptors for condition_id '{condition_id}' in {source}")
+
             for metric in FINAL_METRICS:
                 value = _to_float(row.get(metric))
                 if value is not None:
-                    grouped[algo][metric].append(value)
+                    grouped[condition_id][metric].append(value)
 
     csv_path = tables_dir / "final_evaluation.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
-        fieldnames = ["algorithm", "n_seeds"] + [f"{m}_mean" for m in FINAL_METRICS] + [f"{m}_ci95" for m in FINAL_METRICS]
+        fieldnames = [
+            "condition_id",
+            "algorithm",
+            "reward_type",
+            "reward_behavior",
+            "curriculum",
+            "rulebook_config",
+            "eval_type",
+            "scenario_set",
+            "n_seeds",
+        ] + [f"{m}_mean" for m in FINAL_METRICS] + [f"{m}_ci95" for m in FINAL_METRICS]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        for algo in sorted(grouped.keys()):
-            row: dict[str, Any] = {"algorithm": algo, "n_seeds": len(by_algo_n.get(algo, set()))}
+        for condition_id in sorted(grouped.keys()):
+            row: dict[str, Any] = dict(descriptors[condition_id])
+            row["n_seeds"] = len(by_condition_seed.get(condition_id, set()))
             for metric in FINAL_METRICS:
-                values = grouped[algo].get(metric, [])
+                values = grouped[condition_id].get(metric, [])
                 if values:
                     m, ci = _mean_ci95(values)
                     row[f"{metric}_mean"] = m
@@ -94,13 +146,34 @@ def build_final_tables(aggregated_dir: Path, tables_dir: Path) -> None:
 
     md_path = tables_dir / "final_evaluation.md"
     with md_path.open("w", encoding="utf-8") as handle:
-        headers = ["Algorithm", "n"] + [metric for metric in FINAL_METRICS]
+        headers = [
+            "Condition",
+            "Algorithm",
+            "Reward Type",
+            "Reward Behavior",
+            "Curriculum",
+            "Rulebook Config",
+            "Eval Type",
+            "Scenario Set",
+            "n",
+        ] + [metric for metric in FINAL_METRICS]
         handle.write("| " + " | ".join(headers) + " |\n")
         handle.write("| " + " | ".join(["---"] * len(headers)) + " |\n")
-        for algo in sorted(grouped.keys()):
-            cells = [algo, str(len(by_algo_n.get(algo, set())))]
+        for condition_id in sorted(grouped.keys()):
+            d = descriptors[condition_id]
+            cells = [
+                condition_id,
+                d["algorithm"],
+                d["reward_type"],
+                d["reward_behavior"],
+                d["curriculum"],
+                d["rulebook_config"],
+                d["eval_type"],
+                d["scenario_set"],
+                str(len(by_condition_seed.get(condition_id, set()))),
+            ]
             for metric in FINAL_METRICS:
-                values = grouped[algo].get(metric, [])
+                values = grouped[condition_id].get(metric, [])
                 if values:
                     m, ci = _mean_ci95(values)
                     cells.append(f"{m:.4f} ± {ci:.4f}")
@@ -113,7 +186,7 @@ def build_final_tables(aggregated_dir: Path, tables_dir: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build final evaluation tables (mean ± 95% CI).")
+    parser = argparse.ArgumentParser(description="Build final evaluation tables (mean ± 95% CI) by condition.")
     parser.add_argument("--analysis-root", default="analysis")
     args = parser.parse_args()
     analysis_root = Path(args.analysis_root)
@@ -125,4 +198,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

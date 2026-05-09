@@ -6,6 +6,7 @@ beyond Stable-Baselines3 to support diverse backends (D4PG, SAC, custom RL, etc.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Protocol
 
 import numpy as np
@@ -111,6 +112,8 @@ class Td3Lifecycle:
         self.last_learning_rate = float("nan")
         self._policy: Any | None = None
         self._action_noise: Any | None = None
+        self._warned_missing_truncated_flag = False
+        self._logger = logging.getLogger(__name__)
 
     def _validate_sb3_components(self) -> None:
         policy = getattr(self.sb3_model, "policy", None)
@@ -159,7 +162,8 @@ class Td3Lifecycle:
     ) -> None:
         """Reset counters and initialize SB3 internals for manual loop."""
 
-        self.step_count = 0
+        # Keep update cadence stable across chunks for train_freq > 1.
+        # Chunk-local counters are still reset for monitoring.
         self.update_count = 0
         self.gradient_step_count = 0
         self.chunk_timesteps = chunk_timesteps
@@ -300,9 +304,24 @@ class Td3Lifecycle:
 
         for idx, info in enumerate(infos):
             replay_info = dict(info)
-            replay_info.setdefault("TimeLimit.truncated", False)
+            done = bool(done_batch[idx])
             terminal_observation = replay_info.get("terminal_observation")
-            if bool(done_batch[idx]) and terminal_observation is not None:
+            has_terminal_obs = terminal_observation is not None
+            if "TimeLimit.truncated" in replay_info:
+                replay_info["TimeLimit.truncated"] = bool(replay_info["TimeLimit.truncated"])
+            else:
+                # If a done transition provides terminal_observation but no truncation
+                # flag, assume timeout-like transition and warn once for diagnostics.
+                inferred_truncated = bool(done and has_terminal_obs)
+                replay_info["TimeLimit.truncated"] = inferred_truncated
+                if inferred_truncated and not self._warned_missing_truncated_flag:
+                    self._logger.warning(
+                        "Missing `TimeLimit.truncated` in done transition info. "
+                        "Inferred True because `terminal_observation` is present. "
+                        "Consider ensuring the VecEnv populates this flag explicitly."
+                    )
+                    self._warned_missing_truncated_flag = True
+            if done and terminal_observation is not None:
                 terminal_obs = np.asarray(terminal_observation, dtype=np.float32)
                 replay_info["terminal_observation"] = terminal_obs
                 next_obs_batch[idx] = terminal_obs

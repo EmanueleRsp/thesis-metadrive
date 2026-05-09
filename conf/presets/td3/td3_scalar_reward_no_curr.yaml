@@ -2,6 +2,6 @@
 defaults:
   - /config
   - override /planner: sb3_td3
-  - override /reward: scalar_native
+  - override /reward: scalar_reward
   - override /curriculum: disabled
   - _self_

@@ -13,7 +13,6 @@ experiment:
 planner:
   learning_starts: 100
   batch_size: 32
-  gradient_steps: 2
 
 checkpoint:
   periodic_interval_steps: 10000

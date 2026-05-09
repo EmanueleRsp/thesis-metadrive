@@ -1,0 +1,11 @@
+name: native
+
+# Canonical semantics
+# type: high-level family used in analysis filters/comparisons
+# behavior: how reward is selected at env-step time
+#   - off: no rulebook wrapper, raw environment reward
+type: native
+behavior: off
+
+# Explicitly disabled when behavior=off
+rulebook_config: none

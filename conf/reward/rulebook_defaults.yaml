@@ -1,0 +1,22 @@
+# Shared rulebook instrumentation/scalarization defaults.
+# Concrete reward presets should inherit this file.
+
+# Name of rulebook config in conf/rulebook/*.yaml
+rulebook_config: selection
+
+# Hyperparameters for scalar rulebook aggregation
+# (used when behavior=scalar_reward)
+a: 2.01
+c: 30.0
+lambda_env: 0.0
+lambda_rule: 1.0
+scales:
+  vehicle_collision_energy: 204.92679443359376
+  drivable_area: 108152.42578125001
+  wrong_way: 1.0
+  goal_progress: 189029.40625
+
+# Debug/diagnostic controls
+include_violation_vector: false
+rule_margin_log_path: null
+attach_info: true

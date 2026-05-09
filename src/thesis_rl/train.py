@@ -287,6 +287,8 @@ def _append_rule_metrics_rows(
     *,
     base_fields: dict[str, Any],
     eval_id: int,
+    eval_type: str,
+    scenario_set: str,
     chunk_id: int,
     stage: str,
     stage_index: int,
@@ -304,6 +306,8 @@ def _append_rule_metrics_rows(
             {
                 **base_fields,
                 "eval_id": eval_id,
+                "eval_type": eval_type,
+                "scenario_set": scenario_set,
                 "chunk_id": chunk_id,
                 "stage": stage,
                 "stage_index": stage_index,
@@ -331,10 +335,37 @@ def main(cfg: DictConfig) -> None:
     csv_dir = Path(str(cfg.paths.csv_dir))
     recorder = CSVRecorder(csv_dir)
     run_id = Path(str(cfg.paths.run_dir)).name
+    reward_type = str(cfg.reward.type).strip()
+    if reward_type == "":
+        raise ValueError("reward.type must be set for CSV schema.")
+    reward_behavior = str(cfg.reward.behavior).strip()
+    if reward_behavior == "":
+        raise ValueError("reward.behavior must be set for CSV schema.")
+    rulebook_config = str(cfg.reward.get("rulebook_config", "")).strip()
+    if rulebook_config == "":
+        raise ValueError("reward.rulebook_config must be set for CSV schema.")
+    curriculum_enabled = bool(cfg.curriculum.get("enabled", False))
+    if reward_type not in {"native", "rulebook"}:
+        raise ValueError(
+            f"Unsupported reward.type '{reward_type}' for strict analysis schema. "
+            "Expected one of: native, rulebook."
+        )
+    if reward_behavior not in {"off", "monitor_only", "scalar_reward"}:
+        raise ValueError(
+            f"Unsupported reward.behavior '{reward_behavior}' for strict analysis schema. "
+            "Expected one of: off, monitor_only, scalar_reward."
+        )
+    if reward_behavior == "off" and rulebook_config != "none":
+        raise ValueError("reward.behavior=off requires reward.rulebook_config=none.")
+    if reward_behavior != "off" and rulebook_config == "none":
+        raise ValueError("reward.behavior!=off requires reward.rulebook_config to be a valid rulebook name.")
     base_csv_fields = {
         "algorithm": str(cfg.planner.name),
-        "reward_mode": str(cfg.reward.mode),
+        "reward_type": reward_type,
+        "reward_behavior": reward_behavior,
         "curriculum_name": str(cfg.curriculum.name),
+        "rulebook_config": rulebook_config,
+        "curriculum_enabled": curriculum_enabled,
         "seed": int(cfg.seed),
         "run_id": run_id,
     }
@@ -1093,6 +1124,8 @@ def main(cfg: DictConfig) -> None:
                     {
                         **base_csv_fields,
                         "eval_id": eval_id,
+                        "eval_type": "intermediate",
+                        "scenario_set": "curriculum_eval",
                         "episode_id": episode_idx + 1,
                         "stage": current_stage_name,
                         "stage_index": current_stage_index,
@@ -1128,6 +1161,8 @@ def main(cfg: DictConfig) -> None:
                     {
                         **base_csv_fields,
                         "eval_id": eval_id,
+                        "eval_type": "intermediate",
+                        "scenario_set": "curriculum_eval",
                         "chunk_id": chunk_id,
                         "stage": current_stage_name,
                         "stage_index": current_stage_index,
@@ -1163,6 +1198,8 @@ def main(cfg: DictConfig) -> None:
                     recorder,
                     base_fields=base_csv_fields,
                     eval_id=eval_id,
+                    eval_type="intermediate",
+                    scenario_set="curriculum_eval",
                     chunk_id=chunk_id,
                     stage=current_stage_name,
                     stage_index=current_stage_index,
@@ -1287,6 +1324,8 @@ def main(cfg: DictConfig) -> None:
                 {
                     **base_csv_fields,
                     "eval_id": eval_id,
+                    "eval_type": "intermediate",
+                    "scenario_set": "curriculum_eval",
                     "chunk_id": chunk_id,
                     "stage": current_stage_name,
                     "stage_index": current_stage_index,
@@ -1336,6 +1375,8 @@ def main(cfg: DictConfig) -> None:
                 recorder,
                 base_fields=base_csv_fields,
                 eval_id=eval_id,
+                eval_type="intermediate",
+                scenario_set="curriculum_eval",
                 chunk_id=chunk_id,
                 stage=current_stage_name,
                 stage_index=current_stage_index,
@@ -1406,6 +1447,7 @@ def main(cfg: DictConfig) -> None:
         final_eval_env_overrides = None
         final_stage_name = "baseline"
         final_stage_index = 0
+        steps_to_final_stage = 0
         if curriculum_manager is not None:
             if not curriculum_cfg.stages:
                 raise ValueError("Curriculum is enabled but no stages are configured.")
@@ -1415,6 +1457,26 @@ def main(cfg: DictConfig) -> None:
             final_eval_env_overrides = dict(final_stage.env)
             if final_stage.eval_env:
                 final_eval_env_overrides.update(final_stage.eval_env)
+            promotions_path = Path(str(cfg.paths.csv_dir)) / "promotions.csv"
+            promoted_to_final_step: int | None = None
+            if promotions_path.exists():
+                with promotions_path.open("r", encoding="utf-8", newline="") as handle:
+                    reader = csv.DictReader(handle)
+                    for prow in reader:
+                        try:
+                            to_stage_index = int(str(prow.get("to_stage_index", "")).strip())
+                            step_value = int(float(str(prow.get("global_step", "")).strip()))
+                        except ValueError:
+                            continue
+                        if to_stage_index == final_stage_index:
+                            promoted_to_final_step = step_value
+                            break
+            if promoted_to_final_step is not None:
+                steps_to_final_stage = promoted_to_final_step
+            elif bool(curriculum_manager.is_finished()):
+                steps_to_final_stage = 0
+            else:
+                steps_to_final_stage = -1
         final_eval_env_overrides = apply_eval_scenario_seed_split(
             base_run_seed=run_seed,
             eval_env_overrides=final_eval_env_overrides,
@@ -1486,6 +1548,8 @@ def main(cfg: DictConfig) -> None:
             {
                 **base_csv_fields,
                 "eval_id": final_eval_id,
+                "eval_type": "final",
+                "scenario_set": "test",
                 "chunk_id": chunk_id,
                 "stage": final_stage_name,
                 "stage_index": final_stage_index,
@@ -1521,6 +1585,8 @@ def main(cfg: DictConfig) -> None:
             recorder,
             base_fields=base_csv_fields,
             eval_id=final_eval_id,
+            eval_type="final",
+            scenario_set="test",
             chunk_id=chunk_id,
             stage=final_stage_name,
             stage_index=final_stage_index,
@@ -1550,6 +1616,8 @@ def main(cfg: DictConfig) -> None:
                 {
                     **base_csv_fields,
                     "eval_id": final_eval_id,
+                    "eval_type": "final",
+                    "scenario_set": "test",
                     "episode_id": episode_idx + 1,
                     "stage": final_stage_name,
                     "stage_index": final_stage_index,
@@ -1579,10 +1647,13 @@ def main(cfg: DictConfig) -> None:
             "final_eval.csv",
             {
                 **base_csv_fields,
+                "eval_type": "final",
+                "scenario_set": "test",
                 "total_timesteps": total_timesteps,
                 "final_stage": final_stage_name,
                 "final_stage_index": final_stage_index,
                 "final_stage_reached": bool(curriculum_manager.is_finished()) if curriculum_manager is not None else True,
+                "steps_to_final_stage": int(steps_to_final_stage),
                 "final_eval_episodes": int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
                 "deterministic": bool(cfg.experiment.eval_deterministic),
                 "mean_reward": float(metrics.get("mean_reward", 0.0)),

@@ -68,19 +68,21 @@ class _CrashLoggingEnvWrapper(gym.Wrapper):
 
 
 def _load_rulebook_cfg_from_reward(cfg: DictConfig) -> DictConfig:
-    rulebook_name = str(cfg.reward.get("rulebook", "")).strip()
+    rulebook_name = str(cfg.reward.get("rulebook_config", "")).strip()
     if not rulebook_name:
         raise ValueError(
-            "Reward mode 'rulebook' requires `reward.rulebook` to be set "
-            "(example: reward.rulebook=selection)."
+            "Reward behavior requires `reward.rulebook_config` to be set "
+            "(example: reward.rulebook_config=selection)."
         )
+    if rulebook_name == "none":
+        raise ValueError("reward.rulebook_config='none' is invalid when rulebook behavior is active.")
 
     repo_root = Path(__file__).resolve().parents[3]
     rulebook_path = repo_root / "conf" / "rulebook" / f"{rulebook_name}.yaml"
     if not rulebook_path.exists():
         raise FileNotFoundError(
             f"Rulebook config file not found: {rulebook_path}. "
-            f"Check `reward.rulebook={rulebook_name}`."
+            f"Check `reward.rulebook_config={rulebook_name}`."
         )
 
     loaded = OmegaConf.load(rulebook_path)
@@ -185,21 +187,20 @@ def load_planner(cfg: DictConfig, checkpoint_path: str, env: Any) -> BasePlanner
 
 
 def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
-    mode = str(cfg.reward.mode).lower()
-    if mode == "scalar_native":
+    mode = str(cfg.reward.behavior).lower()
+    if mode == "off":
         return env
 
     supported_modes = {
-        "scalar_default",
-        "rulebook",
-        "scalar_rulebook",
+        "monitor_only",
+        "scalar_reward",
         "hybrid",
         "lexicographic",
     }
     if mode not in supported_modes:
         raise ValueError(
             "Unsupported reward mode. "
-            f"Got mode='{cfg.reward.mode}', expected one of: "
+            f"Got behavior='{cfg.reward.behavior}', expected one of: "
             f"{', '.join(sorted(supported_modes))}"
         )
 

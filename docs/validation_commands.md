@@ -34,7 +34,7 @@ What this step validates:
 - TD3 update path is active with minimal targeted overrides for a short smoke run.
 
 ```bash
-uv run --no-sync python -m thesis_rl.train --config-name presets/td3/td3_scalar_def_no_curr \
+uv run --no-sync python -m thesis_rl.train --config-name presets/td3/td3_monitor_only_no_curr \
   run_profile=smoke
 ```
 
@@ -49,7 +49,7 @@ Visual/manual checks:
 - Open `outputs/<run>/logs/` and confirm training progresses (no repeated reset/crash patterns).
 - Open `outputs/<run>/csv/final_eval.csv` and confirm it has one coherent row.
 
-## 2) Baseline Validation (curriculum OFF, scalar native)
+## 2) Baseline Validation (curriculum OFF, native / behavior=off)
 
 What this step validates:
 - Baseline behavior without curriculum/reward-wrapper confounders.
@@ -58,7 +58,7 @@ What this step validates:
 ```bash
 for s in 0 1 2; do
   uv run --no-sync python -m thesis_rl.train \
-    --config-name presets/td3/td3_scalar_native_no_curr \
+    --config-name presets/td3/td3_native_no_curr \
     run_profile=medium seed=$s
 done
 ```
@@ -71,7 +71,30 @@ Visual/manual checks:
 - Compare `final_eval.csv` across seeds: metrics should vary but stay in plausible ranges.
 - Spot-check `evals.csv` curves: no flatlined or exploding reward/error trends.
 
-## 3) Curriculum Validation (curriculum ON, scalar native)
+## 2.1) Baseline Validation (curriculum OFF, native / behavior=monitor_only)
+
+What this step validates:
+- Rulebook wrapper active with curriculum disabled while training signal remains native env scalar reward.
+- `monitor_only` path (`lambda_env=1.0`, `lambda_rule=0.0`) is stable in non-curriculum runs.
+
+```bash
+for s in 0 1 2; do
+  uv run --no-sync python -m thesis_rl.train \
+    --config-name presets/td3/td3_monitor_only_no_curr \
+    run_profile=medium seed=$s
+done
+```
+
+Expected:
+- All runs complete (`status=completed` in run metadata).
+- Final eval metrics are produced for each seed.
+- Aggregate behavior is broadly aligned with step 2 (allowing seed noise), with no systematic regressions.
+
+Visual/manual checks:
+- Inspect run config snapshot and confirm `reward.type=native`, `reward.behavior=monitor_only`, `reward.lambda_env=1.0`, `reward.lambda_rule=0.0`.
+- Compare `final_eval.csv` from steps 2 and 2.1: no systematic collapse/drift introduced by wrapper activation.
+
+## 3) Curriculum Validation (curriculum ON, native / behavior=off)
 
 What this step validates:
 - Curriculum progression logic and stage-aware train/eval splitting.
@@ -79,7 +102,7 @@ What this step validates:
 ```bash
 for s in 0 1 2; do
   uv run --no-sync python -m thesis_rl.train \
-    --config-name presets/td3/td3_scalar_native_curr \
+    --config-name presets/td3/td3_native_curr \
     run_profile=medium seed=$s
 done
 ```
@@ -92,7 +115,30 @@ Visual/manual checks:
 - Inspect `promotions.csv`: promotion events should be temporally coherent (increasing steps/eval ids).
 - In plots/tables, check if stage transitions align with metric changes (no impossible jumps).
 
-## 4) Rulebook Validation (curriculum ON, scalar rulebook)
+## 3.1) Curriculum Validation (curriculum ON, native / behavior=monitor_only)
+
+What this step validates:
+- Curriculum progression with rulebook wrapper active while training signal remains the native env scalar reward.
+- `monitor_only` path (`lambda_env=1.0`, `lambda_rule=0.0`) does not regress core train/eval behavior.
+
+```bash
+for s in 0 1 2; do
+  uv run --no-sync python -m thesis_rl.train \
+    --config-name presets/td3/td3_monitor_only_curr \
+    run_profile=medium seed=$s
+done
+```
+
+Expected:
+- Runs complete and produce standard train/eval/checkpoint artifacts.
+- Curriculum events remain coherent as in step 3.
+- Final returns should be broadly aligned with step 3 (allowing seed noise), since reward passed to replay is env-native.
+
+Visual/manual checks:
+- Inspect run config snapshot and confirm `reward.type=native`, `reward.behavior=monitor_only`, `reward.lambda_env=1.0`, `reward.lambda_rule=0.0`.
+- Compare `final_eval.csv` from steps 3 and 3.1: no systematic collapse/drift introduced by wrapper activation.
+
+## 4) Rulebook Validation (curriculum ON, rulebook / behavior=scalar_reward)
 
 What this step validates:
 - Rulebook scalar reward path under curriculum.
@@ -101,7 +147,7 @@ What this step validates:
 ```bash
 for s in 0 1 2; do
   uv run --no-sync python -m thesis_rl.train \
-    --config-name presets/td3/td3_scalar_rulebook_curr \
+    --config-name presets/td3/td3_scalar_reward_curr \
     run_profile=medium seed=$s \
     reward.rule_margin_log_path='${paths.logs_dir}/rule_margins.jsonl'
 done
@@ -124,18 +170,8 @@ What this step validates:
 Run after steps 2-4 (baseline/curriculum/rulebook):
 
 ```bash
-python - << 'PY'
-import glob, os, pandas as pd
-files = sorted(glob.glob("outputs/**/csv/final_eval.csv", recursive=True))
-if not files:
-    raise SystemExit("No final_eval.csv found")
-df = pd.concat([pd.read_csv(f).assign(_src=f) for f in files], ignore_index=True)
-cols = [c for c in [
-    "reward_mode","seed","success_rate","collision_rate","out_of_road_rate",
-    "route_completion","top_rule_violation_rate","avg_error_value","max_error_value"
-] if c in df.columns]
-print(df[cols].sort_values(["reward_mode","seed"]).to_string(index=False))
-PY
+uv run --no-sync python -m analysis.run_analysis --only aggregate
+uv run --no-sync python -m analysis.run_analysis --only tables
 ```
 
 Expected:
@@ -143,7 +179,7 @@ Expected:
 - No obviously broken regime (example: all-zero success with all-one collision).
 
 Visual/manual checks:
-- Compare rows side-by-side: confirm rulebook is not trivially worse on all axes.
+- Open `analysis/tables/final_evaluation.md` and compare rows grouped by curriculum/reward behavior.
 
 ## 5) Scale-Tuning Pass (rule margins -> suggested scales)
 
@@ -155,7 +191,7 @@ Collect diagnostics logs from normal rulebook behavior:
 
 ```bash
 uv run --no-sync python -m thesis_rl.train \
-  --config-name presets/td3/td3_scalar_rulebook_scale_tuning_no_curr \
+  --config-name presets/td3/td3_scalar_reward_scale_tuning_no_curr \
 ```
 
 Collect forced diagnostics logs to activate rare rules:
@@ -204,120 +240,13 @@ Expected:
 - If any rule has insufficient active samples, strict tuning fails explicitly.
 - Once all rules pass coverage, `scale_report.json` contains final suggested scales and coverage stats.
 
-Then update `conf/reward/base_rulebook.yaml` (`reward.scales`) and re-run step 4 for confirmation.
+Then update `conf/reward/rulebook_defaults.yaml` (`reward.scales`) and re-run step 4 for confirmation.
 
 Visual/manual checks:
 - Confirm suggested scales are not degenerate (all identical by accident, or extreme outliers without reason).
 - After updating scales and re-running step 4, compare `rule_metrics.csv` to verify reduced saturation/imbalance.
 
-## 6) CSV and Artifact Presence Checks
-
-What this step validates:
-- Mandatory outputs exist for completed runs.
-
-Quick check for required CSVs/checkpoints:
-
-```bash
-find outputs -type f \( \
-  -name train_chunks.csv -o -name evals.csv -o -name eval_episodes.csv -o -name promotions.csv -o -name rule_metrics.csv -o -name final_eval.csv -o \
-  -name final.zip -o -name latest.zip -o -name checkpoint_index.csv -o -name best_checkpoints.yaml -o \
-  -name latest_replay_buffer.pkl -o -name latest_training_state.yaml -o -name latest_rng_state.pkl \
-\) | sort
-```
-
-Expected:
-- Required files exist for completed runs.
-- `promotions.csv` may be empty/absent only when curriculum is disabled or no promotion event occurs.
-
-Visual/manual checks:
-- Browse one run directory tree manually to verify outputs are organized and not partially missing.
-
-## 6.1) CSV Schema Validation vs Objectives
-
-What this step validates:
-- Output contracts match documented schema (`docs/csv_evaluation_objectives.md`).
-
-Validate CSV headers against `docs/csv_evaluation_objectives.md` (including V2 fields).
-
-Quick header dump:
-
-```bash
-python - << 'PY'
-import csv, glob, os
-targets = [
-    "train_chunks.csv",
-    "evals.csv",
-    "eval_episodes.csv",
-    "promotions.csv",
-    "rule_metrics.csv",
-    "final_eval.csv",
-]
-for path in sorted(glob.glob("outputs/**/csv/*.csv", recursive=True)):
-    name = os.path.basename(path)
-    if name not in targets:
-        continue
-    with open(path, newline="", encoding="utf-8") as f:
-        header = next(csv.reader(f), [])
-    print(f"{path}\n  -> {header}\n")
-PY
-```
-
-Expected:
-- Headers match the expected objective schema for each CSV type.
-- Key identifiers are present and non-null: `algorithm`, `seed`, `run_id`, `stage`, `stage_index`, `global_step`.
-
-Visual/manual checks:
-- Open 1-2 CSVs directly and verify header readability and consistent naming conventions.
-
-## 6.2) CSV Granularity Validation
-
-What this step validates:
-- Row-level granularity rules (per chunk / per eval / per episode / per rule) are respected.
-
-```bash
-python - << 'PY'
-import glob, os, pandas as pd
-runs = sorted(glob.glob("outputs/**/csv", recursive=True))
-for csv_dir in runs:
-    files = {os.path.basename(p): p for p in glob.glob(os.path.join(csv_dir, "*.csv"))}
-    if "evals.csv" in files and "eval_episodes.csv" in files:
-        e = pd.read_csv(files["evals.csv"])
-        ep = pd.read_csv(files["eval_episodes.csv"])
-        if {"eval_id"}.issubset(e.columns) and {"eval_id"}.issubset(ep.columns):
-            counts = ep.groupby("eval_id").size()
-            print(csv_dir, "eval_episodes per eval_id:", counts.to_dict())
-PY
-```
-
-Expected:
-- `train_chunks.csv`: one row per training chunk.
-- `evals.csv`: one row per evaluation aggregate.
-- `eval_episodes.csv`: N rows per `eval_id` (N = eval episodes for that run).
-- `promotions.csv`: rows only when promotion events happen.
-- `rule_metrics.csv`: one row per rule per evaluation.
-- `final_eval.csv`: one row per run.
-
-Visual/manual checks:
-- Open grouped counts output and verify no irregular holes in `eval_id` progression.
-
-## 6.3) Run-Selection Filters and Dedupe Validation
-
-What this step validates:
-- Aggregation honors selection policy (completed + include_in_comparison + dedupe + expected seeds).
-
-```bash
-uv run --no-sync python -m analysis.run_analysis --only aggregate --seed-list 0,1,2
-```
-
-Expected:
-- Aggregation includes only `status=completed` and `analysis.include_in_comparison=true`.
-- Dedupe keeps latest run for identical comparison key.
-- Missing-seed warnings are emitted when expected seeds are absent.
-
-Visual/manual checks:
-- Confirm scale-tuning runs are excluded from final comparisons.
-
-## 7) Analysis Pipeline Validation
+## 6) Analysis Pipeline Validation
 
 What this step validates:
 - End-to-end aggregate/tables/plots/orchestrator behavior.
@@ -346,7 +275,7 @@ Visual/manual checks:
 - In curriculum plots, verify promotion markers align with expected promotion steps.
 - Open generated markdown tables and verify CI formatting is readable and coherent.
 
-## 7.1) Video-Pipeline Output Validation
+## 6.1) Video-Pipeline Output Validation
 
 What this step validates:
 - Episode selection + replay rendering + CSV linkage.
@@ -369,7 +298,7 @@ Visual/manual checks:
 - Watch sampled GIFs (best/median/worst/collision/out_of_road) and confirm label semantics match behavior.
 - Cross-check a GIF path against `eval_episodes.csv.video_path`.
 
-## 8) Idempotency / Reproducibility (analysis)
+## 7) Idempotency / Reproducibility (analysis)
 
 What this step validates:
 - Re-running analysis with identical inputs is stable and non-destructive.
@@ -386,7 +315,7 @@ Expected:
 Visual/manual checks:
 - Compare timestamps/file counts: rerun may update files but should not change metric values unexpectedly.
 
-## 9) Resume Validation
+## 8) Resume Validation
 
 What this step validates:
 - Resume restores planner/adapter/replay/state/RNG and continues without silent resets.
@@ -395,7 +324,7 @@ Use a real completed run path:
 
 ```bash
 uv run --no-sync python -m thesis_rl.train \
-  --config-name presets/td3/td3_scalar_native_curr \
+  --config-name presets/td3/td3_native_curr \
   run_profile=medium \
   checkpoint.resume.enabled=true \
   checkpoint.resume.run_dir='/absolute/path/to/previous/run_dir' \
@@ -410,72 +339,7 @@ Expected:
 Visual/manual checks:
 - Compare pre-resume and post-resume CSV tails: `global_step` and `chunk_id` should continue, not restart.
 
-## 9.1) Checkpoint Lifecycle Validation
-
-What this step validates:
-- Expected checkpoint families (`latest`, `periodic`, `final`) are created and retained correctly.
-
-```bash
-find outputs -type f \( \
-  -path "*/checkpoints/latest.zip" -o \
-  -path "*/checkpoints/final.zip" -o \
-  -path "*/checkpoints/periodic/step_*.zip" \
-\) | sort
-```
-
-Expected:
-- `latest.zip` appears after first chunk and is updated on subsequent chunks.
-- `final.zip` exists for completed runs.
-- Periodic checkpoints respect `checkpoint.periodic_interval_steps`.
-- Retention respects `checkpoint.keep_last_periodic` (older periodic snapshots pruned).
-
-Visual/manual checks:
-- Sort periodic checkpoints by step and verify monotonic naming with pruning of older files.
-
-## 9.2) Checkpoint Metadata and Final-Eval Fields
-
-What this step validates:
-- Metadata coherence between checkpoint registry and final-eval references.
-
-```bash
-python - << 'PY'
-import glob, pandas as pd, os
-for p in sorted(glob.glob("outputs/**/checkpoints/metadata/checkpoint_index.csv", recursive=True)):
-    df = pd.read_csv(p)
-    must = [c for c in ["checkpoint_path","type","global_step","reason","timestamp"] if c in df.columns]
-    print(p, "rows=", len(df), "cols=", must)
-for p in sorted(glob.glob("outputs/**/csv/final_eval.csv", recursive=True)):
-    df = pd.read_csv(p)
-    cols = [c for c in ["checkpoint_path","checkpoint_type","checkpoint_global_step"] if c in df.columns]
-    print(p, "final_eval checkpoint cols:", cols)
-PY
-```
-
-Expected:
-- `checkpoint_index.csv` rows are coherent (`type/path/step/reason/timestamp`).
-- `best_checkpoints.yaml` is present and points to current best/final artifacts.
-- `final_eval.csv` includes valid `checkpoint_path`, `checkpoint_type`, `checkpoint_global_step`.
-
-Visual/manual checks:
-- Open `best_checkpoints.yaml` and verify referenced files exist on disk.
-
-## 9.3) Resume Fail-Fast Validation (negative test)
-
-What this step validates:
-- Invalid resume configuration fails explicitly (no silent fallback to fresh run).
-
-```bash
-uv run --no-sync python -m thesis_rl.train \
-  --config-name presets/td3/td3_scalar_native_curr \
-  checkpoint.resume.enabled=true \
-  checkpoint.resume.run_dir='/tmp/this_path_should_not_exist' \
-  checkpoint.resume.checkpoint_name=latest
-```
-
-Expected:
-- Run fails fast with explicit missing-checkpoint/state error (no silent fallback).
-
-## 10) Best-Checkpoint Policy Validation
+## 9) Best-Checkpoint Policy Validation
 
 What this step validates:
 - Best-checkpoint policies (lexicographic and rulebook variants) actually trigger and persist.
@@ -506,7 +370,7 @@ When rendering videos, explicitly set replay checkpoint target:
 
 ```bash
 uv run --no-sync python -m thesis_rl.train \
-  --config-name presets/td3/td3_scalar_rulebook_curr \
+  --config-name presets/td3/td3_scalar_reward_curr \
   video.enabled=true \
   video.replay_checkpoint=final
 ```
