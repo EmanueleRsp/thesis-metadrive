@@ -14,9 +14,9 @@ def _compose(*overrides: str):
 
 
 def test_adapter_groups_compose() -> None:
-    cfg_identity = _compose("adapter=identity", "reward=scalar_default")
-    cfg_neural = _compose("adapter=neural_adapter", "reward=scalar_default")
-    cfg_policy = _compose("adapter=policy_adapter", "reward=scalar_default")
+    cfg_identity = _compose("adapter=identity", "reward=monitor_only")
+    cfg_neural = _compose("adapter=neural_adapter", "reward=monitor_only")
+    cfg_policy = _compose("adapter=policy_adapter", "reward=monitor_only")
 
     assert cfg_identity.adapter.name == "identity"
     assert cfg_neural.adapter.name == "neural_adapter"
@@ -24,8 +24,8 @@ def test_adapter_groups_compose() -> None:
 
 
 def test_curriculum_groups_compose() -> None:
-    cfg_disabled = _compose("curriculum=disabled", "reward=scalar_default")
-    cfg_stages = _compose("curriculum=stages", "reward=scalar_default")
+    cfg_disabled = _compose("curriculum=disabled", "reward=monitor_only")
+    cfg_stages = _compose("curriculum=stages", "reward=monitor_only")
 
     assert bool(cfg_disabled.curriculum.enabled) is False
     assert bool(cfg_stages.curriculum.enabled) is True

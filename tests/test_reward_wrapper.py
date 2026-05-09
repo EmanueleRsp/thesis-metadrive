@@ -108,7 +108,7 @@ def test_rule_reward_wrapper_enriches_info_and_overrides_reward() -> None:
 
 def test_rule_reward_wrapper_can_return_env_reward_with_rulebook_diagnostics() -> None:
     manager = _DummyManager()
-    env = RuleRewardWrapper(_DummyEnv(), manager, reward_mode="scalar_default", attach_info=True)
+    env = RuleRewardWrapper(_DummyEnv(), manager, reward_mode="monitor_only", attach_info=True)
     _obs, _info = env.reset()
 
     _next_obs, reward, _done, _truncated, info = env.step(np.array([0.0], dtype=np.float32))
@@ -122,7 +122,7 @@ def test_rule_reward_wrapper_can_return_env_reward_with_rulebook_diagnostics() -
 
 def test_rule_reward_wrapper_can_return_scalar_rulebook_reward() -> None:
     manager = _DummyManager()
-    env = RuleRewardWrapper(_DummyEnv(), manager, reward_mode="scalar_rulebook", attach_info=True)
+    env = RuleRewardWrapper(_DummyEnv(), manager, reward_mode="scalar_reward", attach_info=True)
     _obs, _info = env.reset()
 
     _next_obs, reward, _done, _truncated, info = env.step(np.array([0.0], dtype=np.float32))

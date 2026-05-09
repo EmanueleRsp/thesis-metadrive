@@ -14,8 +14,8 @@ def test_wiring_wraps_env_in_rulebook_mode() -> None:
     cfg = OmegaConf.create(
         {
             "reward": {
-                "mode": "rulebook",
-                "rulebook": "selection",
+                "behavior": "scalar_reward",
+                "rulebook_config": "selection",
                 "attach_info": True,
                 "a": 2.01,
                 "c": 30.0,
@@ -34,8 +34,8 @@ def test_wiring_wraps_env_in_scalar_default_mode_for_diagnostics() -> None:
     cfg = OmegaConf.create(
         {
             "reward": {
-                "mode": "scalar_default",
-                "rulebook": "selection",
+                "behavior": "monitor_only",
+                "rulebook_config": "selection",
                 "attach_info": True,
                 "a": 2.01,
                 "c": 30.0,
@@ -51,6 +51,6 @@ def test_wiring_wraps_env_in_scalar_default_mode_for_diagnostics() -> None:
 
 
 def test_wiring_is_noop_in_scalar_native_mode() -> None:
-    cfg = OmegaConf.create({"reward": {"mode": "scalar_native"}})
+    cfg = OmegaConf.create({"reward": {"behavior": "off"}})
     env = _DummyEnv()
     assert maybe_wrap_env_with_reward_manager(env, cfg) is env

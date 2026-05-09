@@ -20,7 +20,7 @@ config:
 vectorized:
   enabled: true
   num_envs: 10
-  start_method: forkserver
+  start_method: spawn
 
 # Default observation type:
 # LidarStateObservation

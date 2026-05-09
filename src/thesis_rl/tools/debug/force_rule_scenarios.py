@@ -152,7 +152,7 @@ def main() -> None:
         cfg = compose(
             config_name="config",
             overrides=[
-                "reward=scalar_rulebook",
+                "reward=scalar_reward",
                 "curriculum=stages",
                 f"seed={int(args.seed)}",
                 "reward.rule_margin_log_path=outputs/debug_rule_margins_forced_scenarios.jsonl",

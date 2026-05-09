@@ -9,11 +9,16 @@ import pickle
 
 from dataclasses import asdict
 import random
+import os
 from pathlib import Path
 from typing import Any
 
 import hydra
 import numpy as np
+
+# Ensure CuBLAS reproducibility config is set before importing torch.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
 import torch
 from omegaconf import DictConfig, OmegaConf
 from stable_baselines3.common.vec_env import VecEnv

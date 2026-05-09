@@ -8,7 +8,7 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecEnv
+from stable_baselines3.common.vec_env import VecEnv
 
 from thesis_rl.adapters.base import BaseAdapter
 from thesis_rl.adapters.identity import IdentityAdapter
@@ -21,6 +21,7 @@ from thesis_rl.envs.wrappers import RuleRewardWrapper
 from thesis_rl.preprocessors.base import BasePreprocessor
 from thesis_rl.preprocessors.identity import IdentityPreprocessor
 from thesis_rl.reward.reward_manager import HybridRulebookRewardManager
+from thesis_rl.runtime.deterministic_subproc_vec_env import DeterministicSubprocVecEnv
 from thesis_rl.runtime.seeding import set_global_seed
 
 _LOGGER = logging.getLogger(__name__)
@@ -259,8 +260,15 @@ def _worker_env_overrides(
     if total_scenarios <= 0:
         raise ValueError(f"Training env `num_scenarios` must be > 0, got {total_scenarios}.")
 
-    worker_scenarios = max(total_scenarios // int(num_envs), 1)
-    worker_start_seed = base_start_seed + int(rank) * worker_scenarios
+    num_envs_int = int(num_envs)
+    base = max(total_scenarios // num_envs_int, 1)
+    remainder = max(total_scenarios - base * num_envs_int, 0)
+    worker_scenarios = base + (1 if int(rank) < remainder else 0)
+    worker_start_seed = (
+        base_start_seed
+        + int(rank) * base
+        + min(int(rank), remainder)
+    )
     overrides["start_seed"] = int(worker_start_seed)
     overrides["num_scenarios"] = int(worker_scenarios)
     return overrides
@@ -318,7 +326,7 @@ def build_train_env(cfg: DictConfig, env_overrides: dict[str, Any] | None = None
 
         return _init
 
-    return SubprocVecEnv(
+    return DeterministicSubprocVecEnv(
         [make_thunk(rank) for rank in range(num_envs)],
         start_method=start_method,
     )

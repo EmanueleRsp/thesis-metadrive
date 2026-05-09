@@ -5,7 +5,7 @@ name: native
 # behavior: how reward is selected at env-step time
 #   - off: no rulebook wrapper, raw environment reward
 type: native
-behavior: off
+behavior: "off"
 
 # Explicitly disabled when behavior=off
 rulebook_config: none

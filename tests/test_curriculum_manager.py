@@ -25,7 +25,7 @@ def _passing_metrics() -> dict[str, float]:
 
 def test_curriculum_config_parses_from_curriculum_group() -> None:
     with initialize_config_dir(version_base=None, config_dir=str(CONF_DIR)):
-        cfg = compose(config_name="config", overrides=["curriculum=disabled", "reward=scalar_default"])
+        cfg = compose(config_name="config", overrides=["curriculum=disabled", "reward=monitor_only"])
 
     curriculum = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
 
