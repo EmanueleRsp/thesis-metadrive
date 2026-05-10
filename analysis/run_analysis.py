@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
+import sys
 from pathlib import Path
 
 from analysis.aggregate_runs import aggregate_runs
@@ -72,6 +74,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run full analysis pipeline (aggregate + tables + plots).")
     parser.add_argument("--outputs-root", default="outputs")
     parser.add_argument("--analysis-root", default="analysis")
+    parser.add_argument(
+        "--run-profile",
+        required=True,
+        help="Run profile scope for this analysis (e.g. smoke|fast|medium|long). Outputs are written to analysis/<run_profile>/.",
+    )
     parser.add_argument("--total-timesteps", default=None)
     parser.add_argument("--eval-episodes", default=None)
     parser.add_argument("--final-eval-episodes", default=None)
@@ -128,7 +135,7 @@ def main() -> None:
     args = parser.parse_args()
 
     outputs_root = Path(args.outputs_root)
-    analysis_root = Path(args.analysis_root)
+    analysis_root = Path(args.analysis_root) / str(args.run_profile).strip()
     comparison_dimension = str(args.comparison_dimension).strip().lower()
     seed_list = [int(item.strip()) for item in str(args.seed_list).split(",") if item.strip()]
 
@@ -137,6 +144,7 @@ def main() -> None:
         selected_runs = aggregate_runs(
             outputs_root=outputs_root,
             analysis_root=analysis_root,
+            run_profile=str(args.run_profile).strip(),
             total_timesteps=args.total_timesteps,
             eval_episodes=args.eval_episodes,
             final_eval_episodes=args.final_eval_episodes,
@@ -201,23 +209,33 @@ def main() -> None:
                 "Set --comparison-dimension to curriculum/reward/algorithm."
             )
         else:
-            from analysis.render_qualitative_videos import render_qualitative_videos
-
             for root in comparison_roots:
                 build_qualitative_manifest(
                     comparison_root=root,
                     max_per_category=int(args.qualitative_max_per_category),
                 )
-                render_qualitative_videos(comparison_root=root)
+                try:
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "analysis.render_qualitative_videos",
+                            "--comparison-root",
+                            str(root),
+                        ],
+                        check=True,
+                    )
+                except Exception as exc:
+                    print(f"[qualitative] Skipped render for {root}: {exc}")
 
     if args.only == "all" and not bool(args.no_videos):
-        from analysis.render_selected_videos import render_selected_videos
         from analysis.select_video_episodes import select_video_episodes
 
         if not selected_runs:
             selected_runs = aggregate_runs(
                 outputs_root=outputs_root,
                 analysis_root=analysis_root,
+                run_profile=str(args.run_profile).strip(),
                 total_timesteps=args.total_timesteps,
                 eval_episodes=args.eval_episodes,
                 final_eval_episodes=args.final_eval_episodes,
@@ -230,7 +248,16 @@ def main() -> None:
                     source="final",
                     max_videos=int(args.video_max),
                 )
-                render_selected_videos(run_dir=run.run_dir)
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "analysis.render_selected_videos",
+                        "--run-dir",
+                        str(run.run_dir),
+                    ],
+                    check=True,
+                )
             except Exception as exc:
                 print(f"[video] Skipped run {run.run_dir}: {exc}")
 

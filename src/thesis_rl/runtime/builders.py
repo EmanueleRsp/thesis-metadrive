@@ -217,6 +217,8 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
         reward_mode=mode,
         attach_info=bool(cfg.reward.get("attach_info", True)),
         rule_margin_log_path=cfg.reward.get("rule_margin_log_path"),
+        runtime_info_debug_enabled=bool(cfg.reward.get("runtime_info_debug_enabled", False)),
+        runtime_info_debug_path=cfg.reward.get("runtime_info_debug_path"),
         logger_level=cfg.get("logging", {}).get("console_level", "INFO"),
     )
 

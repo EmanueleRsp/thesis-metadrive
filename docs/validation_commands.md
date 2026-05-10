@@ -170,8 +170,8 @@ What this step validates:
 Run after steps 2-4 (baseline/curriculum/rulebook):
 
 ```bash
-uv run --no-sync python -m analysis.run_analysis --only aggregate
-uv run --no-sync python -m analysis.run_analysis --only tables
+uv run --no-sync python -m analysis.run_analysis --run-profile medium --only aggregate
+uv run --no-sync python -m analysis.run_analysis --run-profile medium --only tables
 ```
 
 Expected:
@@ -179,7 +179,7 @@ Expected:
 - No obviously broken regime (example: all-zero success with all-one collision).
 
 Visual/manual checks:
-- Open `analysis/tables/final_evaluation.md` and compare rows grouped by curriculum/reward behavior.
+- Open `analysis/medium/tables/final_evaluation.md` and compare rows grouped by curriculum/reward behavior.
 
 ## 5) Scale-Tuning Pass (rule margins -> suggested scales)
 
@@ -252,17 +252,17 @@ What this step validates:
 - End-to-end aggregate/tables/plots/orchestrator behavior.
 
 ```bash
-uv run --no-sync python -m analysis.run_analysis --only aggregate
-uv run --no-sync python -m analysis.run_analysis --only tables
-uv run --no-sync python -m analysis.run_analysis --only plots
-uv run --no-sync python -m analysis.run_analysis --only all --no-videos
-uv run --no-sync python -m analysis.run_analysis --only all --video-max 3
+uv run --no-sync python -m analysis.run_analysis --run-profile medium --only aggregate
+uv run --no-sync python -m analysis.run_analysis --run-profile medium --only tables
+uv run --no-sync python -m analysis.run_analysis --run-profile medium --only plots
+uv run --no-sync python -m analysis.run_analysis --run-profile medium --only all --no-videos
+uv run --no-sync python -m analysis.run_analysis --run-profile medium --only all --video-max 3
 ```
 
 Expected:
-- Aggregated CSVs under `analysis/aggregated/*_all_runs.csv`.
-- Tables generated under `analysis/tables` (`.csv` and `.md`).
-- Plots generated under `analysis/plots` (`.png`).
+- Aggregated CSVs under `analysis/medium/aggregated/*_all_runs.csv`.
+- Tables generated under `analysis/medium/tables` (`.csv` and `.md`).
+- Plots generated under `analysis/medium/plots` (`.png`).
 - Video pipeline skips gracefully when dependencies/checkpoints are missing.
 - No crashes when partial datasets are present.
 - Learning curves use `global_step` on x-axis.
@@ -304,8 +304,8 @@ What this step validates:
 - Re-running analysis with identical inputs is stable and non-destructive.
 
 ```bash
-uv run --no-sync python -m analysis.run_analysis --only all --no-videos
-uv run --no-sync python -m analysis.run_analysis --only all --no-videos
+uv run --no-sync python -m analysis.run_analysis --run-profile medium --only all --no-videos
+uv run --no-sync python -m analysis.run_analysis --run-profile medium --only all --no-videos
 ```
 
 Expected:

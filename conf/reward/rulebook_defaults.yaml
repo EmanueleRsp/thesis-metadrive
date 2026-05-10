@@ -20,3 +20,7 @@ scales:
 include_violation_vector: false
 rule_margin_log_path: null
 attach_info: true
+
+# Runtime info debug controls
+runtime_info_debug_enabled: false
+runtime_info_debug_path: outputs/runtime_info_debug.jsonl

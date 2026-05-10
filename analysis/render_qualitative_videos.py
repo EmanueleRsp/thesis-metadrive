@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +18,16 @@ from thesis_rl.runtime.builders import (
     build_preprocessor,
     load_planner,
 )
+from thesis_rl.runtime.seeding import seed_env_spaces, set_global_seed
 
-from analysis.render_selected_videos import _as_bool, _resolve_eval_overrides_for_stage, _resolve_replay_checkpoint, _save_gif
+from analysis.render_selected_videos import (
+    _ensure_omegaconf_now_resolver,
+    _resolve_replay_checkpoint,
+    _resolve_replay_overrides_for_episode,
+    _sanitize_cfg_for_replay,
+    _render_topdown_frame,
+    _save_gif,
+)
 
 
 def _read_manifest(path: Path) -> tuple[list[dict[str, str]], list[str]]:
@@ -55,38 +64,48 @@ def _render_one_episode(
     hydra_cfg_path = run_dir / "hydra" / "config.yaml"
     if not hydra_cfg_path.exists():
         raise FileNotFoundError(f"Missing Hydra config snapshot: {hydra_cfg_path}")
+    _ensure_omegaconf_now_resolver()
     cfg = OmegaConf.load(hydra_cfg_path)
+    _sanitize_cfg_for_replay(cfg, run_dir)
+    final_eval_episodes = int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes))
+    run_seed = int(cfg.get("seed", 0))
+    set_global_seed(run_seed)
 
     checkpoint_path = _resolve_replay_checkpoint(run_dir, cfg)
     fps = int(cfg.video.get("fps", 20))
     topdown_cfg = cfg.video.get("topdown", {})
 
-    overrides = _resolve_eval_overrides_for_stage(cfg, stage_name)
-    env = build_env(cfg, overrides)
-    preprocessor = build_preprocessor(cfg)
-    adapter: BaseAdapter = build_adapter(cfg, adapter_space_kwargs(env.action_space))
-    planner = load_planner(cfg, checkpoint_path=str(checkpoint_path), env=env)
-    agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
-    agent.load_adapter(checkpoint_path=checkpoint_path, strict=True)
-
-    obs, _info = env.reset(seed=scenario_seed)
-    done = False
-    truncated = False
-    frames: list[np.ndarray] = []
-    while not (done or truncated):
-        action, _ = agent.predict(obs, deterministic=True)
-        obs, _reward, done, truncated, _step_info = env.step(action)
-        frame = env.render(
-            mode="topdown",
-            window=_as_bool(topdown_cfg.get("window"), False),
-            screen_record=_as_bool(topdown_cfg.get("screen_record"), False),
-            screen_size=tuple(topdown_cfg.get("screen_size", [800, 800])),
-            scaling=float(topdown_cfg.get("scaling", 4)),
-            semantic_map=_as_bool(topdown_cfg.get("semantic_map"), False),
+    env = None
+    try:
+        overrides = _resolve_replay_overrides_for_episode(
+            cfg=cfg,
+            stage_name=stage_name,
+            scenario_seed=scenario_seed,
+            episode_id=episode_id,
+            final_eval_episodes=final_eval_episodes,
         )
-        if frame is not None:
-            frames.append(np.asarray(frame))
-    env.close()
+        env = build_env(cfg, overrides)
+        seed_env_spaces(env, run_seed + 500_000)
+        preprocessor = build_preprocessor(cfg)
+        adapter: BaseAdapter = build_adapter(cfg, adapter_space_kwargs(env.action_space))
+        planner = load_planner(cfg, checkpoint_path=str(checkpoint_path), env=env)
+        agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
+        agent.load_adapter(checkpoint_path=checkpoint_path, strict=True)
+
+        obs, _info = env.reset(seed=scenario_seed)
+        done = False
+        truncated = False
+        frames: list[np.ndarray] = []
+        while not (done or truncated):
+            action, _ = agent.predict(obs, deterministic=True)
+            obs, _reward, done, truncated, _step_info = env.step(action)
+            frame = _render_topdown_frame(env, topdown_cfg)
+            if frame is not None:
+                frames.append(np.asarray(frame))
+    finally:
+        if env is not None:
+            with suppress(Exception):
+                env.close()
 
     _save_gif(frames, output_path, fps=fps)
     _ = (eval_id, episode_id)  # kept for explicit signature symmetry

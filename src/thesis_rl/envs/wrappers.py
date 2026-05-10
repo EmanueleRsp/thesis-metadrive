@@ -23,6 +23,8 @@ class RuleRewardWrapper(gym.Wrapper):
         reward_mode: str = "monitor_only",
         attach_info: bool = True,
         rule_margin_log_path: str | None = None,
+        runtime_info_debug_enabled: bool = False,
+        runtime_info_debug_path: str | None = None,
         logger_level: int | str | None = None,
     ) -> None:
         super().__init__(env)
@@ -32,6 +34,14 @@ class RuleRewardWrapper(gym.Wrapper):
         self._rule_margin_log_path = Path(rule_margin_log_path) if rule_margin_log_path else None
         if self._rule_margin_log_path is not None:
             self._rule_margin_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._runtime_info_debug_enabled = bool(runtime_info_debug_enabled)
+        self._runtime_info_debug_path = (
+            Path(runtime_info_debug_path)
+            if runtime_info_debug_path
+            else Path("outputs/runtime_info_debug.jsonl")
+        )
+        if self._runtime_info_debug_enabled:
+            self._runtime_info_debug_path.parent.mkdir(parents=True, exist_ok=True)
         self._logger = logging.getLogger(__name__)
         if logger_level is not None:
             if isinstance(logger_level, int):
@@ -257,10 +267,13 @@ class RuleRewardWrapper(gym.Wrapper):
         info_dict["rule_input_sources"] = rule_input_sources
         info_dict["rule_input_available"] = rule_input_available
 
+        if not self._runtime_info_debug_enabled:
+            return
+
         # --- Runtime diagnostics: write a compact JSON line per step indicating
         # presence of key inputs and small numeric samples to help debugging.
         try:
-            debug_path = Path("outputs/runtime_info_debug.jsonl")
+            debug_path = self._runtime_info_debug_path
             debug_path.parent.mkdir(parents=True, exist_ok=True)
 
             top_level = [

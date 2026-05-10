@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,7 @@ CONTEXT_FIELDS = (
     "curriculum_enabled",
     "rulebook_config",
     "experiment_group",
+    "run_profile",
 )
 
 INFERRED_FIELDS_BY_FILE = {
@@ -87,6 +89,7 @@ class RunInfo:
     rulebook_config: str
     condition_id: str
     experiment_group: str
+    run_profile: str
     seed: int
     timestamp_dir: str
     metadata_status: str
@@ -160,6 +163,19 @@ def _build_condition_id(
     return "__".join(parts)
 
 
+def _infer_run_profile(*, metadata: dict[str, str], experiment_group: str) -> str:
+    profile = str(metadata.get("run_profile", "")).strip()
+    if profile != "":
+        return profile
+
+    # Expected format in conf/config.yaml:
+    # EXP_<...>_RP_<run_profile>_CUR_<...>_REW_<...>
+    match = re.search(r"_RP_(.*?)_CUR_", experiment_group)
+    if match:
+        return str(match.group(1)).strip()
+    return ""
+
+
 def _discover_runs(outputs_root: Path) -> list[RunInfo]:
     runs: list[RunInfo] = []
     for run_dir in _iter_run_dirs(outputs_root):
@@ -221,6 +237,12 @@ def _discover_runs(outputs_root: Path) -> list[RunInfo]:
             raise ValueError(
                 f"Missing required metadata field 'experiment_group' in {run_dir / 'artifacts' / 'run_metadata.yaml'}"
             )
+        run_profile = _infer_run_profile(metadata=metadata, experiment_group=experiment_group)
+        if run_profile == "":
+            raise ValueError(
+                "Cannot infer run_profile for run "
+                f"{run_dir}. Add 'run_profile' in run_metadata.yaml or use standard experiment_group naming."
+            )
 
         run_name = run_dir.parents[1].name if len(run_dir.parents) >= 2 else ""
         runs.append(
@@ -235,6 +257,7 @@ def _discover_runs(outputs_root: Path) -> list[RunInfo]:
                 rulebook_config=rulebook_config,
                 condition_id=condition_id,
                 experiment_group=experiment_group,
+                run_profile=run_profile,
                 seed=seed,
                 timestamp_dir=run_dir.name,
                 metadata_status=status,
@@ -283,6 +306,19 @@ def _filter_protocol(
             if run.final_eval_episodes != final_eval_episodes:
                 continue
         out.append(run)
+    return out
+
+
+def _filter_run_profile(runs: list[RunInfo], run_profile: str) -> list[RunInfo]:
+    expected = str(run_profile).strip().lower()
+    if expected == "":
+        raise ValueError("run_profile filter cannot be empty.")
+    out = [run for run in runs if str(run.run_profile).strip().lower() == expected]
+    if not out:
+        raise ValueError(
+            f"No runs found for run_profile='{run_profile}'. "
+            "Check outputs metadata and ensure completed runs exist for this profile."
+        )
     return out
 
 
@@ -339,6 +375,7 @@ def _row_with_context(row: dict[str, str], run: RunInfo, *, filename: str) -> di
     out["curriculum_enabled"] = run.curriculum_enabled
     out["rulebook_config"] = run.rulebook_config
     out["experiment_group"] = run.experiment_group
+    out["run_profile"] = run.run_profile
     return out
 
 
@@ -346,6 +383,7 @@ def aggregate_runs(
     outputs_root: Path,
     analysis_root: Path,
     *,
+    run_profile: str,
     total_timesteps: str | None = None,
     eval_episodes: str | None = None,
     final_eval_episodes: str | None = None,
@@ -356,6 +394,7 @@ def aggregate_runs(
     aggregated_dir.mkdir(parents=True, exist_ok=True)
 
     runs = _discover_runs(outputs_root)
+    runs = _filter_run_profile(runs, run_profile)
     runs = _filter_protocol(runs, total_timesteps, eval_episodes, final_eval_episodes)
     runs = _dedupe_latest_by_condition_seed(runs)
     _warn_seed_coverage(runs, expected_seeds)
@@ -406,6 +445,7 @@ def aggregate_runs(
             "curriculum_enabled",
             "rulebook_config",
             "experiment_group",
+            "run_profile",
             "seed",
             "timestamp_dir",
             "metadata_status",
@@ -429,6 +469,7 @@ def aggregate_runs(
                     "curriculum_enabled": run.curriculum_enabled,
                     "rulebook_config": run.rulebook_config,
                     "experiment_group": run.experiment_group,
+                    "run_profile": run.run_profile,
                     "seed": run.seed,
                     "timestamp_dir": run.timestamp_dir,
                     "metadata_status": run.metadata_status,
@@ -446,6 +487,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Aggregate latest completed runs per condition/seed.")
     parser.add_argument("--outputs-root", default="outputs")
     parser.add_argument("--analysis-root", default="analysis")
+    parser.add_argument("--run-profile", required=True)
     parser.add_argument("--total-timesteps", default=None)
     parser.add_argument("--eval-episodes", default=None)
     parser.add_argument("--final-eval-episodes", default=None)
@@ -456,6 +498,7 @@ def main() -> None:
     _ = aggregate_runs(
         outputs_root=Path(args.outputs_root),
         analysis_root=Path(args.analysis_root),
+        run_profile=str(args.run_profile).strip(),
         total_timesteps=args.total_timesteps,
         eval_episodes=args.eval_episodes,
         final_eval_episodes=args.final_eval_episodes,
