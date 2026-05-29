@@ -22,9 +22,8 @@ vectorized:
   num_envs: 10
   start_method: spawn
 
-# Default observation type:
-# LidarStateObservation
-# More on https://metadrive.readthedocs.io/en/latest/observation.html#lidarstateobservation
+# Observation is selected in `conf/obs/*` via `obs=...`.
+# Default: `obs=lidar_state` (MetaDrive's LidarStateObservation).
 
 # Action space is continuous by default:
 # Box with shape (2,) and values in [-1, 1] for steering and throttle

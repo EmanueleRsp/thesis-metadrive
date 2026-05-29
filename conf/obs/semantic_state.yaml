@@ -1,0 +1,35 @@
+name: semantic_state
+type: semantic_state
+
+# Temporal and token budgets
+history_length: 5
+max_route_points: 5
+max_dynamic_objects: 8
+dynamic_conflict_slots: 4
+dynamic_context_slots: 4
+max_static_objects: 8
+max_control_objects: 8
+
+# Selection radii in meters
+dynamic_radius_m: 50.0
+static_radius_m: 50.0
+control_radius_m: 80.0
+
+# Normalization scales
+speed_norm_kmh: 60.0
+accel_norm_mps2: 20.0
+yaw_rate_norm_rad_s: 1.0
+length_norm_m: 10.0
+width_norm_m: 5.0
+lane_width_norm_m: 6.0
+ttc_horizon_s: 5.0
+cpa_time_norm_s: 5.0
+
+# Top-K selection uses deterministic lexicographic ranking (no weighted scores):
+# dynamic conflict quota: is_approaching > d_cpa > t_cpa > same_or_adjacent_lane > ahead_or_crossing > distance
+# dynamic context quota: same_or_adjacent_lane > ahead > on_route > distance
+# static: intersects_path > on_route > distance
+# control: intersects_path > on_route > distance_along_route > distance
+
+# Disable low-level laser sensors when using semantic observation.
+disable_lidar_sensors: true

@@ -4,6 +4,7 @@ name: PLN_${hydra:runtime.choices.planner}_REW_${hydra:runtime.choices.reward}_C
 # and optionally add CLI overrides (e.g. `run_profile=medium`).
 defaults:
   - env: metadrive          # Environment family/config in `conf/env/*`
+  - obs: lidar_state        # Observation setup in `conf/obs/*`
   - experiment: default
   - run_profile: fast       # Budget/training profile in `conf/run_profile/*`
 

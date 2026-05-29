@@ -229,10 +229,21 @@ def merge_env_config_with_overrides(cfg_env: DictConfig, env_overrides: dict[str
     return merged_cfg_env
 
 
+def _attach_observation_group(cfg: DictConfig, cfg_env: DictConfig) -> DictConfig:
+    if "obs" not in cfg:
+        return cfg_env
+    obs_cfg = cfg.get("obs")
+    if obs_cfg is None:
+        return cfg_env
+    merged_cfg_env = OmegaConf.create(OmegaConf.to_container(cfg_env, resolve=True))
+    merged_cfg_env.observation = OmegaConf.create(OmegaConf.to_container(obs_cfg, resolve=True))
+    return merged_cfg_env
+
+
 def build_env(cfg: DictConfig, env_overrides: dict[str, Any] | None = None):
-    cfg_env = cfg.env
+    cfg_env = _attach_observation_group(cfg, cfg.env)
     if env_overrides:
-        cfg_env = merge_env_config_with_overrides(cfg.env, env_overrides)
+        cfg_env = merge_env_config_with_overrides(cfg_env, env_overrides)
 
     env = make_env(cfg_env)
     return maybe_wrap_env_with_reward_manager(env, cfg)

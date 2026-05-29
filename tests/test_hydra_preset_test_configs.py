@@ -29,3 +29,11 @@ def test_curriculum_groups_compose() -> None:
 
     assert bool(cfg_disabled.curriculum.enabled) is False
     assert bool(cfg_stages.curriculum.enabled) is True
+
+
+def test_observation_groups_compose() -> None:
+    cfg_lidar = _compose("obs=lidar_state", "reward=monitor_only")
+    cfg_semantic = _compose("obs=semantic_state", "reward=monitor_only")
+
+    assert str(cfg_lidar.obs.type) == "lidar_state"
+    assert str(cfg_semantic.obs.type) == "semantic_state"
