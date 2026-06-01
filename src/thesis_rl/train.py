@@ -21,7 +21,6 @@ os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 import torch
 from omegaconf import DictConfig, OmegaConf
-from stable_baselines3.common.vec_env import VecEnv
 
 from thesis_rl.agents.agent import Agent
 from thesis_rl.curriculum.config import CurriculumConfig
@@ -168,43 +167,29 @@ def _load_training_state(path: Path) -> dict[str, Any]:
     return dict(OmegaConf.to_container(loaded, resolve=True))
 
 
-def _planner_model(planner: Any) -> Any | None:
-    model = getattr(planner, "model", None)
-    if model is not None:
-        return model
-    return getattr(planner, "sb3_model", None)
-
-
 def _save_replay_buffer_if_available(planner: Any, path: Path) -> bool:
-    model = _planner_model(planner)
-    if model is None or not hasattr(model, "save_replay_buffer"):
+    if not hasattr(planner, "save_replay_buffer"):
         return False
-    path.parent.mkdir(parents=True, exist_ok=True)
-    model.save_replay_buffer(str(path))
-    return True
+    return bool(planner.save_replay_buffer(str(path)))
 
 
 def _load_replay_buffer_if_available(planner: Any, path: Path) -> bool:
     if not path.exists():
         return False
-    model = _planner_model(planner)
-    if model is None or not hasattr(model, "load_replay_buffer"):
+    if not hasattr(planner, "load_replay_buffer"):
         return False
-    model.load_replay_buffer(str(path))
-    return True
+    return bool(planner.load_replay_buffer(str(path)))
 
 
 def _validate_replay_buffer_n_envs(planner: Any) -> None:
-    model = _planner_model(planner)
-    replay_buffer = getattr(model, "replay_buffer", None)
-    if model is None or replay_buffer is None:
+    planner_n_envs = int(getattr(planner, "n_envs", 1))
+    if not hasattr(planner, "replay_buffer_n_envs"):
         return
-    model_n_envs = int(getattr(model, "n_envs", 1))
-    buffer_n_envs = int(getattr(replay_buffer, "n_envs", model_n_envs))
-    if model_n_envs != buffer_n_envs:
+    buffer_n_envs = int(planner.replay_buffer_n_envs())
+    if planner_n_envs != buffer_n_envs:
         raise ValueError(
             "Loaded replay buffer was created with a different number of envs: "
-            f"model.n_envs={model_n_envs}, replay_buffer.n_envs={buffer_n_envs}. "
+            f"planner.n_envs={planner_n_envs}, replay_buffer.n_envs={buffer_n_envs}. "
             "Resume with the same env.vectorized.num_envs or start a fresh run."
         )
 
@@ -531,7 +516,7 @@ def main(cfg: DictConfig) -> None:
         # Environment
         env = build_train_env(cfg, current_train_overrides)
         seed_env_spaces(env, run_seed)
-        train_env_count = int(env.num_envs) if isinstance(env, VecEnv) else 1
+        train_env_count = int(getattr(env, "num_envs", 1))
 
         # Agent
         preprocessor = build_preprocessor(cfg)
@@ -544,12 +529,12 @@ def main(cfg: DictConfig) -> None:
             vectorized_training
             and str(cfg.env.get("name", "")).lower() == "metadrive"
         ):
-            # SB3 BaseAlgorithm.set_random_seed() calls VecEnv.seed(seed), which assigns
+            # Vectorized reset seeding can conflict with MetaDrive per-worker
             # worker seeds as (seed + rank). That conflicts with MetaDrive per-worker
             # scenario partitions (start_seed/num_scenarios), causing out-of-range asserts.
             planner_seed = None
             train_logger.info(
-                "Planner seed disabled for vectorized MetaDrive to avoid VecEnv reseeding conflicts."
+                "Planner seed disabled for vectorized MetaDrive to avoid worker reseeding conflicts."
             )
 
         if resume_enabled:
@@ -560,8 +545,7 @@ def main(cfg: DictConfig) -> None:
             planner = load_planner(cfg, checkpoint_path=str(resume_checkpoint_zip), env=env)
         else:
             planner = build_planner(cfg, env, seed=planner_seed)
-        planner_model = _planner_model(planner)
-        planner_device = str(getattr(planner_model, "device", cfg.device))
+        planner_device = str(getattr(planner, "device", cfg.device))
         print_run_setup(
             title="Training Run",
             cfg=cfg,

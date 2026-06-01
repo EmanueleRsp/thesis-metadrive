@@ -20,7 +20,6 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 from rich.table import Table
-from stable_baselines3.common.vec_env import VecEnv
 
 from thesis_rl.preprocessors.base import BasePreprocessor
 from thesis_rl.agents.base import BasePlanner
@@ -487,8 +486,8 @@ class Agent:
         log_interval: int = 1000,
         reset_seed_fn: Callable[[int], int | None] | None = None,
     ) -> dict[str, float | int]:
-        """Train with a SB3 VecEnv, counting timesteps as total collected transitions."""
-        n_envs = int(env.num_envs) if isinstance(env, VecEnv) else 1
+        """Train with a vectorized env, counting timesteps as total collected transitions."""
+        n_envs = int(getattr(env, "num_envs", 1))
         if n_envs <= 1:
             return self.train(
                 env=env,

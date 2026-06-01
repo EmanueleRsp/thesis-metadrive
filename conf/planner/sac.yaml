@@ -1,0 +1,15 @@
+name: sac
+share_encoder: false
+verbose: 0
+learning_starts: 10000
+batch_size: 2048
+buffer_size: 300000
+train_freq: 1
+gradient_steps: auto
+learning_rate: 3e-4
+gamma: 0.99
+tau: 0.005
+ent_coef: auto
+target_entropy: auto
+log_std_bounds: [-20, 2]
+monitor_ema_alpha: 0.1

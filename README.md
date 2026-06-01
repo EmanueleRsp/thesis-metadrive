@@ -20,7 +20,7 @@ This scaffold implements the **repository skeleton** and the **initial configura
 
 ## Fixed initial decisions
 
-- baseline backend: **Stable-Baselines3 TD3**
+- baseline backend: **custom PyTorch planners (TD3/SAC/PPO)**
 - observation: **LidarStateObservation**
 - preprocessor: **IdentityPreprocessor**
 - planner output: direct low-level MetaDrive action

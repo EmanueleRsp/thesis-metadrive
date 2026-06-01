@@ -4,15 +4,15 @@ This file records the concrete design decisions that are considered fixed before
 
 ## 1. Baseline training backend
 
-The first executable baseline may rely on an **external RL implementation** for continuous-control training and evaluation.
+The baseline training backend is now fully internal, with custom PyTorch planners.
 
-Initial practical choice:
-- use **Stable-Baselines3** for Step 1
-- preserve an internal modular repository structure around env, preprocessing, adapter, reward, and curriculum
-- later integrate the thesis planner without breaking the surrounding infrastructure
+Current practical choice:
+- use internal planner backends: **TD3, SAC, PPO**
+- preserve modular structure around env, preprocessing, planner, adapter, reward, and curriculum
+- keep algorithm modules isolated from orchestration code
 
 Rationale:
-the first milestone is infrastructure + executability, not planner novelty.
+infrastructure and planner logic now evolve together, without external RL backend coupling.
 
 ## 2. Observation and preprocessor
 

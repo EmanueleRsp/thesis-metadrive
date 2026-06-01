@@ -3,19 +3,27 @@ from __future__ import annotations
 import multiprocessing as mp
 import warnings
 from collections import OrderedDict
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Callable, List, Optional, Sequence, Tuple, Type, Union
 
+import cloudpickle
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
-from stable_baselines3.common.vec_env.base_vec_env import (
-    CloudpickleWrapper,
-    VecEnv,
-    VecEnvIndices,
-    VecEnvObs,
-    VecEnvStepReturn,
-)
-from stable_baselines3.common.vec_env.patch_gym import _patch_env
+
+VecEnvIndices = Union[None, int, Sequence[int], np.ndarray]
+VecEnvObs = Union[np.ndarray, dict[str, np.ndarray], tuple[np.ndarray, ...]]
+VecEnvStepReturn = tuple[VecEnvObs, np.ndarray, np.ndarray, tuple[dict[str, Any], ...]]
+
+
+class CloudpickleWrapper:
+    def __init__(self, var: Any) -> None:
+        self.var = var
+
+    def __getstate__(self) -> bytes:
+        return cloudpickle.dumps(self.var)
+
+    def __setstate__(self, payload: bytes) -> None:
+        self.var = cloudpickle.loads(payload)
 
 
 def _extract_seed_bounds(env: gym.Env) -> tuple[Optional[int], Optional[int]]:
@@ -42,16 +50,23 @@ def _next_seed_in_window(current_seed: int, start: int, count: int) -> int:
     return int(start + ((int(current_seed) - int(start) + 1) % int(count)))
 
 
+def _is_wrapped(env: gym.Env, wrapper_class: Type[gym.Wrapper]) -> bool:
+    current = env
+    while isinstance(current, gym.Wrapper):
+        if isinstance(current, wrapper_class):
+            return True
+        current = current.env
+    return False
+
+
 def _worker(
     remote: mp.connection.Connection,
     parent_remote: mp.connection.Connection,
     env_fn_wrapper: CloudpickleWrapper,
 ) -> None:
-    from stable_baselines3.common.env_util import is_wrapped
-
     parent_remote.close()
-    env = _patch_env(env_fn_wrapper.var())
-    reset_info: Optional[Dict[str, Any]] = {}
+    env = env_fn_wrapper.var()
+    reset_info: dict[str, Any] = {}
     last_reset_seed: Optional[int] = None
     auto_reset_seed: Optional[int] = None
 
@@ -60,8 +75,9 @@ def _worker(
             cmd, data = remote.recv()
             if cmd == "step":
                 observation, reward, terminated, truncated, info = env.step(data)
-                done = terminated or truncated
-                info["TimeLimit.truncated"] = truncated and not terminated
+                done = bool(terminated or truncated)
+                info = dict(info)
+                info["TimeLimit.truncated"] = bool(truncated and not terminated)
                 if done:
                     info["terminal_observation"] = observation
                     start, count = _extract_seed_bounds(env)
@@ -104,35 +120,33 @@ def _worker(
             elif cmd == "set_attr":
                 remote.send(setattr(env, data[0], data[1]))  # type: ignore[func-returns-value]
             elif cmd == "is_wrapped":
-                remote.send(is_wrapped(env, data))
+                remote.send(_is_wrapped(env, data))
             else:
                 raise NotImplementedError(f"`{cmd}` is not implemented in the worker")
         except EOFError:
             break
 
 
-class DeterministicSubprocVecEnv(VecEnv):
+class DeterministicSubprocVecEnv:
     """
-    SubprocVecEnv variant that keeps worker resets deterministic after done transitions.
+    Subprocess vector env with deterministic per-worker auto-resets.
 
-    SB3 default worker auto-resets with `env.reset()` (seed=None), which may introduce
-    non-determinism for environments that sample a new scenario when seed is omitted.
-    This class instead advances deterministic per-worker seeds inside each worker
-    scenario window when available.
+    When an episode ends in a worker, this env auto-resets that worker with the
+    next deterministic seed inside the worker scenario window (if available).
     """
 
     def __init__(self, env_fns: List[Callable[[], gym.Env]], start_method: Optional[str] = None):
         self.waiting = False
         self.closed = False
-        n_envs = len(env_fns)
+        self.num_envs = len(env_fns)
 
         if start_method is None:
             forkserver_available = "forkserver" in mp.get_all_start_methods()
             start_method = "forkserver" if forkserver_available else "spawn"
         ctx = mp.get_context(start_method)
 
-        self.remotes, self.work_remotes = zip(*[ctx.Pipe() for _ in range(n_envs)])
-        self.processes = []
+        self.remotes, self.work_remotes = zip(*[ctx.Pipe() for _ in range(self.num_envs)])
+        self.processes: list[mp.Process] = []
         for work_remote, remote, env_fn in zip(self.work_remotes, self.remotes, env_fns):
             args = (work_remote, remote, CloudpickleWrapper(env_fn))
             process = ctx.Process(target=_worker, args=args, daemon=True)  # type: ignore[attr-defined]
@@ -142,8 +156,27 @@ class DeterministicSubprocVecEnv(VecEnv):
 
         self.remotes[0].send(("get_spaces", None))
         observation_space, action_space = self.remotes[0].recv()
+        self.observation_space = observation_space
+        self.action_space = action_space
+        self.render_mode = getattr(getattr(env_fns[0], "__self__", None), "render_mode", None)
 
-        super().__init__(len(env_fns), observation_space, action_space)
+        self._seeds: list[Optional[int]] = [None for _ in range(self.num_envs)]
+        self._options: list[Optional[dict[str, Any]]] = [None for _ in range(self.num_envs)]
+        self.reset_infos: list[dict[str, Any]] = [{} for _ in range(self.num_envs)]
+
+    def seed(self, seed: int | None = None) -> list[Optional[int]]:
+        if seed is None:
+            self._seeds = [None for _ in range(self.num_envs)]
+        else:
+            base = int(seed)
+            self._seeds = [base + idx for idx in range(self.num_envs)]
+        return list(self._seeds)
+
+    def _reset_seeds(self) -> None:
+        self._seeds = [None for _ in range(self.num_envs)]
+
+    def _reset_options(self) -> None:
+        self._options = [None for _ in range(self.num_envs)]
 
     def step_async(self, actions: np.ndarray) -> None:
         for remote, action in zip(self.remotes, actions):
@@ -153,14 +186,25 @@ class DeterministicSubprocVecEnv(VecEnv):
     def step_wait(self) -> VecEnvStepReturn:
         results = [remote.recv() for remote in self.remotes]
         self.waiting = False
-        obs, rews, dones, infos, self.reset_infos = zip(*results)  # type: ignore[assignment]
-        return _flatten_obs(obs, self.observation_space), np.stack(rews), np.stack(dones), infos  # type: ignore[return-value]
+        obs, rews, dones, infos, reset_infos = zip(*results)
+        self.reset_infos = list(reset_infos)
+        return (
+            _flatten_obs(obs, self.observation_space),
+            np.asarray(rews, dtype=np.float32),
+            np.asarray(dones, dtype=bool),
+            tuple(dict(info) for info in infos),
+        )
+
+    def step(self, actions: np.ndarray) -> VecEnvStepReturn:
+        self.step_async(actions)
+        return self.step_wait()
 
     def reset(self) -> VecEnvObs:
         for env_idx, remote in enumerate(self.remotes):
             remote.send(("reset", (self._seeds[env_idx], self._options[env_idx])))
         results = [remote.recv() for remote in self.remotes]
-        obs, self.reset_infos = zip(*results)  # type: ignore[assignment]
+        obs, reset_infos = zip(*results)
+        self.reset_infos = list(reset_infos)
         self._reset_seeds()
         self._reset_options()
         return _flatten_obs(obs, self.observation_space)
@@ -171,6 +215,7 @@ class DeterministicSubprocVecEnv(VecEnv):
         if self.waiting:
             for remote in self.remotes:
                 remote.recv()
+            self.waiting = False
         for remote in self.remotes:
             remote.send(("close", None))
         for process in self.processes:
@@ -211,14 +256,25 @@ class DeterministicSubprocVecEnv(VecEnv):
         target_remotes = self._get_target_remotes(indices)
         for remote in target_remotes:
             remote.send(("is_wrapped", wrapper_class))
-        return [remote.recv() for remote in target_remotes]
+        return [bool(remote.recv()) for remote in target_remotes]
 
-    def _get_target_remotes(self, indices: VecEnvIndices) -> List[Any]:
-        indices = self._get_indices(indices)
-        return [self.remotes[i] for i in indices]
+    def _get_indices(self, indices: VecEnvIndices) -> list[int]:
+        if indices is None:
+            return list(range(self.num_envs))
+        if isinstance(indices, (int, np.integer)):
+            idx = int(indices)
+            if idx < 0:
+                idx = self.num_envs + idx
+            if idx < 0 or idx >= self.num_envs:
+                raise IndexError(f"Env index out of range: {idx}")
+            return [idx]
+        return [int(i) for i in list(indices)]
+
+    def _get_target_remotes(self, indices: VecEnvIndices) -> list[Any]:
+        return [self.remotes[i] for i in self._get_indices(indices)]
 
 
-def _flatten_obs(obs: Union[List[VecEnvObs], Tuple[VecEnvObs]], space: spaces.Space) -> VecEnvObs:
+def _flatten_obs(obs: Union[List[VecEnvObs], Tuple[VecEnvObs, ...]], space: spaces.Space) -> VecEnvObs:
     assert isinstance(obs, (list, tuple)), "expected list or tuple of observations per environment"
     assert len(obs) > 0, "need observations from at least one environment"
 
@@ -229,5 +285,5 @@ def _flatten_obs(obs: Union[List[VecEnvObs], Tuple[VecEnvObs]], space: spaces.Sp
     if isinstance(space, spaces.Tuple):
         assert isinstance(obs[0], tuple), "non-tuple observation for environment with Tuple observation space"
         obs_len = len(space.spaces)
-        return tuple(np.stack([o[i] for o in obs]) for i in range(obs_len))  # type: ignore[index]
-    return np.stack(obs)  # type: ignore[arg-type]
+        return tuple(np.stack([o[i] for o in obs]) for i in range(obs_len))
+    return np.stack(obs)

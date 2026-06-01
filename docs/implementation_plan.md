@@ -25,13 +25,13 @@ A dummy train script runs with Hydra config resolution.
 
 ---
 
-## Phase 1 — MetaDrive baseline with external trainer
+## Phase 1 — MetaDrive baseline with internal planners
 
 ### Goal
 Run training/evaluation on MetaDrive with minimal customization.
 
 ### Locked decisions for this phase
-- external backend: Stable-Baselines3 TD3
+- internal backends: TD3/SAC/PPO
 - planner integration strategy: full `PlannerAgent` wrapper from the first implementation
 - evaluation protocol for curriculum promotion: 10 stochastic episodes
 
@@ -162,7 +162,7 @@ Immediate coding sequence:
 1. implement MetaDrive env factory
 2. implement identity preprocessor
 3. implement direct adapter
-4. implement TD3 `PlannerAgent` wrapper
+4. implement TD3 planner backend integration
 5. implement evaluator
 6. add stage configs for curriculum
 7. add transition context

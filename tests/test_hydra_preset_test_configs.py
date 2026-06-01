@@ -37,3 +37,16 @@ def test_observation_groups_compose() -> None:
 
     assert str(cfg_lidar.obs.type) == "lidar_state"
     assert str(cfg_semantic.obs.type) == "semantic_state"
+
+
+def test_encoder_and_planner_groups_compose() -> None:
+    cfg_none_td3 = _compose("encoder=none", "planner=td3", "reward=monitor_only")
+    cfg_mlp_sac = _compose("encoder=mlp", "planner=sac", "reward=monitor_only")
+    cfg_lq_ppo = _compose("encoder=lq", "planner=ppo", "obs=semantic_state", "reward=monitor_only")
+
+    assert str(cfg_none_td3.encoder.type) == "none"
+    assert str(cfg_none_td3.planner.name) == "td3"
+    assert str(cfg_mlp_sac.encoder.type) == "mlp"
+    assert str(cfg_mlp_sac.planner.name) == "sac"
+    assert str(cfg_lq_ppo.encoder.type) == "lq"
+    assert str(cfg_lq_ppo.planner.name) == "ppo"

@@ -51,7 +51,6 @@ class PromotionGates:
 class PromotionConfig:
     consecutive_evals: int = 3
     warmup_evals: int = 2
-    min_stage_steps: int = 25_000
     default_min_stage_steps: int = 25_000
     per_stage_min_steps: dict[str, int] = field(default_factory=dict)
     no_demotion: bool = True
@@ -72,17 +71,6 @@ class CurriculumConfig:
     ) -> CurriculumConfig:
         """Create CurriculumConfig from the dedicated `cfg.curriculum` group."""
         return cls.from_mapping(curriculum_cfg)
-
-    @classmethod
-    def from_experiment_cfg(cls, experiment_cfg: DictConfig | dict[str, Any]) -> CurriculumConfig:
-        """Backward-compatible parser for legacy experiment-embedded curriculum.
-
-        If `experiment_cfg` contains a nested `curriculum` field, parse that.
-        Otherwise, treat `experiment_cfg` itself as curriculum payload.
-        """
-        payload = _to_plain_mapping(experiment_cfg)
-        curriculum_payload = _to_plain_mapping(payload.get("curriculum", payload))
-        return cls.from_mapping(curriculum_payload)
 
     @classmethod
     def from_mapping(cls, data: DictConfig | dict[str, Any] | None) -> CurriculumConfig:
@@ -110,10 +98,13 @@ class CurriculumConfig:
         stability_payload = _to_plain_mapping(gates_payload.get("stability"))
         per_stage_payload = _to_plain_mapping(promotion_payload.get("per_stage"))
 
-        legacy_or_default_min_steps = int(promotion_payload.get("min_stage_steps", 25_000))
-        default_min_stage_steps = int(
-            promotion_payload.get("default_min_stage_steps", legacy_or_default_min_steps)
-        )
+        if "min_stage_steps" in promotion_payload:
+            raise ValueError(
+                "Unsupported legacy key `promotion.min_stage_steps`. "
+                "Use `promotion.default_min_stage_steps` and optional "
+                "`promotion.per_stage.<stage>.min_stage_steps`."
+            )
+        default_min_stage_steps = int(promotion_payload.get("default_min_stage_steps", 25_000))
         per_stage_min_steps: dict[str, int] = {}
         for stage_name, stage_cfg in per_stage_payload.items():
             stage_cfg_map = _to_plain_mapping(stage_cfg)
@@ -123,7 +114,6 @@ class CurriculumConfig:
         promotion = PromotionConfig(
             consecutive_evals=int(promotion_payload.get("consecutive_evals", 3)),
             warmup_evals=int(promotion_payload.get("warmup_evals", 2)),
-            min_stage_steps=legacy_or_default_min_steps,
             default_min_stage_steps=default_min_stage_steps,
             per_stage_min_steps=per_stage_min_steps,
             no_demotion=bool(promotion_payload.get("no_demotion", True)),

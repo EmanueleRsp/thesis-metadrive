@@ -8,16 +8,15 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
-from stable_baselines3.common.vec_env import VecEnv
 
 from thesis_rl.adapters.base import BaseAdapter
 from thesis_rl.adapters.identity import IdentityAdapter
 from thesis_rl.adapters.neural_adapter import NeuralAdapter
 from thesis_rl.adapters.policy_adapter import PolicyAdapter
 from thesis_rl.agents.base import BasePlanner
-from thesis_rl.agents.planner_agent import Td3PlannerBackend
 from thesis_rl.envs.factory import make_env
 from thesis_rl.envs.wrappers import RuleRewardWrapper
+from thesis_rl.planners.factory import build_planner_backend, load_planner_backend
 from thesis_rl.preprocessors.base import BasePreprocessor
 from thesis_rl.preprocessors.identity import IdentityPreprocessor
 from thesis_rl.reward.reward_manager import HybridRulebookRewardManager
@@ -165,26 +164,29 @@ def build_adapter(cfg: DictConfig, common_kwargs: dict[str, object]) -> BaseAdap
 
 
 def build_planner(cfg: DictConfig, env: Any, seed: int | None = None) -> BasePlanner:
-    name = str(cfg.planner.name).lower()
-    if name in {"td3", "sb3_td3"}:
-        return Td3PlannerBackend.build(
-            env=env,
-            cfg_planner=cfg.planner,
-            device=str(cfg.device),
-            seed=seed,
-        )
-    raise ValueError(f"Unsupported planner backend: {cfg.planner.name}")
+    return build_planner_backend(
+        planner_name=str(cfg.planner.name),
+        env=env,
+        cfg_planner=cfg.planner,
+        cfg_encoder=cfg.get("encoder"),
+        cfg_decoder=cfg.get("decoder"),
+        cfg_obs=cfg.get("obs"),
+        device=str(cfg.device),
+        seed=seed,
+    )
 
 
 def load_planner(cfg: DictConfig, checkpoint_path: str, env: Any) -> BasePlanner:
-    name = str(cfg.planner.name).lower()
-    if name in {"td3", "sb3_td3"}:
-        return Td3PlannerBackend.load(
-            checkpoint_path=checkpoint_path,
-            env=env,
-            device=str(cfg.device),
-        )
-    raise ValueError(f"Unsupported planner backend: {cfg.planner.name}")
+    return load_planner_backend(
+        planner_name=str(cfg.planner.name),
+        checkpoint_path=checkpoint_path,
+        env=env,
+        cfg_planner=cfg.planner,
+        cfg_encoder=cfg.get("encoder"),
+        cfg_decoder=cfg.get("decoder"),
+        cfg_obs=cfg.get("obs"),
+        device=str(cfg.device),
+    )
 
 
 def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
@@ -346,14 +348,14 @@ def build_train_env(cfg: DictConfig, env_overrides: dict[str, Any] | None = None
 
 
 def set_planner_env_if_compatible(planner: BasePlanner, env: Any) -> None:
-    model = getattr(planner, "model", getattr(planner, "sb3_model", None))
-    current_n_envs = getattr(model, "n_envs", None)
-    next_n_envs = int(env.num_envs) if isinstance(env, VecEnv) else 1
-    
-    if current_n_envs is not None and int(current_n_envs) != int(next_n_envs):
+    next_n_envs = int(getattr(env, "num_envs", 1))
+    current_n_envs = int(getattr(planner, "n_envs", next_n_envs))
+    replay_n_envs = int(getattr(planner, "replay_buffer_n_envs", lambda: current_n_envs)())
+    if replay_n_envs != next_n_envs or current_n_envs != next_n_envs:
         raise RuntimeError(
-            f"Cannot change n_envs: model has n_envs={current_n_envs}, "
-            f"env has n_envs={next_n_envs}. Recreate planner or rebuild env."
+            "Cannot change n_envs on an initialized planner: "
+            f"planner.n_envs={current_n_envs}, replay_buffer.n_envs={replay_n_envs}, env.n_envs={next_n_envs}. "
+            "Recreate planner or rebuild env with the same number of workers."
         )
 
     planner.set_env(env)

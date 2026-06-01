@@ -1,0 +1,6 @@
+name: mlp_large
+type: mlp
+hidden_layers: [512, 512, 256]
+activation: relu
+dropout: 0.0
+layer_norm: false

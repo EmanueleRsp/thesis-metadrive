@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 from omegaconf import OmegaConf
 
-from thesis_rl.agents.planner_agent import Td3PlannerBackend
-from thesis_rl.agents.planner_lifecycle import Td3Lifecycle
+from thesis_rl.planners.algorithms import Td3PlannerBackend
+from thesis_rl.planners.lifecycle import Td3Lifecycle
 from thesis_rl.agents.types import Transition
 
 
@@ -18,7 +18,6 @@ from thesis_rl.agents.types import Transition
 def cfg_planner():
     return OmegaConf.create(
         {
-            "policy": "MlpPolicy",
             "learning_starts": 5,
             "batch_size": 8,
             "buffer_size": 2000,
@@ -31,7 +30,6 @@ def cfg_planner():
             "action_noise_type": "normal",
             "action_noise_sigma": 0.1,
             "action_noise_mean": 0.0,
-            "policy_kwargs": {"net_arch": [32, 32]},
         }
     )
 
@@ -99,7 +97,7 @@ def test_lifecycle_training_loop_collects_replay(cfg_planner, env):
 
     lifecycle.end_training()
 
-    assert lifecycle.replay_buffer.size() > 0
+    assert int(planner.replay_buffer.size) > 0
 
 
 def test_lifecycle_act_returns_valid_action(cfg_planner, env):

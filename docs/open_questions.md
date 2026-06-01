@@ -4,7 +4,7 @@ This file tracks only decisions that are still genuinely open.
 
 ## Already locked (for alignment)
 
-- baseline backend for Step 1: Stable-Baselines3 TD3
+- baseline backend for Step 1: internal TD3/SAC/PPO backends
 - integration strategy: full `PlannerAgent` wrapper from the first implementation
 - promotion evaluation protocol: 10 stochastic episodes
 - violation logging schema:

@@ -1,0 +1,14 @@
+name: ppo
+share_encoder: true
+verbose: 0
+n_steps: 2048
+batch_size: 256
+n_epochs: 10
+learning_rate: 3e-4
+gamma: 0.99
+gae_lambda: 0.95
+ent_coef: 0.0
+vf_coef: 0.5
+clip_range: 0.2
+max_grad_norm: 0.5
+monitor_ema_alpha: 0.1

@@ -9,7 +9,9 @@ defaults:
   - run_profile: fast       # Budget/training profile in `conf/run_profile/*`
 
   - preprocessor: identity  # Observation preprocessor in `conf/preprocessor/*`
-  - planner: sb3_td3        # Planner backend in `conf/planner/*`
+  - encoder: lq             # Planner feature encoder in `conf/encoder/*`
+  - decoder: mlp_encoded    # Planner head decoder profile in `conf/decoder/*`
+  - planner: sac            # Planner backend in `conf/planner/*`
   - adapter: identity       # Action adapter in `conf/adapter/*`
 
   - reward: native          # native | monitor_only | scalar_reward

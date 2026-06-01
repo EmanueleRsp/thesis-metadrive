@@ -1,0 +1,7 @@
+name: mlp
+type: mlp
+output_dim: 256
+hidden_layers: [512, 512, 256]
+activation: relu
+layer_norm: true
+dropout: 0.0

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Protocol
 
-from thesis_rl.agents.planner_lifecycle import BasePlannerLifecycle
+from thesis_rl.planners.lifecycle import BasePlannerLifecycle
 
 
 
@@ -27,4 +27,3 @@ class BasePlanner(Protocol):
     def save(self, checkpoint_path: str | Path) -> None: ...
 
     def set_env(self, env: Any) -> None: ...
-

@@ -4,9 +4,9 @@ type: semantic_state
 # Temporal and token budgets
 history_length: 5
 max_route_points: 5
-max_dynamic_objects: 8
-dynamic_conflict_slots: 4
-dynamic_context_slots: 4
+max_dynamic_objects: 16
+dynamic_conflict_slots: 8
+dynamic_context_slots: 8
 max_static_objects: 8
 max_control_objects: 8
 

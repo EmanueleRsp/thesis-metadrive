@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - /config
+  - override /obs: semantic_state
+  - override /encoder: lq
+  - override /decoder: mlp_encoded
+  - override /planner: ppo
+  - _self_
