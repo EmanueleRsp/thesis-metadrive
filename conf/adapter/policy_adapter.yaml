@@ -1,5 +1,0 @@
-# [Not yet revised]
-name: policy_adapter
-policy_name: EnvInputPolicy
-action_check: true
-clip: true

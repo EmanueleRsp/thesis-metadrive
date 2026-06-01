@@ -11,8 +11,8 @@ from contextlib import suppress
 import numpy as np
 from omegaconf import OmegaConf
 
-from thesis_rl.adapters.base import BaseAdapter
-from thesis_rl.agents.agent import Agent
+from thesis_rl.agent.adapters.interfaces.base import BaseAdapter
+from thesis_rl.agent.agent import Agent
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.runtime.builders import (
     adapter_space_kwargs,

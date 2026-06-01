@@ -9,7 +9,7 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 
-from thesis_rl.agents.agent import Agent
+from thesis_rl.agent.agent import Agent
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.manager import CurriculumManager
 from thesis_rl.runtime.builders import (
@@ -171,7 +171,11 @@ def main(cfg: DictConfig) -> None:
             adapter_space_kwargs(env.action_space),
         )
         planner = load_planner(cfg, checkpoint_path=str(ckpt), env=env)
-        ema_alpha_cfg = float(cfg.planner.get("monitor_ema_alpha", 0.1)) if hasattr(cfg, "planner") else 0.1
+        ema_alpha_cfg = (
+            float(cfg.agent.planner.algorithm.get("monitor_ema_alpha", 0.1))
+            if hasattr(cfg, "agent")
+            else 0.1
+        )
         agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg)
         agent.load_adapter(checkpoint_path=ckpt, strict=True)
 

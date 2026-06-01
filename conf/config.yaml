@@ -1,4 +1,4 @@
-name: PLN_${hydra:runtime.choices.planner}_REW_${hydra:runtime.choices.reward}_CUR_${hydra:runtime.choices.curriculum}
+name: PLN_${agent.planner.algorithm.name}_REW_${hydra:runtime.choices.reward}_CUR_${hydra:runtime.choices.curriculum}
 # Base composition for all runs.
 # Use a preset via `--config-name presets/...` to override groups in one shot,
 # and optionally add CLI overrides (e.g. `run_profile=medium`).
@@ -8,11 +8,11 @@ defaults:
   - experiment: default
   - run_profile: fast       # Budget/training profile in `conf/run_profile/*`
 
-  - preprocessor: identity  # Observation preprocessor in `conf/preprocessor/*`
-  - encoder: lq             # Planner feature encoder in `conf/encoder/*`
-  - decoder: mlp_encoded    # Planner head decoder profile in `conf/decoder/*`
-  - planner: sac            # Planner backend in `conf/planner/*`
-  - adapter: identity       # Action adapter in `conf/adapter/*`
+  - agent/preprocessor: identity      # Observation preprocessor in `conf/agent/preprocessor/*`
+  - agent/planner/encoder: lq         # Planner feature encoder in `conf/agent/planner/encoder/*`
+  - agent/planner/decoder: mlp_encoded # Planner head decoder profile in `conf/agent/planner/decoder/*`
+  - agent/planner/algorithm: sac      # Planner backend in `conf/agent/planner/algorithm/*`
+  - agent/adapter: identity           # Action adapter in `conf/agent/adapter/*`
 
   - reward: native          # native | monitor_only | scalar_reward
   - curriculum: disabled    # disabled | stages
@@ -50,7 +50,7 @@ analysis:
 
 # Output layout for a single run.
 paths:
-  run_dir: outputs/${analysis.experiment_group}/${planner.name}/seed_${seed}/${now:%Y%m%d_%H%M%S}
+  run_dir: outputs/${analysis.experiment_group}/${agent.planner.algorithm.name}/seed_${seed}/${now:%Y%m%d_%H%M%S}
   logs_dir: ${paths.run_dir}/logs
   checkpoints_dir: ${paths.run_dir}/checkpoints
   videos_dir: ${paths.run_dir}/videos

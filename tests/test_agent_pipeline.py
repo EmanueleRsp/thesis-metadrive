@@ -5,10 +5,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from thesis_rl.adapters.identity import IdentityAdapter
-from thesis_rl.agents.agent import Agent
-from thesis_rl.agents.types import Transition
-from thesis_rl.preprocessors.identity import IdentityPreprocessor
+from thesis_rl.agent.adapters.identity import IdentityAdapter
+from thesis_rl.agent.agent import Agent
+from thesis_rl.agent.types import Transition
+from thesis_rl.agent.preprocessors.identity import IdentityPreprocessor
 
 
 class _DummyLifecycle:

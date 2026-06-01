@@ -1,6 +1,6 @@
 import numpy as np
 
-from thesis_rl.preprocessors.identity import IdentityPreprocessor
+from thesis_rl.agent.preprocessors.identity import IdentityPreprocessor
 
 
 def test_identity_preprocessor_is_passthrough() -> None:

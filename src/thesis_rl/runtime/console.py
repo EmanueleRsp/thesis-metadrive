@@ -76,7 +76,7 @@ def print_run_setup(
 
     rows = [
         ("Run dir", str(cfg.paths.run_dir)),
-        ("Algorithm", str(cfg.planner.name)),
+        ("Algorithm", str(cfg.agent.planner.algorithm.name)),
         ("Reward type", str(cfg.reward.type)),
         ("Reward behavior", str(cfg.reward.behavior)),
         ("Rulebook config", str(cfg.reward.rulebook_config)),

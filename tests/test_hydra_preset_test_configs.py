@@ -14,13 +14,9 @@ def _compose(*overrides: str):
 
 
 def test_adapter_groups_compose() -> None:
-    cfg_identity = _compose("adapter=identity", "reward=monitor_only")
-    cfg_neural = _compose("adapter=neural_adapter", "reward=monitor_only")
-    cfg_policy = _compose("adapter=policy_adapter", "reward=monitor_only")
+    cfg_identity = _compose("agent/adapter=identity", "reward=monitor_only")
 
-    assert cfg_identity.adapter.name == "identity"
-    assert cfg_neural.adapter.name == "neural_adapter"
-    assert cfg_policy.adapter.name == "policy_adapter"
+    assert cfg_identity.agent.adapter.name == "identity"
 
 
 def test_curriculum_groups_compose() -> None:
@@ -40,13 +36,13 @@ def test_observation_groups_compose() -> None:
 
 
 def test_encoder_and_planner_groups_compose() -> None:
-    cfg_none_td3 = _compose("encoder=none", "planner=td3", "reward=monitor_only")
-    cfg_mlp_sac = _compose("encoder=mlp", "planner=sac", "reward=monitor_only")
-    cfg_lq_ppo = _compose("encoder=lq", "planner=ppo", "obs=semantic_state", "reward=monitor_only")
+    cfg_none_td3 = _compose("agent/planner/encoder=none", "agent/planner/algorithm=td3", "reward=monitor_only")
+    cfg_mlp_sac = _compose("agent/planner/encoder=mlp", "agent/planner/algorithm=sac", "reward=monitor_only")
+    cfg_lq_ppo = _compose("agent/planner/encoder=lq", "agent/planner/algorithm=ppo", "obs=semantic_state", "reward=monitor_only")
 
-    assert str(cfg_none_td3.encoder.type) == "none"
-    assert str(cfg_none_td3.planner.name) == "td3"
-    assert str(cfg_mlp_sac.encoder.type) == "mlp"
-    assert str(cfg_mlp_sac.planner.name) == "sac"
-    assert str(cfg_lq_ppo.encoder.type) == "lq"
-    assert str(cfg_lq_ppo.planner.name) == "ppo"
+    assert str(cfg_none_td3.agent.planner.encoder.type) == "none"
+    assert str(cfg_none_td3.agent.planner.algorithm.name) == "td3"
+    assert str(cfg_mlp_sac.agent.planner.encoder.type) == "mlp"
+    assert str(cfg_mlp_sac.agent.planner.algorithm.name) == "sac"
+    assert str(cfg_lq_ppo.agent.planner.encoder.type) == "lq"
+    assert str(cfg_lq_ppo.agent.planner.algorithm.name) == "ppo"

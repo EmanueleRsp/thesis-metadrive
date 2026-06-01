@@ -17,8 +17,8 @@ def test_base_config_composes_with_monitor_only() -> None:
     cfg = _compose("reward=monitor_only", "curriculum=disabled")
 
     assert cfg.env.name == "metadrive"
-    assert cfg.preprocessor.name == "identity"
-    assert cfg.adapter.name == "identity"
+    assert cfg.agent.preprocessor.name == "identity"
+    assert cfg.agent.adapter.name == "identity"
     assert cfg.reward.name == "monitor_only"
     assert str(cfg.reward.type) == "native"
     assert str(cfg.reward.behavior) == "monitor_only"

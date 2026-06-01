@@ -1,8 +1,0 @@
-# [Not yet revised]
-name: neural_adapter
-clip: true
-hidden_dim: 64
-learning_rate: 0.001
-batch_size: 64
-update_interval: 1
-buffer_capacity: 10000

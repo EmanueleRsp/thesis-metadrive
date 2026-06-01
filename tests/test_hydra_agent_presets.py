@@ -16,22 +16,22 @@ def _compose_preset(config_name: str):
 def test_td3_none_preset_composes() -> None:
     cfg = _compose_preset("presets/agent/td3_none")
     assert str(cfg.obs.type) == "semantic_state"
-    assert str(cfg.encoder.type) == "none"
-    assert str(cfg.decoder.name) == "mlp_large"
-    assert str(cfg.planner.name) == "td3"
+    assert str(cfg.agent.planner.encoder.type) == "none"
+    assert str(cfg.agent.planner.decoder.name) == "mlp_large"
+    assert str(cfg.agent.planner.algorithm.name) == "td3"
 
 
 def test_sac_lq_preset_composes() -> None:
     cfg = _compose_preset("presets/agent/sac_lq")
     assert str(cfg.obs.type) == "semantic_state"
-    assert str(cfg.encoder.type) == "lq"
-    assert str(cfg.decoder.name) == "mlp_encoded"
-    assert str(cfg.planner.name) == "sac"
+    assert str(cfg.agent.planner.encoder.type) == "lq"
+    assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
+    assert str(cfg.agent.planner.algorithm.name) == "sac"
 
 
 def test_ppo_lq_preset_composes() -> None:
     cfg = _compose_preset("presets/agent/ppo_lq")
     assert str(cfg.obs.type) == "semantic_state"
-    assert str(cfg.encoder.type) == "lq"
-    assert str(cfg.decoder.name) == "mlp_encoded"
-    assert str(cfg.planner.name) == "ppo"
+    assert str(cfg.agent.planner.encoder.type) == "lq"
+    assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
+    assert str(cfg.agent.planner.algorithm.name) == "ppo"

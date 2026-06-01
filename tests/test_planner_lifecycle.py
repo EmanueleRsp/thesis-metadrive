@@ -9,9 +9,9 @@ import numpy as np
 import pytest
 from omegaconf import OmegaConf
 
-from thesis_rl.planners.algorithms import Td3PlannerBackend
-from thesis_rl.planners.lifecycle import Td3Lifecycle
-from thesis_rl.agents.types import Transition
+from thesis_rl.agent.planners.algorithms import Td3PlannerBackend
+from thesis_rl.agent.planners.core.lifecycle import Td3Lifecycle
+from thesis_rl.agent.types import Transition
 
 
 @pytest.fixture

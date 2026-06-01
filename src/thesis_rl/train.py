@@ -22,7 +22,7 @@ os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from thesis_rl.agents.agent import Agent
+from thesis_rl.agent.agent import Agent
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.manager import CurriculumManager
 from thesis_rl.runtime.builders import (
@@ -350,7 +350,7 @@ def main(cfg: DictConfig) -> None:
     if reward_behavior != "off" and rulebook_config == "none":
         raise ValueError("reward.behavior!=off requires reward.rulebook_config to be a valid rulebook name.")
     base_csv_fields = {
-        "algorithm": str(cfg.planner.name),
+        "algorithm": str(cfg.agent.planner.algorithm.name),
         "reward_type": reward_type,
         "reward_behavior": reward_behavior,
         "curriculum_name": str(cfg.curriculum.name),
@@ -559,7 +559,11 @@ def main(cfg: DictConfig) -> None:
             ],
         )
         # Read EMA alpha from planner config if available
-        ema_alpha_cfg = float(cfg.planner.get("monitor_ema_alpha", 0.1)) if hasattr(cfg, "planner") else 0.1
+        ema_alpha_cfg = (
+            float(cfg.agent.planner.algorithm.get("monitor_ema_alpha", 0.1))
+            if hasattr(cfg, "agent")
+            else 0.1
+        )
         agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg)
 
         def _make_eval_agent(checkpoint_stem: Path, eval_env: Any) -> tuple[Agent, str]:
@@ -608,7 +612,7 @@ def main(cfg: DictConfig) -> None:
         )
         train_logger.info(
             "Run started | algorithm=%s | seed=%d | device=%s",
-            str(cfg.planner.name),
+            str(cfg.agent.planner.algorithm.name),
             run_seed,
             str(cfg.device),
         )
@@ -622,7 +626,7 @@ def main(cfg: DictConfig) -> None:
         log_event(
             events_log_path,
             "run_started",
-            algorithm=str(cfg.planner.name),
+            algorithm=str(cfg.agent.planner.algorithm.name),
             seed=run_seed,
             device=str(cfg.device),
             total_timesteps=total_timesteps,

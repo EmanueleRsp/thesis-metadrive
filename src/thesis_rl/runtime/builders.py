@@ -9,16 +9,14 @@ import gymnasium as gym
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
-from thesis_rl.adapters.base import BaseAdapter
-from thesis_rl.adapters.identity import IdentityAdapter
-from thesis_rl.adapters.neural_adapter import NeuralAdapter
-from thesis_rl.adapters.policy_adapter import PolicyAdapter
-from thesis_rl.agents.base import BasePlanner
+from thesis_rl.agent.adapters.interfaces.base import BaseAdapter
+from thesis_rl.agent.adapters.identity import IdentityAdapter
+from thesis_rl.agent.planners.interfaces.planner import BasePlanner
 from thesis_rl.envs.factory import make_env
 from thesis_rl.envs.wrappers import RuleRewardWrapper
-from thesis_rl.planners.factory import build_planner_backend, load_planner_backend
-from thesis_rl.preprocessors.base import BasePreprocessor
-from thesis_rl.preprocessors.identity import IdentityPreprocessor
+from thesis_rl.agent.planners.factory import build_planner_backend, load_planner_backend
+from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
+from thesis_rl.agent.preprocessors.identity import IdentityPreprocessor
 from thesis_rl.reward.reward_manager import HybridRulebookRewardManager
 from thesis_rl.runtime.deterministic_subproc_vec_env import DeterministicSubprocVecEnv
 from thesis_rl.runtime.seeding import set_global_seed
@@ -97,7 +95,7 @@ def _load_rulebook_cfg_from_reward(cfg: DictConfig) -> DictConfig:
 def adapter_space_kwargs(action_space) -> dict[str, object]:
     if not isinstance(action_space, gym.spaces.Box):
         raise TypeError(
-            f"Identity/policy/neural adapters require a Box action space, got {type(action_space).__name__}"
+            f"Identity adapter requires a Box action space, got {type(action_space).__name__}"
         )
 
     low = np.asarray(action_space.low, dtype=np.float32)
@@ -122,54 +120,30 @@ def adapter_space_kwargs(action_space) -> dict[str, object]:
 
 
 def build_preprocessor(cfg: DictConfig) -> BasePreprocessor:
-    name = str(cfg.preprocessor.name).lower()
+    name = str(cfg.agent.preprocessor.name).lower()
     if name == "identity":
         return IdentityPreprocessor()
-    raise ValueError(f"Unsupported preprocessor: {cfg.preprocessor.name}")
+    raise ValueError(f"Unsupported preprocessor: {cfg.agent.preprocessor.name}")
 
 
 def build_adapter(cfg: DictConfig, common_kwargs: dict[str, object]) -> BaseAdapter:
-    name = str(cfg.adapter.name).lower()
-    if train_num_envs(cfg) > 1 and name == "neural_adapter":
-        raise ValueError(
-            "Vectorized training currently supports only stateless adapters "
-            "(identity/direct_action or policy_adapter). Set env.vectorized.num_envs=1 "
-            "or use adapter=identity/policy_adapter."
-        )
-
-    if name in {"identity", "direct_action"}:
+    name = str(cfg.agent.adapter.name).lower()
+    if name == "identity":
         return IdentityAdapter(**common_kwargs)
 
-    if name == "neural_adapter":
-        return NeuralAdapter(
-            **common_kwargs,
-            clip=bool(cfg.adapter.get("clip", True)),
-            hidden_dim=int(cfg.adapter.get("hidden_dim", 64)),
-            learning_rate=float(cfg.adapter.get("learning_rate", 1e-3)),
-            batch_size=int(cfg.adapter.get("batch_size", 64)),
-            update_interval=int(cfg.adapter.get("update_interval", 1)),
-            buffer_capacity=int(cfg.adapter.get("buffer_capacity", 10000)),
-            device=str(cfg.device),
-        )
-
-    if name == "policy_adapter":
-        return PolicyAdapter(
-            **common_kwargs,
-            clip=bool(cfg.adapter.get("clip", True)),
-            policy_name=str(cfg.adapter.get("policy_name", "EnvInputPolicy")),
-            action_check=bool(cfg.adapter.get("action_check", True)),
-        )
-
-    raise ValueError(f"Unsupported adapter: {name}")
+    raise ValueError(
+        f"Unsupported adapter: {cfg.agent.adapter.name}. "
+        "Only agent/adapter=identity is currently supported."
+    )
 
 
 def build_planner(cfg: DictConfig, env: Any, seed: int | None = None) -> BasePlanner:
     return build_planner_backend(
-        planner_name=str(cfg.planner.name),
+        planner_name=str(cfg.agent.planner.algorithm.name),
         env=env,
-        cfg_planner=cfg.planner,
-        cfg_encoder=cfg.get("encoder"),
-        cfg_decoder=cfg.get("decoder"),
+        cfg_planner=cfg.agent.planner.algorithm,
+        cfg_encoder=cfg.agent.planner.encoder,
+        cfg_decoder=cfg.agent.planner.decoder,
         cfg_obs=cfg.get("obs"),
         device=str(cfg.device),
         seed=seed,
@@ -178,12 +152,12 @@ def build_planner(cfg: DictConfig, env: Any, seed: int | None = None) -> BasePla
 
 def load_planner(cfg: DictConfig, checkpoint_path: str, env: Any) -> BasePlanner:
     return load_planner_backend(
-        planner_name=str(cfg.planner.name),
+        planner_name=str(cfg.agent.planner.algorithm.name),
         checkpoint_path=checkpoint_path,
         env=env,
-        cfg_planner=cfg.planner,
-        cfg_encoder=cfg.get("encoder"),
-        cfg_decoder=cfg.get("decoder"),
+        cfg_planner=cfg.agent.planner.algorithm,
+        cfg_encoder=cfg.agent.planner.encoder,
+        cfg_decoder=cfg.agent.planner.decoder,
         cfg_obs=cfg.get("obs"),
         device=str(cfg.device),
     )

@@ -2,7 +2,7 @@
 defaults:
   - /config
   - override /obs: semantic_state
-  - override /encoder: none
-  - override /decoder: mlp_large
-  - override /planner: td3
+  - override /agent/planner/encoder: none
+  - override /agent/planner/decoder: mlp_large
+  - override /agent/planner/algorithm: td3
   - _self_

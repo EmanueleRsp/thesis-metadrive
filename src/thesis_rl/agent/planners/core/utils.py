@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from typing import Any
+
+import gymnasium as gym
+import numpy as np
+import torch
+from omegaconf import DictConfig, OmegaConf
+from torch import nn
+
+from thesis_rl.agent.planners.encoders.factory import build_encoder
+from thesis_rl.observations.spec import ObservationSpec
+
+
+def to_plain_dict(cfg: Any) -> dict[str, Any]:
+    if cfg is None:
+        return {}
+    if isinstance(cfg, DictConfig):
+        return dict(OmegaConf.to_container(cfg, resolve=True))  # type: ignore[arg-type]
+    if isinstance(cfg, dict):
+        return dict(cfg)
+    return dict(cfg)
+
+
+def resolve_device(device: str) -> torch.device:
+    if device == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(device)
+
+
+def count_envs(env: Any) -> int:
+    return int(getattr(env, "num_envs", 1))
+
+
+def to_batch_obs(obs: np.ndarray) -> np.ndarray:
+    arr = np.asarray(obs, dtype=np.float32)
+    if arr.ndim == 1:
+        arr = arr[None, :]
+    return arr
+
+
+def soft_update(source: nn.Module, target: nn.Module, tau: float) -> None:
+    with torch.no_grad():
+        for src_param, tgt_param in zip(source.parameters(), target.parameters()):
+            tgt_param.data.mul_(1.0 - tau)
+            tgt_param.data.add_(tau * src_param.data)
+
+
+def assert_box_spaces(env: Any) -> tuple[gym.spaces.Box, gym.spaces.Box]:
+    if not isinstance(env.observation_space, gym.spaces.Box):
+        raise TypeError(f"Only Box observation spaces are supported, got {type(env.observation_space).__name__}")
+    if not isinstance(env.action_space, gym.spaces.Box):
+        raise TypeError(f"Only Box action spaces are supported, got {type(env.action_space).__name__}")
+    return env.observation_space, env.action_space
+
+
+def safe_atanh(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    clipped = torch.clamp(x, -1.0 + eps, 1.0 - eps)
+    return torch.atanh(clipped)
+
+
+def build_encoder_for_env(cfg_encoder: Any, cfg_obs: Any, obs_dim: int):
+    spec = ObservationSpec.from_obs_config(cfg_obs)
+    enc_cfg = to_plain_dict(cfg_encoder)
+    enc_type = str(enc_cfg.get("type", "none")).lower()
+
+    if enc_type == "lq" and obs_dim != spec.flat_dim:
+        raise ValueError(
+            "LQ encoder requires semantic-state layout consistency: "
+            f"obs_dim={obs_dim}, expected={spec.flat_dim}"
+        )
+    if enc_type == "none":
+        enc_cfg["input_dim"] = obs_dim
+        enc_cfg["output_dim"] = obs_dim
+    if enc_type == "mlp":
+        enc_cfg["input_dim"] = obs_dim
+
+    return build_encoder(cfg_encoder=enc_cfg, obs_spec=spec)
