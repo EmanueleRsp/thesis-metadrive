@@ -40,12 +40,12 @@ def _resolve_eval_env_overrides(curriculum_cfg: CurriculumConfig) -> tuple[dict[
     Evaluation is standalone (no persisted curriculum state), so when curriculum mode is
     `auto` we evaluate on the last configured stage by convention.
     """
-    if not (curriculum_cfg.enabled and curriculum_cfg.stages):
+    if not (curriculum_cfg.enabled and curriculum_cfg.is_staged and curriculum_cfg.staged.stages):
         return None, None
 
-    mode = str(curriculum_cfg.mode).lower()
+    mode = str(curriculum_cfg.staged.mode).lower()
     if mode == "auto":
-        stage = curriculum_cfg.stages[-1]
+        stage = curriculum_cfg.staged.stages[-1]
         merged = dict(stage.env)
         merged.update(stage.eval_env)
         return merged, stage.name

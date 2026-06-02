@@ -134,12 +134,24 @@ Responsible for:
 - train/eval seed ranges
 
 Suggested files:
-- `src/thesis_rl/curriculum/stages.py`
+- `src/thesis_rl/curriculum/config.py`
+- `src/thesis_rl/curriculum/interfaces/strategy.py`
+- `src/thesis_rl/curriculum/state.py`
+- `src/thesis_rl/curriculum/registry.py`
+- `src/thesis_rl/curriculum/strategies/staged.py`
 - `src/thesis_rl/curriculum/manager.py`
 
-The manager should support:
+Recommended structure:
+- `CurriculumConfig`: explicit `kind` selector (`disabled`, `staged`, future strategies)
+- `CurriculumStrategy`: shared protocol implemented by each curriculum type
+- `CurriculumState`: serializable runtime state (`stage_index`, counters, last gate result)
+- `registry`: strategy construction from config kind
+- `CurriculumManager`: thin wrapper that delegates to the selected strategy
+
+The staged strategy should support:
 - fixed stage selection
 - performance-based auto-promotion
+- explicit train/eval scenario split validation per stage
 
 ## 4. Recommended early abstractions
 

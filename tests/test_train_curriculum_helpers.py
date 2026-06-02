@@ -57,23 +57,26 @@ def test_missing_curriculum_metrics_lists_only_absent_keys() -> None:
     curriculum_cfg = CurriculumConfig.from_mapping(
         {
             "enabled": True,
-            "mode": "auto",
-            "promotion": {
-                "gates": {
-                    "safety": {
-                        "collision_rate_max": 0.05,
-                        "top_rule_violation_rate_max": 0.02,
-                        "out_of_road_rate_max": 0.03,
-                    },
-                    "task": {
-                        "success_rate_min": 0.8,
-                        "route_completion_min": 0.85,
-                    },
-                    "stability": {
-                        "success_rate_std_max": 0.1,
-                        "collision_rate_std_max": 0.03,
-                    },
-                }
+            "kind": "staged",
+            "staged": {
+                "mode": "auto",
+                "promotion": {
+                    "gates": {
+                        "safety": {
+                            "collision_rate_max": 0.05,
+                            "top_rule_violation_rate_max": 0.02,
+                            "out_of_road_rate_max": 0.03,
+                        },
+                        "task": {
+                            "success_rate_min": 0.8,
+                            "route_completion_min": 0.85,
+                        },
+                        "stability": {
+                            "success_rate_std_max": 0.1,
+                            "collision_rate_std_max": 0.03,
+                        },
+                    }
+                },
             },
         }
     )

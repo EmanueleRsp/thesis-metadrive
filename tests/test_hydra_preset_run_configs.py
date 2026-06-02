@@ -48,8 +48,8 @@ def test_reward_variants_compose() -> None:
     assert str(cfg_native.reward.behavior) == "off"
     assert str(cfg_native.reward.rulebook_config) == "none"
     assert bool(cfg_native.curriculum.enabled) is True
-    assert str(cfg_native.curriculum.mode) == "auto"
-    assert len(cfg_native.curriculum.stages) >= 1
+    assert str(cfg_native.curriculum.staged.mode) == "auto"
+    assert len(cfg_native.curriculum.staged.stages) >= 1
 
     assert cfg_monitor_only.reward.name == "monitor_only"
     assert str(cfg_monitor_only.reward.type) == "native"

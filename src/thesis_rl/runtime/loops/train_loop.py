@@ -236,7 +236,9 @@ def _required_curriculum_metrics(curriculum_cfg: CurriculumConfig) -> list[str]:
 
     Gate keys are expected to follow `<metric>_min` or `<metric>_max`.
     """
-    gates_payload = asdict(curriculum_cfg.promotion.gates)
+    if not curriculum_cfg.is_staged:
+        return []
+    gates_payload = asdict(curriculum_cfg.staged.promotion.gates)
     required: list[str] = []
     seen: set[str] = set()
 
@@ -263,11 +265,13 @@ def _missing_curriculum_metrics(
 
 
 def _min_stage_steps(curriculum_cfg: CurriculumConfig, stage_name: str) -> int | None:
-    stage_cfg = curriculum_cfg.promotion.per_stage_min_steps.get(stage_name)
+    if not curriculum_cfg.is_staged:
+        return None
+    stage_cfg = curriculum_cfg.staged.promotion.per_stage_min_steps.get(stage_name)
     if stage_cfg is not None:
         return int(stage_cfg)
-    if curriculum_cfg.promotion.default_min_stage_steps > 0:
-        return int(curriculum_cfg.promotion.default_min_stage_steps)
+    if curriculum_cfg.staged.promotion.default_min_stage_steps > 0:
+        return int(curriculum_cfg.staged.promotion.default_min_stage_steps)
     return None
 
 
@@ -476,7 +480,7 @@ def run_training(cfg: DictConfig) -> None:
         curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
         curriculum_manager: CurriculumManager | None = None
         current_train_overrides: dict[str, Any] | None = None
-        if curriculum_cfg.enabled and curriculum_cfg.stages:
+        if curriculum_cfg.enabled and curriculum_cfg.is_staged and curriculum_cfg.staged.stages:
             curriculum_manager = CurriculumManager(curriculum_cfg)
             if resume_enabled:
                 if not resume_training_state_path.exists():
@@ -486,21 +490,7 @@ def run_training(cfg: DictConfig) -> None:
                 resume_state = _load_training_state(resume_training_state_path)
                 curriculum_state = resume_state.get("curriculum", {})
                 if isinstance(curriculum_state, dict):
-                    curriculum_manager._stage_idx = int(  # noqa: SLF001
-                        curriculum_state.get("stage_index", curriculum_manager.stage_index)
-                    )
-                    curriculum_manager._stage_steps_done = int(  # noqa: SLF001
-                        curriculum_state.get("stage_steps_done", curriculum_manager.stage_steps_done)
-                    )
-                    curriculum_manager._eval_count_at_stage = int(  # noqa: SLF001
-                        curriculum_state.get("eval_count_at_stage", curriculum_manager.eval_count_at_stage)
-                    )
-                    curriculum_manager._consecutive_passes = int(  # noqa: SLF001
-                        curriculum_state.get("consecutive_passes", curriculum_manager.consecutive_passes)
-                    )
-                    curriculum_manager._last_eval_passed = bool(  # noqa: SLF001
-                        curriculum_state.get("last_eval_passed", False)
-                    )
+                    curriculum_manager.load_state(curriculum_state)
             current_train_overrides = curriculum_manager.get_env_config(evaluation=False)
         elif resume_enabled:
             if not resume_training_state_path.exists():
@@ -803,6 +793,17 @@ def run_training(cfg: DictConfig) -> None:
             if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
                 agent.save(latest_checkpoint_stem)
                 _save_replay_buffer_if_available(planner, latest_replay_buffer_path)
+                curriculum_state_payload = (
+                    curriculum_manager.state_dict()
+                    if curriculum_manager is not None
+                    else {
+                        "stage_index": 0,
+                        "stage_steps_done": 0,
+                        "eval_count_at_stage": 0,
+                        "consecutive_passes": 0,
+                        "last_eval_passed": False,
+                    }
+                )
                 latest_state_payload = {
                     "global_steps_done": int(current_global_step),
                     "chunk_id": int(chunk_id),
@@ -810,11 +811,7 @@ def run_training(cfg: DictConfig) -> None:
                     "remaining_steps": int(total_timesteps - current_global_step),
                     "curriculum": {
                         "enabled": bool(curriculum_manager is not None),
-                        "stage_index": int(curriculum_manager.stage_index) if curriculum_manager is not None else 0,
-                        "stage_steps_done": int(curriculum_manager.stage_steps_done) if curriculum_manager is not None else 0,
-                        "eval_count_at_stage": int(curriculum_manager.eval_count_at_stage) if curriculum_manager is not None else 0,
-                        "consecutive_passes": int(curriculum_manager.consecutive_passes) if curriculum_manager is not None else 0,
-                        "last_eval_passed": bool(curriculum_manager._last_eval_passed) if curriculum_manager is not None else False,  # noqa: SLF001
+                        **curriculum_state_payload,
                     },
                     "seed": int(run_seed),
                     "updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -1211,7 +1208,7 @@ def run_training(cfg: DictConfig) -> None:
                 continue
 
             # Metrics check
-            if curriculum_cfg.mode.lower() == "auto":
+            if curriculum_cfg.is_staged and curriculum_cfg.staged.mode.lower() == "auto":
                 missing_metrics = _missing_curriculum_metrics(metrics, curriculum_cfg)
                 if missing_metrics:
                     curriculum_logger.error(
@@ -1237,7 +1234,7 @@ def run_training(cfg: DictConfig) -> None:
 
             # Record eval metrics
             passed_eval_gates = curriculum_manager.record_eval_metrics(metrics)
-            stage_gates = curriculum_cfg.promotion.gates
+            stage_gates = curriculum_cfg.staged.promotion.gates
             gate_success_pass = float(metrics.get("success_rate", float("-inf"))) >= float(stage_gates.task.success_rate_min)
             gate_collision_pass = float(metrics.get("collision_rate", float("inf"))) <= float(stage_gates.safety.collision_rate_max)
             gate_out_of_road_pass = float(metrics.get("out_of_road_rate", float("inf"))) <= float(stage_gates.safety.out_of_road_rate_max)
@@ -1356,8 +1353,8 @@ def run_training(cfg: DictConfig) -> None:
                     "gate_route_completion_pass": bool(gate_route_completion_pass),
                     "passed_eval_gates": bool(passed_eval_gates),
                     "consecutive_passes": pre_promotion_consecutive_passes,
-                    "warmup_evals_required": int(curriculum_cfg.promotion.warmup_evals),
-                    "consecutive_evals_required": int(curriculum_cfg.promotion.consecutive_evals),
+                    "warmup_evals_required": int(curriculum_cfg.staged.promotion.warmup_evals),
+                    "consecutive_evals_required": int(curriculum_cfg.staged.promotion.consecutive_evals),
                     "promoted": bool(next_stage_name != current_stage_name),
                     "next_stage": next_stage_name,
                 },
@@ -1440,10 +1437,10 @@ def run_training(cfg: DictConfig) -> None:
         final_stage_index = 0
         steps_to_final_stage = 0
         if curriculum_manager is not None:
-            if not curriculum_cfg.stages:
+            if not curriculum_cfg.staged.stages:
                 raise ValueError("Curriculum is enabled but no stages are configured.")
-            final_stage_index = len(curriculum_cfg.stages) - 1
-            final_stage = curriculum_cfg.stages[final_stage_index]
+            final_stage_index = len(curriculum_cfg.staged.stages) - 1
+            final_stage = curriculum_cfg.staged.stages[final_stage_index]
             final_stage_name = final_stage.name
             final_eval_env_overrides = dict(final_stage.env)
             if final_stage.eval_env:
@@ -1719,6 +1716,17 @@ def run_training(cfg: DictConfig) -> None:
         try:
             agent.save(latest_checkpoint_stem)
             _save_replay_buffer_if_available(planner, latest_replay_buffer_path)
+            curriculum_state_payload = (
+                curriculum_manager.state_dict()
+                if curriculum_manager is not None
+                else {
+                    "stage_index": 0,
+                    "stage_steps_done": 0,
+                    "eval_count_at_stage": 0,
+                    "consecutive_passes": 0,
+                    "last_eval_passed": False,
+                }
+            )
             _save_training_state(
                 latest_training_state_path,
                 {
@@ -1728,11 +1736,7 @@ def run_training(cfg: DictConfig) -> None:
                     "remaining_steps": int(max(0, total_timesteps - current_global_step)),
                     "curriculum": {
                         "enabled": bool(curriculum_manager is not None),
-                        "stage_index": int(curriculum_manager.stage_index) if curriculum_manager is not None else 0,
-                        "stage_steps_done": int(curriculum_manager.stage_steps_done) if curriculum_manager is not None else 0,
-                        "eval_count_at_stage": int(curriculum_manager.eval_count_at_stage) if curriculum_manager is not None else 0,
-                        "consecutive_passes": int(curriculum_manager.consecutive_passes) if curriculum_manager is not None else 0,
-                        "last_eval_passed": bool(curriculum_manager._last_eval_passed) if curriculum_manager is not None else False,  # noqa: SLF001
+                        **curriculum_state_payload,
                     },
                     "seed": int(run_seed),
                     "updated_at": datetime.now().isoformat(timespec="seconds"),

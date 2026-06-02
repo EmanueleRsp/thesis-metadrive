@@ -90,9 +90,9 @@ def _resolve_replay_checkpoint(run_dir: Path, cfg: Any) -> Path:
 
 def _resolve_eval_overrides_for_stage(cfg: Any, stage_name: str) -> dict[str, Any] | None:
     curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
-    if not (curriculum_cfg.enabled and curriculum_cfg.stages):
+    if not (curriculum_cfg.enabled and curriculum_cfg.is_staged and curriculum_cfg.staged.stages):
         return None
-    for stage in curriculum_cfg.stages:
+    for stage in curriculum_cfg.staged.stages:
         if stage.name == stage_name:
             merged = dict(stage.env)
             merged.update(stage.eval_env)
