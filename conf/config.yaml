@@ -4,17 +4,17 @@ name: PLN_${agent.planner.algorithm.name}_REW_${hydra:runtime.choices.reward}_CU
 # and optionally add CLI overrides (e.g. `run_profile=medium`).
 defaults:
   - env: metadrive          # Environment family/config in `conf/env/*`
-  - obs: lidar_state        # Observation setup in `conf/obs/*`
+  - obs: semantic_state     # Observation setup in `conf/obs/*`
   - experiment: default
   - run_profile: fast       # Budget/training profile in `conf/run_profile/*`
 
-  - agent/preprocessor: identity      # Observation preprocessor in `conf/agent/preprocessor/*`
-  - agent/planner/encoder: lq         # Planner feature encoder in `conf/agent/planner/encoder/*`
+  - agent/preprocessor: identity       # Observation preprocessor in `conf/agent/preprocessor/*`
+  - agent/planner/encoder: lq          # Planner feature encoder in `conf/agent/planner/encoder/*`
   - agent/planner/decoder: mlp_encoded # Planner head decoder profile in `conf/agent/planner/decoder/*`
-  - agent/planner/algorithm: sac      # Planner backend in `conf/agent/planner/algorithm/*`
-  - agent/adapter: identity           # Action adapter in `conf/agent/adapter/*`
+  - agent/planner/algorithm: sac       # Planner backend in `conf/agent/planner/algorithm/*`
+  - agent/adapter: identity            # Action adapter in `conf/agent/adapter/*`
 
-  - reward: native          # native | monitor_only | scalar_reward
+  - reward: monitor_only    # native | monitor_only | scalar_reward
   - curriculum: disabled    # disabled | stages
   
   - video: default          # Video/replay pipeline settings in `conf/video/*`

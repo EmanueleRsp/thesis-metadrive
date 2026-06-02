@@ -10,7 +10,14 @@ from thesis_rl.agent.types import Transition
 from thesis_rl.agent.planners.decoders.factory import build_decoder
 from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
 from thesis_rl.agent.planners.modules.actor_critic import DeterministicActor, TwinQCritic
-from thesis_rl.agent.planners.core.utils import assert_box_spaces, build_encoder_for_env, to_batch_obs, to_plain_dict, soft_update
+from thesis_rl.agent.planners.core.utils import (
+    assert_box_spaces,
+    build_encoder_for_env,
+    normalize_checkpoint_path,
+    soft_update,
+    to_batch_obs,
+    to_plain_dict,
+)
 from thesis_rl.agent.planners.core.types import TrainState
 from thesis_rl.agent.planners.core.lifecycle import Td3Lifecycle
 from thesis_rl.agent.planners.core.buffers import ReplayBuffer
@@ -120,7 +127,7 @@ class Td3PlannerBackend(BasePlannerBackend):
         cfg_decoder: Any | None = None,
         cfg_obs: Any | None = None,
     ) -> "Td3PlannerBackend":
-        payload = torch.load(str(checkpoint_path), map_location="cpu")
+        payload = torch.load(str(normalize_checkpoint_path(checkpoint_path)), map_location="cpu")
         resolved_planner = cfg_planner if cfg_planner is not None else payload.get("cfg_planner", {})
         resolved_encoder = cfg_encoder if cfg_encoder is not None else payload.get("cfg_encoder", {})
         resolved_decoder = cfg_decoder if cfg_decoder is not None else payload.get("cfg_decoder", {})
@@ -155,7 +162,7 @@ class Td3PlannerBackend(BasePlannerBackend):
         }
 
     def save(self, checkpoint_path: str | Path) -> None:
-        checkpoint = Path(checkpoint_path)
+        checkpoint = normalize_checkpoint_path(checkpoint_path)
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self._payload(), str(checkpoint))
 

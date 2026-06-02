@@ -22,6 +22,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.agent.agent import Agent
+from thesis_rl.agent.planners.core.utils import count_envs
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.manager import CurriculumManager
 from thesis_rl.runtime.wiring.builders import (
@@ -504,7 +505,7 @@ def run_training(cfg: DictConfig) -> None:
         # Environment
         env = build_train_env(cfg, current_train_overrides)
         seed_env_spaces(env, run_seed)
-        train_env_count = int(getattr(env, "num_envs", 1))
+        train_env_count = count_envs(env)
 
         # Agent
         preprocessor = build_preprocessor(cfg)

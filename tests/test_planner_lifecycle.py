@@ -164,3 +164,12 @@ def test_lifecycle_save_load_compatibility(cfg_planner, env, tmp_path: Path):
 
     assert isinstance(loaded_lifecycle, Td3Lifecycle)
     assert loaded_lifecycle.step_count == 0
+
+
+def test_lifecycle_save_adds_zip_suffix_when_missing(cfg_planner, env, tmp_path: Path):
+    planner = Td3PlannerBackend.build(env, cfg_planner, device="cpu", seed=123)
+
+    checkpoint_stem = tmp_path / "checkpoint_without_suffix"
+    planner.save(checkpoint_stem)
+
+    assert checkpoint_stem.with_suffix(".zip").exists()

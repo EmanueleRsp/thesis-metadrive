@@ -10,7 +10,14 @@ from thesis_rl.agent.types import Transition
 from thesis_rl.agent.planners.decoders.factory import build_decoder
 from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
 from thesis_rl.agent.planners.modules.actor_critic import SquashedGaussianActor, TwinQCritic
-from thesis_rl.agent.planners.core.utils import assert_box_spaces, build_encoder_for_env, soft_update, to_batch_obs, to_plain_dict
+from thesis_rl.agent.planners.core.utils import (
+    assert_box_spaces,
+    build_encoder_for_env,
+    normalize_checkpoint_path,
+    soft_update,
+    to_batch_obs,
+    to_plain_dict,
+)
 from thesis_rl.agent.planners.core.types import TrainState
 from thesis_rl.agent.planners.core.lifecycle import SacLifecycle
 from thesis_rl.agent.planners.core.buffers import ReplayBuffer
@@ -98,11 +105,10 @@ class SacPlannerBackend(BasePlannerBackend):
                     init = 1.0
             self.log_alpha = torch.tensor(np.log(max(init, 1e-6)), dtype=torch.float32, device=self.device, requires_grad=True)
             self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=lr)
-            self.target_entropy = float(self.cfg_planner.get("target_entropy", -self.action_dim))
         else:
             self.log_alpha = torch.tensor(np.log(float(ent_coef_cfg)), dtype=torch.float32, device=self.device)
             self.alpha_opt = None
-            self.target_entropy = float(self.cfg_planner.get("target_entropy", -self.action_dim))
+        self.target_entropy = self._resolve_target_entropy(self.cfg_planner.get("target_entropy", "auto"))
 
         self.replay_buffer = ReplayBuffer(
             capacity=int(self.cfg_planner.get("buffer_size", 300000)),
@@ -113,6 +119,17 @@ class SacPlannerBackend(BasePlannerBackend):
     @property
     def alpha(self) -> torch.Tensor:
         return torch.exp(self.log_alpha.detach())
+
+    def _resolve_target_entropy(self, target_entropy_cfg: Any) -> float:
+        if isinstance(target_entropy_cfg, str) and target_entropy_cfg.lower() == "auto":
+            return -float(self.action_dim)
+        try:
+            return float(target_entropy_cfg)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Invalid SAC `target_entropy`: expected a float or 'auto', "
+                f"got {target_entropy_cfg!r}"
+            ) from exc
 
     @classmethod
     def build(
@@ -138,7 +155,7 @@ class SacPlannerBackend(BasePlannerBackend):
         cfg_decoder: Any | None = None,
         cfg_obs: Any | None = None,
     ) -> "SacPlannerBackend":
-        payload = torch.load(str(checkpoint_path), map_location="cpu")
+        payload = torch.load(str(normalize_checkpoint_path(checkpoint_path)), map_location="cpu")
         resolved_planner = cfg_planner if cfg_planner is not None else payload.get("cfg_planner", {})
         resolved_encoder = cfg_encoder if cfg_encoder is not None else payload.get("cfg_encoder", {})
         resolved_decoder = cfg_decoder if cfg_decoder is not None else payload.get("cfg_decoder", {})
@@ -179,7 +196,7 @@ class SacPlannerBackend(BasePlannerBackend):
         self.state = TrainState(**dict(payload.get("train_state", {})))
 
     def save(self, checkpoint_path: str | Path) -> None:
-        checkpoint = Path(checkpoint_path)
+        checkpoint = normalize_checkpoint_path(checkpoint_path)
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self._payload(), str(checkpoint))
 

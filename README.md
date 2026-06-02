@@ -104,6 +104,54 @@ docker compose exec dev bash
 tmux attach -t thesis
 ```
 
+### 5) Launch one pane per seed with tmux
+
+To create a tmux session with one tiled pane per seed and automatically append
+`seed=<seed>` to each command:
+
+```bash
+scripts/tmux_seed_grid.sh --session sac_semantic_obs -- \
+  uv run --no-sync python -m thesis_rl.cli.train \
+    --config-name config \
+    run_profile=thesis \
+    reward=monitor_only \
+    curriculum=disabled \
+    obs=semantic_state \
+    agent/planner/encoder=mlp \
+    agent/planner/decoder=mlp_encoded \
+    agent/planner/algorithm=sac
+```
+
+By default it launches seeds `0..9`. Useful options:
+
+```bash
+scripts/tmux_seed_grid.sh --attach --seed-list 0,1,2 -- <command ...>
+scripts/tmux_seed_grid.sh --seed-count 4 --seed-start 10 -- <command ...>
+```
+
+To run each pane inside an already running Docker container and enter the
+repository workspace first, you can just pass `--docker-container`; the script
+defaults to `/workspace/thesis/thesis-metadrive` inside the container:
+
+```bash
+scripts/tmux_seed_grid.sh \
+  --session sac_semantic_obs \
+  --docker-container e.respino \
+  --attach -- \
+  uv run --no-sync python -m thesis_rl.cli.train \
+    --config-name config \
+    run_profile=thesis \
+    reward=monitor_only \
+    curriculum=disabled \
+    obs=semantic_state \
+    agent/planner/encoder=mlp \
+    agent/planner/decoder=mlp_encoded \
+    agent/planner/algorithm=sac
+```
+
+If needed, you can still override the container workdir explicitly with
+`--docker-workdir`.
+
 ## Current status
 
 This is still a **starter scaffold**, not the full implementation.

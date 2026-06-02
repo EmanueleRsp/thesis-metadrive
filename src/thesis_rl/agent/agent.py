@@ -21,6 +21,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from thesis_rl.agent.planners.core.utils import count_envs
 from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
 from thesis_rl.agent.planners.interfaces.planner import BasePlanner
 from thesis_rl.agent.adapters.interfaces.base import BaseAdapter
@@ -487,7 +488,7 @@ class Agent:
         reset_seed_fn: Callable[[int], int | None] | None = None,
     ) -> dict[str, float | int]:
         """Train with a vectorized env, counting timesteps as total collected transitions."""
-        n_envs = int(getattr(env, "num_envs", 1))
+        n_envs = count_envs(env)
         if n_envs <= 1:
             return self.train(
                 env=env,

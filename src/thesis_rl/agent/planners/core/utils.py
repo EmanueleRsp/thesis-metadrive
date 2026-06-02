@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import gymnasium as gym
@@ -22,6 +23,13 @@ def to_plain_dict(cfg: Any) -> dict[str, Any]:
     return dict(cfg)
 
 
+def normalize_checkpoint_path(checkpoint_path: str | Path) -> Path:
+    checkpoint = Path(checkpoint_path)
+    if checkpoint.suffix != ".zip":
+        checkpoint = checkpoint.with_suffix(".zip")
+    return checkpoint
+
+
 def resolve_device(device: str) -> torch.device:
     if device == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -29,7 +37,18 @@ def resolve_device(device: str) -> torch.device:
 
 
 def count_envs(env: Any) -> int:
-    return int(getattr(env, "num_envs", 1))
+    if hasattr(env, "get_wrapper_attr"):
+        try:
+            return int(env.get_wrapper_attr("num_envs"))
+        except Exception:
+            pass
+    unwrapped = getattr(env, "unwrapped", None)
+    if unwrapped is not None and hasattr(unwrapped, "num_envs"):
+        return int(unwrapped.num_envs)
+    try:
+        return int(object.__getattribute__(env, "num_envs"))
+    except Exception:
+        return 1
 
 
 def to_batch_obs(obs: np.ndarray) -> np.ndarray:

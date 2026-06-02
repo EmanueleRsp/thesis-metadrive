@@ -11,6 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.agent.adapters.interfaces.base import BaseAdapter
 from thesis_rl.agent.adapters.identity import IdentityAdapter
+from thesis_rl.agent.planners.core.utils import count_envs
 from thesis_rl.envs.factory import make_env
 from thesis_rl.envs.wrappers import RuleRewardWrapper
 from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
@@ -328,7 +329,7 @@ def build_train_env(cfg: DictConfig, env_overrides: dict[str, Any] | None = None
 
 
 def set_planner_env_if_compatible(planner: "BasePlanner", env: Any) -> None:
-    next_n_envs = int(getattr(env, "num_envs", 1))
+    next_n_envs = count_envs(env)
     current_n_envs = int(getattr(planner, "n_envs", next_n_envs))
     replay_n_envs = int(getattr(planner, "replay_buffer_n_envs", lambda: current_n_envs)())
     if replay_n_envs != next_n_envs or current_n_envs != next_n_envs:
