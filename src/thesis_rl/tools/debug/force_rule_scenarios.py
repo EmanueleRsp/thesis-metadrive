@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 from hydra import compose, initialize_config_dir
 
-from thesis_rl.runtime.builders import build_env
+from thesis_rl.runtime.wiring.builders import build_env
 
 
 def _find_repo_root(start: Path) -> Path:

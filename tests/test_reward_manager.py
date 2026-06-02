@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 from omegaconf import OmegaConf
 
-from thesis_rl.reward.reward_manager import HybridRulebookRewardManager
+from thesis_rl.reward.managers.hybrid_rulebook_manager import HybridRulebookRewardManager
 from thesis_rl.rulebook.types import RuleEvalInput, RuleVector
 
 

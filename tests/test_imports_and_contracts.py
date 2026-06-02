@@ -3,7 +3,7 @@ from thesis_rl.agent.adapters.identity import IdentityAdapter
 from thesis_rl.agent.planners.algorithms import PpoPlannerBackend, SacPlannerBackend, Td3PlannerBackend
 from thesis_rl.curriculum.manager import CurriculumManager
 from thesis_rl.agent.planners.encoders import LQEncoder, MLPEncoder, NoneEncoder
-from thesis_rl.observations import ObservationSpec
+from thesis_rl.contracts.observation_spec import ObservationSpec
 from thesis_rl.agent.preprocessors.identity import IdentityPreprocessor
 
 

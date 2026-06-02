@@ -34,7 +34,7 @@ What this step validates:
 - TD3 update path is active with minimal targeted overrides for a short smoke run.
 
 ```bash
-uv run --no-sync python -m thesis_rl.train --config-name presets/td3/td3_monitor_only_no_curr \
+uv run --no-sync python -m thesis_rl.cli.train --config-name presets/td3/td3_monitor_only_no_curr \
   run_profile=smoke
 ```
 
@@ -57,7 +57,7 @@ What this step validates:
 
 ```bash
 for s in 0 1 2; do
-  uv run --no-sync python -m thesis_rl.train \
+  uv run --no-sync python -m thesis_rl.cli.train \
     --config-name presets/td3/td3_native_no_curr \
     run_profile=medium seed=$s
 done
@@ -79,7 +79,7 @@ What this step validates:
 
 ```bash
 for s in 0 1 2; do
-  uv run --no-sync python -m thesis_rl.train \
+  uv run --no-sync python -m thesis_rl.cli.train \
     --config-name presets/td3/td3_monitor_only_no_curr \
     run_profile=medium seed=$s
 done
@@ -101,7 +101,7 @@ What this step validates:
 
 ```bash
 for s in 0 1 2; do
-  uv run --no-sync python -m thesis_rl.train \
+  uv run --no-sync python -m thesis_rl.cli.train \
     --config-name presets/td3/td3_native_curr \
     run_profile=medium seed=$s
 done
@@ -123,7 +123,7 @@ What this step validates:
 
 ```bash
 for s in 0 1 2; do
-  uv run --no-sync python -m thesis_rl.train \
+  uv run --no-sync python -m thesis_rl.cli.train \
     --config-name presets/td3/td3_monitor_only_curr \
     run_profile=medium seed=$s
 done
@@ -146,7 +146,7 @@ What this step validates:
 
 ```bash
 for s in 0 1 2; do
-  uv run --no-sync python -m thesis_rl.train \
+  uv run --no-sync python -m thesis_rl.cli.train \
     --config-name presets/td3/td3_scalar_reward_curr \
     run_profile=medium seed=$s \
     reward.rule_margin_log_path='${paths.logs_dir}/rule_margins.jsonl'
@@ -170,8 +170,8 @@ What this step validates:
 Run after steps 2-4 (baseline/curriculum/rulebook):
 
 ```bash
-uv run --no-sync python -m analysis.run_analysis --run-profile medium --only aggregate
-uv run --no-sync python -m analysis.run_analysis --run-profile medium --only tables
+uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile medium --only aggregate
+uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile medium --only tables
 ```
 
 Expected:
@@ -179,7 +179,7 @@ Expected:
 - No obviously broken regime (example: all-zero success with all-one collision).
 
 Visual/manual checks:
-- Open `analysis/medium/tables/final_evaluation.md` and compare rows grouped by curriculum/reward behavior.
+- Open `outputs/analysis/medium/tables/final_evaluation.md` and compare rows grouped by curriculum/reward behavior.
 
 ## 5) Scale-Tuning Pass (rule margins -> suggested scales)
 
@@ -190,7 +190,7 @@ What this step validates:
 Collect diagnostics logs from normal rulebook behavior:
 
 ```bash
-uv run --no-sync python -m thesis_rl.train \
+uv run --no-sync python -m thesis_rl.cli.train \
   --config-name presets/td3/td3_scalar_reward_scale_tuning_no_curr \
 ```
 
@@ -210,7 +210,7 @@ done
 Aggregate all margin logs into one dataset:
 
 ```bash
-uv run --no-sync python -m thesis_rl.reward.aggregate_rule_margins \
+uv run --no-sync python -m thesis_rl.tools.calibration.aggregate_rule_margins \
   --input "outputs/**/logs/rule_margins.jsonl" "outputs/debug_rule_margins_forced_scenarios.jsonl" \
   --output outputs/scale_calibration/aggregated_rule_margins.jsonl
 ```
@@ -218,7 +218,7 @@ uv run --no-sync python -m thesis_rl.reward.aggregate_rule_margins \
 Run strict scale tuning with minimum active-sample requirements:
 
 ```bash
-uv run --no-sync python -m thesis_rl.reward.scale_tuning \
+uv run --no-sync python -m thesis_rl.tools.calibration.scale_tuning \
   --input outputs/scale_calibration/aggregated_rule_margins.jsonl \
   --percentile 90 \
   --min-scale 1e-6 \
@@ -231,7 +231,7 @@ uv run --no-sync python -m thesis_rl.reward.scale_tuning \
 Optional one-command loop helper (aggregate + strict check):
 
 ```bash
-uv run --no-sync python src/thesis_rl/tools/debug/scale_calibration_loop.py \
+uv run --no-sync python -m thesis_rl.tools.calibration.scale_calibration_loop \
   --inputs "outputs/**/logs/rule_margins.jsonl" "outputs/debug_rule_margins_forced_scenarios.jsonl" \
   --min-samples 300
 ```
@@ -252,17 +252,17 @@ What this step validates:
 - End-to-end aggregate/tables/plots/orchestrator behavior.
 
 ```bash
-uv run --no-sync python -m analysis.run_analysis --run-profile medium --only aggregate
-uv run --no-sync python -m analysis.run_analysis --run-profile medium --only tables
-uv run --no-sync python -m analysis.run_analysis --run-profile medium --only plots
-uv run --no-sync python -m analysis.run_analysis --run-profile medium --only all --no-videos
-uv run --no-sync python -m analysis.run_analysis --run-profile medium --only all --video-max 3
+uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile medium --only aggregate
+uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile medium --only tables
+uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile medium --only plots
+uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --no-videos
+uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --video-max 3
 ```
 
 Expected:
-- Aggregated CSVs under `analysis/medium/aggregated/*_all_runs.csv`.
-- Tables generated under `analysis/medium/tables` (`.csv` and `.md`).
-- Plots generated under `analysis/medium/plots` (`.png`).
+- Aggregated CSVs under `outputs/analysis/medium/aggregated/*_all_runs.csv`.
+- Tables generated under `outputs/analysis/medium/tables` (`.csv` and `.md`).
+- Plots generated under `outputs/analysis/medium/plots` (`.png`).
 - Video pipeline skips gracefully when dependencies/checkpoints are missing.
 - No crashes when partial datasets are present.
 - Learning curves use `global_step` on x-axis.
@@ -304,8 +304,8 @@ What this step validates:
 - Re-running analysis with identical inputs is stable and non-destructive.
 
 ```bash
-uv run --no-sync python -m analysis.run_analysis --run-profile medium --only all --no-videos
-uv run --no-sync python -m analysis.run_analysis --run-profile medium --only all --no-videos
+uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --no-videos
+uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --no-videos
 ```
 
 Expected:
@@ -323,7 +323,7 @@ What this step validates:
 Use a real completed run path:
 
 ```bash
-uv run --no-sync python -m thesis_rl.train \
+uv run --no-sync python -m thesis_rl.cli.train \
   --config-name presets/td3/td3_native_curr \
   run_profile=medium \
   checkpoint.resume.enabled=true \
@@ -369,7 +369,7 @@ What this step validates:
 When rendering videos, explicitly set replay checkpoint target:
 
 ```bash
-uv run --no-sync python -m thesis_rl.train \
+uv run --no-sync python -m thesis_rl.cli.train \
   --config-name presets/td3/td3_scalar_reward_curr \
   video.enabled=true \
   video.replay_checkpoint=final

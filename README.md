@@ -42,8 +42,8 @@ docs/
 ```bash
 uv pip install -e .
 uv sync
-uv run --no-sync python -m thesis_rl.train experiment=baseline device=cuda
-uv run --no-sync python -m thesis_rl.evaluate checkpoint_path=checkpoints/baseline_td3.zip device=cuda
+uv run --no-sync python -m thesis_rl.cli.train experiment=baseline device=cuda
+uv run --no-sync python -m thesis_rl.cli.evaluate checkpoint_path=checkpoints/baseline_td3.zip device=cuda
 ```
 
 For the current test and smoke-run workflow, see
@@ -76,16 +76,16 @@ docker compose exec dev bash
 ### 3) Run training / evaluation
 
 ```bash
-uv run --no-sync python -m thesis_rl.train
-uv run --no-sync python -m thesis_rl.evaluate
+uv run --no-sync python -m thesis_rl.cli.train
+uv run --no-sync python -m thesis_rl.cli.evaluate
 ```
 
 Examples with Hydra preset/overrides:
 
 ```bash
-uv run --no-sync python -m thesis_rl.train preset=td3/td3_scalar_def_curr
-uv run --no-sync python -m thesis_rl.evaluate preset=td3/td3_scalar_def_curr
-uv run --no-sync python -m thesis_rl.train preset=td3/td3_scalar_rulebook_scale_tuning_no_curr run_profile=fast
+uv run --no-sync python -m thesis_rl.cli.train preset=td3/td3_scalar_def_curr
+uv run --no-sync python -m thesis_rl.cli.evaluate preset=td3/td3_scalar_def_curr
+uv run --no-sync python -m thesis_rl.cli.train preset=td3/td3_scalar_rulebook_scale_tuning_no_curr run_profile=fast
 ```
 
 ### 4) Parallel runs in same container

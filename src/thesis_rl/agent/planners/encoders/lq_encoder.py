@@ -6,9 +6,9 @@ import torch
 from torch import nn
 
 from thesis_rl.agent.planners.encoders.base import BaseEncoder
-from thesis_rl.observations.masks import build_global_token_mask
-from thesis_rl.observations.spec import ObservationSpec
-from thesis_rl.observations.unflatten import StructuredObservation, unflatten_observation
+from thesis_rl.agent.planners.encoders.lq.masks import build_global_token_mask
+from thesis_rl.contracts.observation_spec import ObservationSpec
+from thesis_rl.agent.planners.encoders.lq.unflatten import StructuredObservation, unflatten_observation
 
 
 def _activation(name: str) -> type[nn.Module]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from gymnasium import Env, spaces
 
-from thesis_rl.runtime.deterministic_subproc_vec_env import DeterministicSubprocVecEnv
+from thesis_rl.runtime.execution.deterministic_subproc_vec_env import DeterministicSubprocVecEnv
 
 
 class _SeedWindowEnv(Env):

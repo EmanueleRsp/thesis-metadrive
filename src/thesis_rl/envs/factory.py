@@ -18,11 +18,6 @@ def _resolve_agent_policy(policy_name: str):
 
         return EnvInputPolicy
 
-    if name in {"thesis_policy_bridge", "thesis_bridge"}:
-        from thesis_rl.policies.metadrive_policy_bridge import ThesisPolicyBridge
-
-        return ThesisPolicyBridge
-
     if name in {"expert_policy", "expert"}:
         from metadrive.policy.expert_policy import ExpertPolicy
 
@@ -35,7 +30,7 @@ def _resolve_agent_policy(policy_name: str):
 
     raise ValueError(
         f"Unsupported env policy '{policy_name}'. "
-        "Supported values: env_input_policy, thesis_policy_bridge, expert_policy, idm_policy"
+        "Supported values: env_input_policy, expert_policy, idm_policy"
     )
 
 
@@ -51,7 +46,7 @@ def _configure_agent_observation(
         return
 
     if obs_type in {"semantic", "semantic_state", "semanticstateobservation"}:
-        from thesis_rl.envs.semantic_state_observation import SemanticStateObservation
+        from thesis_rl.envs.observations.semantic_state import SemanticStateObservation
 
         semantic_cfg = dict(observation_cfg)
         semantic_cfg.pop("type", None)
@@ -106,10 +101,6 @@ def make_env(cfg_env: Any):
         env_cfg["action_check"] = bool(policy_mode_cfg.get("action_check", True))
         policy_name = str(policy_mode_cfg.get("agent_policy", "env_input_policy"))
         agent_policy_cls = _resolve_agent_policy(policy_name)
-        if policy_name.lower() == "thesis_policy_bridge":
-            agent_policy_cls.POLICY_LOW = float(policy_mode_cfg.get("low", -1.0))
-            agent_policy_cls.POLICY_HIGH = float(policy_mode_cfg.get("high", 1.0))
-
         env_cfg["agent_policy"] = agent_policy_cls
     elif isinstance(env_cfg.get("agent_policy"), str):
         # Allow direct config override like env_overrides["agent_policy"] = "expert_policy".

@@ -6,8 +6,8 @@ from typing import Any
 
 import numpy as np
 
-from thesis_rl.rulebook.base import RuleEvaluator
-from thesis_rl.rulebook.rulebook_config import load_rulebook_from_config
+from thesis_rl.rulebook.interfaces.base import RuleEvaluator
+from thesis_rl.rulebook.registry import load_rulebook_from_config
 from thesis_rl.rulebook.types import RuleEvalInput, RuleSpec, RuleVector
 
 

@@ -53,9 +53,9 @@ You can train and evaluate a simple agent end-to-end on the default scalar rewar
 ### Milestone M1 — First executable baseline
 M1 is reached when:
 
-- `uv run python -m thesis_rl.train experiment=baseline` runs
+- `uv run python -m thesis_rl.cli.train experiment=baseline` runs
 - a checkpoint is saved
-- `uv run python -m thesis_rl.evaluate ...` runs
+- `uv run python -m thesis_rl.cli.evaluate ...` runs
 - observation and action shapes are logged
 
 ---

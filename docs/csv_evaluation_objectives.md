@@ -195,7 +195,7 @@ analysis/
 Output attesi:
 
 ```text
-analysis/aggregated/
+outputs/analysis/aggregated/
   evals_all_runs.csv
   final_eval_all_runs.csv
   promotions_all_runs.csv

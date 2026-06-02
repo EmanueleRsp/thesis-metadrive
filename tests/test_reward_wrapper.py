@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from thesis_rl.envs.wrappers import RuleRewardWrapper
-from thesis_rl.reward.base import RewardComputationResult
+from thesis_rl.reward.types import RewardComputationResult
 
 
 class _DummyLane:

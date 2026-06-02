@@ -3,7 +3,7 @@ from __future__ import annotations
 from omegaconf import OmegaConf
 
 from thesis_rl.envs.wrappers import RuleRewardWrapper
-from thesis_rl.runtime.builders import maybe_wrap_env_with_reward_manager
+from thesis_rl.runtime.wiring.builders import maybe_wrap_env_with_reward_manager
 
 
 class _DummyEnv:

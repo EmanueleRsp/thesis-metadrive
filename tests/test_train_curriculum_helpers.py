@@ -3,14 +3,14 @@ from __future__ import annotations
 from omegaconf import OmegaConf
 
 from thesis_rl.curriculum.config import CurriculumConfig
-from thesis_rl.runtime.builders import merge_env_config_with_overrides
-from thesis_rl.runtime.seeding import (
+from thesis_rl.runtime.wiring.builders import merge_env_config_with_overrides
+from thesis_rl.runtime.execution.seeding import (
     apply_eval_scenario_seed_split,
     eval_base_seed_from_env_overrides,
     train_episode_seed_from_env_overrides,
     train_reset_seed_from_env_overrides,
 )
-from thesis_rl.train import (
+from thesis_rl.cli.train import (
     _missing_curriculum_metrics,
 )
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from thesis_rl.reward.scale_tuning import suggest_scales
+from thesis_rl.reward.tuning.scale_tuning import suggest_scales
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:

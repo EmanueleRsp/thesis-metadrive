@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 
 from thesis_rl.agent.planners.core.utils import count_envs, resolve_device, to_plain_dict
-from thesis_rl.agent.planners.interfaces.base import PlannerBackendProtocol
+from thesis_rl.agent.planners.interfaces.backend import PlannerBackendProtocol
 from thesis_rl.agent.planners.core.types import TrainState
 from thesis_rl.agent.planners.core.lifecycle import BasePlannerLifecycle
 

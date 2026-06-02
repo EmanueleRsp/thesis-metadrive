@@ -9,7 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 
 from thesis_rl.agent.planners.encoders.factory import build_encoder
-from thesis_rl.observations.spec import ObservationSpec
+from thesis_rl.contracts.observation_spec import ObservationSpec
 
 
 def to_plain_dict(cfg: Any) -> dict[str, Any]:

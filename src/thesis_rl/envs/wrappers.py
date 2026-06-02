@@ -10,7 +10,7 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 
-from thesis_rl.reward.base import BaseRewardManager
+from thesis_rl.reward.interfaces.base import BaseRewardManager
 
 
 class RuleRewardWrapper(gym.Wrapper):

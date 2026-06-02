@@ -6,7 +6,7 @@ from thesis_rl.agent.planners.encoders.base import BaseEncoder
 from thesis_rl.agent.planners.encoders.lq_encoder import LQEncoder
 from thesis_rl.agent.planners.encoders.mlp_encoder import MLPEncoder
 from thesis_rl.agent.planners.encoders.none_encoder import NoneEncoder
-from thesis_rl.observations.spec import ObservationSpec
+from thesis_rl.contracts.observation_spec import ObservationSpec
 
 
 def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
