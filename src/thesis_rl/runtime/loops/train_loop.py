@@ -34,10 +34,12 @@ from thesis_rl.runtime.wiring.builders import (
     build_train_env,
     is_vectorized_training_enabled,
     load_planner,
+    merge_env_config_with_overrides,
     set_planner_env_if_compatible,
 )
 from thesis_rl.runtime.io.console import print_evaluation_summary, print_run_setup
 from thesis_rl.runtime.io.csv_recorder import CSVRecorder
+from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
 from thesis_rl.runtime.io.metadata import save_run_metadata, update_run_metadata
 from thesis_rl.runtime.io.run_logging import (
     configure_logging,
@@ -1105,6 +1107,12 @@ def run_training(cfg: DictConfig) -> None:
             episode_scalar_rule_returns = list(per_episode.get("scalar_rule_returns", []))
             episode_hybrid_returns = list(per_episode.get("hybrid_returns", []))
             episode_rule_rewards_by_rule = list(per_episode.get("rule_rewards_by_rule", []))
+            episode_video_paths = list(per_episode.get("video_path", []))
+            episode_video_authoritative_paths = list(per_episode.get("video_authoritative_path", []))
+            episode_video_manifest_paths = list(per_episode.get("video_manifest_path", []))
+            episode_trajectory_log_paths = list(per_episode.get("trajectory_log_path", []))
+            episode_video_recorded_live = list(per_episode.get("video_recorded_live", []))
+            episode_replay_warnings = list(per_episode.get("replay_warning", []))
             episode_count = len(episode_returns)
             for episode_idx in range(episode_count):
                 scenario_seed = int(eval_base_seed + episode_idx)
@@ -1137,7 +1145,12 @@ def run_training(cfg: DictConfig) -> None:
                         "error_value": float(episode_error_value[episode_idx]) if episode_idx < len(episode_error_value) else None,
                         "violated_rules": str(episode_violated_rules[episode_idx]) if episode_idx < len(episode_violated_rules) else None,
                         "violation_pattern": str(episode_violation_pattern[episode_idx]) if episode_idx < len(episode_violation_pattern) else None,
-                        "video_path": None,
+                        "video_path": episode_video_paths[episode_idx] if episode_idx < len(episode_video_paths) else None,
+                        "video_authoritative_path": episode_video_authoritative_paths[episode_idx] if episode_idx < len(episode_video_authoritative_paths) else None,
+                        "video_manifest_path": episode_video_manifest_paths[episode_idx] if episode_idx < len(episode_video_manifest_paths) else None,
+                        "trajectory_log_path": episode_trajectory_log_paths[episode_idx] if episode_idx < len(episode_trajectory_log_paths) else None,
+                        "video_recorded_live": bool(episode_video_recorded_live[episode_idx]) if episode_idx < len(episode_video_recorded_live) else False,
+                        "replay_warning": episode_replay_warnings[episode_idx] if episode_idx < len(episode_replay_warnings) else None,
                     },
                 )
 
@@ -1479,6 +1492,29 @@ def run_training(cfg: DictConfig) -> None:
         eval_agent, _ = _make_eval_agent(final_checkpoint_stem, eval_env)
 
         # Evaluation
+        final_eval_id = eval_id + 1
+        resolved_final_eval_cfg = OmegaConf.to_container(
+            merge_env_config_with_overrides(cfg.env, final_eval_env_overrides or {}),
+            resolve=True,
+        )
+        if not isinstance(resolved_final_eval_cfg, dict):
+            raise TypeError("Resolved final eval env config must be a mapping.")
+        resolved_final_eval_env_config = resolved_final_eval_cfg.get("config", resolved_final_eval_cfg)
+        if not isinstance(resolved_final_eval_env_config, dict):
+            raise TypeError("Resolved final eval env config payload must be a mapping.")
+        final_eval_artifact_factory = maybe_build_live_final_eval_recorder_factory(
+            cfg=cfg,
+            run_dir=run_dir,
+            resolved_env_config=resolved_final_eval_env_config,
+            eval_id=final_eval_id,
+            eval_type="final",
+            scenario_set="test",
+            stage=final_stage_name,
+            stage_index=final_stage_index,
+            checkpoint_path=_checkpoint_rel(run_dir, final_checkpoint_stem),
+            checkpoint_type="final",
+            checkpoint_global_step=int(total_timesteps),
+        )
         metrics = eval_agent.evaluate(
             env=eval_env,
             n_eval_episodes=int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
@@ -1487,8 +1523,8 @@ def run_training(cfg: DictConfig) -> None:
             return_episode_metrics=True,
             error_priority_base=float(cfg.reward.get("a", 2.01)),
             show_progress=True,
+            artifact_recorder_factory=final_eval_artifact_factory,
         )
-        final_eval_id = eval_id + 1
         final_checkpoint_zip = f"{final_checkpoint_stem}.zip"
         print_evaluation_summary(
             title="Final Evaluation",
@@ -1598,6 +1634,12 @@ def run_training(cfg: DictConfig) -> None:
         episode_scalar_rule_returns = list(per_episode.get("scalar_rule_returns", []))
         episode_hybrid_returns = list(per_episode.get("hybrid_returns", []))
         episode_rule_rewards_by_rule = list(per_episode.get("rule_rewards_by_rule", []))
+        episode_video_paths = list(per_episode.get("video_path", []))
+        episode_video_authoritative_paths = list(per_episode.get("video_authoritative_path", []))
+        episode_video_manifest_paths = list(per_episode.get("video_manifest_path", []))
+        episode_trajectory_log_paths = list(per_episode.get("trajectory_log_path", []))
+        episode_video_recorded_live = list(per_episode.get("video_recorded_live", []))
+        episode_replay_warnings = list(per_episode.get("replay_warning", []))
         for episode_idx in range(len(episode_returns)):
             scenario_seed = int(final_eval_base_seed + episode_idx)
             recorder.append_row(
@@ -1629,7 +1671,12 @@ def run_training(cfg: DictConfig) -> None:
                     "error_value": float(episode_error_value[episode_idx]) if episode_idx < len(episode_error_value) else None,
                     "violated_rules": str(episode_violated_rules[episode_idx]) if episode_idx < len(episode_violated_rules) else None,
                     "violation_pattern": str(episode_violation_pattern[episode_idx]) if episode_idx < len(episode_violation_pattern) else None,
-                    "video_path": None,
+                    "video_path": episode_video_paths[episode_idx] if episode_idx < len(episode_video_paths) else None,
+                    "video_authoritative_path": episode_video_authoritative_paths[episode_idx] if episode_idx < len(episode_video_authoritative_paths) else None,
+                    "video_manifest_path": episode_video_manifest_paths[episode_idx] if episode_idx < len(episode_video_manifest_paths) else None,
+                    "trajectory_log_path": episode_trajectory_log_paths[episode_idx] if episode_idx < len(episode_trajectory_log_paths) else None,
+                    "video_recorded_live": bool(episode_video_recorded_live[episode_idx]) if episode_idx < len(episode_video_recorded_live) else False,
+                    "replay_warning": episode_replay_warnings[episode_idx] if episode_idx < len(episode_replay_warnings) else None,
                 },
             )
         recorder.append_row(

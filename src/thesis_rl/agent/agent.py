@@ -830,6 +830,7 @@ class Agent:
         return_episode_metrics: bool = False,
         error_priority_base: float = 2.01,
         show_progress: bool = True,
+        artifact_recorder_factory: Any | None = None,
     ) -> dict[str, Any]:
         '''Evaluate the agent in the given environment for a specified number of episodes.
         Args:
@@ -861,6 +862,12 @@ class Agent:
         episode_scalar_rule_returns: list[float | None] = []
         episode_hybrid_returns: list[float | None] = []
         episode_rule_rewards_by_rule: list[dict[str, float]] = []
+        episode_video_paths: list[str | None] = []
+        episode_video_authoritative_paths: list[str | None] = []
+        episode_video_manifest_paths: list[str | None] = []
+        episode_trajectory_log_paths: list[str | None] = []
+        episode_video_recorded_live: list[bool] = []
+        episode_replay_warnings: list[str | None] = []
         all_rule_names: set[str] = set()
         rule_priority_by_name: dict[str, int] = {}
         per_rule_episode_min_margins: dict[str, list[float]] = {}
@@ -885,10 +892,23 @@ class Agent:
             for episode_idx in range(n_eval_episodes):
                 # Reset preprocessor and environment state at the start of each episode
                 self.preprocessor.reset()
+                scenario_seed = int(base_seed) + episode_idx if base_seed is not None else None
                 if base_seed is not None:
-                    obs, _ = env.reset(seed=int(base_seed) + episode_idx)
+                    obs, _ = env.reset(seed=scenario_seed)
                 else:
                     obs, _ = env.reset()
+                artifact_recorder = (
+                    artifact_recorder_factory(
+                        {
+                            "episode_idx": episode_idx,
+                            "episode_id": episode_idx + 1,
+                            "scenario_seed": scenario_seed,
+                            "deterministic": deterministic,
+                        }
+                    )
+                    if artifact_recorder_factory is not None
+                    else None
+                )
 
                 # Initialize episode tracking variables
                 done = False
@@ -912,8 +932,10 @@ class Agent:
                 # Loop until episode ends
                 while not (done or truncated):
                     # Get action
-                    action, _ = self.predict(obs, deterministic=deterministic)
-                    obs, scalar_reward, done, truncated, step_info = env.step(action)
+                    current_obs = obs
+                    action, _ = self.predict(current_obs, deterministic=deterministic)
+                    next_obs, scalar_reward, done, truncated, step_info = env.step(action)
+                    obs = next_obs
                     ep_return += float(scalar_reward)
                     ep_step_count += 1
                     if isinstance(step_info, dict):
@@ -954,6 +976,18 @@ class Agent:
                         ep_rule_min_margin[rule_name] = min(
                             float(ep_rule_min_margin.get(rule_name, float("inf"))),
                             float(margin),
+                        )
+                    if artifact_recorder is not None:
+                        artifact_recorder.record_step(
+                            env=env,
+                            step_index=ep_step_count - 1,
+                            observation=current_obs,
+                            next_observation=next_obs,
+                            action=np.asarray(action, dtype=np.float32),
+                            reward=float(scalar_reward),
+                            done=bool(done),
+                            truncated=bool(truncated),
+                            step_info=step_info,
                         )
 
                 # Record episode metrics
@@ -1002,6 +1036,34 @@ class Agent:
                     episode_error_values.append(float(ev_episode))
                 else:
                     episode_error_values.append(0.0)
+
+                episode_metrics = {
+                    "reward": float(ep_return),
+                    "env_reward": float(ep_env_return),
+                    "scalar_rule_reward": float(ep_scalar_rule_return) if ep_has_scalar_rule_reward else None,
+                    "hybrid_reward": float(ep_hybrid_return) if ep_has_hybrid_reward else None,
+                    "episode_length": int(ep_step_count),
+                    "success": bool(ep_success),
+                    "collision": bool(ep_collision),
+                    "out_of_road": bool(ep_out_of_road),
+                    "timeout": bool(truncated),
+                    "route_completion": float(ep_route_completion),
+                    "top_rule_violation_rate": float(episode_top_rule_violation_rate[-1]),
+                    "error_value": float(episode_error_values[-1]),
+                    "violated_rules": episode_violated_rule_names[-1],
+                    "violation_pattern": violation_pattern,
+                }
+                artifact_payload = (
+                    artifact_recorder.finalize_episode(episode_metrics=episode_metrics)
+                    if artifact_recorder is not None
+                    else {}
+                )
+                episode_video_paths.append(artifact_payload.get("video_path"))
+                episode_video_authoritative_paths.append(artifact_payload.get("video_authoritative_path"))
+                episode_video_manifest_paths.append(artifact_payload.get("video_manifest_path"))
+                episode_trajectory_log_paths.append(artifact_payload.get("trajectory_log_path"))
+                episode_video_recorded_live.append(bool(artifact_payload.get("video_recorded_live", False)))
+                episode_replay_warnings.append(artifact_payload.get("replay_warning"))
 
                 if progress is not None and progress_task is not None:
                     progress.advance(progress_task)
@@ -1106,6 +1168,12 @@ class Agent:
                 "error_value": episode_error_values,
                 "violation_pattern": episode_violation_patterns,
                 "violated_rules": episode_violated_rule_names,
+                "video_path": episode_video_paths,
+                "video_authoritative_path": episode_video_authoritative_paths,
+                "video_manifest_path": episode_video_manifest_paths,
+                "trajectory_log_path": episode_trajectory_log_paths,
+                "video_recorded_live": episode_video_recorded_live,
+                "replay_warning": episode_replay_warnings,
             }
         return metrics
 

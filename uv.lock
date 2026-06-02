@@ -695,25 +695,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pandas"
-version = "1.3.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "python-dateutil" },
-    { name = "pytz" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/99/f0/f99700ef327e51d291efdf4a6de29e685c4d198cbf8531541fc84d169e0e/pandas-1.3.5.tar.gz", hash = "sha256:1e4285f5de1012de20ca46b188ccf33521bff61ba5c5ebd78b4fb28e5416a9f1", size = 4736591, upload-time = "2021-12-12T14:46:59.173Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/e9/170a5dab5e166610492f74e87b2998e848e920ed137844077c7a04b6c752/pandas-1.3.5-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:62d5b5ce965bae78f12c1c0df0d387899dd4211ec0bdc52822373f13a3a022b9", size = 17688091, upload-time = "2021-12-12T14:30:49.858Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/a2/fb72a79cced335f86a5761d2e44cd750a54fe5eac5a1d239489430c6ef2b/pandas-1.3.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:adfeb11be2d54f275142c8ba9bf67acee771b7186a5745249c7d5a06c670136b", size = 11326728, upload-time = "2021-12-12T14:37:09.719Z" },
-    { url = "https://files.pythonhosted.org/packages/fb/77/e1bb0628d38fef6e12914e4bb853231a9b406f355aa72fc3427a2fe21327/pandas-1.3.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:60a8c055d58873ad81cae290d974d13dd479b82cbb975c3e1fa2cf1920715296", size = 10282482, upload-time = "2021-12-12T14:37:45.132Z" },
-    { url = "https://files.pythonhosted.org/packages/4a/dd/ff9ff3a3330e4e37d8146e19ef7a33324072dabea7c355afe820b6c38a2d/pandas-1.3.5-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:fd541ab09e1f80a2a1760032d665f6e032d8e44055d602d65eeea6e6e85498cb", size = 10901427, upload-time = "2021-12-12T14:38:49.263Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/7a/1ce22f0f009ee31878f717bd5b3221e993a7ebc02391d7a315982c2224dc/pandas-1.3.5-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2651d75b9a167cc8cc572cf787ab512d16e316ae00ba81874b560586fa1325e0", size = 11549648, upload-time = "2021-12-12T14:39:44.997Z" },
-    { url = "https://files.pythonhosted.org/packages/68/a7/96cde70dd2723a9cb79978a390cb3de448a72baafc949ef1fce1e804dbd0/pandas-1.3.5-cp310-cp310-win_amd64.whl", hash = "sha256:aaf183a615ad790801fa3cf2fa450e5b6d23a54684fe386f7e3208f8b9bfbef6", size = 10188149, upload-time = "2021-12-12T14:40:32.159Z" },
-]
-
-[[package]]
 name = "parso"
 version = "0.8.6"
 source = { registry = "https://pypi.org/simple" }
@@ -925,15 +906,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pytz"
-version = "2026.1.post1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/56/db/b8721d71d945e6a8ac63c0fc900b2067181dbb50805958d4d4661cf7d277/pytz-2026.1.post1.tar.gz", hash = "sha256:3378dde6a0c3d26719182142c56e60c7f9af7e968076f31aae569d72a0358ee1", size = 321088, upload-time = "2026-03-03T07:47:50.683Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/99/781fe0c827be2742bcc775efefccb3b048a3a9c6ce9aec0cbf4a101677e5/pytz-2026.1.post1-py2.py3-none-any.whl", hash = "sha256:f2fd16142fda348286a75e1a524be810bb05d444e5a081f37f7affc635035f7a", size = 510489, upload-time = "2026-03-03T07:47:49.167Z" },
-]
-
-[[package]]
 name = "pyyaml"
 version = "6.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1041,23 +1013,6 @@ wheels = [
 ]
 
 [[package]]
-name = "stable-baselines3"
-version = "2.2.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cloudpickle" },
-    { name = "gymnasium" },
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "torch" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/14/72/c924ab56618437ec3928c18e41fb77938e15b7cff7be4dbd6eb8db04f44c/stable_baselines3-2.2.1.tar.gz", hash = "sha256:7db00bea41c82448d9243529059a9bc8131c0fe751098bd05e3d8822d2978a4d", size = 208014, upload-time = "2023-11-20T09:53:19.213Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/43/d4b83e644c7e42d90d76a1987fb98a2ab286a2b5593350210ca8efcc378e/stable_baselines3-2.2.1-py3-none-any.whl", hash = "sha256:ccb3405e244c3f0b284b3487436d99c782f1243229aa466cb4ceba93807e7428", size = 181716, upload-time = "2023-11-17T22:50:53.381Z" },
-]
-
-[[package]]
 name = "sympy"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1110,7 +1065,6 @@ dependencies = [
     { name = "numpy" },
     { name = "omegaconf" },
     { name = "rich" },
-    { name = "stable-baselines3" },
     { name = "tensorboard" },
     { name = "torch" },
 ]
@@ -1135,7 +1089,6 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5,<6" },
     { name = "rich" },
     { name = "ruff", marker = "extra == 'dev'" },
-    { name = "stable-baselines3", specifier = "==2.2.1" },
     { name = "tensorboard" },
     { name = "torch", path = "../third-party/wheels/torch-2.2.0a0+81ea7a4-cp310-cp310-linux_aarch64.whl" },
 ]

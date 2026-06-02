@@ -140,6 +140,11 @@ class CSVRecorder:
             "violated_rules",
             "violation_pattern",
             "video_path",
+            "video_authoritative_path",
+            "video_manifest_path",
+            "trajectory_log_path",
+            "video_recorded_live",
+            "replay_warning",
         ],
         "promotions.csv": [
             "algorithm",

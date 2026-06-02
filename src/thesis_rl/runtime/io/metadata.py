@@ -8,7 +8,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 
-def _get_git_commit() -> str:
+def get_git_commit() -> str:
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
@@ -18,7 +18,7 @@ def _get_git_commit() -> str:
         return "unknown"
 
 
-def _get_git_branch() -> str:
+def get_git_branch() -> str:
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -58,8 +58,8 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
         "cuda_device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "hostname": socket.gethostname(),
         "git": {
-            "branch": _get_git_branch(),
-            "commit": _get_git_commit(),
+            "branch": get_git_branch(),
+            "commit": get_git_commit(),
         },
         "status": "running",
     }

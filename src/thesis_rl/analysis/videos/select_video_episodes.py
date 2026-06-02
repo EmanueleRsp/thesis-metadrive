@@ -26,6 +26,14 @@ def _load_eval_episodes(csv_path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def _prefer_authoritative_video(row: dict[str, str]) -> tuple[str, bool]:
+    authoritative = str(row.get("video_authoritative_path", "")).strip()
+    if authoritative:
+        return authoritative, True
+    legacy = str(row.get("video_path", "")).strip()
+    return legacy, False
+
+
 def _pick_best(rows: list[dict[str, str]]) -> dict[str, str] | None:
     if not rows:
         return None
@@ -137,6 +145,12 @@ def select_video_episodes(
                 "route_completion": row.get("route_completion"),
                 "error_value": row.get("error_value"),
                 "violated_rules": row.get("violated_rules"),
+                "video_path": _prefer_authoritative_video(row)[0],
+                "video_authoritative_path": row.get("video_authoritative_path"),
+                "video_manifest_path": row.get("video_manifest_path"),
+                "trajectory_log_path": row.get("trajectory_log_path"),
+                "video_recorded_live": row.get("video_recorded_live"),
+                "has_authoritative_video": _prefer_authoritative_video(row)[1],
             }
         )
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -144,6 +158,11 @@ def select_video_episodes(
     index_path = metadata_dir / "video_index.csv"
     fieldnames = [
         "video_path",
+        "video_authoritative_path",
+        "video_manifest_path",
+        "trajectory_log_path",
+        "video_recorded_live",
+        "has_authoritative_video",
         "tag",
         "eval_id",
         "episode_id",
@@ -185,6 +204,11 @@ def select_video_episodes(
             writer.writerow(
                 {
                     "video_path": "",
+                    "video_authoritative_path": item.get("video_authoritative_path", ""),
+                    "video_manifest_path": item.get("video_manifest_path", ""),
+                    "trajectory_log_path": item.get("trajectory_log_path", ""),
+                    "video_recorded_live": item.get("video_recorded_live", ""),
+                    "has_authoritative_video": str(bool(item.get("has_authoritative_video", False))).lower(),
                     "tag": item["tag"],
                     "eval_id": item["eval_id"],
                     "episode_id": item["episode_id"],

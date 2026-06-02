@@ -316,20 +316,67 @@ def _update_eval_episodes_video_paths(eval_path: Path, rows: list[dict[str, Any]
     if not data or "video_path" not in fieldnames:
         return
 
-    updates: dict[tuple[str, str, str], str] = {}
+    updates: dict[tuple[str, str, str], dict[str, str]] = {}
     for row in rows:
         key = (str(row.get("eval_id", "")), str(row.get("episode_id", "")), str(row.get("scenario_seed", "")))
-        updates[key] = str(row.get("video_path", ""))
+        updates[key] = {
+            "video_path": str(row.get("video_path", "")),
+            "video_authoritative_path": str(row.get("video_authoritative_path", "")),
+            "video_manifest_path": str(row.get("video_manifest_path", "")),
+            "trajectory_log_path": str(row.get("trajectory_log_path", "")),
+            "video_recorded_live": str(row.get("video_recorded_live", "")),
+        }
 
     for row in data:
         key = (str(row.get("eval_id", "")), str(row.get("episode_id", "")), str(row.get("scenario_seed", "")))
         if key in updates:
-            row["video_path"] = updates[key]
+            payload = updates[key]
+            row["video_path"] = payload["video_path"]
+            if "video_authoritative_path" in fieldnames and payload["video_authoritative_path"] != "":
+                row["video_authoritative_path"] = payload["video_authoritative_path"]
+            if "video_manifest_path" in fieldnames and payload["video_manifest_path"] != "":
+                row["video_manifest_path"] = payload["video_manifest_path"]
+            if "trajectory_log_path" in fieldnames and payload["trajectory_log_path"] != "":
+                row["trajectory_log_path"] = payload["trajectory_log_path"]
+            if "video_recorded_live" in fieldnames and payload["video_recorded_live"] != "":
+                row["video_recorded_live"] = payload["video_recorded_live"]
 
     with eval_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(data)
+
+
+def _authoritative_video_entry(run_dir: Path, item: dict[str, Any]) -> dict[str, Any] | None:
+    video_rel = str(item.get("video_authoritative_path", "")).strip() or str(item.get("video_path", "")).strip()
+    if not video_rel:
+        return None
+    video_abs = run_dir / video_rel
+    if not video_abs.exists():
+        return None
+    return {
+        "eval_id": int(item["eval_id"]),
+        "episode_id": int(item["episode_id"]),
+        "scenario_seed": int(item["scenario_seed"]),
+        "video_path": video_rel,
+        "video_authoritative_path": str(item.get("video_authoritative_path", "")).strip() or video_rel,
+        "video_manifest_path": str(item.get("video_manifest_path", "")).strip(),
+        "trajectory_log_path": str(item.get("trajectory_log_path", "")).strip(),
+        "video_recorded_live": str(item.get("video_recorded_live", "true")).strip().lower(),
+        "replay_reward": "",
+        "reward_abs_diff": "",
+        "replay_route_completion": "",
+        "route_completion_abs_diff": "",
+        "replay_error_value": "",
+        "error_value_abs_diff": "",
+        "replay_success": "",
+        "success_match": "",
+        "replay_collision": "",
+        "collision_match": "",
+        "replay_out_of_road": "",
+        "out_of_road_match": "",
+        "replay_match": "authoritative",
+    }
 
 
 def render_selected_videos(run_dir: Path) -> None:
@@ -362,6 +409,11 @@ def render_selected_videos(run_dir: Path) -> None:
         scenario_seed = int(item["scenario_seed"])
         stage_name = str(item.get("stage", "baseline"))
         tag = str(item.get("tag", "selected"))
+        authoritative_entry = _authoritative_video_entry(run_dir, item)
+        if authoritative_entry is not None:
+            updated_rows.append(authoritative_entry)
+            print(f"Using authoritative video {authoritative_entry['video_path']}")
+            continue
         env = None
         try:
             overrides = _resolve_replay_overrides_for_episode(
@@ -541,6 +593,10 @@ def render_selected_videos(run_dir: Path) -> None:
                     "episode_id": episode_id,
                     "scenario_seed": scenario_seed,
                     "video_path": rel_path,
+                    "video_authoritative_path": "",
+                    "video_manifest_path": "",
+                    "trajectory_log_path": "",
+                    "video_recorded_live": "false",
                     "replay_reward": f"{replay_reward_sum:.8f}",
                     "reward_abs_diff": f"{reward_abs_diff:.8f}",
                     "replay_route_completion": f"{replay_route_completion:.8f}",
