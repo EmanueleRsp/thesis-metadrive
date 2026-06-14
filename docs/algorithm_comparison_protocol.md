@@ -213,19 +213,19 @@ Disponibilita' V2 attuale:
 ## 12) Analysis outputs richiesti
 
 ```text
-outputs/analysis/aggregated/
+<outputs-root>/analysis/aggregated/
   evals_all_runs.csv
   final_eval_all_runs.csv
   promotions_all_runs.csv
   eval_episodes_all_runs.csv
   rule_metrics_all_runs.csv
 
-outputs/analysis/tables/
+<outputs-root>/analysis/tables/
   final_evaluation.(csv|tex)
   rulebook_compliance.(csv|tex)
   curriculum_efficiency.(csv|tex)
 
-outputs/analysis/plots/
+<outputs-root>/analysis/plots/
   learning_curves_success_collision_rule_route.(png|pdf)
   curriculum_progression.(png|pdf)
   safety_performance_tradeoff.(png|pdf)

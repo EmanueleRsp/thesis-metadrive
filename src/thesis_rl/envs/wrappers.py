@@ -10,6 +10,7 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 
+from thesis_rl.common.paths import default_output_path_str
 from thesis_rl.reward.interfaces.base import BaseRewardManager
 
 
@@ -38,7 +39,7 @@ class RuleRewardWrapper(gym.Wrapper):
         self._runtime_info_debug_path = (
             Path(runtime_info_debug_path)
             if runtime_info_debug_path
-            else Path("outputs/runtime_info_debug.jsonl")
+            else Path(default_output_path_str("runtime_info_debug.jsonl"))
         )
         if self._runtime_info_debug_enabled:
             self._runtime_info_debug_path.parent.mkdir(parents=True, exist_ok=True)

@@ -7,6 +7,13 @@ Run all commands from project root.
 Note:
 - In `conf/config.yaml` the default is `run_profile=fast`.
 - Use `run_profile=...` only when you intentionally want a different run budget.
+- The examples below assume `OUTPUTS_ROOT=/scratch/$USER/thesis-metadrive/outputs`.
+
+Optional helper for path-heavy commands:
+
+```bash
+export OUTPUTS_ROOT=/scratch/$USER/thesis-metadrive/outputs
+```
 
 ## 0) Setup
 
@@ -46,8 +53,8 @@ Expected:
 - Run directory contains `logs/`, `csv/`, `checkpoints/`, `artifacts/`.
 
 Visual/manual checks:
-- Open `outputs/<run>/logs/` and confirm training progresses (no repeated reset/crash patterns).
-- Open `outputs/<run>/csv/final_eval.csv` and confirm it has one coherent row.
+- Open `<run_dir>/logs/` and confirm training progresses (no repeated reset/crash patterns).
+- Open `<run_dir>/csv/final_eval.csv` and confirm it has one coherent row.
 
 ## 2) Baseline Validation (curriculum OFF, native / behavior=off)
 
@@ -179,7 +186,7 @@ Expected:
 - No obviously broken regime (example: all-zero success with all-one collision).
 
 Visual/manual checks:
-- Open `outputs/analysis/medium/tables/final_evaluation.md` and compare rows grouped by curriculum/reward behavior.
+- Open `$OUTPUTS_ROOT/analysis/medium/tables/final_evaluation.md` and compare rows grouped by curriculum/reward behavior.
 
 ## 5) Scale-Tuning Pass (rule margins -> suggested scales)
 
@@ -203,7 +210,7 @@ for i in $(seq 0 699); do
     --seed $((42 + i)) \
     --map 5 \
     --traffic-density 0.5 \
-    --out "src/thesis_rl/outputs/forced_rule_scenarios_${i}.json"
+    --out "$OUTPUTS_ROOT/forced_rule_scenarios_${i}.json"
 done
 ```
 
@@ -211,28 +218,28 @@ Aggregate all margin logs into one dataset:
 
 ```bash
 uv run --no-sync python -m thesis_rl.tools.calibration.aggregate_rule_margins \
-  --input "outputs/**/logs/rule_margins.jsonl" "outputs/debug_rule_margins_forced_scenarios.jsonl" \
-  --output outputs/scale_calibration/aggregated_rule_margins.jsonl
+  --input "$OUTPUTS_ROOT/**/logs/rule_margins.jsonl" "$OUTPUTS_ROOT/debug_rule_margins_forced_scenarios.jsonl" \
+  --output "$OUTPUTS_ROOT/scale_calibration/aggregated_rule_margins.jsonl"
 ```
 
 Run strict scale tuning with minimum active-sample requirements:
 
 ```bash
 uv run --no-sync python -m thesis_rl.tools.calibration.scale_tuning \
-  --input outputs/scale_calibration/aggregated_rule_margins.jsonl \
+  --input "$OUTPUTS_ROOT/scale_calibration/aggregated_rule_margins.jsonl" \
   --percentile 90 \
   --min-scale 1e-6 \
   --min-active-margin 1e-9 \
   --min-samples 300 \
   --strict \
-  --output-json outputs/scale_calibration/scale_report.json
+  --output-json "$OUTPUTS_ROOT/scale_calibration/scale_report.json"
 ```
 
 Optional one-command loop helper (aggregate + strict check):
 
 ```bash
 uv run --no-sync python -m thesis_rl.tools.calibration.scale_calibration_loop \
-  --inputs "outputs/**/logs/rule_margins.jsonl" "outputs/debug_rule_margins_forced_scenarios.jsonl" \
+  --inputs "$OUTPUTS_ROOT/**/logs/rule_margins.jsonl" "$OUTPUTS_ROOT/debug_rule_margins_forced_scenarios.jsonl" \
   --min-samples 300
 ```
 
@@ -260,9 +267,9 @@ uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile medium 
 ```
 
 Expected:
-- Aggregated CSVs under `outputs/analysis/medium/aggregated/*_all_runs.csv`.
-- Tables generated under `outputs/analysis/medium/tables` (`.csv` and `.md`).
-- Plots generated under `outputs/analysis/medium/plots` (`.png`).
+- Aggregated CSVs under `$OUTPUTS_ROOT/analysis/medium/aggregated/*_all_runs.csv`.
+- Tables generated under `$OUTPUTS_ROOT/analysis/medium/tables` (`.csv` and `.md`).
+- Plots generated under `$OUTPUTS_ROOT/analysis/medium/plots` (`.png`).
 - Video pipeline skips gracefully when dependencies/checkpoints are missing.
 - No crashes when partial datasets are present.
 - Learning curves use `global_step` on x-axis.
@@ -281,7 +288,7 @@ What this step validates:
 - Episode selection + replay rendering + CSV linkage.
 
 ```bash
-find outputs -type f \( \
+find "$OUTPUTS_ROOT" -type f \( \
   -name video_selection.json -o \
   -name video_index.csv -o \
   -name "*.gif" \
@@ -347,7 +354,7 @@ What this step validates:
 For at least one rulebook run, verify best-checkpoint artifacts:
 
 ```bash
-find outputs -type f \( \
+find "$OUTPUTS_ROOT" -type f \( \
   -name best_lexicographic.zip -o \
   -name best_lexicographic_rulebook.zip -o \
   -name best_thresholded_lexicographic_rulebook.zip \

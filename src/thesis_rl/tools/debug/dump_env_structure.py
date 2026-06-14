@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from thesis_rl.common.paths import default_output_path_str
+
 def safe_serialize(obj: Any, depth: int = 0, max_depth: int = 5) -> Any:
     """Safely serialize an object to JSON-compatible format, with depth limit."""
     if depth > max_depth:
@@ -145,7 +147,7 @@ policy_mode:
         }
     
     # Output path
-    output_file = Path("outputs/env_structure_dump.json")
+    output_file = Path(default_output_path_str("env_structure_dump.json"))
     output_file.parent.mkdir(parents=True, exist_ok=True)
     
     with open(output_file, "w") as f:

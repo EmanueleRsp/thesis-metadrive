@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-docker_default_workdir="/workspace/thesis/thesis-metadrive"
+docker_default_workdir="/workspace/thesis-metadrive"
 
 usage() {
   cat <<'EOF'
@@ -24,8 +24,8 @@ Examples:
 
   scripts/tmux_seed_grid.sh \
     --session alg_lq \
-    --docker-container e.respino \
-    --docker-workdir /workspace/thesis/thesis-metadrive \
+    --docker-container thesis-metadrive-dev \
+    --docker-workdir /workspace/thesis-metadrive \
     --attach -- \
     uv run --no-sync python -m thesis_rl.cli.train \
       --config-name config run_profile=thesis obs=semantic_state \
@@ -41,7 +41,7 @@ Options:
   --docker-container   Run each pane command inside this Docker container
   --docker-workdir     `cd` here inside the container before running the command
                        Default with `--docker-container`:
-                       `/workspace/thesis/thesis-metadrive`.
+                       `/workspace/thesis-metadrive`.
   --docker-shell       Shell used by `docker exec`. Default: bash
   --attach             Attach immediately after creating the session
   --dry-run            Print generated pane commands without creating tmux session

@@ -8,6 +8,8 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from thesis_rl.common.paths import default_outputs_glob_str
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -15,7 +17,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--pattern",
-        default="outputs/**/csv/final_eval.csv",
+        default=default_outputs_glob_str("**/csv/final_eval.csv"),
         help="Glob pattern used to discover final_eval.csv files.",
     )
     return parser.parse_args()

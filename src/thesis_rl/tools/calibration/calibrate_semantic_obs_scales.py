@@ -11,6 +11,7 @@ import numpy as np
 from hydra import compose, initialize_config_dir
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
+from thesis_rl.common.paths import default_output_path_str
 from thesis_rl.runtime.wiring.builders import build_env
 
 
@@ -131,7 +132,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out",
         type=str,
-        default="outputs/semantic_obs_scale_calibration.json",
+        default=default_output_path_str("semantic_obs_scale_calibration.json"),
     )
     parser.add_argument(
         "--ego-policy",

@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 from hydra import compose, initialize_config_dir
 
+from thesis_rl.common.paths import default_output_path_str
 from thesis_rl.runtime.wiring.builders import build_env
 
 
@@ -136,7 +137,7 @@ def _step_zero(env: Any):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", type=str, default="outputs/forced_rule_scenarios.json")
+    parser.add_argument("--out", type=str, default=default_output_path_str("forced_rule_scenarios.json"))
     parser.add_argument("--traffic-density", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--map", dest="map_id", type=int, default=5)
@@ -155,7 +156,7 @@ def main() -> None:
                 "reward=scalar_reward",
                 "curriculum=stages",
                 f"seed={int(args.seed)}",
-                "reward.rule_margin_log_path=outputs/debug_rule_margins_forced_scenarios.jsonl",
+                f"reward.rule_margin_log_path={default_output_path_str('debug_rule_margins_forced_scenarios.jsonl')}",
             ],
         )
 

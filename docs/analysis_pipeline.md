@@ -3,6 +3,11 @@
 Pipeline unica per aggregare run multi-seed, generare tabelle/plot e costruire confronti A/B/C.
 Ogni analisi e` ora scoped per `run_profile`: devi sempre specificarlo.
 
+Convenzione usata in questo documento:
+
+- `outputs-root` = `/scratch/$USER/thesis-metadrive/outputs` di default
+- quando leggi percorsi come `outputs/analysis/...`, intendi la struttura interna sotto `outputs-root`, non una cartella `outputs/` nel repo
+
 ## Schema canonico (nuovo)
 
 Tutti i report usano questi campi:
@@ -29,8 +34,8 @@ python -m thesis_rl.analysis.run_analysis --run-profile medium --only plots
 
 ## Flag più utili
 
-- `--analysis-root` default `outputs/analysis`
-- `--outputs-root` default `outputs`
+- `--analysis-root` default `/scratch/$USER/thesis-metadrive/outputs/analysis`
+- `--outputs-root` default `/scratch/$USER/thesis-metadrive/outputs`
 - `--run-profile` obbligatorio (`smoke|fast|medium|long|...`)
 - `--comparison-dimension` `none|curriculum|reward|algorithm`
 - `--comparison-id` per rigenerare una sola comparison view
@@ -102,7 +107,7 @@ Categorie fisse:
 
 ## Output principali
 
-### `outputs/analysis/<run_profile>/aggregated/`
+### `<outputs-root>/analysis/<run_profile>/aggregated/`
 
 - `train_chunks_all_runs.csv`
 - `evals_all_runs.csv`
@@ -112,7 +117,7 @@ Categorie fisse:
 - `final_eval_all_runs.csv`
 - `selected_runs.csv`
 
-### `outputs/analysis/<run_profile>/tables/` (core)
+### `<outputs-root>/analysis/<run_profile>/tables/` (core)
 
 - `final_evaluation.*`
 - `curriculum_efficiency.*`
@@ -121,7 +126,7 @@ Categorie fisse:
 - `rulebook_compliance.*`
 - `rule_violation_by_rule.*`
 
-### `outputs/analysis/<run_profile>/plots/` (core)
+### `<outputs-root>/analysis/<run_profile>/plots/` (core)
 
 - `learning_success_vs_global_step.png`
 - `learning_collision_vs_global_step.png`
@@ -131,7 +136,7 @@ Categorie fisse:
 - `curriculum_stage_index_vs_global_step.png`
 - `rule_metrics_violation_rate_by_rule.png`
 
-### `outputs/analysis/<run_profile>/comparisons/<dimension>/<comparison_id>/`
+### `<outputs-root>/analysis/<run_profile>/comparisons/<dimension>/<comparison_id>/`
 
 - `aggregated/*.csv`
 - `tables/*`

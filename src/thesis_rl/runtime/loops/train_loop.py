@@ -580,8 +580,9 @@ def run_training(cfg: DictConfig) -> None:
 
         if resume_enabled:
             agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
-            _load_replay_buffer_if_available(planner, resume_replay_buffer_path)
-            _validate_replay_buffer_n_envs(planner)
+            if bool(cfg.checkpoint.get("save_replay_buffer", False)):
+                _load_replay_buffer_if_available(planner, resume_replay_buffer_path)
+                _validate_replay_buffer_n_envs(planner)
             if bool(resume_cfg.get("restore_rng_state", True)):
                 _load_rng_state(resume_rng_state_path)
             if resume_state is None and resume_training_state_path.exists():
@@ -795,7 +796,8 @@ def run_training(cfg: DictConfig) -> None:
 
             if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
                 agent.save(latest_checkpoint_stem)
-                _save_replay_buffer_if_available(planner, latest_replay_buffer_path)
+                if bool(cfg.checkpoint.get("save_replay_buffer", False)):
+                    _save_replay_buffer_if_available(planner, latest_replay_buffer_path)
                 curriculum_state_payload = (
                     curriculum_manager.state_dict()
                     if curriculum_manager is not None
@@ -1763,7 +1765,8 @@ def run_training(cfg: DictConfig) -> None:
         )
         try:
             agent.save(latest_checkpoint_stem)
-            _save_replay_buffer_if_available(planner, latest_replay_buffer_path)
+            if bool(cfg.checkpoint.get("save_replay_buffer", False)):
+                _save_replay_buffer_if_available(planner, latest_replay_buffer_path)
             curriculum_state_payload = (
                 curriculum_manager.state_dict()
                 if curriculum_manager is not None

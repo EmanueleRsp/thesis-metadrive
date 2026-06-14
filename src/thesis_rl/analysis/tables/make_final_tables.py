@@ -7,6 +7,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from thesis_rl.common.paths import default_analysis_root_str
+
 FINAL_METRICS = (
     "success_rate",
     "collision_rate",
@@ -187,7 +189,7 @@ def build_final_tables(aggregated_dir: Path, tables_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build final evaluation tables (mean ± 95% CI) by condition.")
-    parser.add_argument("--analysis-root", default="outputs/analysis")
+    parser.add_argument("--analysis-root", default=default_analysis_root_str())
     args = parser.parse_args()
     analysis_root = Path(args.analysis_root)
     build_final_tables(

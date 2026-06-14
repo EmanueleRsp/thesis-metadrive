@@ -50,7 +50,10 @@ analysis:
 
 # Output layout for a single run.
 paths:
-  run_dir: outputs/${analysis.experiment_group}/${agent.planner.algorithm.name}/seed_${seed}/${now:%Y%m%d_%H%M%S}
+  user_name: ${oc.env:USER,e.respino}
+  outputs_root: /scratch/${paths.user_name}/thesis-metadrive/outputs
+  analysis_root: ${paths.outputs_root}/analysis
+  run_dir: ${paths.outputs_root}/${analysis.experiment_group}/${agent.planner.algorithm.name}/seed_${seed}/${now:%Y%m%d_%H%M%S}
   logs_dir: ${paths.run_dir}/logs
   checkpoints_dir: ${paths.run_dir}/checkpoints
   videos_dir: ${paths.run_dir}/videos
@@ -61,6 +64,7 @@ checkpoint_path: ${paths.checkpoints_dir}/final.zip  # Canonical final checkpoin
 
 checkpoint:
   save_latest_each_chunk: true                       # Update `checkpoints/latest.zip` at each training chunk.
+  save_replay_buffer: false                          # Persist `checkpoints/latest_replay_buffer.pkl` for exact off-policy resume.
   save_final: true                                   # Write `checkpoints/final.zip` at end of training.
   save_best_lexicographic: true                      # Save best by global safety/task lexicographic key.
   save_best_lexicographic_rulebook: true             # Save best by strict per-rule margin comparison.

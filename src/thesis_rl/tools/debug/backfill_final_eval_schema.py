@@ -7,6 +7,8 @@ from typing import Any
 
 import yaml
 
+from thesis_rl.common.paths import default_outputs_root_str
+
 
 RULEBOOK_MODE_BY_REWARD_MODE = {
     "scalar_native": "none",
@@ -147,11 +149,11 @@ def _patch_eval_like_csv(path: Path, force: bool, final_step: int | None) -> Non
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Backfill strict analysis columns across outputs/**/csv/*.csv "
+            "Backfill strict analysis columns across <outputs-root>/**/csv/*.csv "
             "using each run's hydra/config.yaml."
         )
     )
-    parser.add_argument("--outputs-root", default="outputs")
+    parser.add_argument("--outputs-root", default=default_outputs_root_str())
     parser.add_argument("--force", action="store_true", help="Overwrite existing values too.")
     return parser.parse_args()
 

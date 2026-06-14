@@ -6,6 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from thesis_rl.analysis.common_stats import mean_ci95, to_float
+from thesis_rl.common.paths import default_analysis_root_str
 
 REQUIRED_COLUMNS = (
     "condition_id",
@@ -232,7 +233,7 @@ def build_sample_efficiency_tables(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build sample-efficiency threshold tables by condition.")
-    parser.add_argument("--analysis-root", default="outputs/analysis")
+    parser.add_argument("--analysis-root", default=default_analysis_root_str())
     parser.add_argument("--success-threshold", type=float, default=0.70)
     parser.add_argument("--collision-threshold", type=float, default=0.20)
     parser.add_argument("--route-completion-threshold", type=float, default=0.80)

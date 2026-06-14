@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from thesis_rl.common.paths import default_analysis_root_str, default_outputs_root_str
 from thesis_rl.analysis.aggregate.aggregate_runs import aggregate_runs
 from thesis_rl.analysis.comparisons.make_comparison_views import make_comparison_views
 from thesis_rl.analysis.tables.make_curriculum_tables import build_curriculum_tables
@@ -72,12 +73,15 @@ def _build_plots_for_root(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run full analysis pipeline (aggregate + tables + plots).")
-    parser.add_argument("--outputs-root", default="outputs")
-    parser.add_argument("--analysis-root", default="outputs/analysis")
+    parser.add_argument("--outputs-root", default=default_outputs_root_str())
+    parser.add_argument("--analysis-root", default=default_analysis_root_str())
     parser.add_argument(
         "--run-profile",
         required=True,
-        help="Run profile scope for this analysis (e.g. smoke|fast|medium|long). Outputs are written to outputs/analysis/<run_profile>/.",
+        help=(
+            "Run profile scope for this analysis (e.g. smoke|fast|medium|long). "
+            "Analysis outputs are written under <analysis-root>/<run_profile>/."
+        ),
     )
     parser.add_argument("--total-timesteps", default=None)
     parser.add_argument("--eval-episodes", default=None)

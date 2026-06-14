@@ -5,6 +5,8 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
+from thesis_rl.common.paths import default_analysis_root_str
+
 
 ALL_RUNS_FILES = (
     "train_chunks_all_runs.csv",
@@ -328,7 +330,7 @@ def make_comparison_views(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build comparison-specific aggregated views (one varying factor).")
-    parser.add_argument("--analysis-root", default="outputs/analysis")
+    parser.add_argument("--analysis-root", default=default_analysis_root_str())
     parser.add_argument("--dimension", choices=("curriculum", "reward", "algorithm"), required=True)
     parser.add_argument("--comparison-id", default=None)
     parser.add_argument("--algorithm", default=None)

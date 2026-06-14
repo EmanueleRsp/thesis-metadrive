@@ -3,18 +3,27 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      additional_contexts:
+        third_party: ../third-party
+      args:
+        USER_NAME: "${USER_NAME:?set USER_NAME in .env}"
+        HOST_UID: "${HOST_UID:?set HOST_UID in .env}"
+        HOST_GID: "${HOST_GID:?set HOST_GID in .env}"
     image: thesis-metadrive:dev
     container_name: thesis-metadrive-dev
-    working_dir: /workspace
+    working_dir: /workspace/thesis-metadrive
     stdin_open: true
     tty: true
     ipc: host
+    network_mode: host
     ulimits:
       memlock: -1
       stack: 67108864
     gpus: all
+    user: "${HOST_UID:?set HOST_UID in .env}:${HOST_GID:?set HOST_GID in .env}"
     environment:
-      HF_TOKEN: ${HF_TOKEN:-}
+      HOME: /scratch/${USER_NAME:?set USER_NAME=$USER}/container-home
+      UV_PROJECT_ENVIRONMENT: /opt/venv
     volumes:
-      - .:/workspace
-      - ./outputs:/workspace/outputs
+      - .:/workspace/thesis-metadrive
+      - /scratch/${USER_NAME:?set USER_NAME=$USER}:/scratch/${USER_NAME:?set USER_NAME=$USER}

@@ -7,6 +7,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from thesis_rl.common.paths import default_analysis_root_str
+
 try:
     import matplotlib.pyplot as plt
 except Exception as exc:  # pragma: no cover
@@ -408,7 +410,7 @@ def make_plots(aggregated_dir: Path, plots_dir: Path, *, include_diagnostics: bo
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate comparison plots from aggregated CSVs (by condition).")
-    parser.add_argument("--analysis-root", default="outputs/analysis")
+    parser.add_argument("--analysis-root", default=default_analysis_root_str())
     parser.add_argument(
         "--include-diagnostics",
         action="store_true",

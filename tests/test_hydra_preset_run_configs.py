@@ -72,3 +72,10 @@ def test_run_profile_medium_overrides_experiment_budget() -> None:
     assert cfg.experiment.name == "medium"
     assert int(cfg.experiment.total_timesteps) == 350000
     assert int(cfg.experiment.eval_episodes) == 50
+
+
+def test_replay_buffer_checkpointing_defaults_to_disabled() -> None:
+    cfg = _compose("reward=monitor_only", "curriculum=disabled")
+
+    assert bool(cfg.checkpoint.save_latest_each_chunk) is True
+    assert bool(cfg.checkpoint.save_replay_buffer) is False

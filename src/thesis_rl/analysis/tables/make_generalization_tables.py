@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from thesis_rl.analysis.common_stats import mean_ci95, to_float
+from thesis_rl.common.paths import default_analysis_root_str
 
 METRICS = (
     "success_rate",
@@ -266,7 +267,7 @@ def build_generalization_tables(*, aggregated_dir: Path, tables_dir: Path) -> No
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build train-vs-eval generalization gap tables by condition.")
-    parser.add_argument("--analysis-root", default="outputs/analysis")
+    parser.add_argument("--analysis-root", default=default_analysis_root_str())
     args = parser.parse_args()
     analysis_root = Path(args.analysis_root)
     build_generalization_tables(

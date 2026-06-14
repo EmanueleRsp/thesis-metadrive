@@ -5,6 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from thesis_rl.common.paths import default_output_path_str
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -18,12 +20,12 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--aggregated-output",
-        default="outputs/scale_calibration/aggregated_rule_margins.jsonl",
+        default=default_output_path_str("scale_calibration", "aggregated_rule_margins.jsonl"),
         help="Aggregated JSONL output path.",
     )
     parser.add_argument(
         "--report-json",
-        default="outputs/scale_calibration/scale_report.json",
+        default=default_output_path_str("scale_calibration", "scale_report.json"),
         help="Scale tuning JSON report path.",
     )
     parser.add_argument("--percentile", type=float, default=90.0)

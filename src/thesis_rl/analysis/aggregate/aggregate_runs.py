@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from thesis_rl.common.paths import default_analysis_root_str, default_outputs_root_str
+
 CSV_FILENAMES = (
     "train_chunks.csv",
     "evals.csv",
@@ -485,8 +487,8 @@ def aggregate_runs(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Aggregate latest completed runs per condition/seed.")
-    parser.add_argument("--outputs-root", default="outputs")
-    parser.add_argument("--analysis-root", default="outputs/analysis")
+    parser.add_argument("--outputs-root", default=default_outputs_root_str())
+    parser.add_argument("--analysis-root", default=default_analysis_root_str())
     parser.add_argument("--run-profile", required=True)
     parser.add_argument("--total-timesteps", default=None)
     parser.add_argument("--eval-episodes", default=None)

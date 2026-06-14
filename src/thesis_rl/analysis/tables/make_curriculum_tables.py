@@ -6,6 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from thesis_rl.analysis.common_stats import mean_ci95, to_float
+from thesis_rl.common.paths import default_analysis_root_str
 
 REQUIRED_FINAL_COLUMNS = (
     "condition_id",
@@ -186,7 +187,7 @@ def build_curriculum_tables(aggregated_dir: Path, tables_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build curriculum efficiency tables by condition.")
-    parser.add_argument("--analysis-root", default="outputs/analysis")
+    parser.add_argument("--analysis-root", default=default_analysis_root_str())
     args = parser.parse_args()
     analysis_root = Path(args.analysis_root)
     build_curriculum_tables(
