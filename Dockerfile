@@ -31,10 +31,13 @@ RUN set -eux; \
         useradd -m -u "${HOST_UID}" -g "${HOST_GID}" -s /bin/bash "${USER_NAME}"; \
     fi
 
-# Install uv and sync locked Python dependencies first for better layer caching.
-# `torch` is provided by the NVIDIA base image, so we keep the project env
-# aligned with the lockfile while skipping a redundant torch reinstall.
+# Install uv and create the project environment first.
+# The NVIDIA base image already ships with a working GPU-enabled PyTorch stack
+# under the system Python site-packages, so `/opt/venv` must inherit those
+# packages. Otherwise `uv sync --no-install-package torch` would create an
+# isolated env that cannot see the base-image torch installation.
 RUN pip install --no-cache-dir uv
+RUN uv venv /opt/venv --python /usr/bin/python3 --system-site-packages
 COPY pyproject.toml uv.lock ./
 COPY --from=third_party metadrive /workspace/third-party/metadrive
 RUN uv sync --frozen --no-install-project --no-install-package torch

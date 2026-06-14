@@ -187,6 +187,7 @@ id -g
 `.env` is ignored by git, so this stays local to your machine.
 These values are also used at build time to create a named non-root user inside the image, so the shell prompt does not fall back to `I have no name!`.
 The container virtual environment lives at `/opt/venv`, so it is not shadowed by any host-side `.venv` inside the mounted repo.
+That virtual environment is created with access to the NVIDIA base image system site-packages, so GPU-enabled `torch` comes from the base image while the rest of the project dependencies are synced by `uv`.
 
 ### 3) Build and start container
 

@@ -138,13 +138,24 @@ def build_adapter(cfg: DictConfig, common_kwargs: dict[str, object]) -> BaseAdap
     )
 
 
+def _resolve_planner_cfg(cfg: DictConfig) -> DictConfig:
+    """Merge run-profile planner overrides on top of algorithm defaults."""
+    base_cfg = OmegaConf.create(
+        OmegaConf.to_container(cfg.agent.planner.algorithm, resolve=True)
+    )
+    planner_overrides = cfg.get("planner")
+    if planner_overrides is None:
+        return base_cfg
+    return OmegaConf.merge(base_cfg, planner_overrides)
+
+
 def build_planner(cfg: DictConfig, env: Any, seed: int | None = None) -> "BasePlanner":
     from thesis_rl.agent.planners.factory import build_planner_backend
 
     return build_planner_backend(
         planner_name=str(cfg.agent.planner.algorithm.name),
         env=env,
-        cfg_planner=cfg.agent.planner.algorithm,
+        cfg_planner=_resolve_planner_cfg(cfg),
         cfg_encoder=cfg.agent.planner.encoder,
         cfg_decoder=cfg.agent.planner.decoder,
         cfg_obs=cfg.get("obs"),
@@ -160,7 +171,7 @@ def load_planner(cfg: DictConfig, checkpoint_path: str, env: Any) -> "BasePlanne
         planner_name=str(cfg.agent.planner.algorithm.name),
         checkpoint_path=checkpoint_path,
         env=env,
-        cfg_planner=cfg.agent.planner.algorithm,
+        cfg_planner=_resolve_planner_cfg(cfg),
         cfg_encoder=cfg.agent.planner.encoder,
         cfg_decoder=cfg.agent.planner.decoder,
         cfg_obs=cfg.get("obs"),
