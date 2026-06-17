@@ -56,7 +56,7 @@ In particular, the current recommended workflow assumes:
 - Docker with recent `docker compose` support
 - BuildKit support for Compose `additional_contexts`
 - NVIDIA GPU support in Docker
-- a local sibling `third-party/` directory next to this repo
+- a local sibling MetaDrive checkout at `../third-party/metadrive`
 - an output-capable path such as `/scratch/$USER/...`
 
 If those assumptions do not hold on a target machine, the project may still be usable, but the local setup and/or `compose.yaml` will likely need adaptation.
@@ -71,7 +71,7 @@ Before using the current Docker workflow, make sure the host machine provides:
 - enough disk space to build `nvcr.io/nvidia/pytorch:24.01-py3`
 - a writable scratch-like area for large outputs
 
-For local Python/`uv` workflows outside Docker, the current environment still depends on host-side runtime libraries compatible with the pinned local `torch` wheel. That path remains available, but it is not the recommended default.
+For local Python/`uv` workflows outside Docker, the current environment still expects a compatible preinstalled `torch` runtime. That path remains available, but it is not the recommended default.
 
 ## Required directory layout
 
@@ -87,24 +87,23 @@ The current repository expects this layout on disk:
 Concretely, in the current setup:
 
 - the repo lives at `.../thesis-metadrive`
-- local dependency sources live at `../third-party/...` relative to the repo
+- the local MetaDrive checkout lives at `../third-party/metadrive`
 
 This is required because `pyproject.toml` currently pins:
 
 - `metadrive-simulator` from `../third-party/metadrive`
 
-Without that sibling `third-party/` directory, `uv sync` and Docker image builds will fail.
+Without that sibling `metadrive/` checkout, `uv sync` and Docker image builds will fail.
+Other folders under `third-party/` are not used by the current project workflow.
 
-For Docker specifically, `torch` now comes from the NVIDIA base image (`nvcr.io/nvidia/pytorch:24.01-py3`), so the container build no longer needs a sibling `third-party/wheels/` directory.
-
-If you run `uv` directly on the host outside Docker, the local `torch` wheel is still required by the current `pyproject.toml`.
+For Docker specifically, `torch` now comes from the NVIDIA base image (`nvcr.io/nvidia/pytorch:24.01-py3`) and is excluded from uv-managed dependencies.
 
 At the moment this means:
 
-- Docker path: `torch` is provided by the base image and the local wheel is intentionally skipped
-- host path: `pyproject.toml` and `uv.lock` still pin a local `torch` wheel under `../third-party/wheels/...`
+- Docker path: `torch` is provided by the base image and `uv` does not try to resolve or install it
+- host path: `uv` likewise excludes `torch`, so a host-native workflow needs a compatible preinstalled `torch`
 
-This host-side `torch` pin is currently kept for compatibility with the historical setup and should be considered a legacy constraint to revisit deliberately, not a model for new environments.
+`metadrive-simulator` still resolves from the sibling local checkout, matching the MetaDrive development workflow.
 
 ## Output storage assumptions
 
@@ -128,21 +127,25 @@ and, for Docker Compose, likely adapt:
 
 ```bash
 uv pip install -e .
-uv sync
+uv sync --extra dev
 uv run --no-sync python -m thesis_rl.cli.train experiment=baseline device=cuda
 uv run --no-sync python -m thesis_rl.cli.evaluate checkpoint_path=checkpoints/baseline_td3.zip device=cuda
 ```
 
 These commands are primarily relevant inside the Docker container.
-Running them directly on the host may still require extra machine-specific setup because of the pinned host-side `torch` wheel.
+Running them directly on the host may still require extra machine-specific setup because `torch` must already be available outside uv.
 
 For the current test and smoke-run workflow, see
 [`docs/validation_commands.md`](docs/validation_commands.md).
 
+For a curated overview of the documentation set, see
+[`docs/README.md`](docs/README.md).
+
 ## Notes for container usage
 
 - Run commands from `/workspace/thesis-metadrive`.
-- Prefer `uv run --no-sync` for repeated train/evaluate runs after `uv sync`.
+- The Compose service mounts only `../third-party/metadrive` at `/workspace/third-party/metadrive`, so a container-side `uv sync` can resolve the local `metadrive` source pinned in `pyproject.toml` and write build metadata when needed.
+- Prefer `uv run --no-sync` for repeated train/evaluate runs after `uv sync --extra dev`.
 - If the module `thesis_rl` is not found, refresh editable install with `uv pip install -e .`.
 - By default run artifacts now go under `/scratch/$USER/thesis-metadrive/outputs`.
 - Override the output root per run with `paths.outputs_root=/some/other/path` if needed.

@@ -7,11 +7,11 @@ requires-python = ">=3.10,<3.11"
 dependencies = [
   "metadrive-simulator",
   "gymnasium",
+  "stable-baselines3==2.2.1",
   "hydra-core>=1.3",
   "omegaconf>=2.3",
   "numpy>=1.24,<2",
   "setuptools<81",
-  "torch==2.2.0a0+81ea7a4",
   "tensorboard",
   "rich",
 ]
@@ -26,10 +26,10 @@ dev = [
 
 [tool.uv]
 package = true
+exclude-dependencies = ["torch"]
 
 [tool.uv.sources]
 metadrive-simulator = { path = "../third-party/metadrive" }
-torch = { path = "../third-party/wheels/torch-2.2.0a0+81ea7a4-cp310-cp310-linux_aarch64.whl" }
 
 [tool.uv.extra-build-dependencies]
 pandas = ["setuptools<81"]

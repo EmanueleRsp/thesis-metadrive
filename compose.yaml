@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       additional_contexts:
-        third_party: ../third-party
+        metadrive_src: ../third-party/metadrive
       args:
         USER_NAME: "${USER_NAME:?set USER_NAME in .env}"
         HOST_UID: "${HOST_UID:?set HOST_UID in .env}"
@@ -26,4 +26,5 @@ services:
       UV_PROJECT_ENVIRONMENT: /opt/venv
     volumes:
       - .:/workspace/thesis-metadrive
+      - ../third-party/metadrive:/workspace/third-party/metadrive
       - /scratch/${USER_NAME:?set USER_NAME=$USER}:/scratch/${USER_NAME:?set USER_NAME=$USER}
