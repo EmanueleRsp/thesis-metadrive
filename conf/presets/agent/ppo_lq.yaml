@@ -1,4 +1,6 @@
 # @package _global_
+# Legacy compatibility preset during SB3-fork migration.
+# Prefer `presets/agent/ppo_lq_sb3` for new runs.
 defaults:
   - /config
   - override /obs: semantic_state

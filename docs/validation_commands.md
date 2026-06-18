@@ -8,6 +8,13 @@ Note:
 - In `conf/config.yaml` the default is `run_profile=fast`.
 - Use `run_profile=...` only when you intentionally want a different run budget.
 - The examples below assume `OUTPUTS_ROOT=/scratch/$USER/thesis-metadrive/outputs`.
+- For scalar planner baselines, the current preferred presets are the
+  fork-backed ones under `presets/agent/*_sb3`.
+- For the current baseline SB3-fork closure, the active gate is:
+  tests + smoke runs + medium train runs.
+- Standalone `load+eval` and `resume` validation are currently deferred and are
+  not required to consider the scalar migration functionally closed.
+- `presets/agent/*_lq_sb3` assume `obs=semantic_state`.
 
 Optional helper for path-heavy commands:
 
@@ -23,13 +30,13 @@ What this step validates:
 
 ```bash
 uv sync --extra dev
-uv pip install -e .
 uv run --no-sync python -m pytest -q
 ```
 
 If you are inside the Docker Compose container, this works because the service
 mounts `../third-party/metadrive` at `/workspace/third-party/metadrive` for
-the local `metadrive` source with write access for build metadata, while
+the local `metadrive` source and `../third-party/stable-baselines3` at
+`/workspace/third-party/stable-baselines3` for the local SB3 fork, while
 `torch` is inherited from the NVIDIA base image instead of being installed by
 `uv`.
 
@@ -39,6 +46,30 @@ Expected:
 
 Visual/manual checks:
 - Scan test output summary: no skipped-critical suites, no intermittent errors.
+
+## 0.1) Fork-Backed Planner Checks
+
+What this step validates:
+- The local SB3 fork is the effective algorithmic core for the current scalar
+  planner path.
+- Canonical fork-backed presets and thesis-to-SB3 bridges still compose and
+  build correctly.
+
+```bash
+uv run --no-sync python -m pytest -q \
+  tests/test_hydra_agent_presets.py \
+  tests/test_sb3_extensions.py \
+  tests/test_sb3_direct_backends.py
+```
+
+Expected:
+- Fork-backed preset composition passes.
+- SB3 bridge tests pass.
+- Direct fork-backed backend tests pass.
+
+Visual/manual checks:
+- If failures mention `legacy` presets only, check whether the failure is in an
+  archival compatibility path or in the canonical fork-backed path.
 
 ## 1) Smoke Test End-to-End (train + eval + checkpoint)
 

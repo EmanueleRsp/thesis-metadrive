@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from thesis_rl.agent.planners.interfaces.planner import BasePlanner
+from thesis_rl.agent.planners.backend_names import planner_backend_family, warn_if_legacy_backend
 from thesis_rl.agent.planners.algorithms import (
     PpoPlannerBackend,
     SacPlannerBackend,
@@ -24,6 +25,8 @@ def build_planner_backend(
     seed: int | None = None,
 ) -> BasePlanner:
     name = str(planner_name).lower()
+    planner_backend_family(name)
+    warn_if_legacy_backend(name)
     if name == "td3":
         return Td3PlannerBackend.build(
             env=env,
@@ -98,6 +101,8 @@ def load_planner_backend(
     device: str = "auto",
 ) -> BasePlanner:
     name = str(planner_name).lower()
+    planner_backend_family(name)
+    warn_if_legacy_backend(name)
     if name == "td3":
         return Td3PlannerBackend.load(
             checkpoint_path=checkpoint_path,

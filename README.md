@@ -82,19 +82,21 @@ The current repository expects this layout on disk:
   thesis-metadrive/
   third-party/
     metadrive/
+    stable-baselines3/
 ```
 
 Concretely, in the current setup:
 
 - the repo lives at `.../thesis-metadrive`
 - the local MetaDrive checkout lives at `../third-party/metadrive`
+- the local SB3 fork checkout lives at `../third-party/stable-baselines3`
 
 This is required because `pyproject.toml` currently pins:
 
 - `metadrive-simulator` from `../third-party/metadrive`
+- `stable-baselines3` from `../third-party/stable-baselines3`
 
-Without that sibling `metadrive/` checkout, `uv sync` and Docker image builds will fail.
-Other folders under `third-party/` are not used by the current project workflow.
+Without those sibling checkouts, `uv sync` and Docker image builds will fail.
 
 For Docker specifically, `torch` now comes from the NVIDIA base image (`nvcr.io/nvidia/pytorch:24.01-py3`) and is excluded from uv-managed dependencies.
 
@@ -126,7 +128,6 @@ and, for Docker Compose, likely adapt:
 ## Intended commands
 
 ```bash
-uv pip install -e .
 uv sync --extra dev
 uv run --no-sync python -m thesis_rl.cli.train experiment=baseline device=cuda
 uv run --no-sync python -m thesis_rl.cli.evaluate checkpoint_path=checkpoints/baseline_td3.zip device=cuda
@@ -138,15 +139,41 @@ Running them directly on the host may still require extra machine-specific setup
 For the current test and smoke-run workflow, see
 [`docs/validation_commands.md`](docs/validation_commands.md).
 
+For the current fork-backed baseline presets, prefer:
+
+- `presets/agent/sac_sb3`, `presets/agent/ppo_sb3`, `presets/agent/td3_sb3`
+- `presets/agent/sac_mlp_sb3`, `presets/agent/ppo_mlp_sb3`, `presets/agent/td3_mlp_sb3`
+- `presets/agent/sac_lq_sb3`, `presets/agent/ppo_lq_sb3`, `presets/agent/td3_lq_sb3`
+
+The first group keeps the vanilla SB3-style flattened-observation path. The
+second group uses thesis `MLPEncoder` with fork-backed SB3 algorithms. The
+third group uses thesis `LQEncoder` with the same fork-backed path.
+
+Important note:
+
+- `presets/agent/*_lq_sb3` assume `obs=semantic_state`
+- avoid overriding those presets with `obs=lidar_state`, because `LQEncoder`
+  is wired for the semantic-state observation path
+
+Legacy agent presets remain in the repo temporarily for migration support, but
+new runs should prefer the fork-backed presets above.
+
 For a curated overview of the documentation set, see
 [`docs/README.md`](docs/README.md).
 
 ## Notes for container usage
 
 - Run commands from `/workspace/thesis-metadrive`.
-- The Compose service mounts only `../third-party/metadrive` at `/workspace/third-party/metadrive`, so a container-side `uv sync` can resolve the local `metadrive` source pinned in `pyproject.toml` and write build metadata when needed.
+- The Compose service mounts:
+  - `../third-party/metadrive` at `/workspace/third-party/metadrive`
+  - `../third-party/stable-baselines3` at `/workspace/third-party/stable-baselines3`
+  so a container-side `uv sync` can resolve both local path dependencies and
+  write build metadata when needed.
 - Prefer `uv run --no-sync` for repeated train/evaluate runs after `uv sync --extra dev`.
-- If the module `thesis_rl` is not found, refresh editable install with `uv pip install -e .`.
+- Inside the container, prefer `uv sync --extra dev` as the standard way to
+  refresh project installs. Avoid a plain `uv pip install -e .` when the repo
+  also contains a host-side `.venv`, because `uv pip` may try to target that
+  environment instead of `/opt/venv`.
 - By default run artifacts now go under `/scratch/$USER/thesis-metadrive/outputs`.
 - Override the output root per run with `paths.outputs_root=/some/other/path` if needed.
 - Treat this container workflow as the source of truth unless you intentionally want to debug host-native installation issues.

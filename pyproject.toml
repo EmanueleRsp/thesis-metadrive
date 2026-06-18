@@ -30,6 +30,7 @@ exclude-dependencies = ["torch"]
 
 [tool.uv.sources]
 metadrive-simulator = { path = "../third-party/metadrive" }
+stable-baselines3 = { path = "../third-party/stable-baselines3" }
 
 [tool.uv.extra-build-dependencies]
 pandas = ["setuptools<81"]

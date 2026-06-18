@@ -5,7 +5,11 @@ import numpy as np
 import pytest
 from omegaconf import OmegaConf
 
-from thesis_rl.agent.planners.algorithms import Sb3PpoPlannerBackend, Sb3SacPlannerBackend
+from thesis_rl.agent.planners.algorithms import (
+    Sb3PpoPlannerBackend,
+    Sb3SacPlannerBackend,
+    Sb3Td3PlannerBackend,
+)
 from thesis_rl.agent.types import Transition
 
 
@@ -121,3 +125,151 @@ def test_ppo_sb3_builds_collects_and_updates(env) -> None:
 
     assert planner.model.num_timesteps >= 2
     assert planner.model.rollout_buffer.pos in (0, 1)
+
+
+def test_sac_sb3_builds_with_thesis_mlp_encoder_bridge(env) -> None:
+    pytest.importorskip("stable_baselines3")
+
+    planner = Sb3SacPlannerBackend.build(
+        env=env,
+        cfg_planner=OmegaConf.create(
+            {
+                "learning_starts": 0,
+                "batch_size": 8,
+                "buffer_size": 64,
+                "train_freq": 1,
+                "gradient_steps": 1,
+                "learning_rate": 1e-3,
+                "gamma": 0.99,
+                "tau": 0.005,
+            }
+        ),
+        cfg_encoder=OmegaConf.create(
+            {
+                "name": "mlp",
+                "type": "mlp",
+                "output_dim": 32,
+                "hidden_layers": [16],
+                "activation": "relu",
+                "layer_norm": False,
+                "dropout": 0.0,
+            }
+        ),
+        cfg_decoder=OmegaConf.create(
+            {
+                "name": "mlp_encoded",
+                "type": "mlp",
+                "hidden_layers": [32],
+                "activation": "relu",
+                "layer_norm": False,
+                "dropout": 0.0,
+            }
+        ),
+        cfg_obs=OmegaConf.create({"type": "semantic_state"}),
+        device="cpu",
+        seed=123,
+    )
+
+    assert planner.model.policy.features_extractor is None
+    assert planner.model.actor.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
+    assert planner.model.critic.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
+
+
+def test_ppo_sb3_builds_with_thesis_mlp_encoder_bridge(env) -> None:
+    pytest.importorskip("stable_baselines3")
+
+    planner = Sb3PpoPlannerBackend.build(
+        env=env,
+        cfg_planner=OmegaConf.create(
+            {
+                "n_steps": 2,
+                "batch_size": 2,
+                "n_epochs": 1,
+                "learning_rate": 1e-3,
+                "gamma": 0.99,
+                "gae_lambda": 0.95,
+                "ent_coef": 0.0,
+                "vf_coef": 0.5,
+                "clip_range": 0.2,
+                "normalize_advantage": True,
+                "max_grad_norm": 0.5,
+            }
+        ),
+        cfg_encoder=OmegaConf.create(
+            {
+                "name": "mlp",
+                "type": "mlp",
+                "output_dim": 32,
+                "hidden_layers": [16],
+                "activation": "relu",
+                "layer_norm": False,
+                "dropout": 0.0,
+            }
+        ),
+        cfg_decoder=OmegaConf.create(
+            {
+                "name": "mlp_encoded",
+                "type": "mlp",
+                "hidden_layers": [32],
+                "activation": "relu",
+                "layer_norm": False,
+                "dropout": 0.0,
+            }
+        ),
+        cfg_obs=OmegaConf.create({"type": "semantic_state"}),
+        device="cpu",
+        seed=123,
+    )
+
+    assert planner.model.policy.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
+
+
+def test_td3_sb3_builds_with_thesis_mlp_encoder_bridge(env) -> None:
+    pytest.importorskip("stable_baselines3")
+
+    planner = Sb3Td3PlannerBackend.build(
+        env=env,
+        cfg_planner=OmegaConf.create(
+            {
+                "learning_starts": 0,
+                "batch_size": 8,
+                "buffer_size": 64,
+                "train_freq": 1,
+                "gradient_steps": 1,
+                "learning_rate": 1e-3,
+                "gamma": 0.99,
+                "tau": 0.005,
+                "action_noise_type": "normal",
+                "action_noise_sigma": 0.1,
+                "action_noise_mean": 0.0,
+            }
+        ),
+        cfg_encoder=OmegaConf.create(
+            {
+                "name": "mlp",
+                "type": "mlp",
+                "output_dim": 32,
+                "hidden_layers": [16],
+                "activation": "relu",
+                "layer_norm": False,
+                "dropout": 0.0,
+            }
+        ),
+        cfg_decoder=OmegaConf.create(
+            {
+                "name": "mlp_encoded",
+                "type": "mlp",
+                "hidden_layers": [32],
+                "activation": "relu",
+                "layer_norm": False,
+                "dropout": 0.0,
+            }
+        ),
+        cfg_obs=OmegaConf.create({"type": "semantic_state"}),
+        device="cpu",
+        seed=123,
+    )
+
+    assert planner.model.policy.features_extractor is None
+    assert planner.model.actor.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
+    assert planner.model.critic.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"

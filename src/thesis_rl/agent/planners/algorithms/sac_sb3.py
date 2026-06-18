@@ -9,6 +9,9 @@ from thesis_rl.agent.types import Transition
 from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
 from thesis_rl.agent.planners.core.lifecycle import SacLifecycle
 from thesis_rl.agent.planners.core.utils import normalize_checkpoint_path, to_plain_dict
+from thesis_rl.sb3_extensions import (
+    build_sb3_specs_from_configs,
+)
 
 if TYPE_CHECKING:
     from stable_baselines3 import SAC
@@ -25,20 +28,6 @@ def _require_sb3_sac():
             "Run `uv sync` to install project dependencies."
         ) from exc
     return SAC, NormalActionNoise, VectorizedActionNoise, VecEnv
-
-
-def _normalize_policy_kwargs(raw_policy_kwargs: dict[str, Any]) -> dict[str, Any]:
-    policy_kwargs = to_plain_dict(raw_policy_kwargs)
-    net_arch = policy_kwargs.get("net_arch")
-    if isinstance(net_arch, (list, tuple)):
-        policy_kwargs["net_arch"] = list(net_arch)
-    elif isinstance(net_arch, dict):
-        policy_kwargs["net_arch"] = {
-            str(key): list(value) if isinstance(value, (list, tuple)) else value
-            for key, value in net_arch.items()
-        }
-    return policy_kwargs
-
 
 class Sb3SacPlannerBackend(BasePlannerBackend):
     lifecycle_cls = SacLifecycle
@@ -161,15 +150,26 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
         device: str = "auto",
         seed: int | None = None,
     ) -> "Sb3SacPlannerBackend":
-        del cfg_encoder, cfg_decoder, cfg_obs
         SAC, _NormalActionNoise, _VectorizedActionNoise, _VecEnv = _require_sb3_sac()
         del _NormalActionNoise, _VectorizedActionNoise, _VecEnv
 
         planner_cfg = to_plain_dict(cfg_planner)
-        policy_kwargs = _normalize_policy_kwargs(planner_cfg.get("policy_kwargs", {}))
+        policy_spec, algorithm_spec = build_sb3_specs_from_configs(
+            "sac_sb3",
+            planner_cfg,
+            encoder_cfg=to_plain_dict(cfg_encoder),
+            decoder_cfg=to_plain_dict(cfg_decoder),
+            obs_cfg=to_plain_dict(cfg_obs),
+        )
+        model_kwargs = algorithm_spec.merged_algorithm_kwargs()
+        replay_buffer_kwargs = (
+            dict(algorithm_spec.replay_buffer_kwargs)
+            if algorithm_spec.replay_buffer_kwargs
+            else None
+        )
 
         model = SAC(
-            policy=str(planner_cfg.get("policy", "MlpPolicy")),
+            policy=policy_spec.policy,
             env=env,
             learning_starts=int(planner_cfg.get("learning_starts", 100)),
             batch_size=int(planner_cfg.get("batch_size", 256)),
@@ -186,10 +186,13 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
             use_sde=bool(planner_cfg.get("use_sde", False)),
             sde_sample_freq=int(planner_cfg.get("sde_sample_freq", -1)),
             use_sde_at_warmup=bool(planner_cfg.get("use_sde_at_warmup", False)),
-            policy_kwargs=policy_kwargs,
+            policy_kwargs=policy_spec.policy_kwargs,
+            replay_buffer_class=algorithm_spec.replay_buffer_class,
+            replay_buffer_kwargs=replay_buffer_kwargs,
             verbose=int(planner_cfg.get("verbose", 0)),
             device=device,
             seed=seed,
+            **model_kwargs,
         )
         return cls(env=env, cfg_planner=planner_cfg, model=model, device=device)
 

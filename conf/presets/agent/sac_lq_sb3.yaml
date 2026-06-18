@@ -1,10 +1,8 @@
 # @package _global_
-# Legacy compatibility preset during SB3-fork migration.
-# Prefer `presets/agent/sac_lq_sb3` for new runs.
 defaults:
   - /config
   - override /obs: semantic_state
   - override /agent/planner/encoder: lq
   - override /agent/planner/decoder: mlp_encoded
-  - override /agent/planner/algorithm: sac
+  - override /agent/planner/algorithm: sac_sb3
   - _self_

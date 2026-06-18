@@ -1,3 +1,5 @@
+# Fork-backed SB3 baseline path. Keep thesis-specific network hooks in
+# `thesis_rl.sb3_extensions`.
 name: ppo_sb3
 policy: MlpPolicy
 verbose: 0

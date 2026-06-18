@@ -9,6 +9,9 @@ from thesis_rl.agent.types import Transition
 from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
 from thesis_rl.agent.planners.core.utils import normalize_checkpoint_path, to_plain_dict
 from thesis_rl.agent.planners.core.lifecycle import Td3Lifecycle
+from thesis_rl.sb3_extensions import (
+    build_sb3_specs_from_configs,
+)
 
 if TYPE_CHECKING:
     from stable_baselines3 import TD3
@@ -50,6 +53,7 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
 
         self._policy: Any | None = None
         self._action_noise: Any | None = None
+        self._last_buffer_actions: np.ndarray | None = None
 
     def _sync_action_noise(self) -> None:
         self.model.action_noise = self._build_action_noise(self.env, self.cfg_planner)
@@ -151,17 +155,26 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         device: str = "auto",
         seed: int | None = None,
     ) -> "Sb3Td3PlannerBackend":
-        del cfg_encoder, cfg_decoder, cfg_obs
         TD3, _NormalActionNoise, _VectorizedActionNoise, _VecEnv = _require_sb3_td3()
         del _NormalActionNoise, _VectorizedActionNoise, _VecEnv
 
         planner_cfg = to_plain_dict(cfg_planner)
-        policy_kwargs = to_plain_dict(planner_cfg.get("policy_kwargs", {}))
-        if "net_arch" in policy_kwargs:
-            policy_kwargs["net_arch"] = list(policy_kwargs["net_arch"])
+        policy_spec, algorithm_spec = build_sb3_specs_from_configs(
+            "td3_sb3",
+            planner_cfg,
+            encoder_cfg=to_plain_dict(cfg_encoder),
+            decoder_cfg=to_plain_dict(cfg_decoder),
+            obs_cfg=to_plain_dict(cfg_obs),
+        )
+        model_kwargs = algorithm_spec.merged_algorithm_kwargs()
+        replay_buffer_kwargs = (
+            dict(algorithm_spec.replay_buffer_kwargs)
+            if algorithm_spec.replay_buffer_kwargs
+            else None
+        )
 
         model = TD3(
-            policy=str(planner_cfg.get("policy", "MlpPolicy")),
+            policy=policy_spec.policy,
             env=env,
             learning_starts=int(planner_cfg.get("learning_starts", 10000)),
             batch_size=int(planner_cfg.get("batch_size", 2048)),
@@ -172,10 +185,13 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
             gamma=float(planner_cfg.get("gamma", 0.99)),
             tau=float(planner_cfg.get("tau", 0.005)),
             action_noise=cls._build_action_noise(env, planner_cfg),
-            policy_kwargs=policy_kwargs,
+            policy_kwargs=policy_spec.policy_kwargs,
+            replay_buffer_class=algorithm_spec.replay_buffer_class,
+            replay_buffer_kwargs=replay_buffer_kwargs,
             verbose=int(planner_cfg.get("verbose", 0)),
             device=device,
             seed=seed,
+            **model_kwargs,
         )
         return cls(env=env, cfg_planner=planner_cfg, model=model, device=device)
 
@@ -234,21 +250,30 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         action_space = self.model.action_space
         if deterministic:
             action, _ = self.model.predict(observation, deterministic=True)
-            return np.asarray(action, dtype=np.float32)
+            env_action = np.asarray(action, dtype=np.float32)
+            self._last_buffer_actions = np.asarray(
+                self._policy.scale_action(env_action),
+                dtype=np.float32,
+            )[None, ...]
+            return env_action
 
         if self.num_timesteps < int(self.model.learning_starts):
-            return np.asarray(action_space.sample(), dtype=np.float32)
+            env_action = np.asarray(action_space.sample(), dtype=np.float32)
+            self._last_buffer_actions = np.asarray(
+                self._policy.scale_action(env_action),
+                dtype=np.float32,
+            )[None, ...]
+            return np.clip(env_action, action_space.low, action_space.high).astype(np.float32)
 
-        action, _ = self.model.predict(observation, deterministic=False)
-        env_action = np.asarray(action, dtype=np.float32)
-        buffer_action = np.asarray(self._policy.scale_action(env_action), dtype=np.float32)
-        buffer_action = np.clip(
-            buffer_action + np.asarray(self._action_noise(), dtype=np.float32),
-            -1.0,
-            1.0,
+        obs_batch = np.expand_dims(np.asarray(observation, dtype=np.float32), axis=0)
+        self.model._last_obs = obs_batch
+        env_actions, buffer_actions = self.model._sample_action(
+            int(self.model.learning_starts),
+            self._action_noise,
+            1,
         )
-        env_action = np.asarray(self._policy.unscale_action(buffer_action), dtype=np.float32)
-        return np.clip(env_action, action_space.low, action_space.high).astype(np.float32)
+        self._last_buffer_actions = np.asarray(buffer_actions, dtype=np.float32)
+        return np.asarray(env_actions[0], dtype=np.float32)
 
     def act_train_batch(
         self,
@@ -266,7 +291,9 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
             env_actions, _ = self.model.predict(obs_batch, deterministic=True)
             env_actions = np.asarray(env_actions, dtype=np.float32)
             buffer_actions = np.asarray(self._policy.scale_action(env_actions), dtype=np.float32)
-            return env_actions, np.clip(buffer_actions, -1.0, 1.0).astype(np.float32)
+            buffer_actions = np.clip(buffer_actions, -1.0, 1.0).astype(np.float32)
+            self._last_buffer_actions = buffer_actions
+            return env_actions, buffer_actions
 
         self.model._last_obs = obs_batch
         env_actions, buffer_actions = self.model._sample_action(
@@ -274,6 +301,7 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
             self._action_noise,
             n_envs,
         )
+        self._last_buffer_actions = np.asarray(buffer_actions, dtype=np.float32)
         return (
             np.asarray(env_actions, dtype=np.float32),
             np.asarray(buffer_actions, dtype=np.float32),
@@ -404,6 +432,10 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         }
 
     def to_buffer_action(self, env_action: np.ndarray) -> np.ndarray:
+        if self._last_buffer_actions is not None:
+            cached = np.asarray(self._last_buffer_actions, dtype=np.float32)
+            if cached.ndim == 2 and cached.shape[0] > 0:
+                return cached[0]
         if self._policy is None:
             raise RuntimeError("SB3 TD3 backend policy unavailable; call begin_training() first.")
         action = np.asarray(env_action, dtype=np.float32)

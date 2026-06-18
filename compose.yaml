@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         metadrive_src: ../third-party/metadrive
+        sb3_src: ../third-party/stable-baselines3
       args:
         USER_NAME: "${USER_NAME:?set USER_NAME in .env}"
         HOST_UID: "${HOST_UID:?set HOST_UID in .env}"
@@ -27,4 +28,5 @@ services:
     volumes:
       - .:/workspace/thesis-metadrive
       - ../third-party/metadrive:/workspace/third-party/metadrive
+      - ../third-party/stable-baselines3:/workspace/third-party/stable-baselines3
       - /scratch/${USER_NAME:?set USER_NAME=$USER}:/scratch/${USER_NAME:?set USER_NAME=$USER}

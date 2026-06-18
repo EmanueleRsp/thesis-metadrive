@@ -1,3 +1,5 @@
+# Internal thesis implementation kept as the temporary legacy baseline while
+# fork-backed SB3 paths are consolidated.
 name: sac
 share_encoder: false
 verbose: 0

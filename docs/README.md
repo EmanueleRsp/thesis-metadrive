@@ -17,6 +17,9 @@ Per evitare ambiguità:
 - `docs/validation_commands.md`
   - checklist e comandi di validazione; utile, ma alcune parti vanno lette alla
     luce del workflow Docker attuale
+  - per la chiusura corrente della migrazione SB3 fork, considera come gate
+    attivo test, smoke run e medium run; `load+eval` e `resume` restano
+    validazioni rimandate
 - `docs/analysis_pipeline.md`
   - pipeline analitica e convenzioni sugli output sotto `/scratch/$USER/...`
 
@@ -32,11 +35,19 @@ Per evitare ambiguità:
 ## Design / architettura
 
 - `docs/architecture.md`
+- `docs/sb3_fork_migration_plan.md`
 - `docs/initial_design_decisions.md`
 - `docs/metadrive_assumptions.md`
 
 Questi documenti aiutano a capire il razionale del progetto, ma non vanno
 interpretati come guida operativa definitiva per il setup corrente.
+
+Nota:
+- `docs/sb3_fork_migration_plan.md` e` anche il riferimento corrente per:
+  - confine `thesis_rl` vs fork SB3
+  - strategia di integrazione encoder/decoder/policy custom
+  - criteri per rimuovere i backend legacy
+  - stato della chiusura funzionale della migrazione baseline
 
 ## Storici / da rivedere
 

@@ -182,8 +182,8 @@ class Agent:
             table = Table(title=monitor_title, expand=True)
             table.add_column("Metric", style="cyan", no_wrap=True)
             table.add_column("Value", style="white")
-            table.add_row("Chunk steps", f"{chunk_step}/{chunk_timesteps}")
-            table.add_row("Total steps", f"{current_step}/{total_step}")
+            table.add_row("Chunk env steps", f"{chunk_step}/{chunk_timesteps}")
+            table.add_row("Run env steps", f"{current_step}/{total_step}")
             table.add_row("Episodes", str(total_episodes))
             table.add_row("FPS", str(int(chunk_step / max(elapsed_seconds, 1e-9))))
             table.add_row("Elapsed (s)", str(int(elapsed_seconds)))
@@ -192,8 +192,8 @@ class Agent:
             table.add_row("actor_loss_ema", f"{latest_actor_loss_ema:.3g}")
             table.add_row("critic_loss_ema", f"{latest_critic_loss_ema:.3g}")
             table.add_row("learning_rate", f"{latest_learning_rate:.3g}")
-            table.add_row("update_calls", str(total_update_calls))
-            table.add_row("n_updates", str(total_gradient_steps))
+            table.add_row("update_calls_chunk", str(total_update_calls))
+            table.add_row("grad_steps_chunk", str(total_gradient_steps))
             return table
 
         def _build_logs_panel(logs: deque[str]) -> Panel:
@@ -613,12 +613,16 @@ class Agent:
             actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
             critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))
             learning_rate = float(getattr(lifecycle, "last_learning_rate", float("nan")))
+            chunk_env_steps = min(collected_steps, chunk_timesteps)
+            run_env_steps = global_steps_done + collected_steps
+            chunk_vec_iterations = chunk_env_steps // n_envs
             table = Table(title=monitor_title, expand=True)
             table.add_column("Metric", style="cyan", no_wrap=True)
             table.add_column("Value", style="white")
-            table.add_row("Chunk steps", f"{min(collected_steps, chunk_timesteps)}/{chunk_timesteps}")
-            table.add_row("Total steps", f"{global_steps_done + collected_steps}/{global_total_timesteps}")
+            table.add_row("Chunk env steps", f"{chunk_env_steps}/{chunk_timesteps}")
+            table.add_row("Run env steps", f"{run_env_steps}/{global_total_timesteps}")
             table.add_row("Vector envs", str(n_envs))
+            table.add_row("Chunk vec iters", str(int(chunk_vec_iterations)))
             table.add_row("Episodes", str(episodes))
             table.add_row("FPS", str(int(collected_steps / elapsed)))
             table.add_row("Elapsed (s)", str(int(elapsed)))
@@ -631,8 +635,8 @@ class Agent:
             table.add_row("actor_loss_ema", f"{ema_actor_loss:.3g}")
             table.add_row("critic_loss_ema", f"{ema_critic_loss:.3g}")
             table.add_row("learning_rate", f"{learning_rate:.3g}")
-            table.add_row("update_calls", str(int(getattr(lifecycle, "update_count", 0))))
-            table.add_row("n_updates", str(int(getattr(lifecycle, "gradient_step_count", 0))))
+            table.add_row("update_calls_chunk", str(int(getattr(lifecycle, "update_count", 0))))
+            table.add_row("grad_steps_chunk", str(int(getattr(lifecycle, "gradient_step_count", 0))))
             return table
 
         def _logs_panel() -> Panel:

@@ -2,5 +2,7 @@
 defaults:
   - /config
   - override /obs: lidar_state
+  - override /agent/planner/encoder: none
+  - override /agent/planner/decoder: td3_sb3
   - override /agent/planner/algorithm: td3_sb3
   - _self_

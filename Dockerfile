@@ -40,6 +40,7 @@ RUN pip install --no-cache-dir uv
 RUN uv venv /opt/venv --python /usr/bin/python3 --system-site-packages
 COPY pyproject.toml uv.lock ./
 COPY --from=metadrive_src . /workspace/third-party/metadrive
+COPY --from=sb3_src . /workspace/third-party/stable-baselines3
 RUN uv sync --frozen --no-install-project
 
 # Copy project sources after deps are installed.

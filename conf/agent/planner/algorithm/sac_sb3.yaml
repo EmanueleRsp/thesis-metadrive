@@ -1,3 +1,5 @@
+# Fork-backed SB3 baseline path. Keep thesis-specific network and future custom
+# replay-buffer hooks in `thesis_rl.sb3_extensions`.
 name: sac_sb3
 policy: MlpPolicy
 verbose: 0
