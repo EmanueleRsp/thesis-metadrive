@@ -70,6 +70,9 @@
 
 - [x] Remove stale comments once the corresponding analysis tasks are completed.
 - [x] Review whether TODOs currently embedded in code should be reduced after they are captured in this file.
+- [ ] After the SB3-fork baseline path is fully consolidated, remove the remaining legacy scalar backend code (`td3` / `sac` / `ppo`) from runtime factories and tests.
+  - Keep this as a separate cleanup step from the migration commit history.
+  - Before removal, confirm we no longer need legacy checkpoints/configs for archival comparisons or debugging.
 
 ### Possible Improvements (Not Needed Now)
 

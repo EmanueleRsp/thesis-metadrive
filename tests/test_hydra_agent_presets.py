@@ -13,26 +13,6 @@ def _compose_preset(config_name: str):
         return compose(config_name=config_name)
 
 
-def test_td3_none_preset_composes() -> None:
-    cfg = _compose_preset("presets/agent/td3_none")
-    assert str(cfg.obs.type) == "semantic_state"
-    assert str(cfg.agent.planner.encoder.type) == "none"
-    assert str(cfg.agent.planner.decoder.name) == "td3_sb3"
-    assert list(cfg.agent.planner.decoder.hidden_layers) == [400, 300]
-    assert bool(cfg.agent.planner.decoder.layer_norm) is False
-    assert str(cfg.agent.planner.algorithm.name) == "td3"
-
-
-def test_td3_sb3_legacy_preset_composes() -> None:
-    cfg = _compose_preset("presets/agent/td3_sb3_legacy")
-    assert str(cfg.obs.type) == "lidar_state"
-    assert str(cfg.agent.planner.encoder.type) == "none"
-    assert str(cfg.agent.planner.decoder.name) == "td3_sb3"
-    assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
-    assert str(cfg.agent.planner.algorithm.policy) == "MlpPolicy"
-    assert list(cfg.agent.planner.algorithm.policy_kwargs.net_arch) == [256, 256]
-
-
 def test_td3_sb3_preset_composes() -> None:
     cfg = _compose_preset("presets/agent/td3_sb3")
     assert str(cfg.obs.type) == "lidar_state"
@@ -57,24 +37,6 @@ def test_td3_mlp_sb3_preset_composes() -> None:
     assert str(cfg.agent.planner.encoder.type) == "mlp"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
     assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
-
-
-def test_sac_lq_preset_composes() -> None:
-    cfg = _compose_preset("presets/agent/sac_lq")
-    assert str(cfg.obs.type) == "semantic_state"
-    assert str(cfg.agent.planner.encoder.type) == "lq"
-    assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
-    assert str(cfg.agent.planner.algorithm.name) == "sac"
-
-
-def test_sac_none_preset_composes() -> None:
-    cfg = _compose_preset("presets/agent/sac_none")
-    assert str(cfg.obs.type) == "semantic_state"
-    assert str(cfg.agent.planner.encoder.type) == "none"
-    assert str(cfg.agent.planner.decoder.name) == "sac_sb3"
-    assert list(cfg.agent.planner.decoder.hidden_layers) == [256, 256]
-    assert bool(cfg.agent.planner.decoder.layer_norm) is False
-    assert str(cfg.agent.planner.algorithm.name) == "sac"
 
 
 def test_sac_sb3_algorithm_config_composes() -> None:
@@ -107,14 +69,6 @@ def test_sac_mlp_sb3_preset_composes() -> None:
     assert str(cfg.agent.planner.encoder.type) == "mlp"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
     assert str(cfg.agent.planner.algorithm.name) == "sac_sb3"
-
-
-def test_ppo_lq_preset_composes() -> None:
-    cfg = _compose_preset("presets/agent/ppo_lq")
-    assert str(cfg.obs.type) == "semantic_state"
-    assert str(cfg.agent.planner.encoder.type) == "lq"
-    assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
-    assert str(cfg.agent.planner.algorithm.name) == "ppo"
 
 
 def test_ppo_sb3_algorithm_config_composes() -> None:
