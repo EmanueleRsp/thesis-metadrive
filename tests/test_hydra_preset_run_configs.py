@@ -79,12 +79,11 @@ def test_run_profile_medium_overrides_experiment_budget() -> None:
 def test_run_profile_planner_overrides_algorithm_defaults() -> None:
     cfg = _compose("run_profile=thesis", "agent/planner/algorithm=sac")
 
-    assert int(cfg.planner.batch_size) == 512
-    assert int(cfg.agent.planner.algorithm.batch_size) == 2048
+    assert int(cfg.agent.planner.algorithm.batch_size) == 128
 
     resolved_planner_cfg = _resolve_planner_cfg(cfg)
-    assert int(resolved_planner_cfg.batch_size) == 512
-    assert int(resolved_planner_cfg.learning_starts) == 10000
+    assert int(resolved_planner_cfg.batch_size) == 128
+    assert int(resolved_planner_cfg.learning_starts) == 20000
     assert str(resolved_planner_cfg.name) == "sac"
 
 

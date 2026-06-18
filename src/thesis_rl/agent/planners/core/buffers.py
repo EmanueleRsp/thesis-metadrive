@@ -7,10 +7,11 @@ import torch
 
 
 class ReplayBuffer:
-    def __init__(self, capacity: int, obs_dim: int, action_dim: int) -> None:
+    def __init__(self, capacity: int, obs_dim: int, action_dim: int, n_envs: int = 1) -> None:
         self.capacity = int(capacity)
         self.obs_dim = int(obs_dim)
         self.action_dim = int(action_dim)
+        self.n_envs = int(n_envs)
         self.reset()
 
     def reset(self) -> None:
@@ -18,6 +19,7 @@ class ReplayBuffer:
         self.actions = np.zeros((self.capacity, self.action_dim), dtype=np.float32)
         self.rewards = np.zeros((self.capacity, 1), dtype=np.float32)
         self.dones = np.zeros((self.capacity, 1), dtype=np.float32)
+        self.timeouts = np.zeros((self.capacity, 1), dtype=np.float32)
         self.next_obs = np.zeros((self.capacity, self.obs_dim), dtype=np.float32)
         self.ptr = 0
         self.size = 0
@@ -28,6 +30,7 @@ class ReplayBuffer:
         action: np.ndarray,
         reward: float,
         done: bool,
+        timeout: bool,
         next_obs: np.ndarray,
     ) -> None:
         i = self.ptr
@@ -35,6 +38,7 @@ class ReplayBuffer:
         self.actions[i] = np.asarray(action, dtype=np.float32)
         self.rewards[i, 0] = float(reward)
         self.dones[i, 0] = float(done)
+        self.timeouts[i, 0] = float(timeout)
         self.next_obs[i] = np.asarray(next_obs, dtype=np.float32)
         self.ptr = (self.ptr + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
@@ -45,6 +49,7 @@ class ReplayBuffer:
         actions: np.ndarray,
         rewards: np.ndarray,
         dones: np.ndarray,
+        timeouts: np.ndarray,
         next_obs: np.ndarray,
     ) -> None:
         n = int(obs.shape[0])
@@ -54,6 +59,7 @@ class ReplayBuffer:
                 action=actions[i],
                 reward=float(rewards[i]),
                 done=bool(dones[i]),
+                timeout=bool(timeouts[i]),
                 next_obs=next_obs[i],
             )
 
@@ -62,11 +68,13 @@ class ReplayBuffer:
             raise ValueError("Cannot sample from empty replay buffer.")
         batch = min(int(batch_size), self.size)
         idx = np.random.randint(0, self.size, size=batch)
+        dones = self.dones[idx] * (1.0 - self.timeouts[idx])
         return {
             "obs": torch.as_tensor(self.obs[idx], dtype=torch.float32, device=device),
             "actions": torch.as_tensor(self.actions[idx], dtype=torch.float32, device=device),
             "rewards": torch.as_tensor(self.rewards[idx], dtype=torch.float32, device=device),
-            "dones": torch.as_tensor(self.dones[idx], dtype=torch.float32, device=device),
+            "dones": torch.as_tensor(dones, dtype=torch.float32, device=device),
+            "timeouts": torch.as_tensor(self.timeouts[idx], dtype=torch.float32, device=device),
             "next_obs": torch.as_tensor(self.next_obs[idx], dtype=torch.float32, device=device),
         }
 
@@ -75,10 +83,12 @@ class ReplayBuffer:
             "capacity": self.capacity,
             "obs_dim": self.obs_dim,
             "action_dim": self.action_dim,
+            "n_envs": self.n_envs,
             "obs": self.obs,
             "actions": self.actions,
             "rewards": self.rewards,
             "dones": self.dones,
+            "timeouts": self.timeouts,
             "next_obs": self.next_obs,
             "ptr": self.ptr,
             "size": self.size,
@@ -88,10 +98,15 @@ class ReplayBuffer:
         self.capacity = int(payload["capacity"])
         self.obs_dim = int(payload["obs_dim"])
         self.action_dim = int(payload["action_dim"])
+        self.n_envs = int(payload.get("n_envs", 1))
         self.obs = np.asarray(payload["obs"], dtype=np.float32)
         self.actions = np.asarray(payload["actions"], dtype=np.float32)
         self.rewards = np.asarray(payload["rewards"], dtype=np.float32)
         self.dones = np.asarray(payload["dones"], dtype=np.float32)
+        self.timeouts = np.asarray(
+            payload.get("timeouts", np.zeros_like(self.dones)),
+            dtype=np.float32,
+        )
         self.next_obs = np.asarray(payload["next_obs"], dtype=np.float32)
         self.ptr = int(payload["ptr"])
         self.size = int(payload["size"])
@@ -129,7 +144,7 @@ class RolloutBuffer:
         self.obs = np.zeros((self.n_steps, self.n_envs, self.obs_dim), dtype=np.float32)
         self.actions = np.zeros((self.n_steps, self.n_envs, self.action_dim), dtype=np.float32)
         self.rewards = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
-        self.dones = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
+        self.episode_starts = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
         self.values = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
         self.log_probs = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
         self.advantages = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
@@ -142,7 +157,7 @@ class RolloutBuffer:
         obs: np.ndarray,
         actions: np.ndarray,
         rewards: np.ndarray,
-        dones: np.ndarray,
+        episode_starts: np.ndarray,
         values: np.ndarray,
         log_probs: np.ndarray,
     ) -> None:
@@ -151,7 +166,7 @@ class RolloutBuffer:
         self.obs[self.pos] = np.asarray(obs, dtype=np.float32)
         self.actions[self.pos] = np.asarray(actions, dtype=np.float32)
         self.rewards[self.pos] = np.asarray(rewards, dtype=np.float32)
-        self.dones[self.pos] = np.asarray(dones, dtype=np.float32)
+        self.episode_starts[self.pos] = np.asarray(episode_starts, dtype=np.float32)
         self.values[self.pos] = np.asarray(values, dtype=np.float32)
         self.log_probs[self.pos] = np.asarray(log_probs, dtype=np.float32)
         self.pos += 1
@@ -168,7 +183,7 @@ class RolloutBuffer:
                 next_non_terminal = 1.0 - last_dones_np
                 next_values = last_values_np
             else:
-                next_non_terminal = 1.0 - self.dones[step]
+                next_non_terminal = 1.0 - self.episode_starts[step + 1]
                 next_values = self.values[step + 1]
             delta = self.rewards[step] + self.gamma * next_values * next_non_terminal - self.values[step]
             gae = delta + self.gamma * self.gae_lambda * next_non_terminal * gae

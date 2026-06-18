@@ -27,12 +27,14 @@ class SquashedGaussianActor(nn.Module):
         decoder: nn.Module,
         action_dim: int,
         log_std_bounds: tuple[float, float] = (-20.0, 2.0),
+        log_std_init: float = -3.0,
         state_dependent_std: bool = True,
     ) -> None:
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         hidden_dim = int(decoder.output_dim)
+        self.epsilon = 1e-6
         self.mu_head = nn.Linear(hidden_dim, int(action_dim))
         self.state_dependent_std = bool(state_dependent_std)
         if self.state_dependent_std:
@@ -40,7 +42,7 @@ class SquashedGaussianActor(nn.Module):
             self.log_std_param = None
         else:
             self.log_std_head = None
-            self.log_std_param = nn.Parameter(torch.zeros(int(action_dim)))
+            self.log_std_param = nn.Parameter(torch.full((int(action_dim),), float(log_std_init)))
         self.log_std_min = float(log_std_bounds[0])
         self.log_std_max = float(log_std_bounds[1])
 
@@ -56,27 +58,30 @@ class SquashedGaussianActor(nn.Module):
         log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
         return mu, log_std
 
+    def get_action_dist_params(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return self._dist_params(obs)
+
     def sample(self, obs: torch.Tensor, deterministic: bool = False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        mu, log_std = self._dist_params(obs)
+        mu, log_std = self.get_action_dist_params(obs)
         std = torch.exp(log_std)
         normal = Normal(mu, std)
         if deterministic:
-            u = mu
+            gaussian_actions = mu
         else:
-            u = normal.rsample()
-        action = torch.tanh(u)
-        log_prob = normal.log_prob(u).sum(dim=-1, keepdim=True)
-        log_prob = log_prob - torch.log(torch.clamp(1.0 - action.pow(2), min=1e-6)).sum(dim=-1, keepdim=True)
+            gaussian_actions = normal.rsample()
+        action = torch.tanh(gaussian_actions)
+        log_prob = normal.log_prob(gaussian_actions).sum(dim=-1, keepdim=True)
+        log_prob = log_prob - torch.log(1.0 - action.pow(2) + self.epsilon).sum(dim=-1, keepdim=True)
         entropy = normal.entropy().sum(dim=-1, keepdim=True)
         return action, log_prob, entropy
 
     def evaluate(self, obs: torch.Tensor, actions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        mu, log_std = self._dist_params(obs)
+        mu, log_std = self.get_action_dist_params(obs)
         std = torch.exp(log_std)
         normal = Normal(mu, std)
-        u = safe_atanh(actions)
-        log_prob = normal.log_prob(u).sum(dim=-1, keepdim=True)
-        log_prob = log_prob - torch.log(torch.clamp(1.0 - actions.pow(2), min=1e-6)).sum(dim=-1, keepdim=True)
+        gaussian_actions = safe_atanh(actions)
+        log_prob = normal.log_prob(gaussian_actions).sum(dim=-1, keepdim=True)
+        log_prob = log_prob - torch.log(1.0 - actions.pow(2) + self.epsilon).sum(dim=-1, keepdim=True)
         entropy = normal.entropy().sum(dim=-1, keepdim=True)
         return log_prob, entropy
 

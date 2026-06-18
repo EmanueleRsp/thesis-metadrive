@@ -27,6 +27,12 @@ uv pip install -e .
 uv run --no-sync python -m pytest -q
 ```
 
+If you are inside the Docker Compose container, this works because the service
+mounts `../third-party/metadrive` at `/workspace/third-party/metadrive` for
+the local `metadrive` source with write access for build metadata, while
+`torch` is inherited from the NVIDIA base image instead of being installed by
+`uv`.
+
 Expected:
 - Tests pass.
 - No import/runtime wiring errors.

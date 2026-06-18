@@ -43,7 +43,7 @@ def _wrapper_stack(env: Any) -> list[str]:
     visited: set[int] = set()
     while current is not None and id(current) not in visited:
         visited.add(id(current))
-        stack.append(type(current).__name__)
+        stack.append(type(current).__name__.lstrip("_"))
         current = getattr(current, "env", None)
     return stack
 

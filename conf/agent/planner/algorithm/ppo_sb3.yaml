@@ -1,5 +1,5 @@
-name: ppo
-share_encoder: true
+name: ppo_sb3
+policy: MlpPolicy
 verbose: 0
 n_steps: 2048
 batch_size: 64
@@ -7,8 +7,6 @@ n_epochs: 10
 learning_rate: 3e-4
 gamma: 0.99
 gae_lambda: 0.95
-log_std_init: 0.0
-optimizer_eps: 1e-5
 ent_coef: 0.0
 vf_coef: 0.5
 clip_range: 0.2
@@ -16,4 +14,10 @@ clip_range_vf: null
 target_kl: null
 normalize_advantage: true
 max_grad_norm: 0.5
+use_sde: false
+sde_sample_freq: -1
 monitor_ema_alpha: 0.1
+policy_kwargs:
+  net_arch:
+    pi: [64, 64]
+    vf: [64, 64]

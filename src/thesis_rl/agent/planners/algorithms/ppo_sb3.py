@@ -1,0 +1,356 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import torch
+
+from thesis_rl.agent.types import Transition
+from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
+from thesis_rl.agent.planners.core.lifecycle import PpoLifecycle
+from thesis_rl.agent.planners.core.utils import normalize_checkpoint_path, to_plain_dict
+
+if TYPE_CHECKING:
+    from stable_baselines3 import PPO
+
+
+def _require_sb3_ppo():
+    try:
+        from stable_baselines3 import PPO
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        raise ImportError(
+            "The `ppo_sb3` backend requires `stable-baselines3` to be installed. "
+            "Run `uv sync` to install project dependencies."
+        ) from exc
+    return PPO
+
+
+def _normalize_policy_kwargs(raw_policy_kwargs: dict[str, Any]) -> dict[str, Any]:
+    policy_kwargs = to_plain_dict(raw_policy_kwargs)
+    net_arch = policy_kwargs.get("net_arch")
+    if isinstance(net_arch, (list, tuple)):
+        policy_kwargs["net_arch"] = list(net_arch)
+    elif isinstance(net_arch, dict):
+        policy_kwargs["net_arch"] = {
+            str(key): list(value) if isinstance(value, (list, tuple)) else value
+            for key, value in net_arch.items()
+        }
+    return policy_kwargs
+
+
+class Sb3PpoPlannerBackend(BasePlannerBackend):
+    lifecycle_cls = PpoLifecycle
+
+    def __init__(
+        self,
+        env: Any,
+        cfg_planner: Any,
+        model: "PPO",
+        device: str = "auto",
+    ) -> None:
+        super().__init__(env=env, cfg_planner=cfg_planner, device=device)
+        self.model = model
+        self.sb3_model = model
+
+        self.last_actor_loss = float("nan")
+        self.last_critic_loss = float("nan")
+        self.last_learning_rate = float("nan")
+        self.collected_transitions = 0
+
+        self._last_values: Any | None = None
+        self._last_log_probs: Any | None = None
+        self._last_buffer_actions: np.ndarray | None = None
+        self._last_next_obs: np.ndarray | None = None
+
+    @classmethod
+    def build(
+        cls,
+        env: Any,
+        cfg_planner: Any,
+        cfg_encoder: Any | None = None,
+        cfg_decoder: Any | None = None,
+        cfg_obs: Any | None = None,
+        device: str = "auto",
+        seed: int | None = None,
+    ) -> "Sb3PpoPlannerBackend":
+        del cfg_encoder, cfg_decoder, cfg_obs
+        PPO = _require_sb3_ppo()
+
+        planner_cfg = to_plain_dict(cfg_planner)
+        policy_kwargs = _normalize_policy_kwargs(planner_cfg.get("policy_kwargs", {}))
+
+        model = PPO(
+            policy=str(planner_cfg.get("policy", "MlpPolicy")),
+            env=env,
+            n_steps=int(planner_cfg.get("n_steps", 2048)),
+            batch_size=int(planner_cfg.get("batch_size", 64)),
+            n_epochs=int(planner_cfg.get("n_epochs", 10)),
+            learning_rate=float(planner_cfg.get("learning_rate", 3e-4)),
+            gamma=float(planner_cfg.get("gamma", 0.99)),
+            gae_lambda=float(planner_cfg.get("gae_lambda", 0.95)),
+            clip_range=float(planner_cfg.get("clip_range", 0.2)),
+            clip_range_vf=planner_cfg.get("clip_range_vf", None),
+            normalize_advantage=bool(planner_cfg.get("normalize_advantage", True)),
+            ent_coef=float(planner_cfg.get("ent_coef", 0.0)),
+            vf_coef=float(planner_cfg.get("vf_coef", 0.5)),
+            max_grad_norm=float(planner_cfg.get("max_grad_norm", 0.5)),
+            use_sde=bool(planner_cfg.get("use_sde", False)),
+            sde_sample_freq=int(planner_cfg.get("sde_sample_freq", -1)),
+            target_kl=planner_cfg.get("target_kl", None),
+            policy_kwargs=policy_kwargs,
+            verbose=int(planner_cfg.get("verbose", 0)),
+            device=device,
+            seed=seed,
+        )
+        return cls(env=env, cfg_planner=planner_cfg, model=model, device=device)
+
+    @classmethod
+    def load(
+        cls,
+        checkpoint_path: str | Path,
+        env: Any,
+        device: str = "auto",
+        cfg_planner: Any | None = None,
+        cfg_encoder: Any | None = None,
+        cfg_decoder: Any | None = None,
+        cfg_obs: Any | None = None,
+    ) -> "Sb3PpoPlannerBackend":
+        del cfg_encoder, cfg_decoder, cfg_obs
+        PPO = _require_sb3_ppo()
+
+        model = PPO.load(str(normalize_checkpoint_path(checkpoint_path)), env=env, device=device)
+        resolved_cfg = {} if cfg_planner is None else to_plain_dict(cfg_planner)
+        return cls(env=env, cfg_planner=resolved_cfg, model=model, device=device)
+
+    def begin_training(
+        self,
+        chunk_timesteps: int,
+        global_total_timesteps: int | None,
+        global_steps_done: int,
+    ) -> None:
+        del chunk_timesteps
+        _require_sb3_ppo()
+        from stable_baselines3.common.logger import configure
+
+        if not hasattr(self.model, "_logger"):
+            self.model._logger = configure(folder=None, format_strings=[])
+        if not hasattr(self.model, "_current_progress_remaining"):
+            self.model._current_progress_remaining = 1.0
+        if not hasattr(self.model, "num_timesteps"):
+            self.model.num_timesteps = 0
+        if getattr(self.model, "_last_episode_starts", None) is None:
+            self.model._last_episode_starts = np.ones((self.n_envs,), dtype=bool)
+
+        self.collected_transitions = 0
+        self._global_total_timesteps = global_total_timesteps
+        self._global_steps_done = int(global_steps_done)
+
+    def end_training(self) -> None:
+        return None
+
+    def _sample_actions(
+        self,
+        observations: np.ndarray,
+        deterministic: bool,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        obs_batch = np.asarray(observations, dtype=np.float32)
+        if self.model.use_sde:
+            self.model.policy.reset_noise(obs_batch.shape[0])
+
+        obs_tensor = self.model.policy.obs_to_tensor(obs_batch)[0]
+        with torch.no_grad():
+            actions_t, values_t, log_probs_t = self.model.policy(
+                obs_tensor,
+                deterministic=deterministic,
+            )
+        raw_actions = np.asarray(actions_t.cpu().numpy(), dtype=np.float32)
+
+        env_actions = raw_actions
+        if self.model.policy.squash_output:
+            env_actions = np.asarray(self.model.policy.unscale_action(raw_actions), dtype=np.float32)
+        else:
+            env_actions = np.clip(
+                raw_actions,
+                self.model.action_space.low,
+                self.model.action_space.high,
+            ).astype(np.float32)
+
+        self._last_values = values_t
+        self._last_log_probs = log_probs_t
+        self._last_buffer_actions = raw_actions
+        return env_actions, raw_actions
+
+    def act_train(self, observation: np.ndarray, deterministic: bool = False) -> np.ndarray:
+        env_actions, _buffer_actions = self._sample_actions(
+            np.expand_dims(np.asarray(observation, dtype=np.float32), axis=0),
+            deterministic=deterministic,
+        )
+        return np.asarray(env_actions[0], dtype=np.float32)
+
+    def act_train_batch(
+        self,
+        observations: np.ndarray,
+        deterministic: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return self._sample_actions(
+            np.asarray(observations, dtype=np.float32),
+            deterministic=deterministic,
+        )
+
+    def to_buffer_action(self, env_action: np.ndarray) -> np.ndarray:
+        if self._last_buffer_actions is not None:
+            cached = np.asarray(self._last_buffer_actions, dtype=np.float32)
+            if cached.ndim == 2 and cached.shape[0] > 0:
+                return cached[0]
+        return np.asarray(env_action, dtype=np.float32)
+
+    def _bootstrap_timeout_rewards(
+        self,
+        rewards: np.ndarray,
+        dones: np.ndarray,
+        infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> np.ndarray:
+        adjusted_rewards = np.asarray(rewards, dtype=np.float32).copy()
+        for idx, info in enumerate(infos):
+            if not bool(dones[idx]):
+                continue
+            if not isinstance(info, dict):
+                continue
+            terminal_observation = info.get("terminal_observation")
+            if terminal_observation is None or not bool(info.get("TimeLimit.truncated", False)):
+                continue
+            terminal_obs_tensor = self.model.policy.obs_to_tensor(terminal_observation)[0]
+            with torch.no_grad():
+                terminal_value = self.model.policy.predict_values(terminal_obs_tensor)[0]
+            adjusted_rewards[idx] += float(self.model.gamma * terminal_value.cpu().item())
+        return adjusted_rewards
+
+    def observe_transition(self, transition: Transition) -> None:
+        if self._last_values is None or self._last_log_probs is None:
+            raise RuntimeError("PPO transition observed before action evaluation cache is set.")
+
+        rewards = self._bootstrap_timeout_rewards(
+            rewards=np.asarray([transition.scalar_reward], dtype=np.float32),
+            dones=np.asarray([transition.terminated or transition.truncated], dtype=bool),
+            infos=[dict(transition.info) | {"terminal_observation": transition.terminal_observation}],
+        )
+        obs = np.expand_dims(np.asarray(transition.observation, dtype=np.float32), axis=0)
+        actions = np.expand_dims(np.asarray(transition.buffer_action, dtype=np.float32), axis=0)
+        episode_starts = np.asarray(self.model._last_episode_starts, dtype=np.float32)
+
+        self.model.rollout_buffer.add(
+            obs=obs,
+            action=actions,
+            reward=rewards,
+            episode_start=episode_starts,
+            value=self._last_values,
+            log_prob=self._last_log_probs,
+        )
+        self.model._last_episode_starts = np.asarray(
+            [transition.terminated or transition.truncated],
+            dtype=bool,
+        )
+        self._last_next_obs = np.asarray(transition.next_observation, dtype=np.float32)[None, :]
+        self.model.num_timesteps += 1
+        self.collected_transitions += 1
+
+    def observe_transition_batch(
+        self,
+        observations: np.ndarray,
+        buffer_actions: np.ndarray,
+        rewards: np.ndarray,
+        dones: np.ndarray,
+        next_observations: np.ndarray,
+        infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> None:
+        if self._last_values is None or self._last_log_probs is None:
+            raise RuntimeError("PPO batch transition observed before action evaluation cache is set.")
+
+        obs_batch = np.asarray(observations, dtype=np.float32)
+        action_batch = np.asarray(buffer_actions, dtype=np.float32)
+        done_batch = np.asarray(dones, dtype=bool)
+        adjusted_rewards = self._bootstrap_timeout_rewards(
+            rewards=np.asarray(rewards, dtype=np.float32),
+            dones=done_batch,
+            infos=infos,
+        )
+        episode_starts = np.asarray(self.model._last_episode_starts, dtype=np.float32)
+
+        self.model.rollout_buffer.add(
+            obs=obs_batch,
+            action=action_batch,
+            reward=adjusted_rewards,
+            episode_start=episode_starts,
+            value=self._last_values,
+            log_prob=self._last_log_probs,
+        )
+        self.model._last_episode_starts = done_batch.copy()
+        self._last_next_obs = np.asarray(next_observations, dtype=np.float32)
+        collected = int(obs_batch.shape[0])
+        self.model.num_timesteps += collected
+        self.collected_transitions += collected
+
+    def maybe_update(
+        self,
+        collected_steps: int,
+        step_count: int,
+        global_total_timesteps: int | None,
+        global_steps_done: int,
+    ) -> dict[str, float | int]:
+        del collected_steps, step_count
+        if not self.model.rollout_buffer.full:
+            return {}
+
+        if self._last_next_obs is None:
+            raise RuntimeError("PPO rollout is full but next-observation cache is missing.")
+
+        if global_total_timesteps and global_total_timesteps > 0:
+            global_step = int(global_steps_done) + int(self.collected_transitions)
+            self.model._current_progress_remaining = max(
+                1.0 - (global_step / float(global_total_timesteps)),
+                0.0,
+            )
+
+        with torch.no_grad():
+            last_values = self.model.policy.predict_values(
+                self.model.policy.obs_to_tensor(self._last_next_obs)[0]
+            )
+        self.model.rollout_buffer.compute_returns_and_advantage(
+            last_values=last_values,
+            dones=np.asarray(self.model._last_episode_starts, dtype=bool),
+        )
+
+        prev_updates = int(getattr(self.model, "_n_updates", 0))
+        self.model.train()
+        self.model.rollout_buffer.reset()
+
+        logger_values = self.model.logger.name_to_value
+        self.last_actor_loss = float(
+            logger_values.get("train/policy_gradient_loss", float("nan"))
+        )
+        self.last_critic_loss = float(logger_values.get("train/value_loss", float("nan")))
+        self.last_learning_rate = float(logger_values.get("train/learning_rate", float("nan")))
+        update_delta = int(getattr(self.model, "_n_updates", 0)) - prev_updates
+
+        self._last_buffer_actions = None
+        self._last_next_obs = None
+        return {
+            "actor_loss": self.last_actor_loss,
+            "critic_loss": self.last_critic_loss,
+            "learning_rate": self.last_learning_rate,
+            "update_calls": 1,
+            "gradient_steps": max(update_delta, 0),
+        }
+
+    def predict(self, observation: Any, deterministic: bool = False):
+        return self.model.predict(observation, deterministic=deterministic)
+
+    def set_env(self, env: Any) -> None:
+        self.model.set_env(env)
+        super().set_env(env)
+
+    def save(self, checkpoint_path: str | Path) -> None:
+        checkpoint = normalize_checkpoint_path(checkpoint_path)
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        self.model.save(str(checkpoint))

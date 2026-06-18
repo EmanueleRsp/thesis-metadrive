@@ -9,9 +9,9 @@ fps: 20
 
 record_intermediate_evals: false
 record_final_eval: true
-max_final_videos: 5
+max_final_videos: 0
 save_manifest: true
-save_trajectory_log: true
+save_trajectory_log: false
 official_only: true
 replay_checkpoint: final  # final | latest | best_lexicographic | <relative-or-absolute-path>
 

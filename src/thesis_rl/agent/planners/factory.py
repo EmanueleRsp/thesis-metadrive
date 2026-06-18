@@ -3,7 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 from thesis_rl.agent.planners.interfaces.planner import BasePlanner
-from thesis_rl.agent.planners.algorithms import PpoPlannerBackend, SacPlannerBackend, Td3PlannerBackend
+from thesis_rl.agent.planners.algorithms import (
+    PpoPlannerBackend,
+    SacPlannerBackend,
+    Sb3PpoPlannerBackend,
+    Sb3SacPlannerBackend,
+    Sb3Td3PlannerBackend,
+    Td3PlannerBackend,
+)
 
 
 def build_planner_backend(
@@ -27,6 +34,16 @@ def build_planner_backend(
             device=device,
             seed=seed,
         )
+    if name == "td3_sb3":
+        return Sb3Td3PlannerBackend.build(
+            env=env,
+            cfg_planner=cfg_planner,
+            cfg_encoder=cfg_encoder,
+            cfg_decoder=cfg_decoder,
+            cfg_obs=cfg_obs,
+            device=device,
+            seed=seed,
+        )
     if name == "sac":
         return SacPlannerBackend.build(
             env=env,
@@ -37,8 +54,28 @@ def build_planner_backend(
             device=device,
             seed=seed,
         )
+    if name == "sac_sb3":
+        return Sb3SacPlannerBackend.build(
+            env=env,
+            cfg_planner=cfg_planner,
+            cfg_encoder=cfg_encoder,
+            cfg_decoder=cfg_decoder,
+            cfg_obs=cfg_obs,
+            device=device,
+            seed=seed,
+        )
     if name == "ppo":
         return PpoPlannerBackend.build(
+            env=env,
+            cfg_planner=cfg_planner,
+            cfg_encoder=cfg_encoder,
+            cfg_decoder=cfg_decoder,
+            cfg_obs=cfg_obs,
+            device=device,
+            seed=seed,
+        )
+    if name == "ppo_sb3":
+        return Sb3PpoPlannerBackend.build(
             env=env,
             cfg_planner=cfg_planner,
             cfg_encoder=cfg_encoder,
@@ -71,6 +108,16 @@ def load_planner_backend(
             cfg_obs=cfg_obs,
             device=device,
         )
+    if name == "td3_sb3":
+        return Sb3Td3PlannerBackend.load(
+            checkpoint_path=checkpoint_path,
+            env=env,
+            cfg_planner=cfg_planner,
+            cfg_encoder=cfg_encoder,
+            cfg_decoder=cfg_decoder,
+            cfg_obs=cfg_obs,
+            device=device,
+        )
     if name == "sac":
         return SacPlannerBackend.load(
             checkpoint_path=checkpoint_path,
@@ -81,8 +128,28 @@ def load_planner_backend(
             cfg_obs=cfg_obs,
             device=device,
         )
+    if name == "sac_sb3":
+        return Sb3SacPlannerBackend.load(
+            checkpoint_path=checkpoint_path,
+            env=env,
+            cfg_planner=cfg_planner,
+            cfg_encoder=cfg_encoder,
+            cfg_decoder=cfg_decoder,
+            cfg_obs=cfg_obs,
+            device=device,
+        )
     if name == "ppo":
         return PpoPlannerBackend.load(
+            checkpoint_path=checkpoint_path,
+            env=env,
+            cfg_planner=cfg_planner,
+            cfg_encoder=cfg_encoder,
+            cfg_decoder=cfg_decoder,
+            cfg_obs=cfg_obs,
+            device=device,
+        )
+    if name == "ppo_sb3":
+        return Sb3PpoPlannerBackend.load(
             checkpoint_path=checkpoint_path,
             env=env,
             cfg_planner=cfg_planner,

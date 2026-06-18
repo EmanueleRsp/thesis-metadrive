@@ -3,6 +3,6 @@ defaults:
   - /config
   - override /obs: semantic_state
   - override /agent/planner/encoder: none
-  - override /agent/planner/decoder: td3_sb3
-  - override /agent/planner/algorithm: td3
+  - override /agent/planner/decoder: ppo_sb3
+  - override /agent/planner/algorithm: ppo_sb3
   - _self_

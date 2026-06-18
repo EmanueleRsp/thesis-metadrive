@@ -10,6 +10,24 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+try:
+    from stable_baselines3.common.vec_env.base_vec_env import VecEnv as Sb3VecEnv
+except ModuleNotFoundError:  # pragma: no cover
+    class Sb3VecEnv:  # type: ignore[no-redef]
+        def __init__(self, num_envs: int, observation_space: spaces.Space, action_space: spaces.Space):
+            self.num_envs = int(num_envs)
+            self.observation_space = observation_space
+            self.action_space = action_space
+            self.reset_infos: list[dict[str, Any]] = [{} for _ in range(self.num_envs)]
+            self._seeds: list[Optional[int]] = [None for _ in range(self.num_envs)]
+            self._options: list[Optional[dict[str, Any]]] = [None for _ in range(self.num_envs)]
+
+        def _reset_seeds(self) -> None:
+            self._seeds = [None for _ in range(self.num_envs)]
+
+        def _reset_options(self) -> None:
+            self._options = [None for _ in range(self.num_envs)]
+
 VecEnvIndices = Union[None, int, Sequence[int], np.ndarray]
 VecEnvObs = Union[np.ndarray, dict[str, np.ndarray], tuple[np.ndarray, ...]]
 VecEnvStepReturn = tuple[VecEnvObs, np.ndarray, np.ndarray, tuple[dict[str, Any], ...]]
@@ -127,7 +145,7 @@ def _worker(
             break
 
 
-class DeterministicSubprocVecEnv:
+class DeterministicSubprocVecEnv(Sb3VecEnv):
     """
     Subprocess vector env with deterministic per-worker auto-resets.
 
@@ -156,12 +174,8 @@ class DeterministicSubprocVecEnv:
 
         self.remotes[0].send(("get_spaces", None))
         observation_space, action_space = self.remotes[0].recv()
-        self.observation_space = observation_space
-        self.action_space = action_space
+        super().__init__(self.num_envs, observation_space, action_space)
         self.render_mode = getattr(getattr(env_fns[0], "__self__", None), "render_mode", None)
-
-        self._seeds: list[Optional[int]] = [None for _ in range(self.num_envs)]
-        self._options: list[Optional[dict[str, Any]]] = [None for _ in range(self.num_envs)]
         self.reset_infos: list[dict[str, Any]] = [{} for _ in range(self.num_envs)]
 
     def seed(self, seed: int | None = None) -> list[Optional[int]]:

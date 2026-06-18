@@ -8,6 +8,7 @@ import torch
 
 from thesis_rl.agent.types import Transition
 from thesis_rl.agent.planners.decoders.factory import build_decoder
+from thesis_rl.agent.planners.core.action_noise import build_action_noise
 from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
 from thesis_rl.agent.planners.modules.actor_critic import DeterministicActor, TwinQCritic
 from thesis_rl.agent.planners.core.utils import (
@@ -21,10 +22,12 @@ from thesis_rl.agent.planners.core.utils import (
 from thesis_rl.agent.planners.core.types import TrainState
 from thesis_rl.agent.planners.core.lifecycle import Td3Lifecycle
 from thesis_rl.agent.planners.core.buffers import ReplayBuffer
+from thesis_rl.agent.planners.core.offpolicy_debug import OffPolicyDebugLogger
 
 
 class Td3PlannerBackend(BasePlannerBackend):
     lifecycle_cls = Td3Lifecycle
+    _SB3_TD3_HIDDEN_LAYERS = [400, 300]
 
     def __init__(
         self,
@@ -49,6 +52,7 @@ class Td3PlannerBackend(BasePlannerBackend):
         self.action_dim = int(np.prod(action_space.shape))
         self.action_low = np.asarray(action_space.low, dtype=np.float32)
         self.action_high = np.asarray(action_space.high, dtype=np.float32)
+        self._validate_network_config()
 
         enc_actor = build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(self.device)
         share_encoder = bool(self.cfg_planner.get("share_encoder", False))
@@ -90,18 +94,101 @@ class Td3PlannerBackend(BasePlannerBackend):
         self.learning_starts = int(self.cfg_planner.get("learning_starts", 10000))
         self.batch_size = int(self.cfg_planner.get("batch_size", 256))
         self.train_freq = int(self.cfg_planner.get("train_freq", 1))
-        gradient_steps_cfg = self.cfg_planner.get("gradient_steps", "auto")
-        self.gradient_steps = int(self.train_freq * max(self.n_envs, 1)) if str(gradient_steps_cfg).lower() == "auto" else int(gradient_steps_cfg)
+        if self.train_freq <= 0:
+            raise ValueError("`train_freq` must be >= 1 for TD3.")
+        self.gradient_steps_cfg = self.cfg_planner.get("gradient_steps", "auto")
         self.policy_delay = int(self.cfg_planner.get("policy_delay", 2))
         self.target_policy_noise = float(self.cfg_planner.get("target_policy_noise", 0.2))
         self.target_noise_clip = float(self.cfg_planner.get("target_noise_clip", 0.5))
-        self.action_noise_sigma = float(self.cfg_planner.get("action_noise_sigma", 0.1))
+        self.action_noise = build_action_noise(self.cfg_planner, action_dim=self.action_dim)
+        self._rollout_steps_since_update = 0
+        self._rollout_transitions_since_update = 0
 
         self.replay_buffer = ReplayBuffer(
             capacity=int(self.cfg_planner.get("buffer_size", 300000)),
             obs_dim=self.obs_dim,
             action_dim=self.action_dim,
+            n_envs=self.n_envs,
         )
+        self.debug_logger = OffPolicyDebugLogger(
+            self.cfg_planner.get("offpolicy_debug"),
+            algorithm="td3",
+            action_dim=self.action_dim,
+        )
+
+    def _validate_network_config(self) -> None:
+        decoder_name = str(self.cfg_decoder.get("name", "")).strip().lower()
+        if decoder_name != "td3_sb3":
+            return
+
+        encoder_type = str(self.cfg_encoder.get("type", "none")).strip().lower()
+        if encoder_type != "none":
+            raise ValueError("`decoder=td3_sb3` requires `encoder=none` for SB3-faithful TD3.")
+
+        decoder_type = str(self.cfg_decoder.get("type", "mlp")).strip().lower()
+        hidden_layers = [int(width) for width in self.cfg_decoder.get("hidden_layers", [])]
+        activation = str(self.cfg_decoder.get("activation", "relu")).strip().lower()
+        layer_norm = bool(self.cfg_decoder.get("layer_norm", False))
+        dropout = float(self.cfg_decoder.get("dropout", 0.0))
+
+        if decoder_type != "mlp":
+            raise ValueError("`decoder=td3_sb3` must use an MLP decoder.")
+        if hidden_layers != self._SB3_TD3_HIDDEN_LAYERS:
+            raise ValueError(
+                "`decoder=td3_sb3` must keep hidden_layers=[400, 300] for SB3-faithful TD3."
+            )
+        if activation != "relu":
+            raise ValueError("`decoder=td3_sb3` must use ReLU activations for SB3-faithful TD3.")
+        if layer_norm:
+            raise ValueError("`decoder=td3_sb3` must keep layer_norm=false for SB3-faithful TD3.")
+        if dropout != 0.0:
+            raise ValueError("`decoder=td3_sb3` must keep dropout=0.0 for SB3-faithful TD3.")
+
+    def _sample_random_actions(self, batch_size: int) -> np.ndarray:
+        low = np.broadcast_to(self.action_low, (int(batch_size), self.action_dim))
+        high = np.broadcast_to(self.action_high, (int(batch_size), self.action_dim))
+        return np.random.uniform(low=low, high=high).astype(np.float32)
+
+    def _policy_actions(self, observation: Any) -> np.ndarray:
+        obs = to_batch_obs(np.asarray(observation, dtype=np.float32))
+        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            action = self.actor(obs_t)
+        action_np = action.cpu().numpy()
+        return np.clip(action_np, self.action_low, self.action_high).astype(np.float32)
+
+    def _apply_action_noise(self, actions: np.ndarray) -> np.ndarray:
+        action_batch = np.asarray(actions, dtype=np.float32)
+        if self.action_noise is None:
+            return np.clip(action_batch, self.action_low, self.action_high).astype(np.float32)
+        noisy_actions = action_batch + self.action_noise.sample(int(action_batch.shape[0]))
+        return np.clip(noisy_actions, self.action_low, self.action_high).astype(np.float32)
+
+    def _resolve_gradient_steps(self, rollout_transitions: int) -> int:
+        cfg_value = self.gradient_steps_cfg
+        if isinstance(cfg_value, str):
+            key = cfg_value.strip().lower()
+            if key == "auto":
+                return max(int(rollout_transitions), 1)
+        resolved = int(cfg_value)
+        if resolved == -1:
+            return max(int(rollout_transitions), 1)
+        return max(resolved, 1)
+
+    @staticmethod
+    def _is_timeout(info: dict[str, Any] | None) -> bool:
+        if not isinstance(info, dict):
+            return False
+        return bool(info.get("TimeLimit.truncated", False))
+
+    @staticmethod
+    def _resolve_next_observation(
+        next_observation: np.ndarray,
+        terminal_observation: np.ndarray | None,
+    ) -> np.ndarray:
+        if terminal_observation is not None:
+            return np.asarray(terminal_observation, dtype=np.float32)
+        return np.asarray(next_observation, dtype=np.float32)
 
     @classmethod
     def build(
@@ -181,41 +268,50 @@ class Td3PlannerBackend(BasePlannerBackend):
         return True
 
     def predict(self, observation: Any, deterministic: bool = False):
-        obs = to_batch_obs(np.asarray(observation, dtype=np.float32))
-        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        with torch.no_grad():
-            action = self.actor(obs_t)
-        action_np = action.cpu().numpy()
-        if not deterministic:
-            action_np = action_np + np.random.normal(0.0, self.action_noise_sigma, size=action_np.shape).astype(np.float32)
-            action_np = np.clip(action_np, -1.0, 1.0)
-        action_np = np.clip(action_np, self.action_low, self.action_high).astype(np.float32)
+        del deterministic
+        action_np = self._policy_actions(observation)
         if np.asarray(observation).ndim == 1:
             return action_np[0], None
         return action_np, None
 
     def act_train(self, observation: np.ndarray, deterministic: bool = False) -> np.ndarray:
-        action, _ = self.predict(observation, deterministic=deterministic)
-        return np.asarray(action, dtype=np.float32)
+        if not deterministic and self.state.total_steps < self.learning_starts:
+            return self._sample_random_actions(1)[0]
+        action, _ = self.predict(observation, deterministic=True)
+        action_batch = to_batch_obs(np.asarray(action, dtype=np.float32))
+        if deterministic:
+            return action_batch[0]
+        return self._apply_action_noise(action_batch)[0]
 
     def act_train_batch(self, observations: np.ndarray, deterministic: bool = False) -> tuple[np.ndarray, np.ndarray]:
-        actions, _ = self.predict(observations, deterministic=deterministic)
+        if not deterministic and self.state.total_steps < self.learning_starts:
+            action_batch = self._sample_random_actions(int(observations.shape[0]))
+            return action_batch, action_batch
+        actions, _ = self.predict(observations, deterministic=True)
         action_batch = np.asarray(actions, dtype=np.float32)
+        if not deterministic:
+            action_batch = self._apply_action_noise(action_batch)
         return action_batch, action_batch
 
     def to_buffer_action(self, env_action: np.ndarray) -> np.ndarray:
         return np.asarray(env_action, dtype=np.float32)
 
     def observe_transition(self, transition: Transition) -> None:
+        is_timeout = self._is_timeout(transition.info) or bool(transition.truncated)
         done = bool(transition.terminated or transition.truncated)
         self.replay_buffer.add(
             obs=np.asarray(transition.observation, dtype=np.float32),
             action=np.asarray(transition.buffer_action, dtype=np.float32),
             reward=float(transition.scalar_reward),
             done=done,
-            next_obs=np.asarray(transition.next_observation, dtype=np.float32),
+            timeout=is_timeout,
+            next_obs=self._resolve_next_observation(
+                transition.next_observation,
+                transition.terminal_observation,
+            ),
         )
         self.state.total_steps += 1
+        self._rollout_transitions_since_update += 1
 
     def observe_transition_batch(
         self,
@@ -226,15 +322,34 @@ class Td3PlannerBackend(BasePlannerBackend):
         next_observations: np.ndarray,
         infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     ) -> None:
-        del infos
+        resolved_next_observations = np.asarray(next_observations, dtype=np.float32).copy()
+        stored_dones = np.asarray(dones, dtype=bool).copy()
+        timeouts = np.zeros_like(stored_dones, dtype=bool)
+        for idx, info in enumerate(infos):
+            if self._is_timeout(info):
+                timeouts[idx] = True
+            terminal_observation = info.get("terminal_observation") if isinstance(info, dict) else None
+            if terminal_observation is not None:
+                resolved_next_observations[idx] = np.asarray(terminal_observation, dtype=np.float32)
         self.replay_buffer.add_batch(
             obs=observations,
             actions=buffer_actions,
             rewards=rewards,
-            dones=dones,
-            next_obs=next_observations,
+            dones=stored_dones,
+            timeouts=timeouts,
+            next_obs=resolved_next_observations,
         )
         self.state.total_steps += int(observations.shape[0])
+        self._rollout_transitions_since_update += int(observations.shape[0])
+        self.debug_logger.record_collect(
+            total_steps=int(self.state.total_steps),
+            replay_size=int(self.replay_buffer.size),
+            actions=np.asarray(buffer_actions, dtype=np.float32),
+            rewards=np.asarray(rewards, dtype=np.float32),
+            dones=stored_dones * (~timeouts),
+            infos=infos,
+            warmup_active=bool(self.state.total_steps <= self.learning_starts),
+        )
 
     def maybe_update(
         self,
@@ -243,16 +358,23 @@ class Td3PlannerBackend(BasePlannerBackend):
         global_total_timesteps: int | None,
         global_steps_done: int,
     ) -> dict[str, float | int]:
-        del collected_steps, global_total_timesteps, global_steps_done
+        del step_count, global_total_timesteps, global_steps_done
+        self._rollout_steps_since_update += int(collected_steps)
         if self.state.total_steps < self.learning_starts:
+            self._rollout_steps_since_update = 0
+            self._rollout_transitions_since_update = 0
             return {}
-        if step_count % self.train_freq != 0:
+        if self._rollout_steps_since_update < self.train_freq:
             return {}
+
+        gradient_steps = self._resolve_gradient_steps(self._rollout_transitions_since_update)
+        self._rollout_steps_since_update = 0
+        self._rollout_transitions_since_update = 0
 
         critic_losses: list[float] = []
         actor_losses: list[float] = []
 
-        for _ in range(max(self.gradient_steps, 1)):
+        for _ in range(gradient_steps):
             batch = self.replay_buffer.sample(self.batch_size, device=self.device)
             obs = batch["obs"]
             actions = batch["actions"]
@@ -287,10 +409,39 @@ class Td3PlannerBackend(BasePlannerBackend):
                 soft_update(self.actor, self.actor_target, self.tau)
                 soft_update(self.critic, self.critic_target, self.tau)
 
+            with torch.no_grad():
+                policy_actions = self.actor(obs)
+                debug_metrics = {
+                    "batch_reward_mean": float(rewards.mean().detach().cpu().item()),
+                    "batch_reward_std": float(rewards.std(unbiased=False).detach().cpu().item()),
+                    "batch_done_rate": float(dones.mean().detach().cpu().item()),
+                    "batch_action_abs_mean": float(actions.abs().mean().detach().cpu().item()),
+                    "policy_action_abs_mean": float(policy_actions.abs().mean().detach().cpu().item()),
+                    "target_action_abs_mean": float(next_actions.abs().mean().detach().cpu().item()),
+                    "q_target_mean": float(q_target.mean().detach().cpu().item()),
+                    "q1_mean": float(q1.mean().detach().cpu().item()),
+                    "q2_mean": float(q2.mean().detach().cpu().item()),
+                    "critic_loss": float(critic_losses[-1]) if critic_losses else float("nan"),
+                    "actor_loss": float(actor_losses[-1]) if actor_losses else float("nan"),
+                    "random_warmup_active": False,
+                }
+                self.debug_logger.record_update(
+                    total_steps=int(self.state.total_steps),
+                    replay_size=int(self.replay_buffer.size),
+                    metrics=debug_metrics,
+                )
+
         return {
             "actor_loss": float(np.mean(actor_losses)) if actor_losses else float("nan"),
             "critic_loss": float(np.mean(critic_losses)) if critic_losses else float("nan"),
             "learning_rate": float(self.actor_opt.param_groups[0]["lr"]),
             "update_calls": 1,
-            "gradient_steps": int(max(self.gradient_steps, 1)),
+            "gradient_steps": int(gradient_steps),
         }
+
+    def end_training(self) -> None:
+        self.debug_logger.close(total_steps=int(self.state.total_steps), replay_size=int(self.replay_buffer.size))
+
+    def on_episode_end(self, indices: list[int] | np.ndarray | None = None) -> None:
+        if self.action_noise is not None:
+            self.action_noise.reset(indices=indices)

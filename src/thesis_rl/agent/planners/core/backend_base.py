@@ -46,4 +46,7 @@ class BasePlannerBackend(PlannerBackendProtocol):
         return False
 
     def replay_buffer_n_envs(self) -> int:
+        replay_buffer = getattr(self, "replay_buffer", None)
+        if replay_buffer is not None and hasattr(replay_buffer, "n_envs"):
+            return int(getattr(replay_buffer, "n_envs"))
         return int(self.n_envs)

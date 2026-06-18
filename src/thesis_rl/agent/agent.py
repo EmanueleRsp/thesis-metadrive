@@ -282,7 +282,7 @@ class Agent:
                             terminated=bool(done),
                             truncated=bool(truncated),
                             next_observation=next_processed_obs,
-                            terminal_observation=next_processed_obs if terminated else None,
+                            terminal_observation=next_processed_obs if terminated or truncated else None,
                             info=dict(step_info),
                         )
                     )

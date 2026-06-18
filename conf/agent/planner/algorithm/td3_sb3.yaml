@@ -1,0 +1,17 @@
+name: td3_sb3
+policy: MlpPolicy
+verbose: 0
+learning_starts: 10000
+batch_size: 2048
+buffer_size: 300000
+train_freq: 1
+gradient_steps: auto
+learning_rate: 3e-4
+gamma: 0.99
+tau: 0.005
+action_noise_type: normal
+action_noise_sigma: 0.1
+action_noise_mean: 0.0
+monitor_ema_alpha: 0.1
+policy_kwargs:
+  net_arch: [256, 256]

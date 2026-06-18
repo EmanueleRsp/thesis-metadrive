@@ -1,10 +1,12 @@
 name: td3
 share_encoder: false
 verbose: 0
-learning_starts: 10000
-batch_size: 2048
+learning_starts: 20000
+batch_size: 128
 buffer_size: 300000
 train_freq: 1
+# "auto" maps to the number of transitions collected in the last rollout,
+# which is the closest legacy alias to SB3's gradient_steps=-1.
 gradient_steps: auto
 learning_rate: 3e-4
 gamma: 0.99
@@ -12,5 +14,13 @@ tau: 0.005
 policy_delay: 2
 target_policy_noise: 0.2
 target_noise_clip: 0.5
+action_noise_type: normal
+action_noise_mean: 0.0
 action_noise_sigma: 0.1
+offpolicy_debug:
+  enabled: false
+  log_path: ${paths.logs_dir}/offpolicy_debug_td3.jsonl
+  log_interval_steps: 20000
+  log_interval_update_calls: 250
+  near_zero_eps: 0.05
 monitor_ema_alpha: 0.1

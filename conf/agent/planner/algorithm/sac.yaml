@@ -1,15 +1,25 @@
 name: sac
 share_encoder: false
 verbose: 0
-learning_starts: 10000
-batch_size: 2048
+learning_starts: 20000
+batch_size: 128
 buffer_size: 300000
 train_freq: 1
+# "auto" maps to the number of transitions collected in the last rollout,
+# which is the closest legacy alias to SB3's gradient_steps=-1.
 gradient_steps: auto
 learning_rate: 3e-4
 gamma: 0.99
 tau: 0.005
+target_update_interval: 1
 ent_coef: auto
 target_entropy: auto
+log_std_init: -3.0
 log_std_bounds: [-20, 2]
+offpolicy_debug:
+  enabled: false
+  log_path: ${paths.logs_dir}/offpolicy_debug_sac.jsonl
+  log_interval_steps: 20000
+  log_interval_update_calls: 250
+  near_zero_eps: 0.05
 monitor_ema_alpha: 0.1

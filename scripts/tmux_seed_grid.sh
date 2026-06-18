@@ -36,6 +36,7 @@ Options:
   --window NAME        Window name. Default: runs
   --seed-count N       Use seeds 0..N-1. Default: 10
   --seed-start N       Start seed for --seed-count mode. Default: 0
+  --seed-end N         Inclusive end seed for range mode (requires --seed-start)
   --seed-list LIST     Comma-separated explicit seeds (overrides --seed-count)
   --workdir DIR        Working directory for each pane. Default: current dir
   --docker-container   Run each pane command inside this Docker container
@@ -84,6 +85,7 @@ session_name=""
 window_name="runs"
 seed_count=10
 seed_start=0
+seed_end=""
 seed_list_raw=""
 workdir="$(pwd)"
 attach=0
@@ -108,6 +110,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --seed-start)
       seed_start="${2:-}"
+      shift 2
+      ;;
+    --seed-end)
+      seed_end="${2:-}"
       shift 2
       ;;
     --seed-list)
@@ -177,18 +183,32 @@ fi
 if [[ -n "$seed_list_raw" ]]; then
   IFS=',' read -r -a seeds <<<"$seed_list_raw"
 else
-  if ! [[ "$seed_count" =~ ^[0-9]+$ ]] || ! [[ "$seed_start" =~ ^-?[0-9]+$ ]]; then
-    echo "Error: --seed-count must be a non-negative integer and --seed-start an integer." >&2
-    exit 1
-  fi
-  if [[ "$seed_count" -le 0 ]]; then
-    echo "Error: --seed-count must be > 0." >&2
-    exit 1
-  fi
   seeds=()
-  for ((offset = 0; offset < seed_count; offset++)); do
-    seeds+=("$((seed_start + offset))")
-  done
+  if [[ -n "$seed_end" ]]; then
+    if ! [[ "$seed_start" =~ ^-?[0-9]+$ ]] || ! [[ "$seed_end" =~ ^-?[0-9]+$ ]]; then
+      echo "Error: --seed-start/--seed-end must be integers." >&2
+      exit 1
+    fi
+    if [[ "$seed_end" -lt "$seed_start" ]]; then
+      echo "Error: --seed-end must be >= --seed-start." >&2
+      exit 1
+    fi
+    for ((seed = seed_start; seed <= seed_end; seed++)); do
+      seeds+=("$seed")
+    done
+  else
+    if ! [[ "$seed_count" =~ ^[0-9]+$ ]] || ! [[ "$seed_start" =~ ^-?[0-9]+$ ]]; then
+      echo "Error: --seed-count must be a non-negative integer and --seed-start an integer." >&2
+      exit 1
+    fi
+    if [[ "$seed_count" -le 0 ]]; then
+      echo "Error: --seed-count must be > 0." >&2
+      exit 1
+    fi
+    for ((offset = 0; offset < seed_count; offset++)); do
+      seeds+=("$((seed_start + offset))")
+    done
+  fi
 fi
 
 if [[ ${#seeds[@]} -eq 0 ]]; then

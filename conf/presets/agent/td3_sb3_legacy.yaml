@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - /config
+  - override /obs: lidar_state
+  - override /agent/planner/algorithm: td3_sb3
+  - _self_

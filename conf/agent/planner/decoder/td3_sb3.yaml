@@ -1,0 +1,6 @@
+name: td3_sb3
+type: mlp
+hidden_layers: [400, 300]
+activation: relu
+dropout: 0.0
+layer_norm: false

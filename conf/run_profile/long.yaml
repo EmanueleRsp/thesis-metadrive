@@ -10,10 +10,6 @@ experiment:
   eval_episodes: 50
   final_eval_episodes: 100
 
-planner:
-  learning_starts: 10000
-  batch_size: 512
-
 checkpoint:
   periodic_interval_steps: 125000
   keep_last_periodic: 6

@@ -1,0 +1,6 @@
+name: sac_sb3
+type: mlp
+hidden_layers: [256, 256]
+activation: relu
+dropout: 0.0
+layer_norm: false
