@@ -25,6 +25,11 @@ from thesis_rl.agent.agent import Agent
 from thesis_rl.agent.planners.core.utils import count_envs
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.manager import CurriculumManager
+from thesis_rl.curriculum.scenario_acl import (
+    ScenarioAclDriverPaths,
+    run_scenario_acl_training,
+    validate_scenario_acl_runtime_support,
+)
 from thesis_rl.runtime.wiring.builders import (
     adapter_space_kwargs,
     build_adapter,
@@ -481,6 +486,32 @@ def run_training(cfg: DictConfig) -> None:
         
         # Curriculum manager
         curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
+        validate_scenario_acl_runtime_support(
+            cfg,
+            curriculum_cfg,
+            context="training",
+        )
+        if curriculum_cfg.is_scenario_acl:
+            run_scenario_acl_training(
+                cfg=cfg,
+                curriculum_cfg=curriculum_cfg,
+                recorder=recorder,
+                base_csv_fields=base_csv_fields,
+                metadata_path=metadata_path,
+                hydra_config_path=hydra_config_path,
+                start_time=start_time,
+                paths=ScenarioAclDriverPaths(
+                    artifacts_dir=artifacts_dir,
+                    run_dir=run_dir,
+                    checkpoints_dir=checkpoints_dir,
+                    final_checkpoint_stem=final_checkpoint_stem,
+                    latest_checkpoint_stem=latest_checkpoint_stem,
+                    events_log_path=events_log_path,
+                ),
+                train_logger=train_logger,
+                curriculum_logger=curriculum_logger,
+            )
+            return
         curriculum_manager: CurriculumManager | None = None
         current_train_overrides: dict[str, Any] | None = None
         if curriculum_cfg.enabled and curriculum_cfg.is_staged and curriculum_cfg.staged.stages:

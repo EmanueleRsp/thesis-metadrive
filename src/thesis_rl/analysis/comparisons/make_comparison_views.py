@@ -55,6 +55,7 @@ def _collect_descriptors(final_rows: list[dict[str, str]]) -> dict[str, dict[str
         payload = {
             "condition_id": condition_id,
             "algorithm": str(row["algorithm"]).strip(),
+            "task_contract": str(row.get("task_contract", "")).strip(),
             "reward_type": str(row["reward_type"]).strip(),
             "reward_behavior": str(row["reward_behavior"]).strip(),
             "curriculum_name": str(row["curriculum_name"]).strip(),
@@ -72,6 +73,7 @@ def _apply_descriptor_filters(
     descriptors: dict[str, dict[str, str]],
     *,
     algorithm: str | None = None,
+    task_contract: str | None = None,
     reward_type: str | None = None,
     reward_behavior: str | None = None,
     curriculum_name: str | None = None,
@@ -80,6 +82,8 @@ def _apply_descriptor_filters(
     out: dict[str, dict[str, str]] = {}
     for condition_id, desc in descriptors.items():
         if algorithm and desc["algorithm"] != algorithm:
+            continue
+        if task_contract and desc["task_contract"] != task_contract:
             continue
         if reward_type and desc["reward_type"] != reward_type:
             continue
@@ -178,9 +182,10 @@ def _build_reward_views(
 
 
 def _build_algorithm_views(descriptors: dict[str, dict[str, str]]) -> list[ComparisonView]:
-    groups: dict[tuple[str, str, str, str], dict[str, list[str]]] = {}
+    groups: dict[tuple[str, str, str, str, str], dict[str, list[str]]] = {}
     for condition_id, desc in descriptors.items():
         key = (
+            desc["task_contract"],
             desc["reward_type"],
             desc["reward_behavior"],
             desc["curriculum_name"],
@@ -193,13 +198,14 @@ def _build_algorithm_views(descriptors: dict[str, dict[str, str]]) -> list[Compa
         algorithms = sorted(by_algorithm.keys())
         if len(algorithms) < 2:
             continue
-        reward_type, reward_behavior, curriculum_name, rulebook_config = key
+        task_contract, reward_type, reward_behavior, curriculum_name, rulebook_config = key
         comparison_id = (
-            f"{reward_type}__{reward_behavior}__{curriculum_name}__{rulebook_config}"
+            f"{task_contract}__{reward_type}__{reward_behavior}__{curriculum_name}__{rulebook_config}"
         )
         summary = (
-            f"algorithm effect | reward_type={reward_type} | reward_behavior={reward_behavior} "
-            f"| curriculum={curriculum_name} | rulebook_config={rulebook_config}"
+            f"algorithm effect | task_contract={task_contract} | reward_type={reward_type} "
+            f"| reward_behavior={reward_behavior} | curriculum={curriculum_name} "
+            f"| rulebook_config={rulebook_config}"
         )
         condition_ids: list[str] = []
         for algorithm in algorithms:
@@ -208,6 +214,47 @@ def _build_algorithm_views(descriptors: dict[str, dict[str, str]]) -> list[Compa
             ComparisonView(
                 comparison_id=comparison_id,
                 dimension="algorithm",
+                condition_ids=tuple(sorted(condition_ids)),
+                summary=summary,
+            )
+        )
+    return views
+
+
+def _build_task_contract_views(descriptors: dict[str, dict[str, str]]) -> list[ComparisonView]:
+    groups: dict[tuple[str, str, str, str, str], dict[str, list[str]]] = {}
+    for condition_id, desc in descriptors.items():
+        key = (
+            desc["algorithm"],
+            desc["reward_type"],
+            desc["reward_behavior"],
+            desc["curriculum_name"],
+            desc["rulebook_config"],
+        )
+        task_contract = str(desc.get("task_contract", "")).strip()
+        if task_contract == "":
+            continue
+        groups.setdefault(key, {}).setdefault(task_contract, []).append(condition_id)
+
+    views: list[ComparisonView] = []
+    for key, by_contract in sorted(groups.items()):
+        contracts = sorted(by_contract.keys())
+        if len(contracts) < 2:
+            continue
+        algorithm, reward_type, reward_behavior, curriculum_name, rulebook_config = key
+        comparison_id = f"{algorithm}__{reward_type}__{reward_behavior}__{curriculum_name}__{rulebook_config}"
+        summary = (
+            f"task_contract effect | algorithm={algorithm} | reward_type={reward_type} "
+            f"| reward_behavior={reward_behavior} | curriculum={curriculum_name} "
+            f"| rulebook_config={rulebook_config}"
+        )
+        condition_ids: list[str] = []
+        for task_contract in contracts:
+            condition_ids.extend(by_contract[task_contract])
+        views.append(
+            ComparisonView(
+                comparison_id=comparison_id,
+                dimension="task_contract",
                 condition_ids=tuple(sorted(condition_ids)),
                 summary=summary,
             )
@@ -245,7 +292,7 @@ def make_comparison_views(
     curriculum_name: str | None = None,
     rulebook_config: str | None = None,
 ) -> list[Path]:
-    if dimension not in {"curriculum", "reward", "algorithm"}:
+    if dimension not in {"curriculum", "reward", "algorithm", "task_contract"}:
         raise ValueError(f"Unsupported comparison dimension: {dimension}")
     if reward_granularity not in {"semantic", "raw"}:
         raise ValueError(f"Unsupported reward_granularity: {reward_granularity}")
@@ -256,6 +303,7 @@ def make_comparison_views(
     descriptors = _apply_descriptor_filters(
         descriptors,
         algorithm=algorithm,
+        task_contract=None,
         reward_type=reward_type,
         reward_behavior=reward_behavior,
         curriculum_name=curriculum_name,
@@ -266,6 +314,8 @@ def make_comparison_views(
         views = _build_curriculum_views(descriptors)
     elif dimension == "reward":
         views = _build_reward_views(descriptors, reward_granularity=reward_granularity)
+    elif dimension == "task_contract":
+        views = _build_task_contract_views(descriptors)
     else:
         views = _build_algorithm_views(descriptors)
 
@@ -331,7 +381,7 @@ def make_comparison_views(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build comparison-specific aggregated views (one varying factor).")
     parser.add_argument("--analysis-root", default=default_analysis_root_str())
-    parser.add_argument("--dimension", choices=("curriculum", "reward", "algorithm"), required=True)
+    parser.add_argument("--dimension", choices=("curriculum", "reward", "algorithm", "task_contract"), required=True)
     parser.add_argument("--comparison-id", default=None)
     parser.add_argument("--algorithm", default=None)
     parser.add_argument("--reward-type", default=None)

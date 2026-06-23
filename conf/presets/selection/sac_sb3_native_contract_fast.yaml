@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - /config
+  - override /run_profile: fast
+  - override /reward: monitor_only
+  - override /curriculum: disabled
+  - override /obs: lidar_state
+  - override /agent/planner/encoder: none
+  - override /agent/planner/decoder: sac_sb3
+  - override /agent/planner/algorithm: sac_sb3
+  - _self_

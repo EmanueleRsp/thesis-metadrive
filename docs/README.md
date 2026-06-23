@@ -14,6 +14,12 @@ Per evitare ambiguità:
 
 - `docs/comparison_run_commands.md`
   - comandi correnti per smoke run e run di confronto nel setup Docker attuale
+- `docs/algorithm_selection_playbook.md`
+  - sequenza operativa e comandi per selezione algoritmo, qualification run e
+    passaggio successivo a osservazioni/encoder
+- `docs/thesis_experiment_roadmap.md`
+  - roadmap sperimentale corrente fase-per-fase, con budget, seed, componenti
+    bloccati e criteri decisionali
 - `docs/validation_commands.md`
   - checklist e comandi di validazione; utile, ma alcune parti vanno lette alla
     luce del workflow Docker attuale
@@ -31,10 +37,16 @@ Per evitare ambiguità:
   - schema e significato degli artefatti CSV
 - `docs/live_eval_video_protocol.md`
   - stato e obiettivi della pipeline video/evaluation
+- `docs/curriculum_learning_specification.md`
+  - specifica tecnica del curriculum scenario-level
+  - nota importante: alcune flag previste per `ScenarioEnv` replay non sono
+    oggi supportate 1:1 dalla versione di MetaDrive nel container; vedi anche
+    `docs/scenario_acl_implementation_plan.md`
 
 ## Design / architettura
 
 - `docs/architecture.md`
+- `docs/scenario_acl_implementation_plan.md`
 - `docs/sb3_fork_migration_plan.md`
 - `docs/initial_design_decisions.md`
 - `docs/metadrive_assumptions.md`

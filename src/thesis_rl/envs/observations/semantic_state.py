@@ -961,12 +961,32 @@ class SemanticStateObservation(BaseObservation):
         return float(np.clip(rel_x / radius, 0.0, 1.0))
 
     @staticmethod
+    def _hashable_route_token(value: Any) -> Any:
+        if isinstance(value, np.ndarray):
+            return tuple(np.asarray(value).tolist())
+        if isinstance(value, list):
+            return tuple(
+                SemanticStateObservation._hashable_route_token(item) for item in value
+            )
+        if isinstance(value, tuple):
+            return tuple(
+                SemanticStateObservation._hashable_route_token(item) for item in value
+            )
+        return value
+
+    @staticmethod
     def _route_pairs(vehicle: Any) -> set[tuple[Any, Any]]:
         navigation = getattr(vehicle, "navigation", None)
         checkpoints = getattr(navigation, "checkpoints", None) if navigation is not None else None
         if not isinstance(checkpoints, list) or len(checkpoints) < 2:
             return set()
-        return {(start, end) for start, end in zip(checkpoints[:-1], checkpoints[1:])}
+        return {
+            (
+                SemanticStateObservation._hashable_route_token(start),
+                SemanticStateObservation._hashable_route_token(end),
+            )
+            for start, end in zip(checkpoints[:-1], checkpoints[1:])
+        }
 
     @staticmethod
     def _is_on_route(
@@ -977,7 +997,10 @@ class SemanticStateObservation(BaseObservation):
             return False
         if not route_pairs:
             return False
-        return (lane_idx[0], lane_idx[1]) in route_pairs
+        return (
+            SemanticStateObservation._hashable_route_token(lane_idx[0]),
+            SemanticStateObservation._hashable_route_token(lane_idx[1]),
+        ) in route_pairs
 
     @staticmethod
     def _light_status(obj: Any) -> str:

@@ -117,3 +117,102 @@ def test_ppo_mlp_sb3_preset_composes() -> None:
     assert str(cfg.agent.planner.encoder.type) == "mlp"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
     assert str(cfg.agent.planner.algorithm.name) == "ppo_sb3"
+
+
+def test_selection_td3_sb3_qual_lidar_thesis_preset_composes() -> None:
+    cfg = _compose_preset("presets/selection/td3_sb3_qual_lidar_thesis")
+    assert str(cfg.run_profile.name) == "thesis"
+    assert str(cfg.reward.name) == "monitor_only"
+    assert str(cfg.curriculum.name) == "disabled"
+    assert str(cfg.env.name) == "metadrive_native_strict"
+    assert bool(cfg.env.config.out_of_road_done) is True
+    assert bool(cfg.env.config.on_continuous_line_done) is True
+    assert str(cfg.obs.type) == "lidar_state"
+    assert str(cfg.agent.planner.encoder.type) == "none"
+    assert str(cfg.agent.planner.decoder.name) == "td3_sb3"
+    assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
+    assert int(cfg.env.vectorized.num_envs) == 5
+    assert int(cfg.experiment.eval_interval) == 50000
+    assert int(cfg.experiment.eval_episodes) == 20
+    assert int(cfg.experiment.final_eval_episodes) == 100
+
+
+def test_selection_sac_sb3_qual_lidar_thesis_preset_composes() -> None:
+    cfg = _compose_preset("presets/selection/sac_sb3_qual_lidar_thesis")
+    assert str(cfg.run_profile.name) == "thesis"
+    assert str(cfg.reward.name) == "monitor_only"
+    assert str(cfg.curriculum.name) == "disabled"
+    assert str(cfg.env.name) == "metadrive_native_strict"
+    assert bool(cfg.env.config.out_of_road_done) is True
+    assert bool(cfg.env.config.on_continuous_line_done) is True
+    assert str(cfg.obs.type) == "lidar_state"
+    assert str(cfg.agent.planner.encoder.type) == "none"
+    assert str(cfg.agent.planner.decoder.name) == "sac_sb3"
+    assert str(cfg.agent.planner.algorithm.name) == "sac_sb3"
+    assert int(cfg.env.vectorized.num_envs) == 5
+    assert int(cfg.experiment.eval_interval) == 50000
+    assert int(cfg.experiment.eval_episodes) == 20
+    assert int(cfg.experiment.final_eval_episodes) == 100
+
+
+def test_selection_ppo_sb3_qual_lidar_thesis_preset_composes() -> None:
+    cfg = _compose_preset("presets/selection/ppo_sb3_qual_lidar_thesis")
+    assert str(cfg.run_profile.name) == "thesis"
+    assert str(cfg.reward.name) == "monitor_only"
+    assert str(cfg.curriculum.name) == "disabled"
+    assert str(cfg.env.name) == "metadrive_native_strict"
+    assert bool(cfg.env.config.out_of_road_done) is True
+    assert bool(cfg.env.config.on_continuous_line_done) is True
+    assert str(cfg.obs.type) == "lidar_state"
+    assert str(cfg.agent.planner.encoder.type) == "none"
+    assert str(cfg.agent.planner.decoder.name) == "ppo_sb3"
+    assert str(cfg.agent.planner.algorithm.name) == "ppo_sb3"
+    assert int(cfg.env.vectorized.num_envs) == 5
+    assert int(cfg.experiment.eval_interval) == 50000
+    assert int(cfg.experiment.eval_episodes) == 20
+    assert int(cfg.experiment.final_eval_episodes) == 100
+
+
+def test_selection_sac_sb3_native_contract_strict_fast_preset_composes() -> None:
+    cfg = _compose_preset("presets/selection/sac_sb3_native_contract_strict_fast")
+    assert str(cfg.run_profile.name) == "fast"
+    assert str(cfg.reward.name) == "monitor_only"
+    assert str(cfg.curriculum.name) == "disabled"
+    assert str(cfg.obs.type) == "lidar_state"
+    assert str(cfg.agent.planner.encoder.type) == "none"
+    assert str(cfg.agent.planner.decoder.name) == "sac_sb3"
+    assert str(cfg.agent.planner.algorithm.name) == "sac_sb3"
+    assert str(cfg.env.name) == "metadrive_native_strict"
+    assert bool(cfg.env.config.out_of_road_done) is True
+    assert bool(cfg.env.config.on_continuous_line_done) is True
+    assert bool(cfg.env.config.on_broken_line_done) is False
+    assert int(cfg.env.vectorized.num_envs) == 5
+
+
+def test_selection_sac_sb3_native_contract_relaxed_fast_preset_composes() -> None:
+    cfg = _compose_preset("presets/selection/sac_sb3_native_contract_relaxed_fast")
+    assert str(cfg.run_profile.name) == "fast"
+    assert str(cfg.reward.name) == "monitor_only"
+    assert str(cfg.curriculum.name) == "disabled"
+    assert str(cfg.obs.type) == "lidar_state"
+    assert str(cfg.agent.planner.encoder.type) == "none"
+    assert str(cfg.agent.planner.decoder.name) == "sac_sb3"
+    assert str(cfg.agent.planner.algorithm.name) == "sac_sb3"
+    assert str(cfg.env.name) == "metadrive_native_relaxed"
+    assert bool(cfg.env.config.out_of_road_done) is True
+    assert bool(cfg.env.config.on_continuous_line_done) is False
+    assert bool(cfg.env.config.on_broken_line_done) is False
+    assert int(cfg.env.vectorized.num_envs) == 5
+
+
+def test_selection_sac_sb3_native_contract_strict_fast_env4_preset_composes() -> None:
+    cfg = _compose_preset("presets/selection/sac_sb3_native_contract_strict_fast_env4")
+    assert str(cfg.run_profile.name) == "fast"
+    assert str(cfg.reward.name) == "monitor_only"
+    assert str(cfg.curriculum.name) == "disabled"
+    assert str(cfg.obs.type) == "lidar_state"
+    assert str(cfg.agent.planner.algorithm.name) == "sac_sb3"
+    assert str(cfg.env.name) == "metadrive_native_strict"
+    assert bool(cfg.env.config.out_of_road_done) is True
+    assert bool(cfg.env.config.on_continuous_line_done) is True
+    assert int(cfg.env.vectorized.num_envs) == 4

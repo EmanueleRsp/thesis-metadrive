@@ -1,16 +1,13 @@
-name: metadrive
+name: metadrive_native_relaxed
 env_id: MetaDriveEnv
 
-# Main environment configuration
 config:
-  
   use_render: false
 
   horizon: 1000
-  
-  out_of_road_done: true
+
   out_of_route_done: false
-  
+  out_of_road_done: true
   on_continuous_line_done: false
   on_broken_line_done: false
 
@@ -39,17 +36,6 @@ vectorized:
   num_envs: 5
   start_method: spawn
 
-# Observation is selected in `conf/obs/*` via `obs=...`.
-# Default: `obs=lidar_state` (MetaDrive's LidarStateObservation).
-
-# Action space is continuous by default:
-# Box with shape (2,) and values in [-1, 1] for steering and throttle
-# More on https://metadrive-simulator.readthedocs.io/en/latest/action.html
-
-###### Additional configuration for the env-side adapter ######
-# For converting agent actions to env actions
-# More on https://metadrive-simulator.readthedocs.io/en/latest/action.html#policy
-# [Note: not yet revised, keep on enabled:false]
 policy_mode:
   enabled: false
   agent_policy: env_input_policy

@@ -1,0 +1,9 @@
+defaults:
+  - scenario_acl
+
+scenario_acl:
+  mode: mab_plus_replay
+  use_mab: true
+  use_scenario_buffer: true
+  use_replay: true
+  use_mutation: false

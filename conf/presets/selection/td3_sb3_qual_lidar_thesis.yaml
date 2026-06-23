@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - alg_qual_lidar_thesis
+  - override /agent/planner/decoder: td3_sb3
+  - override /agent/planner/algorithm: td3_sb3
+  - _self_

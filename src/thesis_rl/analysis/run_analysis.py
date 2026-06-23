@@ -90,7 +90,7 @@ def main() -> None:
     parser.add_argument("--only", choices=("all", "aggregate", "tables", "plots"), default="all")
     parser.add_argument(
         "--comparison-dimension",
-        choices=("none", "curriculum", "reward", "algorithm"),
+        choices=("none", "curriculum", "reward", "algorithm", "task_contract"),
         default="none",
         help="Build reports for one varying factor only (A/B/C style comparisons).",
     )
@@ -210,7 +210,7 @@ def main() -> None:
         if not comparison_roots:
             print(
                 "[qualitative] Skipped: requires comparison views. "
-                "Set --comparison-dimension to curriculum/reward/algorithm."
+                "Set --comparison-dimension to curriculum/reward/algorithm/task_contract."
             )
         else:
             for root in comparison_roots:

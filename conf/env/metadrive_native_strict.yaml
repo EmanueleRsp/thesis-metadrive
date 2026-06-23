@@ -1,0 +1,44 @@
+name: metadrive_native_strict
+env_id: MetaDriveEnv
+
+config:
+  use_render: false
+
+  horizon: 1000
+
+  out_of_route_done: false
+  out_of_road_done: true
+  on_continuous_line_done: true
+  on_broken_line_done: false
+
+  crash_vehicle_done: true
+  crash_object_done: true
+  crash_human_done: true
+
+  map: 5
+  traffic_density: 0.1
+
+  start_seed: 10000
+  num_scenarios: 5000
+
+  random_spawn_lane_index: true
+  random_lane_width: true
+  random_lane_num: true
+  random_agent_model: true
+
+  physics_world_step_size: 0.02
+  decision_repeat: 5
+
+  log_level: 50
+
+vectorized:
+  enabled: true
+  num_envs: 5
+  start_method: spawn
+
+policy_mode:
+  enabled: false
+  agent_policy: env_input_policy
+  action_check: true
+  low: -1.0
+  high: 1.0

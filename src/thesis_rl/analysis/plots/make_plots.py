@@ -28,6 +28,7 @@ REQUIRED_CONDITION_COLUMNS = (
 
 DESCRIPTOR_COLUMNS = (
     "algorithm",
+    "task_contract",
     "reward_type",
     "reward_behavior",
     "curriculum",
@@ -36,6 +37,7 @@ DESCRIPTOR_COLUMNS = (
 
 DISPLAY_NAME = {
     "algorithm": "Algorithm",
+    "task_contract": "Task Contract",
     "reward_type": "Reward Type",
     "reward_behavior": "Reward Behavior",
     "curriculum": "Curriculum",
@@ -77,6 +79,7 @@ def _collect_condition_descriptors(rows: list[dict[str, str]]) -> dict[str, dict
         condition_id = _condition_label(row)
         payload = {
             "algorithm": str(row.get("algorithm", "")).strip(),
+            "task_contract": str(row.get("task_contract", "")).strip(),
             "reward_type": str(row.get("reward_type", "")).strip(),
             "reward_behavior": str(row.get("reward_behavior", "")).strip(),
             "curriculum": str(row.get("curriculum_name", "")).strip(),
@@ -386,10 +389,16 @@ def _read_rows(path: Path) -> list[dict[str, str]]:
         return list(reader)
 
 
+def _read_optional_rows(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    return _read_rows(path)
+
+
 def make_plots(aggregated_dir: Path, plots_dir: Path, *, include_diagnostics: bool = False) -> None:
     eval_rows = _read_rows(aggregated_dir / "evals_all_runs.csv")
     rule_rows = _read_rows(aggregated_dir / "rule_metrics_all_runs.csv")
-    promotions_rows = _read_rows(aggregated_dir / "promotions_all_runs.csv")
+    promotions_rows = _read_optional_rows(aggregated_dir / "promotions_all_runs.csv")
 
     # Core thesis figures (behavior, safety, compliance, curriculum progression)
     _plot_learning_curve(eval_rows, promotions_rows, "success_rate", plots_dir / "learning_success_vs_global_step.png", "Success vs Global Step", "success_rate")

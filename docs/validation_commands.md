@@ -7,6 +7,7 @@ Run all commands from project root.
 Note:
 - In `conf/config.yaml` the default is `run_profile=fast`.
 - Use `run_profile=...` only when you intentionally want a different run budget.
+- `run_profile=tune` is the preferred profile for local hyperparameter tuning loops.
 - The examples below assume `OUTPUTS_ROOT=/scratch/$USER/thesis-metadrive/outputs`.
 - For scalar planner baselines, the current preferred presets are the
   fork-backed ones under `presets/agent/*_sb3`.
@@ -429,6 +430,7 @@ Visual/manual checks:
 
 - Default `run_profile` is `fast` (quick diagnostics/iteration).
 - `run_profile=medium` is the default validation profile.
+- `run_profile=tune` is for algorithm-focused hyperparameter search.
 - `run_profile=long` is for final comparisons and thesis-quality runs.
 - MetaDrive uses `reset(seed=...)` as scenario index; scenario split separation is configured in `conf/config.yaml`.
 - For fair comparisons, keep a fixed seed set across presets (example: `0,1,2` for all compared configs).

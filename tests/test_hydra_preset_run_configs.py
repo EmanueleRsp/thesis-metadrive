@@ -44,6 +44,11 @@ def test_reward_variants_compose() -> None:
     cfg_native = _compose("reward=native", "curriculum=stages")
     cfg_monitor_only = _compose("reward=monitor_only", "curriculum=stages")
     cfg_scalar_reward = _compose("reward=scalar_reward", "curriculum=stages")
+    cfg_scenario_acl = _compose("reward=monitor_only", "curriculum=scenario_acl")
+    cfg_scenario_acl_replay = _compose(
+        "reward=monitor_only",
+        "curriculum=scenario_acl_mab_plus_replay",
+    )
 
     assert cfg_native.reward.name == "native"
     assert str(cfg_native.reward.type) == "native"
@@ -65,6 +70,11 @@ def test_reward_variants_compose() -> None:
     assert str(cfg_scalar_reward.reward.rulebook_config) == "selection"
     assert float(cfg_scalar_reward.reward.lambda_env) == 0.0
     assert float(cfg_scalar_reward.reward.lambda_rule) == 1.0
+    assert cfg_scenario_acl.reward.name == "monitor_only"
+    assert str(cfg_scenario_acl.curriculum.kind) == "scenario_acl"
+    assert str(cfg_scenario_acl.curriculum.scenario_acl.mode) == "mab_generate_only"
+    assert str(cfg_scenario_acl_replay.curriculum.scenario_acl.mode) == "mab_plus_replay"
+    assert bool(cfg_scenario_acl_replay.curriculum.scenario_acl.use_replay) is True
 
 
 def test_run_profile_medium_overrides_experiment_budget() -> None:
@@ -74,6 +84,17 @@ def test_run_profile_medium_overrides_experiment_budget() -> None:
     assert cfg.experiment.name == "medium"
     assert int(cfg.experiment.total_timesteps) == 350000
     assert int(cfg.experiment.eval_episodes) == 50
+
+
+def test_run_profile_tune_overrides_experiment_budget() -> None:
+    cfg = _compose("run_profile=tune")
+
+    assert cfg.run_profile.name == "tune"
+    assert cfg.experiment.name == "tune"
+    assert int(cfg.experiment.total_timesteps) == 500000
+    assert int(cfg.experiment.eval_interval) == 25000
+    assert int(cfg.experiment.eval_episodes) == 20
+    assert int(cfg.experiment.final_eval_episodes) == 50
 
 
 def test_run_profile_planner_overrides_algorithm_defaults() -> None:

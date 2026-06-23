@@ -1,0 +1,22 @@
+# @package _global_
+# Shared protocol for algorithm qualification runs on the updated MetaDrive task.
+# Keep algorithm/decoder selection in derived presets so the comparison setup
+# stays identical across PPO/SAC/TD3.
+defaults:
+  - /config
+  - override /env: metadrive_native_strict
+  - override /run_profile: thesis
+  - override /reward: monitor_only
+  - override /curriculum: disabled
+  - override /obs: lidar_state
+  - override /agent/planner/encoder: none
+  - _self_
+
+env:
+  vectorized:
+    num_envs: 5
+
+experiment:
+  eval_interval: 50000
+  eval_episodes: 20
+  final_eval_episodes: 100

@@ -22,9 +22,18 @@ def test_adapter_groups_compose() -> None:
 def test_curriculum_groups_compose() -> None:
     cfg_disabled = _compose("curriculum=disabled", "reward=monitor_only")
     cfg_stages = _compose("curriculum=stages", "reward=monitor_only")
+    cfg_scenario_acl = _compose("curriculum=scenario_acl", "reward=monitor_only")
+    cfg_scenario_acl_replay = _compose(
+        "curriculum=scenario_acl_mab_plus_replay",
+        "reward=monitor_only",
+    )
 
     assert bool(cfg_disabled.curriculum.enabled) is False
     assert bool(cfg_stages.curriculum.enabled) is True
+    assert bool(cfg_scenario_acl.curriculum.enabled) is True
+    assert str(cfg_scenario_acl.curriculum.kind) == "scenario_acl"
+    assert str(cfg_scenario_acl_replay.curriculum.scenario_acl.mode) == "mab_plus_replay"
+    assert bool(cfg_scenario_acl_replay.curriculum.scenario_acl.use_replay) is True
 
 
 def test_observation_groups_compose() -> None:

@@ -1,0 +1,9 @@
+defaults:
+  - scenario_acl
+
+scenario_acl:
+  mode: mab_generate_only
+  use_mab: true
+  use_scenario_buffer: true
+  use_replay: false
+  use_mutation: false

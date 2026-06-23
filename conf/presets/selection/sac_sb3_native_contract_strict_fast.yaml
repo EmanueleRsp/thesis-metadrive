@@ -1,0 +1,5 @@
+# @package _global_
+defaults:
+  - sac_sb3_native_contract_fast
+  - override /env: metadrive_native_strict
+  - _self_

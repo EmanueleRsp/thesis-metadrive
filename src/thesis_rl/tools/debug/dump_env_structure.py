@@ -56,7 +56,14 @@ name: metadrive
 env_id: MetaDriveEnv
 config:
   use_render: false
-  horizon: 500
+  horizon: 1000
+  out_of_road_done: false
+  on_continuous_line_done: false
+  on_broken_line_done: false
+  out_of_route_done: false
+  crash_vehicle_done: true
+  crash_object_done: true
+  crash_human_done: true
   map: 5
   traffic_density: 0.1
   start_seed: 10000

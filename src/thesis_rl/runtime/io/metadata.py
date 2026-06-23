@@ -42,6 +42,7 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
     metadata = {
         "name": _cfg_get(cfg, "name"),
         "algorithm": _cfg_get(cfg, "planner.name", default="unknown"),
+        "task_contract": _cfg_get(cfg, "env.name", default="unknown"),
         "run_profile": _cfg_get(cfg, "run_profile.name", default="unknown"),
         "reward_type": _cfg_get(cfg, "reward.type", default="unknown"),
         "reward_behavior": _cfg_get(cfg, "reward.behavior", default="unknown"),

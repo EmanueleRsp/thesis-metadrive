@@ -56,7 +56,7 @@ scripts/tmux_seed_grid.sh \
     run_profile=smoke \
     reward=monitor_only \
     curriculum=disabled \
-    env.vectorized.num_envs=4
+    env.vectorized.num_envs=5
 ```
 
 ## Confronto osservazioni
@@ -74,6 +74,7 @@ for obs in lidar_state semantic_state; do
       reward=monitor_only \
       curriculum=disabled \
       obs=$obs \
+      env.vectorized.num_envs=5 \
       agent/planner/encoder=none \
       agent/planner/decoder=sac_sb3 \
       agent/planner/algorithm=sac_sb3 \
@@ -95,6 +96,7 @@ for enc in lq mlp none; do
       reward=monitor_only \
       curriculum=disabled \
       obs=semantic_state \
+      env.vectorized.num_envs=5 \
       agent/planner/encoder=$enc \
       agent/planner/decoder=$dec \
       agent/planner/algorithm=sac_sb3 \
@@ -103,6 +105,35 @@ done
 ```
 
 ## Confronto algoritmi
+
+Wrapper consigliato:
+
+```bash
+scripts/run_algorithm_selection.sh run-parallel --tag v3
+```
+
+Questo wrapper:
+
+- crea le sessioni tmux con naming coerente
+- usa i preset di selezione correnti
+- lancia `td3`, `sac`, `ppo` insieme
+- aspetta il completamento reale di tutti i gruppi
+- rilancia l'analisi finale con i path giusti
+
+Se vuoi una variante piu' conservativa lato GPU, resta disponibile anche:
+
+```bash
+scripts/run_algorithm_selection.sh run --tag v3
+```
+
+Per pulire eventuali sessioni tmux rimaste appese prima di rilanciare:
+
+```bash
+scripts/run_algorithm_selection.sh cleanup --tag v3
+```
+
+Se preferisci vedere i comandi espliciti o fare piccole varianti manuali, resta
+valido anche il blocco seguente.
 
 Per un confronto fork-backed tra algoritmi con setup il piu` vicino possibile
 alle policy MLP standard di SB3:
@@ -117,7 +148,7 @@ Setup consigliato per stabilità iniziale e confronto più pulito:
 
 - `obs=lidar_state`
 - `agent/planner/encoder=none`
-- `env.vectorized.num_envs=4`
+- `env.vectorized.num_envs=5`
 - `experiment.eval_interval=50000`
 - `experiment.eval_episodes=20`
 
@@ -142,7 +173,7 @@ for alg in td3 sac ppo; do
       reward=monitor_only \
       curriculum=disabled \
       obs=lidar_state \
-      env.vectorized.num_envs=4 \
+      env.vectorized.num_envs=5 \
       experiment.eval_interval=50000 \
       experiment.eval_episodes=20 \
       agent/planner/encoder=none \
@@ -153,7 +184,9 @@ done
 ```
 
 Se la GPU resta stabile con `3` seed per algoritmo, puoi allargare la finestra
-dei seed rilanciando ad esempio con `--seed-start 3 --seed-end 5`.
+dei seed rilanciando ad esempio con `--seed-start 3 --seed-end 5`. Se usi
+encoder pesanti o la GPU e' condivisa, riduci il parallelismo prima di
+aumentare `num_envs`.
 
 ## Sessioni tmux
 

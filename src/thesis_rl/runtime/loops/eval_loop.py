@@ -12,6 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from thesis_rl.agent.agent import Agent
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.manager import CurriculumManager
+from thesis_rl.curriculum.scenario_acl import validate_scenario_acl_runtime_support
 from thesis_rl.runtime.io.csv_recorder import CSVRecorder
 from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
 from thesis_rl.runtime.wiring.builders import (
@@ -201,6 +202,16 @@ def run_evaluation(cfg: DictConfig) -> None:
         )
 
         curriculum_cfg = CurriculumConfig.from_curriculum_cfg(cfg.curriculum)
+        validate_scenario_acl_runtime_support(
+            cfg,
+            curriculum_cfg,
+            context="evaluation",
+        )
+        if curriculum_cfg.is_scenario_acl:
+            raise NotImplementedError(
+                "Standalone evaluation for curriculum kind 'scenario_acl' is not "
+                "implemented yet. Use the training pipeline final evaluation path."
+            )
         eval_env_overrides, eval_stage_name = _resolve_eval_env_overrides(curriculum_cfg)
         eval_env_overrides = apply_eval_scenario_seed_split(
             base_run_seed=run_seed,

@@ -37,7 +37,7 @@ python -m thesis_rl.analysis.run_analysis --run-profile medium --only plots
 - `--analysis-root` default `/scratch/$USER/thesis-metadrive/outputs/analysis`
 - `--outputs-root` default `/scratch/$USER/thesis-metadrive/outputs`
 - `--run-profile` obbligatorio (`smoke|fast|medium|long|...`)
-- `--comparison-dimension` `none|curriculum|reward|algorithm`
+- `--comparison-dimension` `none|curriculum|reward|algorithm|task_contract`
 - `--comparison-id` per rigenerare una sola comparison view
 - `--algorithm`
 - `--reward-type`
@@ -82,6 +82,15 @@ python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --no-v
   --curriculum-name stages \
   --reward-type rulebook \
   --reward-behavior scalar_reward \
+  --rulebook-config selection
+
+# D) Effetto task contract (varia SOLO task_contract)
+python -m thesis_rl.analysis.run_analysis --run-profile fast --only all --no-videos \
+  --comparison-dimension task_contract \
+  --algorithm sac_sb3 \
+  --reward-type native \
+  --reward-behavior monitor_only \
+  --curriculum-name disabled \
   --rulebook-config selection
 ```
 
@@ -173,7 +182,16 @@ python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --no-v
   --reward-behavior scalar_reward \
   --rulebook-config selection
 
-# 5) Pacchetto qualitativo curato
+# 5) Confronto D (task_contract)
+python -m thesis_rl.analysis.run_analysis --run-profile fast --only all --no-videos \
+  --comparison-dimension task_contract \
+  --algorithm sac_sb3 \
+  --reward-type native \
+  --reward-behavior monitor_only \
+  --curriculum-name disabled \
+  --rulebook-config selection
+
+# 6) Pacchetto qualitativo curato
 python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --no-videos \
   --comparison-dimension curriculum \
   --algorithm sb3_td3 \

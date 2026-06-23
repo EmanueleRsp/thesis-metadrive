@@ -13,17 +13,17 @@ def _to_plain_dict(cfg: DictConfig | dict[str, Any]) -> dict[str, Any]:
 
 def _resolve_agent_policy(policy_name: str):
     name = policy_name.lower()
-    if name in {"env_input_policy", "env_input"}:
+    if name in {"envinputpolicy", "env_input_policy", "env_input"}:
         from metadrive.policy.env_input_policy import EnvInputPolicy
 
         return EnvInputPolicy
 
-    if name in {"expert_policy", "expert"}:
+    if name in {"expertpolicy", "expert_policy", "expert"}:
         from metadrive.policy.expert_policy import ExpertPolicy
 
         return ExpertPolicy
 
-    if name in {"idm_policy", "idm"}:
+    if name in {"idmpolicy", "idm_policy", "idm"}:
         from metadrive.policy.idm_policy import IDMPolicy
 
         return IDMPolicy

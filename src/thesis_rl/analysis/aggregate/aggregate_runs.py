@@ -42,6 +42,7 @@ CONTEXT_FIELDS = (
     "metadata_status",
     "condition_id",
     "algorithm",
+    "task_contract",
     "reward_type",
     "reward_behavior",
     "curriculum_name",
@@ -84,6 +85,7 @@ class RunInfo:
     run_dir: Path
     run_name: str
     algorithm: str
+    task_contract: str
     reward_type: str
     reward_behavior: str
     curriculum_name: str
@@ -146,6 +148,7 @@ def _read_final_eval_first_row(csv_path: Path) -> dict[str, str]:
 def _build_condition_id(
     *,
     algorithm: str,
+    task_contract: str,
     reward_type: str,
     reward_behavior: str,
     curriculum_name: str,
@@ -154,6 +157,7 @@ def _build_condition_id(
 ) -> str:
     parts = [
         algorithm.strip(),
+        task_contract.strip(),
         reward_type.strip(),
         reward_behavior.strip(),
         curriculum_name.strip(),
@@ -194,6 +198,9 @@ def _discover_runs(outputs_root: Path) -> list[RunInfo]:
         first_row = _read_final_eval_first_row(final_eval_path)
 
         algorithm = first_row["algorithm"].strip()
+        task_contract = str(metadata.get("task_contract", "")).strip()
+        if task_contract == "":
+            task_contract = "unknown"
         reward_type = first_row["reward_type"].strip()
         reward_behavior = first_row["reward_behavior"].strip()
         curriculum_name = first_row["curriculum_name"].strip()
@@ -226,6 +233,7 @@ def _discover_runs(outputs_root: Path) -> list[RunInfo]:
 
         condition_id = _build_condition_id(
             algorithm=algorithm,
+            task_contract=task_contract,
             reward_type=reward_type,
             reward_behavior=reward_behavior,
             curriculum_name=curriculum_name,
@@ -252,6 +260,7 @@ def _discover_runs(outputs_root: Path) -> list[RunInfo]:
                 run_dir=run_dir,
                 run_name=run_name or condition_id,
                 algorithm=algorithm,
+                task_contract=task_contract,
                 reward_type=reward_type,
                 reward_behavior=reward_behavior,
                 curriculum_name=curriculum_name,
@@ -371,6 +380,7 @@ def _row_with_context(row: dict[str, str], run: RunInfo, *, filename: str) -> di
     out["metadata_status"] = run.metadata_status
     out["condition_id"] = run.condition_id
     out["algorithm"] = run.algorithm
+    out["task_contract"] = run.task_contract
     out["reward_type"] = run.reward_type
     out["reward_behavior"] = run.reward_behavior
     out["curriculum_name"] = run.curriculum_name
@@ -441,6 +451,7 @@ def aggregate_runs(
             "run_name",
             "condition_id",
             "algorithm",
+            "task_contract",
             "reward_type",
             "reward_behavior",
             "curriculum_name",
@@ -465,6 +476,7 @@ def aggregate_runs(
                     "run_name": run.run_name,
                     "condition_id": run.condition_id,
                     "algorithm": run.algorithm,
+                    "task_contract": run.task_contract,
                     "reward_type": run.reward_type,
                     "reward_behavior": run.reward_behavior,
                     "curriculum_name": run.curriculum_name,
