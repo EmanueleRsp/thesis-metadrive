@@ -1,3 +1,9 @@
 [submodule "third_party/stable-baselines3"]
 	path = third_party/stable-baselines3
 	url = https://github.com/EmanueleRsp/stable-baselines3.git
+[submodule "third_party/metadrive"]
+	path = third_party/metadrive
+	url = https://github.com/metadriverse/metadrive.git
+[submodule "third_party/scenarionet"]
+	path = third_party/scenarionet
+	url = https://github.com/metadriverse/scenarionet.git
