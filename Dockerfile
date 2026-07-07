@@ -8,6 +8,12 @@ ARG HOST_GID=1000
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
+    USER=${USER_NAME} \
+    HOME=/workspace/.container-home \
+    OUTPUTS_ROOT=/workspace/outputs \
+    DATA_ROOT=/workspace/data \
+    SCENARIONET_DATA_ROOT=/workspace/data/scenarionet \
+    METADRIVE_DATA_ROOT=/workspace/data/metadrive \
     PATH=/opt/venv/bin:/root/.local/bin:${PATH}
 
 WORKDIR /workspace/thesis-metadrive
@@ -39,15 +45,15 @@ RUN set -eux; \
 RUN pip install --no-cache-dir uv
 RUN uv venv /opt/venv --python /usr/bin/python3 --system-site-packages
 COPY pyproject.toml uv.lock ./
-COPY --from=metadrive_src . /workspace/third-party/metadrive
-COPY --from=sb3_src . /workspace/third-party/stable-baselines3
+COPY third_party ./third_party
 RUN uv sync --frozen --no-install-project
 
 # Copy project sources after deps are installed.
 COPY . .
+RUN mkdir -p /workspace/.container-home /workspace/outputs /workspace/data/scenarionet /workspace/data/metadrive
 RUN uv sync --frozen
 RUN set -eux; \
     metadrive_dir="$(python -c "import importlib.util; from pathlib import Path; spec = importlib.util.find_spec('metadrive'); assert spec is not None and spec.origin is not None, 'metadrive package not found after uv sync'; print(Path(spec.origin).resolve().parent)")"; \
-    chown -R "${HOST_UID}:${HOST_GID}" /opt/venv "${metadrive_dir}"
+    chown -R "${HOST_UID}:${HOST_GID}" /opt/venv "${metadrive_dir}" /workspace/.container-home /workspace/outputs /workspace/data
 
 CMD ["bash"]

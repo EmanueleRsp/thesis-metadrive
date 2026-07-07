@@ -23,10 +23,10 @@ Current closure snapshot for the scalar baseline migration:
 
 The following decisions are now fixed unless later revised explicitly:
 
-- SB3 will live as a sibling checkout at
-  `../third-party/stable-baselines3`
-- Docker integration should mount only the specific external libraries needed by
-  the project, not the whole sibling `third-party/` tree
+- SB3 lives inside the repository as submodule at
+  `third_party/stable-baselines3`
+- Docker integration uses the repository tree directly, including
+  `third_party/`, rather than sibling checkouts outside the repo
 - the immediate scope is not lexicographic or distributional research yet
 - the immediate goal is to consolidate correct fork-backed baseline
   implementations for `PPO`, `SAC`, and `TD3`
@@ -76,26 +76,22 @@ This is a "fork early, patch late" strategy:
 
 ## Current repo constraints
 
-The current project assumes a sibling `third-party/` directory on disk:
+The current project now assumes an in-repo `third_party/` directory:
 
 ```text
-<parent>/
-  thesis-metadrive/
-  third-party/
+thesis-metadrive/
+  third_party/
     metadrive/
+    scenarionet/
+    stable-baselines3/
 ```
 
 At the moment:
 
-- `pyproject.toml` resolves MetaDrive from `../third-party/metadrive`
-- `pyproject.toml` resolves SB3 from `../third-party/stable-baselines3`
-- `compose.yaml` mounts both sibling checkouts:
-  - `../third-party/metadrive`
-  - `../third-party/stable-baselines3`
-
-The intended SB3 fork location is:
-
-- `/home/e.respino/main/thesis/third-party/stable-baselines3`
+- `pyproject.toml` resolves MetaDrive from `third_party/metadrive`
+- `pyproject.toml` resolves SB3 from `third_party/stable-baselines3`
+- `compose.yaml` mounts the whole repository and keeps host-specific storage in
+  `.env`
 
 ## Target architecture
 
@@ -105,10 +101,7 @@ The migration target is a 3-layer layout.
 
 Location:
 
-- preferred if keeping sibling external checkout:
-  - `../third-party/stable-baselines3`
-- alternative if vendoring inside repo:
-  - `third_party/stable-baselines3`
+- `third_party/stable-baselines3`
 
 Responsibilities:
 
@@ -545,13 +538,13 @@ These choices should be confirmed before Phase 1 starts.
 
 Option 1:
 
-- keep SB3 as a sibling checkout in `../third-party/stable-baselines3`
+- keep SB3 as an in-repo submodule in `third_party/stable-baselines3`
 
 Pros:
 
-- consistent with current MetaDrive sibling layout
-- avoids placing a large third-party repo inside this repo tree
-- easy to inspect side by side with MetaDrive
+- clone-friendly layout
+- Docker build works from repository contents only
+- dependency paths stay stable across machines
 
 Cons:
 

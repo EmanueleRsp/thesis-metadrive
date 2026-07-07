@@ -70,6 +70,8 @@ Notes:
   - Esegui `analyze` solo dopo che tutte le run sono completate.
   - Per evitare OOM GPU, e' spesso meglio lanciare un algoritmo per volta con
     `--algorithms td3` / `sac` / `ppo`.
+  - Nel container gli output sono letti da `OUTPUTS_ROOT`
+    (default: `/workspace/outputs`).
 EOF
 }
 
@@ -265,8 +267,7 @@ seed_start="$3"
 seed_end="$4"
 poll_seconds="$5"
 
-SCRATCH_ROOT="$(dirname "$HOME")"
-OUT_ROOT="$SCRATCH_ROOT/thesis-metadrive/outputs"
+OUT_ROOT="${OUTPUTS_ROOT:-/workspace/outputs}"
 expected_count=$((seed_end - seed_start + 1))
 stale_polls=0
 
@@ -462,9 +463,9 @@ groups=("$@")
 
 cd "$container_workdir"
 
-SCRATCH_ROOT="$(dirname "$HOME")"
-OUT_ROOT="$SCRATCH_ROOT/thesis-metadrive/outputs"
-CMP_ROOT="$SCRATCH_ROOT/outputs_qual_alg_compare_${tag}"
+OUT_ROOT="${OUTPUTS_ROOT:-/workspace/outputs}"
+CMP_BASE_ROOT="${COMPARISON_ROOT:-$OUT_ROOT/_comparisons}"
+CMP_ROOT="$CMP_BASE_ROOT/qual_alg_compare_${tag}"
 ANALYSIS_ROOT="$CMP_ROOT/analysis"
 
 rm -rf "$CMP_ROOT"

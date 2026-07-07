@@ -469,7 +469,7 @@ wheels = [
 [[package]]
 name = "metadrive-simulator"
 version = "0.4.3"
-source = { directory = "../third-party/metadrive" }
+source = { editable = "third_party/metadrive" }
 dependencies = [
     { name = "filelock" },
     { name = "gymnasium" },
@@ -656,27 +656,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0d/be/c4d1ded04c22b357277cf6e6a44c1ab4abb285a700bd1991460460e05b99/panda3d_simplepbr-0.13.1.tar.gz", hash = "sha256:c83766d7c8f47499f365a07fe1dff078fc8b3054c2689bdc8dceabddfe7f1a35", size = 6216055, upload-time = "2025-03-30T16:57:41.087Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/11/5d/3744c6550dddf933785a37cdd4a9921fe13284e6d115b5a2637fe390f158/panda3d_simplepbr-0.13.1-py3-none-any.whl", hash = "sha256:cda41cb57cff035b851646956cfbdcc408bee42511dabd4f2d7bd4fbf48c57a9", size = 2457097, upload-time = "2025-03-30T16:57:39.729Z" },
-]
-
-[[package]]
-name = "pandas"
-version = "2.3.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "python-dateutil" },
-    { name = "pytz" },
-    { name = "tzdata" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/33/01/d40b85317f86cf08d853a4f495195c73815fdf205eef3993821720274518/pandas-2.3.3.tar.gz", hash = "sha256:e05e1af93b977f7eafa636d043f9f94c7ee3ac81af99c13508215942e64c993b", size = 4495223, upload-time = "2025-09-29T23:34:51.853Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/f7/f425a00df4fcc22b292c6895c6831c0c8ae1d9fac1e024d16f98a9ce8749/pandas-2.3.3-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:376c6446ae31770764215a6c937f72d917f214b43560603cd60da6408f183b6c", size = 11555763, upload-time = "2025-09-29T23:16:53.287Z" },
-    { url = "https://files.pythonhosted.org/packages/13/4f/66d99628ff8ce7857aca52fed8f0066ce209f96be2fede6cef9f84e8d04f/pandas-2.3.3-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:e19d192383eab2f4ceb30b412b22ea30690c9e618f78870357ae1d682912015a", size = 10801217, upload-time = "2025-09-29T23:17:04.522Z" },
-    { url = "https://files.pythonhosted.org/packages/1d/03/3fc4a529a7710f890a239cc496fc6d50ad4a0995657dccc1d64695adb9f4/pandas-2.3.3-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5caf26f64126b6c7aec964f74266f435afef1c1b13da3b0636c7518a1fa3e2b1", size = 12148791, upload-time = "2025-09-29T23:17:18.444Z" },
-    { url = "https://files.pythonhosted.org/packages/40/a8/4dac1f8f8235e5d25b9955d02ff6f29396191d4e665d71122c3722ca83c5/pandas-2.3.3-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:dd7478f1463441ae4ca7308a70e90b33470fa593429f9d4c578dd00d1fa78838", size = 12769373, upload-time = "2025-09-29T23:17:35.846Z" },
-    { url = "https://files.pythonhosted.org/packages/df/91/82cc5169b6b25440a7fc0ef3a694582418d875c8e3ebf796a6d6470aa578/pandas-2.3.3-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:4793891684806ae50d1288c9bae9330293ab4e083ccd1c5e383c34549c6e4250", size = 13200444, upload-time = "2025-09-29T23:17:49.341Z" },
-    { url = "https://files.pythonhosted.org/packages/10/ae/89b3283800ab58f7af2952704078555fa60c807fff764395bb57ea0b0dbd/pandas-2.3.3-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:28083c648d9a99a5dd035ec125d42439c6c1c525098c58af0fc38dd1a7a1b3d4", size = 13858459, upload-time = "2025-09-29T23:18:03.722Z" },
-    { url = "https://files.pythonhosted.org/packages/85/72/530900610650f54a35a19476eca5104f38555afccda1aa11a92ee14cb21d/pandas-2.3.3-cp310-cp310-win_amd64.whl", hash = "sha256:503cf027cf9940d2ceaa1a93cfb5f8c8c7e6e90720a2850378f0b3f3b1e06826", size = 11346086, upload-time = "2025-09-29T23:18:18.505Z" },
 ]
 
 [[package]]
@@ -891,15 +870,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pytz"
-version = "2026.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ff/46/dd499ec9038423421951e4fad73051febaa13d2df82b4064f87af8b8c0c3/pytz-2026.2.tar.gz", hash = "sha256:0e60b47b29f21574376f218fe21abc009894a2321ea16c6754f3cad6eb7cdd6a", size = 320861, upload-time = "2026-05-04T01:35:29.667Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/dd/96da98f892250475bdf2328112d7468abdd4acc7b902b6af23f4ed958ea0/pytz-2026.2-py2.py3-none-any.whl", hash = "sha256:04156e608bee23d3792fd45c94ae47fae1036688e75032eea2e3bf0323d1f126", size = 510141, upload-time = "2026-05-04T01:35:27.408Z" },
-]
-
-[[package]]
 name = "pyyaml"
 version = "6.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1008,55 +978,45 @@ wheels = [
 
 [[package]]
 name = "stable-baselines3"
-version = "2.2.1"
-source = { directory = "../third-party/stable-baselines3" }
+version = "2.9.0"
+source = { editable = "third_party/stable-baselines3" }
 dependencies = [
     { name = "cloudpickle" },
     { name = "gymnasium" },
-    { name = "matplotlib" },
     { name = "numpy" },
-    { name = "pandas" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "autorom", extras = ["accept-rom-license"], marker = "extra == 'extra'", specifier = "~=0.6.1" },
-    { name = "black", marker = "extra == 'tests'", specifier = ">=23.9.1,<24" },
+    { name = "ale-py", marker = "extra == 'extra'", specifier = ">=0.9.0" },
+    { name = "black", marker = "extra == 'tests'", specifier = ">=26.1.0,<27" },
     { name = "cloudpickle" },
-    { name = "gymnasium", specifier = ">=0.28.1,<0.30" },
-    { name = "matplotlib" },
-    { name = "mypy", marker = "extra == 'tests'" },
-    { name = "numpy", specifier = ">=1.20" },
+    { name = "gymnasium", specifier = ">=0.29.1,<2.0" },
+    { name = "matplotlib", marker = "extra == 'extra'" },
+    { name = "mypy", marker = "extra == 'tests'", specifier = ">=1.9.0,<2" },
+    { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=4,<6" },
+    { name = "numpy", specifier = ">=1.20,<3.0" },
     { name = "opencv-python", marker = "extra == 'extra'" },
-    { name = "opencv-python", marker = "extra == 'extra-no-roms'" },
-    { name = "pandas" },
+    { name = "pandas", marker = "extra == 'extra'" },
     { name = "pillow", marker = "extra == 'extra'" },
-    { name = "pillow", marker = "extra == 'extra-no-roms'" },
     { name = "psutil", marker = "extra == 'extra'" },
-    { name = "psutil", marker = "extra == 'extra-no-roms'" },
-    { name = "pygame", marker = "extra == 'extra'" },
-    { name = "pygame", marker = "extra == 'extra-no-roms'" },
+    { name = "pygame-ce", marker = "extra == 'extra'" },
     { name = "pytest", marker = "extra == 'tests'" },
     { name = "pytest-cov", marker = "extra == 'tests'" },
     { name = "pytest-env", marker = "extra == 'tests'" },
     { name = "pytest-xdist", marker = "extra == 'tests'" },
     { name = "rich", marker = "extra == 'extra'" },
-    { name = "rich", marker = "extra == 'extra-no-roms'" },
-    { name = "ruff", marker = "extra == 'tests'", specifier = ">=0.0.288" },
-    { name = "shimmy", extras = ["atari"], marker = "extra == 'extra'", specifier = "~=1.3.0" },
-    { name = "shimmy", extras = ["atari"], marker = "extra == 'extra-no-roms'", specifier = "~=1.3.0" },
-    { name = "sphinx", marker = "extra == 'docs'", specifier = ">=5,<8" },
+    { name = "ruff", marker = "extra == 'tests'", specifier = ">=0.5.6" },
+    { name = "sphinx", marker = "extra == 'docs'", specifier = ">=5,<10" },
     { name = "sphinx-autobuild", marker = "extra == 'docs'" },
     { name = "sphinx-copybutton", marker = "extra == 'docs'" },
-    { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=1.3.0" },
+    { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=3.0.0" },
     { name = "sphinxcontrib-spelling", marker = "extra == 'docs'" },
     { name = "tensorboard", marker = "extra == 'extra'", specifier = ">=2.9.1" },
-    { name = "tensorboard", marker = "extra == 'extra-no-roms'", specifier = ">=2.9.1" },
-    { name = "torch", specifier = ">=1.13" },
+    { name = "torch", specifier = ">=2.8,<3.0" },
     { name = "tqdm", marker = "extra == 'extra'" },
-    { name = "tqdm", marker = "extra == 'extra-no-roms'" },
 ]
-provides-extras = ["tests", "docs", "extra", "extra-no-roms"]
+provides-extras = ["tests", "docs", "extra"]
 
 [[package]]
 name = "tensorboard"
@@ -1116,7 +1076,7 @@ dev = [
 requires-dist = [
     { name = "gymnasium" },
     { name = "hydra-core", specifier = ">=1.3" },
-    { name = "metadrive-simulator", directory = "../third-party/metadrive" },
+    { name = "metadrive-simulator", editable = "third_party/metadrive" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24,<2" },
     { name = "omegaconf", specifier = ">=2.3" },
@@ -1125,7 +1085,7 @@ requires-dist = [
     { name = "rich" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "setuptools", specifier = "<81" },
-    { name = "stable-baselines3", directory = "../third-party/stable-baselines3" },
+    { name = "stable-baselines3", editable = "third_party/stable-baselines3" },
     { name = "tensorboard" },
 ]
 provides-extras = ["dev"]
@@ -1164,15 +1124,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/94/1a15dd82efb362ac84269196e94cf00f187f7ed21c242792a923cdb1c61f/typing_extensions-4.15.0.tar.gz", hash = "sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466", size = 109391, upload-time = "2025-08-25T13:49:26.313Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/18/67/36e9267722cc04a6b9f15c7f3441c2363321a3ea07da7ae0c0707beb2a9c/typing_extensions-4.15.0-py3-none-any.whl", hash = "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548", size = 44614, upload-time = "2025-08-25T13:49:24.86Z" },
-]
-
-[[package]]
-name = "tzdata"
-version = "2026.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ba/19/1b9b0e29f30c6d35cb345486df41110984ea67ae69dddbc0e8a100999493/tzdata-2026.2.tar.gz", hash = "sha256:9173fde7d80d9018e02a662e168e5a2d04f87c41ea174b139fbef642eda62d10", size = 198254, upload-time = "2026-04-24T15:22:08.651Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/e4/dccd7f47c4b64213ac01ef921a1337ee6e30e8c6466046018326977efd95/tzdata-2026.2-py2.py3-none-any.whl", hash = "sha256:bbe9af844f658da81a5f95019480da3a89415801f6cc966806612cc7169bffe7", size = 349321, upload-time = "2026-04-24T15:22:05.876Z" },
 ]
 
 [[package]]

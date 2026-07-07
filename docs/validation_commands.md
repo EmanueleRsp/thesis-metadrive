@@ -8,7 +8,7 @@ Note:
 - In `conf/config.yaml` the default is `run_profile=fast`.
 - Use `run_profile=...` only when you intentionally want a different run budget.
 - `run_profile=tune` is the preferred profile for local hyperparameter tuning loops.
-- The examples below assume `OUTPUTS_ROOT=/scratch/$USER/thesis-metadrive/outputs`.
+- The examples below assume `OUTPUTS_ROOT=/workspace/outputs`.
 - For scalar planner baselines, the current preferred presets are the
   fork-backed ones under `presets/agent/*_sb3`.
 - For the current baseline SB3-fork closure, the active gate is:
@@ -20,7 +20,7 @@ Note:
 Optional helper for path-heavy commands:
 
 ```bash
-export OUTPUTS_ROOT=/scratch/$USER/thesis-metadrive/outputs
+export OUTPUTS_ROOT=/workspace/outputs
 ```
 
 ## 0) Setup
@@ -35,11 +35,9 @@ uv run --no-sync python -m pytest -q
 ```
 
 If you are inside the Docker Compose container, this works because the service
-mounts `../third-party/metadrive` at `/workspace/third-party/metadrive` for
-the local `metadrive` source and `../third-party/stable-baselines3` at
-`/workspace/third-party/stable-baselines3` for the local SB3 fork, while
-`torch` is inherited from the NVIDIA base image instead of being installed by
-`uv`.
+mounts the whole repository at `/workspace/thesis-metadrive`, including the
+submodules under `third_party/`, while `torch` is inherited from the NVIDIA
+base image instead of being installed by `uv`.
 
 Expected:
 - Tests pass.

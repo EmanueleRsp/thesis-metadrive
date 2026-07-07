@@ -7,7 +7,7 @@ requires-python = ">=3.10,<3.11"
 dependencies = [
   "metadrive-simulator",
   "gymnasium",
-  "stable-baselines3==2.2.1",
+  "stable-baselines3",
   "hydra-core>=1.3",
   "omegaconf>=2.3",
   "numpy>=1.24,<2",
@@ -29,8 +29,9 @@ package = true
 exclude-dependencies = ["torch"]
 
 [tool.uv.sources]
-metadrive-simulator = { path = "../third-party/metadrive" }
-stable-baselines3 = { path = "../third-party/stable-baselines3" }
+metadrive-simulator = { path = "third_party/metadrive", editable = true }
+stable-baselines3 = { path = "third_party/stable-baselines3", editable = true }
+scenarionet = { path = "third_party/scenarionet", editable = true }
 
 [tool.uv.extra-build-dependencies]
 pandas = ["setuptools<81"]

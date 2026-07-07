@@ -155,7 +155,7 @@ column -s, -t < "$CMP_ROOT/analysis/medium/comparisons/algorithm/native__monitor
 Host:
 
 ```bash
-cd /home/e.respino/main/thesis/thesis-metadrive
+cd /path/to/thesis-metadrive
 ```
 
 Wrapper consigliato:
@@ -292,7 +292,7 @@ Metriche da leggere con priorita`:
 Template:
 
 ```bash
-cd /home/e.respino/main/thesis/thesis-metadrive
+cd /path/to/thesis-metadrive
 
 scripts/tmux_seed_grid.sh \
   --session "final_<ALG>_sb3_lidar_thesis_v2" \

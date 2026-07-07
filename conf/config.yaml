@@ -50,8 +50,11 @@ analysis:
 
 # Output layout for a single run.
 paths:
-  user_name: ${oc.env:USER,e.respino}
-  outputs_root: /scratch/${paths.user_name}/thesis-metadrive/outputs
+  user_name: ${oc.env:USER_NAME,${oc.env:USER,}}
+  outputs_root: ${oc.env:OUTPUTS_ROOT,/workspace/outputs}
+  data_root: ${oc.env:DATA_ROOT,/workspace/data}
+  scenarionet_data_root: ${oc.env:SCENARIONET_DATA_ROOT,${paths.data_root}/scenarionet}
+  metadrive_data_root: ${oc.env:METADRIVE_DATA_ROOT,${paths.data_root}/metadrive}
   analysis_root: ${paths.outputs_root}/analysis
   run_dir: ${paths.outputs_root}/${analysis.experiment_group}/${agent.planner.algorithm.name}/seed_${seed}/${now:%Y%m%d_%H%M%S}
   logs_dir: ${paths.run_dir}/logs

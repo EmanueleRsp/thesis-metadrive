@@ -3,30 +3,36 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      additional_contexts:
-        metadrive_src: ../third-party/metadrive
-        sb3_src: ../third-party/stable-baselines3
       args:
-        USER_NAME: "${USER_NAME:?set USER_NAME in .env}"
-        HOST_UID: "${HOST_UID:?set HOST_UID in .env}"
-        HOST_GID: "${HOST_GID:?set HOST_GID in .env}"
+        USER_NAME: "${USER_NAME:-appuser}"
+        HOST_UID: "${HOST_UID:-1000}"
+        HOST_GID: "${HOST_GID:-1000}"
     image: thesis-metadrive:dev
     container_name: thesis-metadrive-dev
     working_dir: /workspace/thesis-metadrive
     stdin_open: true
     tty: true
+    # Intentional defaults for Linux hosts with NVIDIA GPU support.
     ipc: host
     network_mode: host
     ulimits:
       memlock: -1
       stack: 67108864
     gpus: all
-    user: "${HOST_UID:?set HOST_UID in .env}:${HOST_GID:?set HOST_GID in .env}"
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
-      HOME: /scratch/${USER_NAME:?set USER_NAME=$USER}/container-home
+      USER: "${USER_NAME:-appuser}"
+      LOGNAME: "${USER_NAME:-appuser}"
+      HOME: "${CONTAINER_HOME_DIR:-/workspace/.container-home}"
       UV_PROJECT_ENVIRONMENT: /opt/venv
+      OUTPUTS_ROOT: "${OUTPUTS_ROOT:-/workspace/outputs}"
+      DATA_ROOT: "${DATA_ROOT:-/workspace/data}"
+      SCENARIONET_DATA_ROOT: "${SCENARIONET_DATA_ROOT:-/workspace/data/scenarionet}"
+      METADRIVE_DATA_ROOT: "${METADRIVE_DATA_ROOT:-/workspace/data/metadrive}"
+      WANDB_MODE: "${WANDB_MODE:-offline}"
+      HYDRA_FULL_ERROR: "${HYDRA_FULL_ERROR:-1}"
     volumes:
       - .:/workspace/thesis-metadrive
-      - ../third-party/metadrive:/workspace/third-party/metadrive
-      - ../third-party/stable-baselines3:/workspace/third-party/stable-baselines3
-      - /scratch/${USER_NAME:?set USER_NAME=$USER}:/scratch/${USER_NAME:?set USER_NAME=$USER}
+      - ${HOST_OUTPUTS_DIR:-./outputs}:${CONTAINER_OUTPUTS_DIR:-/workspace/outputs}
+      - ${HOST_DATA_DIR:-./data}:${CONTAINER_DATA_DIR:-/workspace/data}
+      - ${HOST_CONTAINER_HOME_DIR:-./.container-home}:${CONTAINER_HOME_DIR:-/workspace/.container-home}

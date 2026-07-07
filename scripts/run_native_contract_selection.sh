@@ -57,6 +57,10 @@ Options:
   --window NAME           tmux window name. Default: runs
   --poll-seconds N        Poll interval in seconds. Default: 60
   -h, --help              Show this help
+
+Notes:
+  - Nel container gli output sono letti da `OUTPUTS_ROOT`
+    (default: `/workspace/outputs`).
 EOF
 }
 
@@ -248,8 +252,7 @@ seed_start="$2"
 seed_end="$3"
 poll_seconds="$4"
 
-SCRATCH_ROOT="$(dirname "$HOME")"
-OUT_ROOT="$SCRATCH_ROOT/thesis-metadrive/outputs"
+OUT_ROOT="${OUTPUTS_ROOT:-/workspace/outputs}"
 expected_count=$((seed_end - seed_start + 1))
 stale_polls=0
 
@@ -445,9 +448,9 @@ groups=("$@")
 
 cd "$container_workdir"
 
-SCRATCH_ROOT="$(dirname "$HOME")"
-OUT_ROOT="$SCRATCH_ROOT/thesis-metadrive/outputs"
-CMP_ROOT="$SCRATCH_ROOT/outputs_native_contract_compare_${tag}"
+OUT_ROOT="${OUTPUTS_ROOT:-/workspace/outputs}"
+CMP_BASE_ROOT="${COMPARISON_ROOT:-$OUT_ROOT/_comparisons}"
+CMP_ROOT="$CMP_BASE_ROOT/native_contract_compare_${tag}"
 ANALYSIS_ROOT="$CMP_ROOT/analysis"
 
 rm -rf "$CMP_ROOT"
