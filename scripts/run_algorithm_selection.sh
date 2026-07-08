@@ -28,8 +28,8 @@ Usage:
   scripts/run_algorithm_selection.sh analyze [options]
 
 Purpose:
-  Wrapper per la Fase 2 di selezione algoritmo. Lancia i tre gruppi di run
-  in tmux e, in un secondo momento, aggrega e analizza i risultati.
+  Phase-2 algorithm-selection wrapper. Launches run groups in tmux and later
+  aggregates and analyzes the results.
 
 Examples:
   scripts/run_algorithm_selection.sh run --tag v3
@@ -62,15 +62,15 @@ Options:
   -h, --help               Show this help
 
 Notes:
-  - `launch` crea le sessioni tmux ma non aspetta che finiscano.
-  - `run` esegue i gruppi in sequenza e lancia l'analisi finale da solo.
-  - `run-parallel` lancia tutti i gruppi richiesti insieme, aspetta che finiscano
-    tutti, poi esegue l'analisi finale.
-  - `cleanup` chiude le sessioni tmux associate agli algoritmi richiesti.
-  - Esegui `analyze` solo dopo che tutte le run sono completate.
-  - Per evitare OOM GPU, e' spesso meglio lanciare un algoritmo per volta con
+  - `launch` creates tmux sessions but does not wait for completion.
+  - `run` executes groups sequentially and launches the final analysis itself.
+  - `run-parallel` launches all requested groups together, waits for all of
+    them to finish, then runs the final analysis.
+  - `cleanup` closes tmux sessions associated with the requested algorithms.
+  - Run `analyze` only after all runs are complete.
+  - To avoid GPU OOM, it is often safer to launch one algorithm at a time with
     `--algorithms td3` / `sac` / `ppo`.
-  - Nel container gli output sono letti da `OUTPUTS_ROOT`
+  - Inside the container, outputs are read from `OUTPUTS_ROOT`
     (default: `/workspace/outputs`).
 EOF
 }

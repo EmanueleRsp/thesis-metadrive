@@ -1,65 +1,59 @@
-# Docs Index
+# Documentation
 
-Questa cartella contiene documentazione operativa, note architetturali e
-materiale storico.
+Start with the repository [README.md](../README.md) for the canonical clone,
+setup, build, and run workflow.
 
-## Convenzioni correnti
+This file is only a lightweight map of the `docs/` folder.
 
-Le convenzioni portabili del repository sono:
+## Setup And Validation
 
-- dipendenze esterne sotto `third_party/`
-- clone con submodule inizializzati
-- configurazione host-specifica via `.env`
-- path stabili nel container:
-  - `/workspace/thesis-metadrive`
-  - `/workspace/outputs`
-  - `/workspace/data`
-  - `/workspace/data/scenarionet`
-  - `/workspace/data/metadrive`
+- [setup/environment_setup.md](setup/environment_setup.md): `.env` usage,
+  host/container path conventions, and the new-machine bring-up checklist
+- [setup/validation_commands.md](setup/validation_commands.md): smoke checks
+  and validation commands
+- [setup/comparison_run_commands.md](setup/comparison_run_commands.md):
+  current Docker run commands for comparison workflows
 
-`/scratch/...` resta un'opzione valida per la VM remota, ma non e' piu' un
-requisito di default.
+## Operational Workflows
 
-## Operativi correnti
+- [workflows/algorithm_selection_playbook.md](workflows/algorithm_selection_playbook.md):
+  algorithm selection and qualification flow
+- [workflows/analysis_pipeline.md](workflows/analysis_pipeline.md): analysis
+  outputs and pipeline conventions
+- [workflows/thesis_experiment_roadmap.md](workflows/thesis_experiment_roadmap.md):
+  current experiment roadmap
 
-- `docs/comparison_run_commands.md`
-  - comandi correnti per smoke run e run di confronto nel setup Docker
-- `docs/algorithm_selection_playbook.md`
-  - sequenza operativa per selezione algoritmo e qualification run
-- `docs/validation_commands.md`
-  - checklist e comandi di validazione leggeri
-- `docs/analysis_pipeline.md`
-  - pipeline analitica e convenzioni sugli output
-- `docs/thesis_experiment_roadmap.md`
-  - roadmap sperimentale corrente
+## Architecture And Design
 
-## Riferimento corrente
+- [architecture/architecture.md](architecture/architecture.md)
+- [architecture/sb3_fork_migration_plan.md](architecture/sb3_fork_migration_plan.md)
+- [architecture/initial_design_decisions.md](architecture/initial_design_decisions.md)
+- [architecture/metadrive_assumptions.md](architecture/metadrive_assumptions.md)
 
-- `docs/algorithm_comparison_protocol.md`
-- `docs/csv_evaluation_objectives.md`
-- `docs/live_eval_video_protocol.md`
-- `docs/curriculum_learning_specification.md`
-- `docs/scenario_acl_implementation_plan.md`
+## Reference Material
 
-## Design / architettura
+- [specs/algorithm_comparison_protocol.md](specs/algorithm_comparison_protocol.md)
+- [specs/csv_evaluation_objectives.md](specs/csv_evaluation_objectives.md)
+- [specs/rulebook_v1_specification.md](specs/rulebook_v1_specification.md)
+- [specs/live_eval_video_protocol.md](specs/live_eval_video_protocol.md)
+- [specs/curriculum_learning_specification.md](specs/curriculum_learning_specification.md)
+- [specs/scenario_acl_implementation_plan.md](specs/scenario_acl_implementation_plan.md)
 
-- `docs/architecture.md`
-- `docs/sb3_fork_migration_plan.md`
-- `docs/initial_design_decisions.md`
-- `docs/metadrive_assumptions.md`
+## Archive
 
-## Storici / da rivedere
+- [archive/README.md](archive/README.md)
+- [archive/plans/hydra_config_strategy.md](archive/plans/hydra_config_strategy.md)
+- [archive/plans/implementation_plan.md](archive/plans/implementation_plan.md)
+- [archive/plans/open_questions.md](archive/plans/open_questions.md)
+- [archive/plans/ppo_sb3_porting_plan.md](archive/plans/ppo_sb3_porting_plan.md)
+- [archive/plans/sac_sb3_porting_plan.md](archive/plans/sac_sb3_porting_plan.md)
+- [archive/plans/td3_sb3_porting_plan.md](archive/plans/td3_sb3_porting_plan.md)
 
-- `docs/hydra_config_strategy.md`
-- `docs/implementation_plan.md`
-- `docs/open_questions.md`
+Archived documents are kept for context and historical decisions. They are not
+the preferred entry point for current implementation work.
 
-## Regola pratica
+## Source Of Truth
 
-Se un documento e' in conflitto con:
-
-- `README.md`
-- il comportamento reale del codice
-- il layout `third_party/` + `.env` + `/workspace/{outputs,data}`
-
-trattalo come da aggiornare, non come fonte di verita' finale.
+If a document conflicts with the root `README.md`, the current code, or the
+portable `third_party/` plus `.env` plus `/workspace/{outputs,data}` layout,
+the document should be updated.

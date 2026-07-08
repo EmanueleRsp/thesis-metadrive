@@ -1,27 +1,28 @@
 # Analysis Pipeline
 
-Pipeline unica per aggregare run multi-seed, generare tabelle/plot e costruire
-confronti A/B/C. Ogni analisi e' scoped per `run_profile`.
+This is the unified pipeline for aggregating multi-seed runs, generating
+tables/plots, and building A/B/C comparisons. Every analysis is scoped by
+`run_profile`.
 
-Convenzione usata in questo documento:
+Conventions used in this document:
 
-- `outputs-root` = `/workspace/outputs` di default
+- `outputs-root` = `/workspace/outputs` by default
 - `analysis-root` = `<outputs-root>/analysis`
-- `/scratch/...` e' solo un possibile host mount sulla VM remota
+- `/scratch/...` is only an optional host mount on the remote VM
 
-## Flag piu' utili
+## Useful Flags
 
 - `--analysis-root` default `<outputs-root>/analysis`
 - `--outputs-root` default `<outputs-root>`
-- `--run-profile` obbligatorio (`smoke|fast|medium|long|...`)
+- `--run-profile` required (`smoke|fast|medium|long|...`)
 - `--comparison-dimension` `none|curriculum|reward|algorithm|task_contract`
-- `--comparison-id` per rigenerare una sola comparison view
+- `--comparison-id` regenerate one comparison view only
 - `--algorithm`
 - `--reward-type`
 - `--reward-behavior`
 - `--rulebook-config`
 
-## Comandi principali
+## Main Commands
 
 ```bash
 python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --no-videos
@@ -30,7 +31,7 @@ python -m thesis_rl.analysis.run_analysis --run-profile medium --only tables
 python -m thesis_rl.analysis.run_analysis --run-profile medium --only plots
 ```
 
-## Confronti A/B/C
+## A/B/C Comparisons
 
 ```bash
 python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --no-videos \
@@ -54,7 +55,7 @@ python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --no-v
   --rulebook-config selection
 ```
 
-## Output principali
+## Main Outputs
 
 ### `<outputs-root>/analysis/<run_profile>/aggregated/`
 
@@ -86,5 +87,5 @@ python -m thesis_rl.analysis.run_analysis --run-profile medium --only all --no-v
 - `aggregated/*.csv`
 - `tables/*`
 - `plots/*`
-- `qualitative/video_manifest.csv` se richiesto
-- `qualitative/gifs/*.gif` se richiesto
+- `qualitative/video_manifest.csv` when requested
+- `qualitative/gifs/*.gif` when requested

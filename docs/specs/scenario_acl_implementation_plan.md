@@ -3,7 +3,7 @@
 ## Objective
 
 Implement the curriculum described in
-`docs/curriculum_learning_specification.md` as a new curriculum kind,
+`curriculum_learning_specification.md` as a new curriculum kind,
 without blocking on the unfinished rulebook redesign.
 
 ## Current status
@@ -33,7 +33,7 @@ Important:
 - replay currently works, but it carries explicit compatibility debt with the
   installed MetaDrive `ScenarioEnv` API and with some replay-time rulebook
   inputs; these gaps are documented below and in
-  `docs/curriculum_learning_specification.md`
+  `curriculum_learning_specification.md`
 - because the rulebook/scalarization redesign is still open, the recommended
   next major implementation step is not mutation, but returning to rulebook
   work first

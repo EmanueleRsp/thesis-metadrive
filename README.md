@@ -12,6 +12,11 @@ Modular codebase for MetaDrive-based reinforcement learning experiments, with:
 ```text
 conf/
 docs/
+  architecture/
+  archive/
+  setup/
+  specs/
+  workflows/
 scripts/
 src/
 tests/
@@ -78,6 +83,8 @@ Important variables:
 - `HOST_OUTPUTS_DIR`
 - `HOST_DATA_DIR`
 - `HOST_CONTAINER_HOME_DIR`
+- `HOST_UID`
+- `HOST_GID`
 - `OUTPUTS_ROOT`
 - `DATA_ROOT`
 - `SCENARIONET_DATA_ROOT`
@@ -97,6 +104,17 @@ HOST_OUTPUTS_DIR=/scratch/your_user/thesis-metadrive/outputs
 HOST_DATA_DIR=/scratch/your_user/thesis-metadrive/data
 HOST_CONTAINER_HOME_DIR=/scratch/your_user/container-home
 ```
+
+Rule of thumb:
+
+- customize host-side variables in `.env`
+- keep container-side `/workspace/...` paths stable
+- never commit `.env`, only `.env.example`
+
+For the full per-machine setup procedure, see
+[docs/setup/environment_setup.md](docs/setup/environment_setup.md).
+For a short clone-to-usable-machine checklist, see the
+`New Machine Bring-Up Checklist` section in that document.
 
 ## Docker Workflow
 
@@ -161,10 +179,14 @@ instead of assuming `/scratch/...`.
 
 ## Documentation
 
-Useful entry points:
+This `README.md` is the canonical entry point for cloning, configuring, and
+running the repository. `docs/README.md` is only a lightweight map of the
+documentation folder.
+
+Useful follow-up documents:
 
 - [docs/README.md](docs/README.md)
-- [docs/comparison_run_commands.md](docs/comparison_run_commands.md)
-- [docs/algorithm_selection_playbook.md](docs/algorithm_selection_playbook.md)
-- [docs/validation_commands.md](docs/validation_commands.md)
-- [docs/sb3_fork_migration_plan.md](docs/sb3_fork_migration_plan.md)
+- [docs/setup/comparison_run_commands.md](docs/setup/comparison_run_commands.md)
+- [docs/workflows/algorithm_selection_playbook.md](docs/workflows/algorithm_selection_playbook.md)
+- [docs/setup/validation_commands.md](docs/setup/validation_commands.md)
+- [docs/architecture/sb3_fork_migration_plan.md](docs/architecture/sb3_fork_migration_plan.md)

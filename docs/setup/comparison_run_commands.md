@@ -1,23 +1,23 @@
 # Comparison Run Commands
 
-Questo documento raccoglie i comandi correnti per lanciare run di confronto
-nel setup Docker attuale.
+This document collects the current commands used to launch comparison runs in
+the Docker-based setup.
 
 ## Scope
 
-Questi comandi assumono:
+These commands assume:
 
-- container Compose attivo con nome `thesis-metadrive-dev`
-- progetto montato in `/workspace/thesis-metadrive`
-- output scritti sotto `OUTPUTS_ROOT` nel container
-- `OUTPUTS_ROOT=/workspace/outputs` come default
-- esecuzione dei comandi dal terminale host, nella root del repo
+- a running Compose container named `thesis-metadrive-dev`
+- the project mounted at `/workspace/thesis-metadrive`
+- outputs written under `OUTPUTS_ROOT` inside the container
+- `OUTPUTS_ROOT=/workspace/outputs` by default
+- commands launched from the host terminal at the repository root
 
 ```bash
 cd /path/to/thesis-metadrive
 ```
 
-## Check rapido iniziale
+## Initial Smoke Check
 
 ```bash
 docker compose exec dev bash -lc 'cd /workspace/thesis-metadrive && pwd && uv run --no-sync python -c "import thesis_rl; print(\"ok\")"'
@@ -38,7 +38,7 @@ scripts/tmux_seed_grid.sh \
     env.vectorized.num_envs=5
 ```
 
-## Confronto osservazioni
+## Observation Comparison
 
 ```bash
 for obs in lidar_state semantic_state; do
@@ -59,7 +59,7 @@ for obs in lidar_state semantic_state; do
 done
 ```
 
-## Confronto encoder
+## Encoder Comparison
 
 ```bash
 for enc in lq mlp none; do
@@ -81,30 +81,30 @@ for enc in lq mlp none; do
 done
 ```
 
-## Confronto algoritmi
+## Algorithm Comparison
 
-Wrapper consigliato:
+Recommended wrapper:
 
 ```bash
 scripts/run_algorithm_selection.sh run-parallel --tag v3
 ```
 
-Variante piu' conservativa:
+More conservative variant:
 
 ```bash
 scripts/run_algorithm_selection.sh run --tag v3
 ```
 
-Pulizia rapida:
+Cleanup:
 
 ```bash
 scripts/run_algorithm_selection.sh cleanup --tag v3
 ```
 
-## Monitoraggio GPU
+## GPU Monitoring
 
 ```bash
 nvidia-smi
 ```
 
-Se la GPU non regge, riduci il parallelismo prima di aumentare `num_envs`.
+If the GPU becomes unstable, reduce parallelism before increasing `num_envs`.

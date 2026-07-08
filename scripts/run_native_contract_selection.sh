@@ -28,9 +28,9 @@ Usage:
   scripts/run_native_contract_selection.sh analyze [options]
 
 Purpose:
-  Wrapper per la Fase 1 di chiusura del native-baseline contract.
-  Confronta i due task contract `strict` e `relaxed` usando SAC con
-  `run_profile=fast`, poi lancia l'analisi finale.
+  Phase-1 native-baseline contract wrapper. Compares the `strict` and
+  `relaxed` task contracts using SAC with `run_profile=fast`, then launches
+  the final analysis.
 
 Examples:
   scripts/run_native_contract_selection.sh run-parallel --tag v1
@@ -59,7 +59,7 @@ Options:
   -h, --help              Show this help
 
 Notes:
-  - Nel container gli output sono letti da `OUTPUTS_ROOT`
+  - Inside the container, outputs are read from `OUTPUTS_ROOT`
     (default: `/workspace/outputs`).
 EOF
 }
