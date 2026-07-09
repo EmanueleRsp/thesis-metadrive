@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - /config
+  - override /run_profile: smoke
+  - override /agent/planner/algorithm: td3
+  - override /reward: monitor_only
+  - override /curriculum: disabled
+  - _self_

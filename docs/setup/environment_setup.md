@@ -125,12 +125,76 @@ If you get `1000` and `1000`, you can keep the defaults.
 `USER_NAME` can remain `appuser`. UID/GID matter much more than the symbolic
 username for file permissions.
 
+## Machine Requirements
+
+This repository is Docker-first and currently assumes a Linux/NVIDIA-oriented
+host. Some requirements are explicit in the repo, while memory sizing is an
+engineering estimate based on the default configs.
+
+### Minimum Recommended Machine
+
+- Linux or WSL2
+- Docker Engine installed and reachable
+- Docker Compose v2 available as `docker compose`
+- Git with submodule support
+- NVIDIA GPU with working `nvidia-smi`
+- NVIDIA Container Toolkit / Docker GPU runtime
+- `16 GB` RAM
+- `4 GB` VRAM
+- `20-30 GB` free disk
+
+### Comfortable Recommended Machine
+
+- Linux natively
+- Recent Docker Engine and Compose v2
+- NVIDIA GPU with a driver compatible with CUDA `12.3.2`
+- `32 GB` RAM
+- `8 GB+` VRAM
+- `50+ GB` free disk
+- Modern multi-core CPU
+
+### Driver Note
+
+The repository uses `nvcr.io/nvidia/pytorch:24.01-py3` as its base image.
+According to the official NVIDIA PyTorch 24.01 release notes, that container
+generally requires NVIDIA driver `545+`, with documented compatibility on some
+data center GPUs for `470.57+`, `525.85+`, `535.86+`, and `545.23+`.
+
+Reference:
+- [NVIDIA PyTorch Release 24.01](https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel-24-01.html)
+
+### RAM Note
+
+The default configs are not especially light on memory. In particular, the
+standard TD3/SAC paths use `obs=semantic_state` together with a replay buffer
+of `300000` transitions, which is roughly `5.3 GiB` of RAM just for replay
+buffer observation storage before accounting for the simulator, PyTorch, Python,
+logs, and the OS. That is why `16 GB` is a realistic floor and `32 GB` is much
+safer for day-to-day use.
+
 ## Standard Procedure On A New Machine
 
 ```bash
 git clone --recurse-submodules <repo-url>
 cd thesis-metadrive
 cp .env.example .env
+```
+
+Shortcut:
+
+```bash
+./setup.sh
+```
+
+The helper bootstraps `.env`, creates the configured host directories,
+initializes submodules, checks UID/GID, Docker/Compose, and basic
+Linux/NVIDIA compatibility, then runs `docker compose build`, a container
+import smoke check, and `pytest` by default.
+
+If you want only the bootstrap and preflight checks:
+
+```bash
+./setup.sh --skip-build --skip-smoke-check --skip-pytest
 ```
 
 Then check `.env`.

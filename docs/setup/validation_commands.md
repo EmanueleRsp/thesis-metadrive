@@ -77,8 +77,7 @@ What this step validates:
 - TD3 update path is active with minimal targeted overrides for a short smoke run.
 
 ```bash
-uv run --no-sync python -m thesis_rl.cli.train --config-name presets/td3/td3_monitor_only_no_curr \
-  run_profile=smoke
+uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train
 ```
 
 Expected:

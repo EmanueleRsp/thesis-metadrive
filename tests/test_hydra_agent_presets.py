@@ -216,3 +216,12 @@ def test_selection_sac_sb3_native_contract_strict_fast_env4_preset_composes() ->
     assert bool(cfg.env.config.out_of_road_done) is True
     assert bool(cfg.env.config.on_continuous_line_done) is True
     assert int(cfg.env.vectorized.num_envs) == 4
+
+
+def test_smoke_train_preset_composes() -> None:
+    cfg = _compose_preset("presets/test/smoke_train")
+    assert str(cfg.run_profile.name) == "smoke"
+    assert str(cfg.experiment.name) == "smoke"
+    assert str(cfg.reward.name) == "monitor_only"
+    assert str(cfg.curriculum.name) == "disabled"
+    assert str(cfg.agent.planner.algorithm.name) == "td3"
