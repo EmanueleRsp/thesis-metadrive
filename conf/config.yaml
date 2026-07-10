@@ -50,7 +50,7 @@ analysis:
 
 # Output layout for a single run.
 paths:
-  user_name: ${oc.env:USER_NAME,${oc.env:USER,}}
+  user_name: ${oc.env:USER_NAME,appuser}
   outputs_root: ${oc.env:OUTPUTS_ROOT,/workspace/outputs}
   data_root: ${oc.env:DATA_ROOT,/workspace/data}
   scenarionet_data_root: ${oc.env:SCENARIONET_DATA_ROOT,${paths.data_root}/scenarionet}

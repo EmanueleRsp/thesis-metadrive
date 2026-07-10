@@ -5,7 +5,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 
-docker_container="thesis-metadrive-dev"
+docker_container=""
 container_workdir="/workspace/thesis-metadrive"
 seed_start=0
 seed_end=2
@@ -44,7 +44,7 @@ Options:
                           Default: v1
   --seed-start N          Inclusive start seed. Default: 0
   --seed-end N            Inclusive end seed. Default: 2
-  --docker-container NAME Docker container name. Default: thesis-metadrive-dev
+  --docker-container NAME Docker container name. Default: current Compose dev service
   --container-workdir DIR Project path inside container.
                           Default: /workspace/thesis-metadrive
   --run-profile NAME      Analysis run-profile label. Default: fast
@@ -77,6 +77,12 @@ require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     die "missing required command '$1'"
   fi
+}
+
+resolve_docker_container() {
+  [[ -n "$docker_container" ]] && return
+  docker_container="$(cd "$repo_root" && docker compose ps -q dev)"
+  [[ -n "$docker_container" ]] || die "Compose service 'dev' is not running; run 'make up-gpu' first"
 }
 
 sanitize_tag() {
@@ -512,6 +518,7 @@ main() {
   esac
 
   parse_args "$@"
+  resolve_docker_container
   validate_common
   collect_variants
 

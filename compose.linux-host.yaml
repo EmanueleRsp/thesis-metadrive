@@ -1,0 +1,4 @@
+services:
+  dev:
+    # Opt in only when an experiment genuinely benefits from host networking.
+    network_mode: host

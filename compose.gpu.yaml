@@ -1,0 +1,6 @@
+services:
+  dev:
+    # Optional Linux/NVIDIA acceleration. The base compose file can also run
+    # smoke checks and tests on a CPU-only Docker host.
+    gpus: all
+    ipc: host

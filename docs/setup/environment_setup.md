@@ -35,11 +35,21 @@ On a new machine, you usually only need to check:
 USER_NAME=appuser
 HOST_UID=1000
 HOST_GID=1000
+TORCH_BACKEND=cu128
 
 HOST_OUTPUTS_DIR=./outputs
 HOST_DATA_DIR=./data
 HOST_CONTAINER_HOME_DIR=./.container-home
 ```
+
+Select `TORCH_BACKEND` before the first build:
+
+- `cpu` for CI and machines without NVIDIA;
+- `cu126` for legacy NVIDIA hosts;
+- `cu128` for modern NVIDIA GPUs and Blackwell/RTX 50xx.
+
+Changing it requires `docker compose build` because the backend is baked into
+the image.
 
 ### `HOST_OUTPUTS_DIR`
 
@@ -141,27 +151,29 @@ engineering estimate based on the default configs.
 - NVIDIA Container Toolkit / Docker GPU runtime
 - `16 GB` RAM
 - `4 GB` VRAM
-- `20-30 GB` free disk
+- `12-20 GB` free disk
 
 ### Comfortable Recommended Machine
 
 - Linux natively
 - Recent Docker Engine and Compose v2
-- NVIDIA GPU with a driver compatible with CUDA `12.3.2`
+- NVIDIA GPU with a driver compatible with the selected Torch backend
 - `32 GB` RAM
 - `8 GB+` VRAM
-- `50+ GB` free disk
+- `30+ GB` free disk
 - Modern multi-core CPU
 
-### Driver Note
+### Runtime Image And Driver Note
 
-The repository uses `nvcr.io/nvidia/pytorch:24.01-py3` as its base image.
-According to the official NVIDIA PyTorch 24.01 release notes, that container
-generally requires NVIDIA driver `545+`, with documented compatibility on some
-data center GPUs for `470.57+`, `525.85+`, `535.86+`, and `545.23+`.
+The repository uses the digest-pinned official
+`python:3.10.20-slim-bookworm` image and installs `torch==2.8.0` using the
+backend selected in `.env`. GPU runs require a compatible host NVIDIA driver
+plus the NVIDIA Container Toolkit. `cu128` supports Blackwell/RTX 50xx;
+CPU-only setup uses `TORCH_BACKEND=cpu` and does not require an NVIDIA GPU.
 
-Reference:
-- [NVIDIA PyTorch Release 24.01](https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel-24-01.html)
+References:
+- [Official Python Docker image](https://hub.docker.com/_/python)
+- [PyTorch installation guide](https://pytorch.org/get-started/locally/)
 
 ### RAM Note
 
@@ -186,15 +198,19 @@ Shortcut:
 ./setup.sh
 ```
 
-The helper bootstraps `.env`, creates the configured host directories,
-initializes submodules, checks UID/GID, Docker/Compose, and basic
-Linux/NVIDIA compatibility, then runs `docker compose build`, a container
-import smoke check, and `pytest` by default.
+The helper bootstraps `.env`, fills Linux UID/GID automatically, creates the
+configured host directories, initializes submodules, and performs preflight
+checks. Full verification is explicit:
+
+```bash
+./setup.sh --verify         # CPU-capable build, imports and tests
+./setup.sh --verify --gpu   # also require and test NVIDIA/CUDA access
+```
 
 If you want only the bootstrap and preflight checks:
 
 ```bash
-./setup.sh --skip-build --skip-smoke-check --skip-pytest
+./setup.sh
 ```
 
 Then check `.env`.
@@ -228,6 +244,9 @@ Then:
 docker compose config
 docker compose build
 docker compose run --rm dev bash
+
+# NVIDIA run
+docker compose -f compose.yaml -f compose.gpu.yaml up -d
 ```
 
 ## New Machine Bring-Up Checklist
@@ -314,17 +333,7 @@ What this catches:
 
 ```bash
 docker compose run --rm dev bash -lc "
-  uv sync --extra dev &&
-  python -c 'import thesis_rl, metadrive, stable_baselines3; print(\"imports ok\")'
-"
-```
-
-If you also want to confirm that ScenarioNet is installable in the image:
-
-```bash
-docker compose run --rm dev bash -lc "
-  uv sync --extra dev &&
-  python -c 'import scenarionet; print(\"scenarionet ok\")'
+  uv run --no-sync python -c 'import thesis_rl, metadrive, stable_baselines3; print(\"imports ok\")'
 "
 ```
 
@@ -345,7 +354,7 @@ nvidia-smi
 Inside the container:
 
 ```bash
-docker compose run --rm dev bash -lc "
+docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev bash -lc "
   python - <<'PY'
 import torch
 print(torch.cuda.is_available())
@@ -360,7 +369,6 @@ If you want one fast repo-local check before heavier validation:
 
 ```bash
 docker compose run --rm dev bash -lc "
-  uv sync --extra dev &&
   uv run --no-sync python -m pytest -q tests/test_common_paths.py
 "
 ```

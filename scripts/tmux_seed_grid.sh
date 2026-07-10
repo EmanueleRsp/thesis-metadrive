@@ -24,7 +24,7 @@ Examples:
 
   scripts/tmux_seed_grid.sh \
     --session alg_lq \
-    --docker-container thesis-metadrive-dev \
+    --docker-compose-service dev \
     --docker-workdir /workspace/thesis-metadrive \
     --attach -- \
     uv run --no-sync python -m thesis_rl.cli.train \
@@ -40,6 +40,8 @@ Options:
   --seed-list LIST     Comma-separated explicit seeds (overrides --seed-count)
   --workdir DIR        Working directory for each pane. Default: current dir
   --docker-container   Run each pane command inside this Docker container
+  --docker-compose-service NAME
+                       Resolve the running container from this Compose service
   --docker-workdir     `cd` here inside the container before running the command
                        Default with `--docker-container`:
                        `/workspace/thesis-metadrive`.
@@ -91,6 +93,7 @@ workdir="$(pwd)"
 attach=0
 dry_run=0
 docker_container=""
+docker_compose_service=""
 docker_workdir=""
 docker_shell="bash"
 
@@ -128,6 +131,10 @@ while [[ $# -gt 0 ]]; do
       docker_container="${2:-}"
       shift 2
       ;;
+    --docker-compose-service)
+      docker_compose_service="${2:-}"
+      shift 2
+      ;;
     --docker-workdir)
       docker_workdir="${2:-}"
       shift 2
@@ -159,6 +166,18 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "$docker_container" && -n "$docker_compose_service" ]]; then
+  echo "Error: use only one of --docker-container and --docker-compose-service." >&2
+  exit 1
+fi
+if [[ -n "$docker_compose_service" ]]; then
+  docker_container="$(docker compose ps -q "$docker_compose_service")"
+  if [[ -z "$docker_container" ]]; then
+    echo "Error: Compose service '$docker_compose_service' is not running." >&2
+    exit 1
+  fi
+fi
 
 if [[ $# -eq 0 ]]; then
   echo "Error: missing command after '--'." >&2

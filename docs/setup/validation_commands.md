@@ -30,14 +30,13 @@ What this step validates:
 - Core code contracts still pass after recent refactors.
 
 ```bash
-uv sync --extra dev
 uv run --no-sync python -m pytest -q
 ```
 
 If you are inside the Docker Compose container, this works because the service
 mounts the whole repository at `/workspace/thesis-metadrive`, including the
-submodules under `third_party/`, while `torch` is inherited from the NVIDIA
-base image instead of being installed by `uv`.
+submodules under `third_party/`, while `torch` is installed from the dedicated
+CUDA wheel index after the platform-neutral `uv` synchronization.
 
 Expected:
 - Tests pass.

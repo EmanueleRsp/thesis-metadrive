@@ -1,0 +1,27 @@
+name: Portability checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Validate shell scripts
+        run: |
+          bash -n setup.sh scripts/*.sh
+          shellcheck setup.sh scripts/*.sh
+      - name: Validate Compose profiles
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          docker compose -f compose.yaml -f compose.gpu.yaml config --quiet
+          docker compose -f compose.yaml -f compose.gpu.yaml -f compose.linux-host.yaml config --quiet
+      - name: Validate bootstrap without Docker daemon operations
+        run: ./setup.sh --check-only --skip-docker-checks

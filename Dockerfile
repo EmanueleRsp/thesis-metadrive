@@ -1,12 +1,16 @@
 # syntax=docker/dockerfile:1.4
-FROM nvcr.io/nvidia/pytorch:24.01-py3
+FROM python:3.10.20-slim-bookworm@sha256:ff7161e2b8e2a56fc6a62a6099ff8feb72f1a6dbae9860cdcb9a6c65cf4c6be9
 
 ARG USER_NAME=appuser
 ARG HOST_UID=1000
 ARG HOST_GID=1000
+ARG UV_VERSION=0.11.28
+ARG TORCH_VERSION=2.8.0
+ARG TORCH_BACKEND=cu128
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
+    UV_NO_CACHE=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     USER=${USER_NAME} \
     HOME=/workspace/.container-home \
@@ -37,13 +41,9 @@ RUN set -eux; \
         useradd -m -u "${HOST_UID}" -g "${HOST_GID}" -s /bin/bash "${USER_NAME}"; \
     fi
 
-# Install uv and create the project environment first.
-# The NVIDIA base image already ships with a working GPU-enabled PyTorch stack
-# under the system Python site-packages, so `/opt/venv` must inherit those
-# packages. The project excludes `torch` from uv-managed dependencies and
-# relies on that base-image installation at runtime.
-RUN pip install --no-cache-dir uv
-RUN uv venv /opt/venv --python /usr/bin/python3 --system-site-packages
+# Install uv and create an isolated project environment.
+RUN pip install --no-cache-dir "uv==${UV_VERSION}"
+RUN uv venv /opt/venv --python /usr/local/bin/python
 COPY pyproject.toml uv.lock ./
 COPY third_party ./third_party
 RUN uv sync --frozen --no-install-project
@@ -51,9 +51,16 @@ RUN uv sync --frozen --no-install-project
 # Copy project sources after deps are installed.
 COPY . .
 RUN mkdir -p /workspace/.container-home /workspace/outputs /workspace/data/scenarionet /workspace/data/metadrive
-RUN uv sync --frozen
-RUN set -eux; \
-    metadrive_dir="$(python -c "import importlib.util; from pathlib import Path; spec = importlib.util.find_spec('metadrive'); assert spec is not None and spec.origin is not None, 'metadrive package not found after uv sync'; print(Path(spec.origin).resolve().parent)")"; \
-    chown -R "${HOST_UID}:${HOST_GID}" /opt/venv "${metadrive_dir}" /workspace/.container-home /workspace/outputs /workspace/data
+RUN uv sync --frozen --extra dev
+# Torch is intentionally installed after uv sync because it comes from the
+# dedicated CUDA wheel index and is excluded from the portable project lock.
+RUN case "${TORCH_BACKEND}" in cpu|cu126|cu128) ;; *) echo "Unsupported TORCH_BACKEND=${TORCH_BACKEND}" >&2; exit 2;; esac \
+    && uv pip install --no-config --python /opt/venv \
+        --index-url "https://download.pytorch.org/whl/${TORCH_BACKEND}" \
+        "torch==${TORCH_VERSION}"
+RUN python -c "import torch; assert torch.__version__.split('+')[0] == '${TORCH_VERSION}', torch.__version__" \
+    && uv pip check --no-config --python /opt/venv
+RUN chown -R "${HOST_UID}:${HOST_GID}" \
+    /workspace/.container-home /workspace/outputs /workspace/data
 
 CMD ["bash"]

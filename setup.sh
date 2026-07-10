@@ -6,6 +6,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$repo_root"
 
 check_only=0
+verify=0
+gpu=0
 skip_docker_checks=0
 skip_compose_config=0
 skip_build=0
@@ -42,6 +44,7 @@ usage() {
   cat <<'EOF'
 Usage:
   ./setup.sh [options]
+  ./setup.sh --verify [--gpu]
 
 Bootstraps the local machine setup for this repository and runs a set of
 practical compatibility checks for the Docker-first workflow.
@@ -52,12 +55,12 @@ What it does:
   - initializes git submodules when needed
   - compares HOST_UID/HOST_GID with the current user
   - checks Docker, Docker Compose, daemon reachability, and compose expansion
-  - runs `docker compose build`
-  - runs a container import smoke check
-  - runs the repository pytest suite in the container
+  - with --verify, builds the image and runs smoke checks and pytest
   - warns about likely Linux/NVIDIA compatibility issues
 
 Options:
+  --verify               Build and run the complete validation suite
+  --gpu                  Use compose.gpu.yaml and verify CUDA access
   --check-only           Do not create or modify local files/directories
   --skip-docker-checks   Skip Docker/Compose/NVIDIA checks
   --skip-compose-config  Skip `docker compose config`
@@ -250,6 +253,30 @@ check_uid_gid() {
   fi
 }
 
+check_torch_backend() {
+  local env_file="$1"
+  torch_backend="$(read_env_var "$env_file" TORCH_BACKEND "cu128")"
+
+  case "$torch_backend" in
+    cpu|cu126|cu128)
+      ok "TORCH_BACKEND is supported: $torch_backend"
+      ;;
+    *)
+      fail "Unsupported TORCH_BACKEND=$torch_backend; use cpu, cu126, or cu128"
+      ;;
+  esac
+
+  if [[ $gpu -eq 1 && "$torch_backend" == "cpu" ]]; then
+    fail "--gpu requires TORCH_BACKEND=cu126 or cu128"
+  fi
+  if [[ $gpu -eq 0 && "$torch_backend" != "cpu" ]]; then
+    info "TORCH_BACKEND=$torch_backend is CUDA-capable; base Compose can still run it on CPU"
+  fi
+  if [[ -f "$env_file" ]] && grep -q '^TORCH_INDEX_URL=' "$env_file"; then
+    warn "TORCH_INDEX_URL is obsolete and ignored; replace it with TORCH_BACKEND=$torch_backend"
+  fi
+}
+
 check_host_platform() {
   local os_name
 
@@ -264,9 +291,30 @@ check_host_platform() {
   esac
 }
 
+check_host_resources() {
+  local arch available_kb free_kb
+  arch="$(uname -m 2>/dev/null || true)"
+  if [[ "$arch" == "x86_64" ]]; then
+    ok "Host architecture is x86_64"
+  else
+    warn "Host architecture is ${arch:-unknown}; the CUDA-enabled image is validated on x86_64"
+  fi
+
+  available_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+  if [[ -n "$available_kb" && "$available_kb" -lt 12582912 ]]; then
+    warn "Less than 12 GiB of RAM is currently available"
+  fi
+  free_kb="$(df -Pk "$repo_root" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  if [[ -n "$free_kb" && "$free_kb" -lt 12582912 ]]; then
+    warn "Less than 12 GiB of disk space is available for the repository filesystem"
+  fi
+}
+
 check_docker_stack() {
   local docker_info_ok=0
   local runtimes=""
+  local compute_cap=""
+  local compute_major=""
 
   if ! command -v docker >/dev/null 2>&1; then
     fail "docker is not installed or not on PATH"
@@ -301,18 +349,31 @@ check_docker_stack() {
     compose_config_ok=1
   fi
 
-  if command -v nvidia-smi >/dev/null 2>&1; then
-    ok "nvidia-smi is available on the host"
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+    ok "nvidia-smi can access an NVIDIA GPU on the host"
+    if [[ $gpu -eq 1 ]]; then
+      compute_cap="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n 1 || true)"
+      compute_major="${compute_cap%%.*}"
+      if [[ "$compute_major" =~ ^[0-9]+$ && "$compute_major" -ge 12 && "$torch_backend" != "cu128" ]]; then
+        fail "GPU compute capability $compute_cap requires TORCH_BACKEND=cu128"
+      elif [[ -n "$compute_cap" ]]; then
+        ok "Detected GPU compute capability: $compute_cap"
+      fi
+    fi
   else
-    warn "nvidia-smi is missing; GPU-backed Docker runs may be unavailable on this machine"
+    if [[ $gpu -eq 1 ]]; then
+      fail "nvidia-smi cannot access a GPU but --gpu was requested"
+    else
+      info "nvidia-smi cannot access a GPU; CPU-only validation remains available"
+    fi
   fi
 
-  if [[ $docker_info_ok -eq 1 ]]; then
+  if [[ $docker_info_ok -eq 1 && $gpu -eq 1 ]]; then
     runtimes="$(docker info --format '{{json .Runtimes}}' 2>/dev/null || true)"
     if [[ -n "$runtimes" && "$runtimes" == *nvidia* ]]; then
       ok "Docker advertises an NVIDIA runtime"
     else
-      warn "Docker does not advertise an NVIDIA runtime; check NVIDIA Container Toolkit if GPU access is expected"
+      fail "Docker does not advertise an NVIDIA runtime but --gpu was requested"
     fi
   fi
 }
@@ -352,10 +413,29 @@ run_import_smoke_check() {
   fi
 
   info "Running the container import smoke check"
-  if docker compose run --rm dev bash -lc "uv sync --extra dev && python -c 'import thesis_rl, metadrive, stable_baselines3; print(\"imports ok\")'"; then
+  if docker compose run --rm dev bash -lc "uv run --no-sync python -c 'import thesis_rl, metadrive, stable_baselines3, torch; assert tuple(map(int, torch.__version__.split(\"+\")[0].split(\".\")[:2])) >= (2, 8); print(\"imports ok; torch=\" + torch.__version__)' && uv pip check --no-config --python /opt/venv"; then
     ok "Container import smoke check succeeded"
   else
     fail "Container import smoke check failed"
+  fi
+}
+
+run_gpu_smoke_check() {
+  if [[ $gpu -ne 1 || $check_only -eq 1 || $skip_docker_checks -eq 1 ]]; then
+    return 0
+  fi
+  if [[ $skip_build -eq 0 && $build_ok -ne 1 ]]; then
+    warn "Skipping CUDA check because the Docker image build did not complete"
+    return 0
+  fi
+  if [[ $docker_available -ne 1 || $docker_daemon_available -ne 1 || $compose_config_ok -ne 1 ]]; then
+    return 0
+  fi
+  info "Verifying CUDA access inside the container"
+  if docker compose run --rm dev uv run --no-sync python -c 'import torch; assert torch.cuda.is_available(), "CUDA is unavailable"; x = torch.tensor([1.0], device="cuda"); assert (x * 2).item() == 2.0; print(f"torch={torch.__version__} gpu={torch.cuda.get_device_name(0)} capability={torch.cuda.get_device_capability(0)}")'; then
+    ok "Container CUDA smoke check succeeded"
+  else
+    fail "Container CUDA smoke check failed"
   fi
 }
 
@@ -375,7 +455,7 @@ run_pytest_suite() {
   fi
 
   info "Running pytest in the container"
-  if docker compose run --rm dev bash -lc "uv sync --extra dev && uv run --no-sync python -m pytest -q"; then
+  if docker compose run --rm dev uv run --no-sync python -m pytest -q; then
     ok "Container pytest run succeeded"
   else
     fail "Container pytest run failed"
@@ -384,6 +464,14 @@ run_pytest_suite() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --verify)
+      verify=1
+      shift
+      ;;
+    --gpu)
+      gpu=1
+      shift
+      ;;
     --check-only)
       check_only=1
       shift
@@ -420,6 +508,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ $verify -eq 0 ]]; then
+  skip_build=1
+  skip_smoke_check=1
+  skip_pytest=1
+fi
+if [[ $gpu -eq 1 ]]; then
+  export COMPOSE_FILE="compose.yaml:compose.gpu.yaml"
+fi
+
 info "Repository root: $repo_root"
 check_repo_layout
 prepare_submodules
@@ -436,6 +533,9 @@ else
     env_source=".env.example"
   else
     cp .env.example .env
+    if [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]]; then
+      sed -i "s/^USER_NAME=.*/USER_NAME=$(id -un)/; s/^HOST_UID=.*/HOST_UID=$(id -u)/; s/^HOST_GID=.*/HOST_GID=$(id -g)/" .env
+    fi
     ok "Created .env from .env.example"
     changes=$((changes + 1))
   fi
@@ -446,11 +546,13 @@ host_data_dir="$(read_env_var "$env_source" HOST_DATA_DIR "./data")"
 host_container_home_dir="$(read_env_var "$env_source" HOST_CONTAINER_HOME_DIR "./.container-home")"
 
 check_uid_gid "$env_source"
+check_torch_backend "$env_source"
 ensure_dir "HOST_OUTPUTS_DIR" "$host_outputs_dir"
 ensure_dir "HOST_DATA_DIR" "$host_data_dir"
 ensure_dir "HOST_CONTAINER_HOME_DIR" "$host_container_home_dir"
 
 check_host_platform
+check_host_resources
 if [[ $skip_docker_checks -eq 1 ]]; then
   info "Skipping Docker/Compose/NVIDIA checks"
 else
@@ -458,6 +560,7 @@ else
 fi
 run_docker_build
 run_import_smoke_check
+run_gpu_smoke_check
 run_pytest_suite
 
 printf '\n'
@@ -465,16 +568,21 @@ info "Summary: $failures blocking issue(s), $warnings warning(s), $changes local
 
 if [[ $failures -eq 0 ]]; then
   printf '\n'
-  cat <<'EOF'
-Setup completed.
-
-Recommended next steps:
-  1. Review .env if you need non-default host paths or UID/GID values.
-  2. Start the dev container: docker compose up -d
-  3. Enter it: docker compose exec dev bash
-  4. Optionally rerun tests interactively: uv run --no-sync python -m pytest -q
-  5. Verify end-to-end training manually: uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train
-EOF
+  printf 'Setup completed.\n\n'
+  printf 'Recommended next steps:\n'
+  printf '  1. Review .env, especially TORCH_BACKEND and host paths.\n'
+  if [[ "$torch_backend" == "cpu" ]]; then
+    printf '  2. Start the CPU container: make up\n'
+  else
+    printf '  2. Start the NVIDIA container: make up-gpu\n'
+  fi
+  printf '  3. Enter it: make shell\n'
+  printf '  4. Run tests: make test\n'
+  if [[ "$torch_backend" == "cpu" ]]; then
+    printf '  5. Verify end-to-end training: make smoke\n'
+  else
+    printf '  5. Check CUDA and smoke training: make gpu-check && make smoke-gpu\n'
+  fi
   exit 0
 fi
 

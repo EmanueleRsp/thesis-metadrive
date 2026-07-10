@@ -7,7 +7,7 @@ the Docker-based setup.
 
 These commands assume:
 
-- a running Compose container named `thesis-metadrive-dev`
+- a running Compose service named `dev`
 - the project mounted at `/workspace/thesis-metadrive`
 - outputs written under `OUTPUTS_ROOT` inside the container
 - `OUTPUTS_ROOT=/workspace/outputs` by default
@@ -29,7 +29,7 @@ docker compose exec dev bash -lc 'cd /workspace/thesis-metadrive && pwd && uv ru
 scripts/tmux_seed_grid.sh \
   --session smoke_alg_sac \
   --seed-list 0 \
-  --docker-container thesis-metadrive-dev -- \
+  --docker-compose-service dev -- \
   uv run --no-sync python -m thesis_rl.cli.train \
     --config-name presets/agent/sac_sb3 \
     run_profile=smoke \
@@ -44,7 +44,7 @@ scripts/tmux_seed_grid.sh \
 for obs in lidar_state semantic_state; do
   scripts/tmux_seed_grid.sh \
     --session "cmp_obs_${obs}" \
-    --docker-container thesis-metadrive-dev -- \
+    --docker-compose-service dev -- \
     uv run --no-sync python -m thesis_rl.cli.train \
       --config-name config \
       run_profile=thesis \
@@ -66,7 +66,7 @@ for enc in lq mlp none; do
   if [ "$enc" = "none" ]; then dec=sac_sb3; else dec=mlp_encoded; fi
   scripts/tmux_seed_grid.sh \
     --session "cmp_enc_${enc}" \
-    --docker-container thesis-metadrive-dev -- \
+    --docker-compose-service dev -- \
     uv run --no-sync python -m thesis_rl.cli.train \
       --config-name config \
       run_profile=thesis \

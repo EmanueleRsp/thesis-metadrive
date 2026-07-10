@@ -7,20 +7,18 @@ services:
         USER_NAME: "${USER_NAME:-appuser}"
         HOST_UID: "${HOST_UID:-1000}"
         HOST_GID: "${HOST_GID:-1000}"
-    image: thesis-metadrive:dev
-    container_name: thesis-metadrive-dev
+        UV_VERSION: "${UV_VERSION:-0.11.28}"
+        TORCH_VERSION: "${TORCH_VERSION:-2.8.0}"
+        TORCH_BACKEND: "${TORCH_BACKEND:-cu128}"
     working_dir: /workspace/thesis-metadrive
     stdin_open: true
     tty: true
-    # Intentional defaults for Linux hosts with NVIDIA GPU support.
-    ipc: host
-    network_mode: host
     ulimits:
       memlock: -1
       stack: 67108864
-    gpus: all
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
+      USER_NAME: "${USER_NAME:-appuser}"
       USER: "${USER_NAME:-appuser}"
       LOGNAME: "${USER_NAME:-appuser}"
       HOME: "${CONTAINER_HOME_DIR:-/workspace/.container-home}"

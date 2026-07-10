@@ -3,6 +3,8 @@
 .gitmodules
 .env
 .envrc
+.agents
+.codex
 .venv
 .pytest_cache
 .hydra

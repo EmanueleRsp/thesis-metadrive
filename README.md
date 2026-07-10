@@ -54,8 +54,9 @@ The project currently uses local editable dependencies for:
 future dataset integration. The current phase does not yet implement the full
 ScenarioNet training pipeline inside `thesis_rl`.
 
-For Docker builds, `torch` comes from the NVIDIA PyTorch base image and is
-excluded from `uv`-managed dependencies.
+For Docker builds, the repository starts from the official minimal Python
+3.10 image. PyTorch 2.8 is installed from the backend selected per machine by
+`TORCH_BACKEND` and excluded from the platform-neutral uv lock.
 
 ## Requirements
 
@@ -70,20 +71,29 @@ engineering estimate based on the default configs and submodules.
 - Docker Compose v2 must be available as `docker compose`.
 - Git submodules are required because `third_party/` is part of the repo layout.
 - If you work outside the container, Python must be `>=3.10,<3.11`.
-- The container image is `nvcr.io/nvidia/pytorch:24.01-py3`.
+- The base image is the digest-pinned official `python:3.10.20-slim-bookworm`.
 
 ### NVIDIA Requirements
 
-- The default container workflow expects an NVIDIA-capable Docker host.
-- `compose.yaml` uses `gpus: all`, `ipc: host`, and `network_mode: host`.
-- The NVIDIA PyTorch `24.01` base image uses CUDA `12.3.2`.
-- According to the official NVIDIA release notes, that container requires
-  NVIDIA driver `545+` in general.
-- For some data center GPUs, NVIDIA documents compatibility with
-  `470.57+`, `525.85+`, `535.86+`, or `545.23+`.
+- CPU-only checks use `compose.yaml`; GPU runs add `compose.gpu.yaml`.
+- Host networking is opt-in through `compose.linux-host.yaml`.
+- `.env` selects `TORCH_BACKEND=cpu`, `cu126`, or `cu128`.
+- `cu128` is the default for modern NVIDIA GPUs and is required for Blackwell
+  (`sm_120`, including RTX 50xx); `cu126` is the legacy NVIDIA option.
+- GPU execution requires a compatible NVIDIA driver and the NVIDIA Container
+  Toolkit. CPU-only checks can use `TORCH_BACKEND=cpu`.
 
-Reference:
-- [NVIDIA PyTorch Release 24.01](https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel-24-01.html)
+Choose before building:
+
+| Machine | `.env` value | Compose command |
+|---|---|---|
+| CPU / CI | `TORCH_BACKEND=cpu` | `docker compose ...` |
+| Legacy NVIDIA | `TORCH_BACKEND=cu126` | add `compose.gpu.yaml` |
+| Modern NVIDIA / RTX 50xx | `TORCH_BACKEND=cu128` | add `compose.gpu.yaml` |
+
+References:
+- [Official Python Docker image](https://hub.docker.com/_/python)
+- [PyTorch installation guide](https://pytorch.org/get-started/locally/)
 
 ### Minimum Recommended Machine
 
@@ -94,17 +104,17 @@ Reference:
 - NVIDIA Container Toolkit / Docker GPU runtime available
 - `16 GB` RAM
 - `4 GB` VRAM
-- `20-30 GB` free disk
+- `12-20 GB` free disk
 - Internet access for image pulls and dependency resolution during build
 
 ### Comfortable Recommended Machine
 
 - Linux natively
 - Recent Docker Engine and Compose v2
-- NVIDIA GPU with recent driver compatible with CUDA `12.3.2`
+- NVIDIA GPU with a driver compatible with the selected Torch backend
 - `32 GB` RAM
 - `8 GB+` VRAM
-- `50+ GB` free disk
+- `30+ GB` free disk
 - Modern multi-core CPU
 
 ### RAM Notes
@@ -154,12 +164,11 @@ Or use the repository bootstrap helper:
 ./setup.sh
 ```
 
-`setup.sh` creates `.env` if missing, ensures the host mount directories
-exist, initializes submodules, checks UID/GID, Docker/Compose, and basic
-Linux/NVIDIA compatibility, then runs `docker compose build`, a container
-import smoke check, and `pytest` by default. It exits non-zero when it finds a
-blocking issue. Use `./setup.sh --skip-build --skip-smoke-check --skip-pytest`
-if you only want the bootstrap and preflight checks.
+`setup.sh` creates `.env` if missing, fills UID/GID from the current Linux
+user, creates host mount directories, initializes submodules, and runs the
+portable preflight checks. Use `./setup.sh --verify` for build, imports and
+pytest, or `./setup.sh --verify --gpu` to additionally verify CUDA inside the
+container.
 
 Important variables:
 
@@ -205,9 +214,20 @@ This repository is optimized for Docker-based development and runs.
 
 ### 1. Build And Start
 
+CPU-only development/checks:
+
 ```bash
 docker compose up -d --build
 ```
+
+Linux/NVIDIA development and experiments:
+
+```bash
+docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
+```
+
+The equivalent shortcuts are `make up` and `make up-gpu`. Use `make gpu-check`
+to execute a real CUDA tensor operation, not just detect the device.
 
 ### 2. Enter The Container
 
@@ -215,13 +235,12 @@ docker compose up -d --build
 docker compose exec dev bash
 ```
 
-### 3. Install / Refresh The Environment
+### 3. Dependencies
 
-Inside the container:
-
-```bash
-uv sync --extra dev
-```
+The image already contains the frozen runtime and development dependencies.
+Do not run `uv sync` interactively: after changing `pyproject.toml` or
+`uv.lock`, rebuild with `docker compose build` (or `make build`). This keeps
+the container environment immutable and reproducible.
 
 ### 4. Run Commands
 
@@ -262,7 +281,7 @@ For one-pane-per-seed tmux launches:
 ```bash
 scripts/tmux_seed_grid.sh \
   --session smoke_alg_sac \
-  --docker-container thesis-metadrive-dev -- \
+    --docker-compose-service dev -- \
   uv run --no-sync python -m thesis_rl.cli.train \
     --config-name presets/agent/sac_sb3 \
     run_profile=smoke \
@@ -275,10 +294,9 @@ instead of assuming `/scratch/...`.
 
 ## Notes On Portability
 
-- `compose.yaml` keeps Linux/NVIDIA-oriented settings such as `gpus: all`,
-  `ipc: host`, and `network_mode: host` intentionally.
-- Those settings are good defaults for the target research environment, but
-  they are not meant to imply universal compatibility on every host OS.
+- `compose.yaml` is the portable CPU-capable base.
+- `compose.gpu.yaml` adds NVIDIA GPU access and host IPC.
+- `compose.linux-host.yaml` separately enables host networking when needed.
 - Host-side paths should always be changed through `.env`, not by hardcoding
   machine-specific paths in source files.
 

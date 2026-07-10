@@ -163,7 +163,7 @@ scripts/tmux_seed_grid.sh \
   --session "final_<ALG>_sb3_lidar_thesis_v2" \
   --seed-start 0 \
   --seed-end 9 \
-  --docker-container thesis-metadrive-dev -- \
+  --docker-compose-service dev -- \
   uv run --no-sync python -m thesis_rl.cli.train \
     --config-name presets/selection/<ALG>_sb3_qual_lidar_thesis \
     analysis.experiment_group=EXP_final_<ALG>_sb3_lidar_thesis_v2
