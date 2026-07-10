@@ -22,6 +22,8 @@ This file is only a lightweight map of the `docs/` folder.
   outputs and pipeline conventions
 - [workflows/thesis_experiment_roadmap.md](workflows/thesis_experiment_roadmap.md):
   current experiment roadmap
+- [workflows/scenario_acl_parallelization.md](workflows/scenario_acl_parallelization.md):
+  future per-worker Scenario ACL design
 
 ## Architecture And Design
 
