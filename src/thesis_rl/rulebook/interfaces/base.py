@@ -11,3 +11,6 @@ class RuleEvaluator(ABC):
     @abstractmethod
     def evaluate(self, rule_eval_input: RuleEvalInput) -> RuleVector:
         """Evaluate all configured rules and return ordered margins."""
+
+    def reset(self) -> None:
+        """Clear episode-local evaluator state when the caller starts an episode."""

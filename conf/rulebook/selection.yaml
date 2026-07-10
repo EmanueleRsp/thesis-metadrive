@@ -1,11 +1,23 @@
-name: baseline
+name: rulebook_v1
 mode: ex_post
+strict: true
 rules:
-  - name: vehicle_collision_energy
+  - name: collision_severity
     priority: 0
-  - name: drivable_area
+    params:
+      include_static_obstacles: true
+      use_reduced_mass: true
+  - name: allowed_driving_area
     priority: 1
-  - name: wrong_way
+    params:
+      distance_weight: 1.0
+  - name: lane_marking_compliance
     priority: 2
-  - name: goal_progress
+    params:
+      alpha_solid: 1.0
+      alpha_dashed: 0.25
+      dashed_persistence_steps: 5
+  - name: local_route_progress
     priority: 3
+    params:
+      checkpoint_weights: [0.40, 0.25, 0.15, 0.12, 0.08]

@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import pytest
 
-from thesis_rl.rulebook.evaluator import ScenicRulesEvaluator
+from thesis_rl.rulebook.evaluator import RulebookEvaluationError, ScenicRulesEvaluator
 from thesis_rl.rulebook.registry import load_rulebook_from_config
 from thesis_rl.rulebook.types import RuleEvalInput
+
+
+V1_RULES = {
+    "rules": [
+        {"name": "collision_severity", "priority": 0},
+        {"name": "allowed_driving_area", "priority": 1},
+        {"name": "lane_marking_compliance", "priority": 2},
+        {"name": "local_route_progress", "priority": 3},
+    ]
+}
 
 
 def test_rulebook_loader_orders_by_priority_then_yaml_order() -> None:
@@ -115,3 +125,106 @@ def test_goal_progress_accepts_polygon_vertices_input() -> None:
     assert result.names == ["goal_progress"]
     assert result.metadata["failed_rules"] == []
     assert float(result.values[0]) < 0.0
+
+
+def test_rulebook_v1_returns_structured_rule_schema() -> None:
+    evaluator = ScenicRulesEvaluator.from_config(V1_RULES)
+
+    result = evaluator.evaluate(
+        RuleEvalInput(
+            ego_state={"position": [0.0, 0.0], "velocity": [2.0, 0.0]},
+            neighbors=[],
+            route_progress=3.5,
+            prev_route_progress=3.0,
+        )
+    )
+
+    assert result.names == [
+        "collision_severity",
+        "allowed_driving_area",
+        "lane_marking_compliance",
+        "local_route_progress",
+    ]
+    payload = result.metadata["rules"]
+    assert set(payload["collision_severity"]) == {
+        "name", "margin", "violated", "severity", "available", "fallback_used", "raw"
+    }
+    assert payload["collision_severity"]["margin"] == 0.0
+    assert payload["local_route_progress"]["margin"] == pytest.approx(0.5)
+    assert payload["local_route_progress"]["available"] is True
+
+
+def test_rulebook_v1_collision_severity_distinguishes_speed_and_static_objects() -> None:
+    evaluator = ScenicRulesEvaluator.from_config(
+        {"rules": [{"name": "collision_severity", "priority": 0}]}
+    )
+    low_speed = evaluator.evaluate(
+        RuleEvalInput(
+            ego_state={"position": [0.0, 0.0], "velocity": [1.0, 0.0], "radius": 1.0},
+            neighbors=[{"position": [0.5, 0.0], "radius": 1.0, "type": "static_obstacle"}],
+        )
+    )
+    high_speed = evaluator.evaluate(
+        RuleEvalInput(
+            ego_state={"position": [0.0, 0.0], "velocity": [5.0, 0.0], "radius": 1.0},
+            neighbors=[{"position": [0.5, 0.0], "radius": 1.0, "type": "static_obstacle"}],
+        )
+    )
+
+    assert float(low_speed.values[0]) < 0.0
+    assert abs(float(high_speed.values[0])) > abs(float(low_speed.values[0]))
+    assert high_speed.metadata["rules"]["collision_severity"]["raw"]["collision_object_type"] == "static_obstacle"
+
+
+def test_rulebook_v1_progress_checkpoint_fallback_is_transition_based() -> None:
+    evaluator = ScenicRulesEvaluator.from_config(
+        {"rules": [{"name": "local_route_progress", "priority": 0}]}
+    )
+    result = evaluator.evaluate(
+        RuleEvalInput(
+            ego_state={"position": [1.0, 0.0]},
+            prev_ego_state={"position": [0.0, 0.0]},
+            neighbors=[],
+            route_checkpoints=[[10.0, 0.0], [20.0, 0.0]],
+        )
+    )
+
+    assert float(result.values[0]) > 0.0
+    assert result.metadata["rules"]["local_route_progress"]["fallback_used"] is True
+
+
+def test_strict_rulebook_rejects_unavailable_rule_inputs() -> None:
+    evaluator = ScenicRulesEvaluator.from_config(
+        {"strict": True, "rules": [{"name": "allowed_driving_area", "priority": 0}]}
+    )
+
+    with pytest.raises(RulebookEvaluationError, match="unavailable"):
+        evaluator.evaluate(RuleEvalInput(ego_state={"position": [0.0, 0.0]}, neighbors=[]))
+
+
+def test_strict_rulebook_rejects_fallback_paths() -> None:
+    evaluator = ScenicRulesEvaluator.from_config(
+        {"strict": True, "rules": [{"name": "local_route_progress", "priority": 0}]}
+    )
+
+    with pytest.raises(RulebookEvaluationError, match="fallback"):
+        evaluator.evaluate(
+            RuleEvalInput(
+                ego_state={"position": [1.0, 0.0]},
+                prev_ego_state={"position": [0.0, 0.0]},
+                neighbors=[],
+                route_checkpoints=[[10.0, 0.0]],
+            )
+        )
+
+
+def test_strict_rulebook_allows_route_progress_initialization_without_fallback() -> None:
+    evaluator = ScenicRulesEvaluator.from_config(
+        {"strict": True, "rules": [{"name": "local_route_progress", "priority": 0}]}
+    )
+
+    result = evaluator.evaluate(
+        RuleEvalInput(ego_state={"position": [0.0, 0.0]}, neighbors=[], route_progress=0.0)
+    )
+
+    assert result.metadata["rules"]["local_route_progress"]["raw"]["initialization"] is True

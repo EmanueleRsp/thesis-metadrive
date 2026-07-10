@@ -13,10 +13,18 @@ from thesis_rl.rulebook.rules import (
     check_vehicle_collision_energy,
     check_vru_collision_energy,
     check_wrong_way,
+    allowed_driving_area,
+    collision_severity,
+    lane_marking_compliance,
+    local_route_progress,
 )
 from thesis_rl.rulebook.types import RuleSpec
 
-RULE_REGISTRY: dict[str, Callable[..., tuple[bool, float]]] = {
+RULE_REGISTRY: dict[str, Callable[..., Any]] = {
+    "collision_severity": collision_severity,
+    "allowed_driving_area": allowed_driving_area,
+    "lane_marking_compliance": lane_marking_compliance,
+    "local_route_progress": local_route_progress,
     "vru_collision_energy": check_vru_collision_energy,
     "vehicle_collision_energy": check_vehicle_collision_energy,
     "drivable_area": check_drivable_area,

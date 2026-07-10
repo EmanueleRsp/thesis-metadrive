@@ -87,42 +87,6 @@ class ScenarioAclReplaySamplingConfig:
 
 
 @dataclass(frozen=True)
-class ScenarioAclMutationConfig:
-    buffer_min_size_for_mutation: int = 100
-    max_children_per_parent: int = 5
-    max_mutation_attempts: int = 5
-    mutation_probs: dict[str, float] = field(default_factory=dict)
-    min_time_shift: int = -10
-    max_time_shift: int = 10
-    min_long_shift: float = -3.0
-    max_long_shift: float = 3.0
-    min_dist_from_ego: float = 10.0
-    min_dist_between_objects: float = 3.0
-    max_lane_distance: float = 4.0
-    valid_check: bool = True
-    min_initial_collision_margin: float = 0.3
-    max_speed: float = 45.0
-    max_acc: float = 12.0
-    max_heading_jump: float = 1.05
-    min_sdc_valid_steps: int = 50
-    smoke_test_steps: int = 20
-    reactive_traffic: bool = True
-
-
-@dataclass(frozen=True)
-class ScenarioAclValidationConfig:
-    valid_check: bool = True
-    min_collision_margin: float = 0.3
-    max_lane_dist: float = 4.0
-    dt: float = 0.1
-    max_speed: float = 45.0
-    max_acc: float = 12.0
-    max_heading_jump: float = 1.05
-    min_sdc_valid_steps: int = 50
-    smoke_test_steps: int = 20
-
-
-@dataclass(frozen=True)
 class ScenarioAclScenarioEnvConfig:
     horizon: int = 1000
     truncate_as_terminate: bool = False
@@ -148,17 +112,13 @@ class ScenarioAclConfig:
     use_mab: bool = True
     use_scenario_buffer: bool = True
     use_replay: bool = False
-    use_mutation: bool = False
     use_staleness: bool = True
     use_rule_criticality: bool = True
-    mutation_per_exploit: int = 2
     recent_window_size: int = 100
     mab: ScenarioAclMabConfig = field(default_factory=ScenarioAclMabConfig)
     replay_sampling: ScenarioAclReplaySamplingConfig = field(
         default_factory=ScenarioAclReplaySamplingConfig
     )
-    mutation: ScenarioAclMutationConfig = field(default_factory=ScenarioAclMutationConfig)
-    validation: ScenarioAclValidationConfig = field(default_factory=ScenarioAclValidationConfig)
     scenario_env: ScenarioAclScenarioEnvConfig = field(
         default_factory=ScenarioAclScenarioEnvConfig
     )
@@ -310,7 +270,6 @@ def _parse_scenario_acl_config(
         "uniform_pg",
         "mab_generate_only",
         "mab_plus_replay",
-        "full_curriculum",
     }
     mode = str(payload.get("mode", "mab_generate_only")).strip().lower()
     if mode not in allowed_modes:
@@ -321,7 +280,6 @@ def _parse_scenario_acl_config(
 
     buffer_capacity = int(payload.get("buffer_capacity", 1000))
     warmup_buffer_size = int(payload.get("warmup_buffer_size", 100))
-    mutation_per_exploit = int(payload.get("mutation_per_exploit", 2))
     recent_window_size = int(payload.get("recent_window_size", 100))
     exploit_probability = float(payload.get("exploit_probability", 0.8))
     generate_probability = float(payload.get("generate_probability", 0.2))
@@ -334,8 +292,10 @@ def _parse_scenario_acl_config(
         raise ValueError(
             "scenario_acl.warmup_buffer_size must be <= scenario_acl.buffer_capacity."
         )
-    if mutation_per_exploit < 0:
-        raise ValueError("scenario_acl.mutation_per_exploit must be >= 0.")
+    if bool(payload.get("use_mutation", False)) or "mutation" in payload:
+        raise ValueError(
+            "Scenario ACL mutation is out of scope. Use generation and replay only."
+        )
     if recent_window_size <= 0:
         raise ValueError("scenario_acl.recent_window_size must be > 0.")
     if not 0.0 <= exploit_probability <= 1.0:
@@ -347,11 +307,11 @@ def _parse_scenario_acl_config(
             "scenario_acl.exploit_probability + scenario_acl.generate_probability "
             "must equal 1.0."
         )
+    if bool(payload.get("use_replay", False)) and not bool(payload.get("use_scenario_buffer", True)):
+        raise ValueError("scenario_acl.use_replay=true requires use_scenario_buffer=true.")
 
     mab_payload = _to_plain_mapping(payload.get("mab"))
     replay_payload = _to_plain_mapping(payload.get("replay_sampling"))
-    mutation_payload = _to_plain_mapping(payload.get("mutation"))
-    validation_payload = _to_plain_mapping(payload.get("validation"))
     scenario_env_payload = _to_plain_mapping(payload.get("scenario_env"))
 
     feedback = str(mab_payload.get("feedback", "rank_normalized_usefulness")).strip()
@@ -375,8 +335,6 @@ def _parse_scenario_acl_config(
             "scenario_acl.mab.weight_clip_max."
         )
 
-    mutation_probs = _to_plain_mapping(mutation_payload.get("mutation_probs"))
-
     return ScenarioAclConfig(
         mode=mode,
         buffer_capacity=buffer_capacity,
@@ -386,10 +344,8 @@ def _parse_scenario_acl_config(
         use_mab=bool(payload.get("use_mab", True)),
         use_scenario_buffer=bool(payload.get("use_scenario_buffer", True)),
         use_replay=bool(payload.get("use_replay", False)),
-        use_mutation=bool(payload.get("use_mutation", False)),
         use_staleness=bool(payload.get("use_staleness", True)),
         use_rule_criticality=bool(payload.get("use_rule_criticality", True)),
-        mutation_per_exploit=mutation_per_exploit,
         recent_window_size=recent_window_size,
         mab=ScenarioAclMabConfig(
             num_arms=num_arms,
@@ -407,44 +363,6 @@ def _parse_scenario_acl_config(
             beta=float(replay_payload.get("beta", 1.0)),
             staleness_offset=int(replay_payload.get("staleness_offset", 1)),
             rank_one_is_best=bool(replay_payload.get("rank_one_is_best", True)),
-        ),
-        mutation=ScenarioAclMutationConfig(
-            buffer_min_size_for_mutation=int(
-                mutation_payload.get("buffer_min_size_for_mutation", 100)
-            ),
-            max_children_per_parent=int(mutation_payload.get("max_children_per_parent", 5)),
-            max_mutation_attempts=int(mutation_payload.get("max_mutation_attempts", 5)),
-            mutation_probs={str(k): float(v) for k, v in mutation_probs.items()},
-            min_time_shift=int(mutation_payload.get("min_time_shift", -10)),
-            max_time_shift=int(mutation_payload.get("max_time_shift", 10)),
-            min_long_shift=float(mutation_payload.get("min_long_shift", -3.0)),
-            max_long_shift=float(mutation_payload.get("max_long_shift", 3.0)),
-            min_dist_from_ego=float(mutation_payload.get("min_dist_from_ego", 10.0)),
-            min_dist_between_objects=float(
-                mutation_payload.get("min_dist_between_objects", 3.0)
-            ),
-            max_lane_distance=float(mutation_payload.get("max_lane_distance", 4.0)),
-            valid_check=bool(mutation_payload.get("valid_check", True)),
-            min_initial_collision_margin=float(
-                mutation_payload.get("min_initial_collision_margin", 0.3)
-            ),
-            max_speed=float(mutation_payload.get("max_speed", 45.0)),
-            max_acc=float(mutation_payload.get("max_acc", 12.0)),
-            max_heading_jump=float(mutation_payload.get("max_heading_jump", 1.05)),
-            min_sdc_valid_steps=int(mutation_payload.get("min_sdc_valid_steps", 50)),
-            smoke_test_steps=int(mutation_payload.get("smoke_test_steps", 20)),
-            reactive_traffic=bool(mutation_payload.get("reactive_traffic", True)),
-        ),
-        validation=ScenarioAclValidationConfig(
-            valid_check=bool(validation_payload.get("valid_check", True)),
-            min_collision_margin=float(validation_payload.get("min_collision_margin", 0.3)),
-            max_lane_dist=float(validation_payload.get("max_lane_dist", 4.0)),
-            dt=float(validation_payload.get("dt", 0.1)),
-            max_speed=float(validation_payload.get("max_speed", 45.0)),
-            max_acc=float(validation_payload.get("max_acc", 12.0)),
-            max_heading_jump=float(validation_payload.get("max_heading_jump", 1.05)),
-            min_sdc_valid_steps=int(validation_payload.get("min_sdc_valid_steps", 50)),
-            smoke_test_steps=int(validation_payload.get("smoke_test_steps", 20)),
         ),
         scenario_env=ScenarioAclScenarioEnvConfig(
             horizon=int(scenario_env_payload.get("horizon", 1000)),

@@ -37,6 +37,7 @@ class HybridRulebookRewardManager(BaseRewardManager):
         self._prev_ego_state: dict[str, Any] | None = None
         self._prev_neighbors: list[dict[str, Any]] | None = None
         self._prev_neighbors_by_id: dict[str, dict[str, Any]] | None = None
+        self._prev_route_progress: float | None = None
         self._rule_eval_counts: dict[str, int] = {}
         self._rule_saturation_counts: dict[str, int] = {}
 
@@ -53,7 +54,10 @@ class HybridRulebookRewardManager(BaseRewardManager):
             raise ValueError("rulebook config must resolve to a mapping")
 
         # Create rule evaluator from config
-        evaluator = ScenicRulesEvaluator.from_config(rulebook_cfg)
+        evaluator = ScenicRulesEvaluator.from_config(
+            rulebook_cfg,
+            strict=bool(cfg_reward.get("rulebook_strict", rulebook_cfg.get("strict", False))),
+        )
         scales_cfg = dict(cfg_reward.get("scales", {}))
 
         return cls(
@@ -67,10 +71,14 @@ class HybridRulebookRewardManager(BaseRewardManager):
         )
 
     def reset(self) -> None:
+        reset_evaluator = getattr(self.evaluator, "reset", None)
+        if callable(reset_evaluator):
+            reset_evaluator()
         self._step = 0
         self._prev_ego_state = None
         self._prev_neighbors = None
         self._prev_neighbors_by_id = None
+        self._prev_route_progress = None
         self._rule_eval_counts = {}
         self._rule_saturation_counts = {}
 
@@ -158,6 +166,7 @@ class HybridRulebookRewardManager(BaseRewardManager):
             for entity_id in [item.get("entity_id")]
             if isinstance(entity_id, str) and entity_id
         }
+        self._prev_route_progress = self._extract_route_progress(info)
 
         return RewardComputationResult(
             final_reward=final_reward,
@@ -172,6 +181,11 @@ class HybridRulebookRewardManager(BaseRewardManager):
                 "step": self._step,
                 "step_saturated_rules": step_saturated_rules,
                 "saturation_ratio_by_rule": saturation_ratio_by_rule,
+                "rules": {
+                    result.name: result.to_dict()
+                    for result in rule_vector.results
+                },
+                "diagnostics": dict(rule_vector.metadata.get("diagnostics", {})),
             },
             rule_violation_vector=violation_vector,
         )
@@ -186,8 +200,15 @@ class HybridRulebookRewardManager(BaseRewardManager):
             ego_state=ego_state,
             neighbors=neighbors,
             drivable_area=info.get("drivable_area"),
+            allowed_driving_area=info.get("allowed_driving_area"),
             opposite_carriageway=info.get("opposite_carriageway"),
             lane_centerline=info.get("lane_centerline"),
+            solid_lane_markings=info.get("solid_lane_markings"),
+            dashed_lane_markings=info.get("dashed_lane_markings"),
+            lane_boundaries=info.get("lane_boundaries"),
+            route_progress=self._extract_route_progress(info),
+            prev_route_progress=self._prev_route_progress,
+            route_checkpoints=self._extract_route_checkpoints(info),
             target_region=info.get("target_region"),
             target_point=info.get("target_point"),
             speed_limit=self._extract_speed_limit(info),
@@ -282,4 +303,18 @@ class HybridRulebookRewardManager(BaseRewardManager):
         max_speed_alt = info.get("max_speed")
         if max_speed_alt is not None:
             return float(max_speed_alt)
+        return None
+
+    @staticmethod
+    def _extract_route_progress(info: dict[str, Any]) -> float | None:
+        value = info.get("route_progress")
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
+
+    @staticmethod
+    def _extract_route_checkpoints(info: dict[str, Any]) -> list[Any] | None:
+        value = info.get("route_checkpoints")
+        if isinstance(value, (list, tuple)):
+            return list(value)
         return None

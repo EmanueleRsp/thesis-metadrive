@@ -84,6 +84,13 @@ class RuleRewardWrapper(gym.Wrapper):
             info_dict["rule_bounded_vector"] = result.rule_bounded_vector
             info_dict["rule_components"] = result.rule_components
             info_dict["rule_metadata"] = result.rule_metadata
+            rulebook_rules = result.rule_metadata.get("rules", {})
+            diagnostics = result.rule_metadata.get("diagnostics", {})
+            if isinstance(rulebook_rules, Mapping):
+                info_dict["rulebook"] = {
+                    **dict(rulebook_rules),
+                    "diagnostics": dict(diagnostics) if isinstance(diagnostics, Mapping) else {},
+                }
             info_dict["scalar_rule_reward"] = result.scalar_rule_reward
             if result.rule_violation_vector is not None:
                 info_dict["rule_violation_vector"] = result.rule_violation_vector
@@ -119,6 +126,8 @@ class RuleRewardWrapper(gym.Wrapper):
             "scalar_rule_reward": float(result.scalar_rule_reward),
             "final_reward": float(result.final_reward),
             "rule_components": dict(result.rule_components),
+            "rulebook": dict(result.rule_metadata.get("rules", {})),
+            "diagnostics": dict(result.rule_metadata.get("diagnostics", {})),
         }
         with self._rule_margin_log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=True))
@@ -255,6 +264,35 @@ class RuleRewardWrapper(gym.Wrapper):
             rule_input_available["opposite_carriageway"] = True
         else:
             rule_input_available["opposite_carriageway"] = False
+
+        allowed_driving_area = self._extract_allowed_driving_area(
+            drivable_area,
+            opposite_carriageway,
+        )
+        if allowed_driving_area is not None:
+            info_dict.setdefault("allowed_driving_area", allowed_driving_area)
+            rule_input_sources["allowed_driving_area"] = "drivable_area - opposite_carriageway"
+            rule_input_available["allowed_driving_area"] = True
+        else:
+            rule_input_available["allowed_driving_area"] = False
+
+        lane_markings = self._extract_lane_markings(lane_centerline)
+        if lane_markings is not None:
+            solid_markings, dashed_markings = lane_markings
+            info_dict.setdefault("solid_lane_markings", solid_markings)
+            info_dict.setdefault("dashed_lane_markings", dashed_markings)
+            rule_input_sources["lane_markings"] = "current_lane.line_types + current_lane.get_polyline"
+            rule_input_available["lane_markings"] = True
+        else:
+            rule_input_available["lane_markings"] = False
+
+        route_progress = self._extract_route_progress(ego_vehicle)
+        if route_progress is not None:
+            info_dict.setdefault("route_progress", route_progress)
+            rule_input_sources["route_progress"] = "ego_vehicle.navigation.route_progress"
+            rule_input_available["route_progress"] = True
+        else:
+            rule_input_available["route_progress"] = False
 
         if not isinstance(info_dict.get("neighbors"), list):
             neighbors, neighbors_source = self._extract_neighbors(base_env, ego_vehicle)
@@ -425,6 +463,53 @@ class RuleRewardWrapper(gym.Wrapper):
             "Lane speed limit is unavailable; falling back to `vehicle.max_speed_km_h` for speed-limit rule.",
         )
         return self._safe_float(getattr(ego_vehicle, "max_speed_km_h", None))
+
+    @staticmethod
+    def _extract_allowed_driving_area(drivable_area: Any | None, opposite_carriageway: Any | None) -> Any | None:
+        if drivable_area is None or opposite_carriageway is None:
+            return None
+        try:
+            return drivable_area.difference(opposite_carriageway)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _extract_lane_markings(lane: Any | None) -> tuple[list[Any], list[Any]] | None:
+        if lane is None or not hasattr(lane, "get_polyline"):
+            return None
+        line_types = getattr(lane, "line_types", None)
+        width = RuleRewardWrapper._safe_float(getattr(lane, "width", None))
+        if not isinstance(line_types, (list, tuple)) or len(line_types) != 2 or width is None:
+            return None
+        try:
+            from shapely.geometry import LineString
+
+            solid: list[Any] = []
+            dashed: list[Any] = []
+            for side, line_type in enumerate(line_types):
+                kind = str(getattr(line_type, "name", line_type)).lower()
+                if "none" in kind:
+                    continue
+                lateral = -width / 2.0 if side == 0 else width / 2.0
+                geometry = LineString(lane.get_polyline(interval=0.5, lateral=lateral)).buffer(0.10)
+                if "broken" in kind or "dash" in kind:
+                    dashed.append(geometry)
+                else:
+                    solid.append(geometry)
+            return solid, dashed
+        except Exception:
+            return None
+
+    @staticmethod
+    def _extract_route_progress(ego_vehicle: Any) -> float | None:
+        navigation = getattr(ego_vehicle, "navigation", None)
+        if navigation is None:
+            return None
+        for name in ("route_progress", "current_route_progress", "progress", "travelled_length"):
+            value = getattr(navigation, name, None)
+            if isinstance(value, (int, float)):
+                return float(value)
+        return None
 
     def _extract_physical_acceleration(self, base_env: Any, ego_vehicle: Any) -> dict[str, float] | None:
         current_velocity = self._to_xy_array(getattr(ego_vehicle, "velocity", None))
@@ -618,6 +703,25 @@ class RuleRewardWrapper(gym.Wrapper):
             state = self._vehicle_to_state(vehicle, ego_vehicle)
             if state is not None:
                 neighbors.append(state)
+                seen_ids.add(id(vehicle))
+
+        # Scenario environments can include static collidable objects that are
+        # not owned by the traffic manager. Include them when the engine offers
+        # the public object registry, while preserving the traffic fast path.
+        get_objects = getattr(engine, "get_objects", None)
+        if callable(get_objects):
+            try:
+                engine_objects = get_objects()
+            except Exception:
+                engine_objects = {}
+            values = engine_objects.values() if isinstance(engine_objects, Mapping) else ()
+            for obj in values:
+                if id(obj) in seen_ids or obj is ego_vehicle:
+                    continue
+                state = self._vehicle_to_state(obj, ego_vehicle)
+                if state is not None:
+                    neighbors.append(state)
+                    seen_ids.add(id(obj))
 
         return neighbors, source_name
 

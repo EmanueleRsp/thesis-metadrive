@@ -13,6 +13,12 @@ from thesis_rl.curriculum.scenario_acl.scenario_env import (
     scenario_env_runtime_config,
 )
 from thesis_rl.curriculum.scenario_acl.strategy import ScenarioAclCurriculum
+from thesis_rl.curriculum.scenario_acl.usefulness import (
+    ScenarioUsefulness,
+    compute_rule_criticality,
+    compute_learning_potential,
+    compute_scenario_usefulness,
+)
 
 __all__ = [
     "ScenarioAclCurriculum",
@@ -28,4 +34,8 @@ __all__ = [
     "scenario_env_runtime_config",
     "run_scenario_acl_training",
     "validate_scenario_acl_runtime_support",
+    "ScenarioUsefulness",
+    "compute_rule_criticality",
+    "compute_learning_potential",
+    "compute_scenario_usefulness",
 ]

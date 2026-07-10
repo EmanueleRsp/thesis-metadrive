@@ -39,9 +39,3 @@ def validate_scenario_acl_runtime_support(
             f"reward.behavior='{cfg.reward.get('behavior')}' in {context}. "
             f"Supported values: {supported}."
         )
-
-    if bool(curriculum_cfg.scenario_acl.use_mutation):
-        raise ValueError(
-            "Curriculum kind 'scenario_acl' does not yet support "
-            "scenario_acl.use_mutation=true. Use replay-only mode for now."
-        )

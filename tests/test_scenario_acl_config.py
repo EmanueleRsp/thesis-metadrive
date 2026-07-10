@@ -123,7 +123,6 @@ def test_scenario_acl_config_parses_replay_mode_flags() -> None:
             "scenario_acl": {
                 "mode": "mab_plus_replay",
                 "use_replay": True,
-                "use_mutation": False,
                 "exploit_probability": 0.8,
                 "generate_probability": 0.2,
             },
@@ -132,28 +131,19 @@ def test_scenario_acl_config_parses_replay_mode_flags() -> None:
 
     assert curriculum.scenario_acl.mode == "mab_plus_replay"
     assert curriculum.scenario_acl.use_replay is True
-    assert curriculum.scenario_acl.use_mutation is False
 
 
-def test_scenario_acl_runtime_validation_rejects_mutation_until_supported() -> None:
-    cfg = OmegaConf.create(
-        {
-            "env": {"vectorized": {"enabled": False}},
-            "reward": {"behavior": "monitor_only"},
-        }
-    )
-    curriculum = CurriculumConfig.from_mapping(
-        {
-            "enabled": True,
-            "kind": "scenario_acl",
-            "scenario_acl": {
-                "mode": "full_curriculum",
-                "use_mutation": True,
-                "exploit_probability": 0.8,
-                "generate_probability": 0.2,
-            },
-        }
-    )
-
-    with pytest.raises(ValueError, match="use_mutation=true"):
-        validate_scenario_acl_runtime_support(cfg, curriculum, context="training")
+def test_scenario_acl_config_rejects_mutation_scope() -> None:
+    with pytest.raises(ValueError, match="mutation is out of scope"):
+        CurriculumConfig.from_mapping(
+            {
+                "enabled": True,
+                "kind": "scenario_acl",
+                "scenario_acl": {
+                    "mode": "mab_plus_replay",
+                    "use_mutation": True,
+                    "exploit_probability": 0.8,
+                    "generate_probability": 0.2,
+                },
+            }
+        )

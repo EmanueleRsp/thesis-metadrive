@@ -7,6 +7,12 @@ from thesis_rl.rulebook.rules.road import (
     check_speed_limit,
     check_wrong_way,
 )
+from thesis_rl.rulebook.rules.v1 import (
+    allowed_driving_area,
+    collision_severity,
+    lane_marking_compliance,
+    local_route_progress,
+)
 
 __all__ = [
     "check_drivable_area",
@@ -18,4 +24,8 @@ __all__ = [
     "check_vehicle_collision_energy",
     "check_vru_collision_energy",
     "check_wrong_way",
+    "allowed_driving_area",
+    "collision_severity",
+    "lane_marking_compliance",
+    "local_route_progress",
 ]

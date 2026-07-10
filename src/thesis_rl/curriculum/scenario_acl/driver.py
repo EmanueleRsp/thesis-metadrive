@@ -20,6 +20,10 @@ from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer
 from thesis_rl.curriculum.scenario_acl.mab import GeneratorArmBandit
 from thesis_rl.curriculum.scenario_acl.record import ScenarioRecord
 from thesis_rl.curriculum.scenario_acl.scenario_env import build_scenario_replay_env
+from thesis_rl.curriculum.scenario_acl.usefulness import (
+    compute_learning_potential,
+    compute_scenario_usefulness,
+)
 from thesis_rl.runtime.execution.seeding import (
     apply_eval_scenario_seed_split,
     eval_base_seed_from_env_overrides,
@@ -85,24 +89,7 @@ def _scenario_acl_artifact_paths(artifacts_dir: Path) -> dict[str, Path]:
     }
 
 
-def _compute_proxy_usefulness(metrics: dict[str, Any]) -> float:
-    collision_rate = float(metrics.get("collision_rate", 0.0))
-    out_of_road_rate = float(metrics.get("out_of_road_rate", 0.0))
-    top_rule_violation_rate = float(metrics.get("top_rule_violation_rate", 0.0))
-    success_gap = max(0.0, 1.0 - float(metrics.get("success_rate", 0.0)))
-    route_gap = max(0.0, 1.0 - float(metrics.get("route_completion", 0.0)))
-    reward_difficulty = max(0.0, -float(metrics.get("mean_reward", 0.0)))
-    return (
-        (2.0 * collision_rate)
-        + (1.5 * out_of_road_rate)
-        + (1.0 * top_rule_violation_rate)
-        + (1.0 * success_gap)
-        + (0.5 * route_gap)
-        + (0.05 * reward_difficulty)
-    )
-
-
-def _normalize_proxy_usefulness(
+def _normalize_learning_potential(
     current_value: float,
     recent_values: list[float],
 ) -> float:
@@ -223,13 +210,17 @@ def _build_record_from_export(
     chunk_id: int,
     scenario_seed: int,
     arm_name: str,
-    proxy_usefulness: float,
+    learning_potential: float,
     normalized_usefulness: float,
     metrics: dict[str, Any],
     source: str = "generate",
     parent_id: str | None = None,
 ) -> ScenarioRecord:
     export_file = Path(export_path)
+    usefulness = compute_scenario_usefulness(
+        metrics,
+        learning_potential=learning_potential,
+    )
     return ScenarioRecord(
         scenario_id=f"{source}_chunk_{chunk_id:04d}",
         source=source,
@@ -244,9 +235,9 @@ def _build_record_from_export(
         mutation_type=None,
         mutation_params=None,
         validation_status="valid",
-        rule_criticality=0.0,
-        learning_potential=float(proxy_usefulness),
-        usefulness=float(proxy_usefulness),
+        rule_criticality=float(usefulness.rule_criticality),
+        learning_potential=float(usefulness.learning_potential),
+        usefulness=float(usefulness.value),
         usefulness_norm=float(normalized_usefulness),
         rank=0,
         num_seen=1,
@@ -260,12 +251,17 @@ def _update_replay_record(
     record: ScenarioRecord,
     *,
     chunk_id: int,
-    proxy_usefulness: float,
+    learning_potential: float,
     normalized_usefulness: float,
     metrics: dict[str, Any],
 ) -> ScenarioRecord:
-    record.learning_potential = float(proxy_usefulness)
-    record.usefulness = float(proxy_usefulness)
+    usefulness = compute_scenario_usefulness(
+        metrics,
+        learning_potential=learning_potential,
+    )
+    record.rule_criticality = float(usefulness.rule_criticality)
+    record.learning_potential = float(usefulness.learning_potential)
+    record.usefulness = float(usefulness.value)
     record.usefulness_norm = float(normalized_usefulness)
     record.num_seen += 1
     record.last_seen_step = int(chunk_id)
@@ -284,6 +280,49 @@ def _persist_buffer_state(
     path.write_text(
         json.dumps(buffer.state_dict(), ensure_ascii=True, indent=2),
         encoding="utf-8",
+    )
+
+
+def _load_scenario_acl_resume_state(
+    *,
+    cfg: DictConfig,
+    artifact_paths: dict[str, Path],
+    scenario_cfg: Any,
+    rng: np.random.Generator,
+) -> tuple[ScenarioBuffer, GeneratorArmBandit, int, int, int, list[float]]:
+    resume_cfg = cfg.checkpoint.get("resume", {})
+    if not bool(resume_cfg.get("enabled", False)):
+        return ScenarioBuffer(capacity=int(scenario_cfg.buffer_capacity)), GeneratorArmBandit(scenario_cfg.mab), 0, 0, 0, []
+
+    configured_run_dir = resume_cfg.get("run_dir")
+    resume_run_dir = Path(str(configured_run_dir)) if configured_run_dir not in (None, "", "null") else artifact_paths["root"].parents[1]
+    resume_root = resume_run_dir / "artifacts" / "curriculum"
+    state_path = resume_root / "scenario_acl_state.json"
+    buffer_path = resume_root / "scenario_buffer.json"
+    if not state_path.exists() or not buffer_path.exists():
+        raise FileNotFoundError(
+            "Scenario ACL resume requires both state and buffer artifacts: "
+            f"state={state_path}, buffer={buffer_path}"
+        )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    buffer_payload = json.loads(buffer_path.read_text(encoding="utf-8"))
+    buffer = ScenarioBuffer.from_state_dict(buffer_payload)
+    bandit_payload = state.get("mab", {})
+    if not isinstance(bandit_payload, dict):
+        raise ValueError("Scenario ACL resume state has invalid MAB payload.")
+    bandit = GeneratorArmBandit.from_state_dict(scenario_cfg.mab, bandit_payload)
+    rng_state = state.get("rng_state")
+    if bool(resume_cfg.get("restore_rng_state", True)):
+        if not isinstance(rng_state, dict):
+            raise ValueError("Scenario ACL resume state is missing RNG state.")
+        rng.bit_generator.state = rng_state
+    return (
+        buffer,
+        bandit,
+        int(state.get("global_step", 0)),
+        int(state.get("chunk_id", 0)),
+        int(state.get("eval_id", 0)),
+        [float(value) for value in state.get("recent_usefulness", [])],
     )
 
 
@@ -360,13 +399,6 @@ def run_scenario_acl_training(
 ) -> None:
     if not curriculum_cfg.is_scenario_acl:
         raise ValueError("Scenario ACL driver requires curriculum kind 'scenario_acl'.")
-    if bool(cfg.checkpoint.get("resume", {}).get("enabled", False)):
-        raise ValueError("Scenario ACL resume is not implemented yet.")
-    if bool(curriculum_cfg.scenario_acl.use_mutation):
-        raise NotImplementedError(
-            "scenario_acl mutation support is not implemented yet. "
-            "Use mode='mab_plus_replay' or disable use_mutation."
-        )
 
     total_timesteps = int(cfg.experiment.total_timesteps)
     eval_interval = int(cfg.experiment.get("eval_interval", total_timesteps))
@@ -386,12 +418,19 @@ def run_scenario_acl_training(
             f"expected {expected_arms}, got {len(arms)}."
         )
 
-    bandit = GeneratorArmBandit(scenario_cfg.mab)
-    buffer = ScenarioBuffer(capacity=int(scenario_cfg.buffer_capacity))
-    recent_usefulness: list[float] = []
-    current_global_step = 0
-    current_eval_id = 0
-    current_chunk_id = 0
+    (
+        buffer,
+        bandit,
+        current_global_step,
+        current_chunk_id,
+        current_eval_id,
+        recent_usefulness,
+    ) = _load_scenario_acl_resume_state(
+        cfg=cfg,
+        artifact_paths=artifact_paths,
+        scenario_cfg=scenario_cfg,
+        rng=rng,
+    )
     generate_count = 0
     replay_count = 0
 
@@ -402,7 +441,7 @@ def run_scenario_acl_training(
         bandit=bandit,
         buffer=buffer,
         rng=rng,
-        chunk_id=1,
+        chunk_id=current_chunk_id + 1,
     )
     if first_spec.mode == "generate":
         env = build_env(cfg, first_spec.train_env_overrides)
@@ -419,7 +458,18 @@ def run_scenario_acl_training(
 
     preprocessor = build_preprocessor(cfg)
     adapter = build_adapter(cfg, adapter_space_kwargs(env.action_space))
-    planner = build_planner(cfg, env, seed=run_seed)
+    resume_cfg = cfg.checkpoint.get("resume", {})
+    resume_enabled = bool(resume_cfg.get("enabled", False))
+    resume_run_dir_cfg = resume_cfg.get("run_dir")
+    resume_run_dir = Path(str(resume_run_dir_cfg)) if resume_run_dir_cfg not in (None, "", "null") else paths.run_dir
+    resume_checkpoint_stem = resume_run_dir / "checkpoints" / str(resume_cfg.get("checkpoint_name", "latest"))
+    resume_checkpoint_zip = resume_checkpoint_stem.with_suffix(".zip")
+    if resume_enabled:
+        if not resume_checkpoint_zip.exists():
+            raise FileNotFoundError(f"Scenario ACL resume checkpoint is missing: {resume_checkpoint_zip}")
+        planner = load_planner(cfg, checkpoint_path=str(resume_checkpoint_zip), env=env)
+    else:
+        planner = build_planner(cfg, env, seed=run_seed)
     planner_device = str(getattr(planner, "device", cfg.device))
     ema_alpha_cfg = (
         float(cfg.agent.planner.algorithm.get("monitor_ema_alpha", 0.1))
@@ -427,6 +477,8 @@ def run_scenario_acl_training(
         else 0.1
     )
     agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg)
+    if resume_enabled:
+        agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
 
     print_run_setup(
         title="Training Run",
@@ -444,7 +496,7 @@ def run_scenario_acl_training(
     )
 
     try:
-        remaining = total_timesteps
+        remaining = max(0, total_timesteps - current_global_step)
         next_spec = first_spec
         while remaining > 0:
             current_chunk_id += 1
@@ -619,12 +671,15 @@ def run_scenario_acl_training(
             Path(f"{eval_snapshot_stem}.zip").unlink(missing_ok=True)
             Agent.adapter_checkpoint_path(eval_snapshot_stem).unlink(missing_ok=True)
 
-            proxy_usefulness = _compute_proxy_usefulness(eval_metrics)
-            normalized_usefulness = _normalize_proxy_usefulness(
-                proxy_usefulness,
+            learning_potential = compute_learning_potential(
+                chunk_summary,
+                planner_name=str(cfg.agent.planner.algorithm.name),
+            )
+            normalized_usefulness = _normalize_learning_potential(
+                learning_potential,
                 recent_usefulness,
             )
-            recent_usefulness.append(proxy_usefulness)
+            recent_usefulness.append(learning_potential)
             max_recent = int(scenario_cfg.recent_window_size)
             if len(recent_usefulness) > max_recent:
                 recent_usefulness = recent_usefulness[-max_recent:]
@@ -643,14 +698,15 @@ def run_scenario_acl_training(
                             current_spec.arm_probabilities[current_spec.arm_index]
                         ),
                     )
-                export_path = _export_scenario_dataset(
-                    cfg=cfg,
-                    env_overrides=current_spec.train_env_overrides,
-                    agent=agent,
-                    chunk_id=current_chunk_id,
-                    scenario_seed=current_spec.scenario_seed,
-                    dataset_root=artifact_paths["scenarios"],
-                )
+                if bool(scenario_cfg.use_scenario_buffer):
+                    export_path = _export_scenario_dataset(
+                        cfg=cfg,
+                        env_overrides=current_spec.train_env_overrides,
+                        agent=agent,
+                        chunk_id=current_chunk_id,
+                        scenario_seed=current_spec.scenario_seed,
+                        dataset_root=artifact_paths["scenarios"],
+                    )
                 if export_path is not None:
                     record = _build_record_from_export(
                         export_path=export_path,
@@ -658,7 +714,7 @@ def run_scenario_acl_training(
                         chunk_id=current_chunk_id,
                         scenario_seed=current_spec.scenario_seed,
                         arm_name=current_spec.arm_name,
-                        proxy_usefulness=proxy_usefulness,
+                        learning_potential=learning_potential,
                         normalized_usefulness=normalized_usefulness,
                         metrics=eval_metrics,
                     )
@@ -673,7 +729,7 @@ def run_scenario_acl_training(
                             "action": buffer_action,
                             "scenario_id": record.scenario_id,
                             "scenario_hash": record.scenario_description_hash,
-                            "usefulness": float(proxy_usefulness),
+                            "usefulness": float(learning_potential),
                         },
                     )
             else:
@@ -682,7 +738,7 @@ def run_scenario_acl_training(
                 updated_record = _update_replay_record(
                     current_spec.replay_record,
                     chunk_id=current_chunk_id,
-                    proxy_usefulness=proxy_usefulness,
+                    learning_potential=learning_potential,
                     normalized_usefulness=normalized_usefulness,
                     metrics=eval_metrics,
                 )
@@ -696,7 +752,7 @@ def run_scenario_acl_training(
                         "chunk_id": current_chunk_id,
                         "action": buffer_action,
                         "scenario_id": updated_record.scenario_id,
-                        "usefulness": float(proxy_usefulness),
+                        "usefulness": float(learning_potential),
                         "num_seen": int(updated_record.num_seen),
                     },
                 )
@@ -772,7 +828,7 @@ def run_scenario_acl_training(
                     if current_spec.replay_record is not None
                     else None
                 ),
-                "proxy_usefulness": float(proxy_usefulness),
+                "learning_potential": float(learning_potential),
                 "normalized_usefulness": float(normalized_usefulness),
                 "env_overrides": current_spec.train_env_overrides,
                 "export_path": export_path,
@@ -823,6 +879,7 @@ def run_scenario_acl_training(
                             for record in buffer.top_k(5)
                         ],
                         "mab": bandit.state_dict(),
+                        "rng_state": rng.bit_generator.state,
                     },
                     ensure_ascii=True,
                     indent=2,
@@ -841,7 +898,7 @@ def run_scenario_acl_training(
                 current_spec.arm_name,
                 current_spec.scenario_seed,
                 current_global_step,
-                proxy_usefulness,
+                learning_potential,
                 normalized_usefulness,
                 len(buffer),
             )

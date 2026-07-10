@@ -6,4 +6,3 @@ scenario_acl:
   use_mab: true
   use_scenario_buffer: true
   use_replay: true
-  use_mutation: false

@@ -35,6 +35,7 @@ This file is only a lightweight map of the `docs/` folder.
 - [specs/algorithm_comparison_protocol.md](specs/algorithm_comparison_protocol.md)
 - [specs/csv_evaluation_objectives.md](specs/csv_evaluation_objectives.md)
 - [specs/rulebook_v1_specification.md](specs/rulebook_v1_specification.md)
+- [workflows/rulebook_v1_calibration.md](workflows/rulebook_v1_calibration.md)
 - [specs/live_eval_video_protocol.md](specs/live_eval_video_protocol.md)
 - [specs/curriculum_learning_specification.md](specs/curriculum_learning_specification.md)
 - [specs/scenario_acl_implementation_plan.md](specs/scenario_acl_implementation_plan.md)
