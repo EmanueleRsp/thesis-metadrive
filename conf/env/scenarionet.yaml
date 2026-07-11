@@ -1,0 +1,62 @@
+name: scenarionet
+env_id: ThesisScenarioEnv
+
+split: train
+
+config:
+  curriculum_level: 1
+  horizon: null
+  allowed_more_steps: null
+  start_scenario_index: 0
+  num_scenarios: -1
+  worker_index: 0
+  num_workers: 1
+  sequential_seed: false
+  agent_policy: env_input_policy
+  discrete_action: false
+  set_static: false
+  no_map: false
+  need_lane_localization: true
+  cull_lanes_outside_map: true
+  map_region_size: 1024
+  no_traffic: false
+  no_static_vehicles: false
+  no_light: false
+  reactive_traffic: true
+  filter_overlapping_car: true
+  skip_missing_light: true
+  static_traffic_object: true
+  store_data: false
+  store_map: false
+  physics_world_step_size: 0.02
+  decision_repeat: 5
+  crash_vehicle_done: true
+  crash_object_done: true
+  crash_human_done: true
+  out_of_route_done: false
+  relax_out_of_road_done: false
+  truncate_as_terminate: false
+  log_level: 50
+
+episode_control:
+  extra_steps_after_scenario: 50
+
+provider:
+  kind: uniform
+  strict: true
+  allow_fallback: false
+  source_probability:
+    waymo: 0.5
+    pg: 0.5
+
+vectorized:
+  enabled: true
+  num_envs: 5
+  start_method: spawn
+
+policy_mode:
+  enabled: false
+  agent_policy: env_input_policy
+  action_check: true
+  low: -1.0
+  high: 1.0

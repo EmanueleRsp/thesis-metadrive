@@ -1,0 +1,20 @@
+dataset_id: scenarionet_v1
+root: ${paths.scenarionet_data_root}
+
+source_reset_probability:
+  waymo: 0.5
+  pg: 0.5
+
+counts:
+  train:
+    waymo: 1000
+    pg: 1000
+  validation:
+    waymo: 250
+    pg: 250
+  test:
+    waymo: 500
+    pg: 500
+
+strict: true
+allow_fallback: false

@@ -1,0 +1,10 @@
+profiles_version: pg_profiles_v1
+offline: true
+max_episode_length: 500
+ego_generation_policy: IDMPolicy
+accident_prob_default: 0.0
+random_lane_num: true
+random_lane_width: true
+
+pilot_count_per_profile: 20
+profiles: [P0_simple, P1_vehicle_interaction, P2_merge_or_roundabout, P3_intersection, P5_complex_mixed]

@@ -1,0 +1,15 @@
+feature_version: v1
+
+relevant_agents:
+  radius_m: 50.0
+  vertical_tolerance_m: 3.0
+  temporal_quantile: 0.90
+
+vru_interaction:
+  max_distance_to_route_m: 8.0
+
+traffic_thresholds:
+  low_quantile: 0.40
+  dense_quantile: 0.75
+  computed_on_split: train
+  balanced_sources: true

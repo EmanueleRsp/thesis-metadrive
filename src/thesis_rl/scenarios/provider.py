@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections import defaultdict
+from typing import Sequence
+
+import numpy as np
+
+from thesis_rl.scenarios.records import ScenarioRecord
+
+
+class ScenarioProvider(ABC):
+    @abstractmethod
+    def sample(
+        self,
+        *,
+        split: str,
+        worker_id: int,
+        source: str | None = None,
+        arm: str | None = None,
+    ) -> ScenarioRecord:
+        raise NotImplementedError
+
+
+def _valid_records(records: Sequence[ScenarioRecord]) -> tuple[ScenarioRecord, ...]:
+    return tuple(
+        record for record in records if record.validation_status in {"valid", "warning"}
+    )
+
+
+class UniformScenarioProvider(ScenarioProvider):
+    def __init__(
+        self,
+        records: Sequence[ScenarioRecord],
+        *,
+        global_seed: int,
+        source_probabilities: dict[str, float] | None = None,
+        strict: bool = True,
+        allow_fallback: bool = False,
+    ) -> None:
+        if not strict or allow_fallback:
+            raise ValueError("ScenarioNet v1 provider requires strict=true and allow_fallback=false")
+        self._records = _valid_records(records)
+        if not self._records:
+            raise ValueError("provider requires at least one valid scenario")
+        probabilities = dict(source_probabilities or {"waymo": 0.5, "pg": 0.5})
+        if set(probabilities) != {"waymo", "pg"}:
+            raise ValueError("source probabilities must define exactly waymo and pg")
+        if any(value < 0 for value in probabilities.values()) or not np.isclose(
+            sum(probabilities.values()), 1.0
+        ):
+            raise ValueError("source probabilities must be non-negative and sum to one")
+        self._source_names = ("waymo", "pg")
+        self._source_probabilities = np.asarray(
+            [probabilities[name] for name in self._source_names], dtype=np.float64
+        )
+        self._global_seed = int(global_seed)
+        self._rng_by_worker: dict[int, np.random.Generator] = {}
+        self.reset_counts: dict[str, int] = defaultdict(int)
+
+    def _rng(self, worker_id: int) -> np.random.Generator:
+        worker = int(worker_id)
+        if worker < 0:
+            raise ValueError("worker_id must be non-negative")
+        if worker not in self._rng_by_worker:
+            seed_sequence = np.random.SeedSequence([self._global_seed, worker])
+            self._rng_by_worker[worker] = np.random.default_rng(seed_sequence)
+        return self._rng_by_worker[worker]
+
+    def sample(
+        self,
+        *,
+        split: str,
+        worker_id: int,
+        source: str | None = None,
+        arm: str | None = None,
+    ) -> ScenarioRecord:
+        rng = self._rng(worker_id)
+        requested_source = source
+        if requested_source is None:
+            requested_source = str(rng.choice(self._source_names, p=self._source_probabilities))
+        if requested_source not in self._source_names:
+            raise ValueError(f"unsupported source: {requested_source!r}")
+        candidates = [
+            record
+            for record in self._records
+            if record.split == split
+            and record.source == requested_source
+            and (arm is None or record.primary_arm == arm)
+        ]
+        if not candidates:
+            filters = f"split={split!r}, source={requested_source!r}, arm={arm!r}"
+            raise LookupError(f"no valid scenarios for {filters}; fallback is disabled")
+        selected = candidates[int(rng.integers(0, len(candidates)))]
+        self.reset_counts[selected.source] += 1
+        return selected
+
+
+class FixedSequenceScenarioProvider(ScenarioProvider):
+    def __init__(self, records: Sequence[ScenarioRecord], *, repeat: bool = False) -> None:
+        self._records = _valid_records(records)
+        if len(self._records) != len(records):
+            raise ValueError("fixed sequence contains invalid scenarios")
+        if not self._records:
+            raise ValueError("fixed sequence cannot be empty")
+        if len({record.scenario_uid for record in self._records}) != len(self._records):
+            raise ValueError("fixed sequence contains duplicate scenario_uid values")
+        self._repeat = bool(repeat)
+        self._position = 0
+
+    def sample(
+        self,
+        *,
+        split: str,
+        worker_id: int,
+        source: str | None = None,
+        arm: str | None = None,
+    ) -> ScenarioRecord:
+        if worker_id < 0:
+            raise ValueError("worker_id must be non-negative")
+        if self._position >= len(self._records):
+            if not self._repeat:
+                raise LookupError("fixed scenario sequence is exhausted")
+            self._position = 0
+        record = self._records[self._position]
+        if record.split != split:
+            raise LookupError(
+                f"fixed sequence record {record.scenario_uid} belongs to {record.split}, not {split}"
+            )
+        if source is not None and record.source != source:
+            raise LookupError(f"fixed sequence record does not match requested source {source!r}")
+        if arm is not None and record.primary_arm != arm:
+            raise LookupError(f"fixed sequence record does not match requested arm {arm!r}")
+        self._position += 1
+        return record
