@@ -265,31 +265,35 @@ class RuleRewardWrapper(gym.Wrapper):
         else:
             rule_input_available["opposite_carriageway"] = False
 
-        allowed_driving_area = self._extract_allowed_driving_area(
+        allowed_driving_area, allowed_area_source = self._extract_allowed_driving_area(
+            ego_vehicle,
             drivable_area,
             opposite_carriageway,
         )
         if allowed_driving_area is not None:
             info_dict.setdefault("allowed_driving_area", allowed_driving_area)
-            rule_input_sources["allowed_driving_area"] = "drivable_area - opposite_carriageway"
+            rule_input_sources["allowed_driving_area"] = allowed_area_source
             rule_input_available["allowed_driving_area"] = True
         else:
             rule_input_available["allowed_driving_area"] = False
 
-        lane_markings = self._extract_lane_markings(lane_centerline)
+        lane_markings = self._extract_lane_markings(base_env, lane_centerline)
         if lane_markings is not None:
-            solid_markings, dashed_markings = lane_markings
+            solid_markings, dashed_markings, lane_marking_source = lane_markings
             info_dict.setdefault("solid_lane_markings", solid_markings)
             info_dict.setdefault("dashed_lane_markings", dashed_markings)
-            rule_input_sources["lane_markings"] = "current_lane.line_types + current_lane.get_polyline"
+            rule_input_sources["lane_markings"] = lane_marking_source
             rule_input_available["lane_markings"] = True
         else:
             rule_input_available["lane_markings"] = False
 
-        route_progress = self._extract_route_progress(ego_vehicle)
+        route_progress, route_progress_source = self._extract_route_progress(
+            ego_vehicle,
+            info_dict,
+        )
         if route_progress is not None:
             info_dict.setdefault("route_progress", route_progress)
-            rule_input_sources["route_progress"] = "ego_vehicle.navigation.route_progress"
+            rule_input_sources["route_progress"] = route_progress_source
             rule_input_available["route_progress"] = True
         else:
             rule_input_available["route_progress"] = False
@@ -465,16 +469,88 @@ class RuleRewardWrapper(gym.Wrapper):
         return self._safe_float(getattr(ego_vehicle, "max_speed_km_h", None))
 
     @staticmethod
-    def _extract_allowed_driving_area(drivable_area: Any | None, opposite_carriageway: Any | None) -> Any | None:
+    def _extract_allowed_driving_area(
+        ego_vehicle: Any,
+        drivable_area: Any | None,
+        opposite_carriageway: Any | None,
+    ) -> tuple[Any | None, str]:
+        """Build the route-compatible area before considering road-wide geometry.
+
+        ScenarioEnv does not consistently expose an opposite carriageway.  Its
+        navigation reference lanes are the stronger semantic source: they
+        already identify the lanes compatible with the current route.
+        """
+        navigation = getattr(ego_vehicle, "navigation", None)
+        if navigation is not None:
+            lanes: list[Any] = []
+            for attr_name in ("current_ref_lanes", "next_ref_lanes"):
+                candidates = getattr(navigation, attr_name, None)
+                if isinstance(candidates, (list, tuple)):
+                    lanes.extend(candidates)
+            polygons = [getattr(lane, "shapely_polygon", None) for lane in lanes]
+            polygons = [polygon for polygon in polygons if polygon is not None]
+            if polygons:
+                try:
+                    from shapely.ops import unary_union
+
+                    return unary_union(polygons), "navigation.current_ref_lanes + next_ref_lanes"
+                except Exception:
+                    pass
+
         if drivable_area is None or opposite_carriageway is None:
-            return None
+            return None, "unavailable"
         try:
-            return drivable_area.difference(opposite_carriageway)
+            return drivable_area.difference(opposite_carriageway), "drivable_area - opposite_carriageway"
         except Exception:
-            return None
+            return None, "unavailable"
 
     @staticmethod
-    def _extract_lane_markings(lane: Any | None) -> tuple[list[Any], list[Any]] | None:
+    def _extract_lane_markings(
+        base_env: Any,
+        lane: Any | None,
+    ) -> tuple[list[Any], list[Any], str] | None:
+        """Extract physical road markings, preferring ScenarioMap features.
+
+        ScenarioEnv's route is a ``PointLane`` whose ``line_types`` are always
+        ``NONE``.  Its actual solid and broken lines live in the loaded
+        ``ScenarioMap`` feature set, so using the route lane would silently
+        erase R3's signal.  The map feature vector is the authoritative source
+        for ScenarioEnv; the lane representation remains the direct source for
+        non-scenario environments that do not expose it.
+        """
+        current_map = getattr(base_env, "current_map", None)
+        boundary_line_vector = getattr(current_map, "get_boundary_line_vector", None)
+        if callable(boundary_line_vector):
+            try:
+                features = boundary_line_vector(interval=0.5)
+            except Exception:
+                features = None
+            if isinstance(features, Mapping):
+                try:
+                    from shapely.geometry import LineString
+
+                    solid: list[Any] = []
+                    dashed: list[Any] = []
+                    for feature in features.values():
+                        if not isinstance(feature, Mapping):
+                            continue
+                        polyline = feature.get("polyline")
+                        line_type = str(feature.get("type", "")).lower()
+                        if polyline is None:
+                            continue
+                        geometry = LineString(polyline).buffer(0.10)
+                        if "broken" in line_type or "dash" in line_type:
+                            dashed.append(geometry)
+                        else:
+                            # Continuous road lines and road-edge boundaries
+                            # are both forbidden boundaries for R3.
+                            solid.append(geometry)
+                    return solid, dashed, "current_map.get_boundary_line_vector"
+                except Exception:
+                    # Do not return partial geometry.  The direct lane adapter
+                    # below remains valid for non-ScenarioEnv environments.
+                    pass
+
         if lane is None or not hasattr(lane, "get_polyline"):
             return None
         line_types = getattr(lane, "line_types", None)
@@ -496,20 +572,47 @@ class RuleRewardWrapper(gym.Wrapper):
                     dashed.append(geometry)
                 else:
                     solid.append(geometry)
-            return solid, dashed
+            return solid, dashed, "current_lane.line_types + current_lane.get_polyline"
         except Exception:
             return None
 
     @staticmethod
-    def _extract_route_progress(ego_vehicle: Any) -> float | None:
+    def _extract_route_progress(
+        ego_vehicle: Any,
+        info_dict: Mapping[str, Any],
+    ) -> tuple[float | None, str]:
+        """Return a monotonic route coordinate from the active navigation module.
+
+        ``ScenarioEnv`` uses ``TrajectoryNavigation``.  Unlike the road-network
+        navigation modules, it reports per-step ``route_completion`` and
+        ``track_length`` in its info dictionary, while retaining the absolute
+        coordinate as ``current_longitude`` internally.  Converting the two
+        public info fields yields the same metric coordinate and keeps the
+        rule input tied to ScenarioEnv's documented step interface.
+        """
+        route_completion = RuleRewardWrapper._safe_float(info_dict.get("route_completion"))
+        track_length = RuleRewardWrapper._safe_float(info_dict.get("track_length"))
+        if route_completion is not None and track_length is not None and track_length > 0.0:
+            return route_completion * track_length, "info.route_completion * info.track_length"
+
         navigation = getattr(ego_vehicle, "navigation", None)
         if navigation is None:
-            return None
-        for name in ("route_progress", "current_route_progress", "progress", "travelled_length"):
-            value = getattr(navigation, name, None)
-            if isinstance(value, (int, float)):
-                return float(value)
-        return None
+            return None, "unavailable"
+
+        # This is a direct navigation coordinate, not a derived fallback.  It
+        # covers navigation modules that do not publish ScenarioEnv's info
+        # fields, while preserving strict-mode guarantees.
+        for name in (
+            "current_longitude",
+            "travelled_length",
+            "route_progress",
+            "current_route_progress",
+            "progress",
+        ):
+            value = RuleRewardWrapper._safe_float(getattr(navigation, name, None))
+            if value is not None:
+                return value, f"ego_vehicle.navigation.{name}"
+        return None, "unavailable"
 
     def _extract_physical_acceleration(self, base_env: Any, ego_vehicle: Any) -> dict[str, float] | None:
         current_velocity = self._to_xy_array(getattr(ego_vehicle, "velocity", None))
@@ -822,18 +925,35 @@ class RuleRewardWrapper(gym.Wrapper):
                 "missing_drivable_area",
                 "Rulebook input `drivable_area` is unavailable; related rules may become neutral.",
             )
-        if info_dict.get("opposite_carriageway") is None:
+        active_rule_names = self._active_rule_names()
+        if "wrong_way" in active_rule_names and info_dict.get("opposite_carriageway") is None:
             self._warn_once(
                 "missing_opposite_carriageway",
                 "Rulebook input `opposite_carriageway` is unavailable; wrong-way rule may become neutral.",
             )
-        if info_dict.get("target_region") is None:
+        if "goal_progress" in active_rule_names and info_dict.get("target_region") is None:
             self._warn_once(
                 "missing_target_region",
                 "Rulebook input `target_region` is unavailable; goal-progress rule may rely only on `target_point`.",
             )
 
         self._diagnostics_emitted = True
+
+    def _active_rule_names(self) -> set[str]:
+        """Return configured rule names when the manager exposes an evaluator.
+
+        Runtime diagnostics must describe the active rulebook.  In particular,
+        ScenarioEnv legitimately lacks inputs needed only by legacy rules, and
+        those should not look like a degraded v1 evaluation.
+        """
+        evaluator = getattr(self.reward_manager, "evaluator", None)
+        specs = getattr(evaluator, "rules", ())
+        return {
+            str(name)
+            for spec in specs
+            for name in (getattr(spec, "name", None),)
+            if isinstance(name, str)
+        }
 
     @classmethod
     def _vehicle_to_state(cls, vehicle: Any, ego_vehicle: Any) -> dict[str, Any] | None:
