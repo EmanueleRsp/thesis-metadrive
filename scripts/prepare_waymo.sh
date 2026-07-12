@@ -35,6 +35,14 @@ die() {
 command -v gcloud >/dev/null 2>&1 || die \
   "gcloud CLI non trovato. Esegui 'make waymo-auth' dopo aver installato il Google Cloud CLI."
 
+credentials_file="${GOOGLE_APPLICATION_CREDENTIALS:-}"
+if [[ -n "$credentials_file" ]]; then
+  [[ -f "$credentials_file" ]] || die \
+    "GOOGLE_APPLICATION_CREDENTIALS non punta a un file esistente: $credentials_file"
+  echo "Attivazione service account dal file indicato in GOOGLE_APPLICATION_CREDENTIALS"
+  gcloud auth activate-service-account --key-file="$credentials_file" --quiet
+fi
+
 active_account="$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | head -n 1 || true)"
 [[ -n "$active_account" ]] || die \
   "nessun account Google Cloud attivo. Esegui una volta 'make waymo-auth'."

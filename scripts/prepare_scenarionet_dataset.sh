@@ -11,6 +11,32 @@ if [[ -f .env ]]; then
   set +a
 fi
 
+die() {
+  echo "scenarionet-pipeline: $*" >&2
+  exit 2
+}
+
+is_true() {
+  case "${1,,}" in
+    1|true|yes|y|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+pipeline_config="${SCENARIONET_PIPELINE_CONFIG:-/workspace/thesis-metadrive/conf/scenarios/pipeline_v1.yaml}"
+if ! is_true "${SCENARIONET_SKIP_CONFIG_RESOLVE:-false}"; then
+  echo "Risoluzione configurazione pipeline: $pipeline_config"
+  docker compose build dev >/dev/null
+  while IFS=$'\t' read -r key value; do
+    [[ -n "$key" ]] || continue
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < <(
+    docker compose run --rm -T dev uv run --no-sync python \
+      -m thesis_rl.cli.scenarios.pipeline_config --config "$pipeline_config"
+  )
+fi
+
 data_root="${SCENARIONET_DATA_ROOT:-/workspace/data/scenarionet}"
 catalog_raw="${SCENARIONET_RAW_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_raw.parquet}"
 catalog_split="${SCENARIONET_SPLIT_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_split.parquet}"
@@ -23,18 +49,6 @@ pg_seed_start="${SCENARIONET_PG_SEED_START:-920000}"
 split_seed="${SCENARIONET_SPLIT_SEED:-0}"
 overwrite="${SCENARIONET_OVERWRITE:-false}"
 auto_split="${SCENARIONET_AUTO_SPLIT:-true}"
-
-die() {
-  echo "scenarionet-pipeline: $*" >&2
-  exit 2
-}
-
-is_true() {
-  case "${1,,}" in
-    1|true|yes|y|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 
 require_count() {
   local name="$1"

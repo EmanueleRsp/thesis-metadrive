@@ -1,0 +1,23 @@
+pipeline_version: scenarionet_pipeline_v1
+
+# Scientific/data policy defaults. Host paths and credentials stay in .env.
+pg:
+  count_per_profile: 350
+  seed_start: 920000
+
+split:
+  seed: 0
+  auto: true
+  targets:
+    waymo:
+      train: 1000
+      validation: 250
+      test: 500
+    pg:
+      train: 1000
+      validation: 250
+      test: 500
+
+checks:
+  simulation: true
+  workers: 8

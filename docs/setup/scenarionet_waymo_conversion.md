@@ -46,6 +46,38 @@ make install-gcloud
 L'installer installa solo il client locale. Non esegue il login al posto
 dell'utente: l'autorizzazione Waymo richiede una conferma OAuth interattiva.
 
+Se disponi già di un service account autorizzato al dataset, puoi usare
+un'automazione non interattiva indicando in `.env` soltanto il percorso di un
+file JSON conservato fuori dal repository:
+
+```dotenv
+GOOGLE_APPLICATION_CREDENTIALS=/percorso/privato/waymo-service-account.json
+```
+
+La pipeline attiva quel service account con `gcloud` prima del download. Il
+file JSON non deve essere committato né copiato dentro `.env`.
+
+## Numero di scenari e spazio disco
+
+Il pool convertito contiene tutti gli scenari presenti nei TFRecord. La
+configurazione finale seleziona verso i target della specifica:
+
+```text
+Waymo: 1000 train + 250 validation + 500 test
+PG:    1000 train + 250 validation + 500 test
+```
+
+La selezione Waymo avviene per gruppi interi; i conteggi effettivi possono
+quindi essere leggermente inferiori e vengono registrati nel manifest. Gli
+scenari non selezionati restano nel database convertito, ma non entrano nelle
+runtime view.
+
+Nel nostro smoke un TFRecord è risultato di circa 82 MB e la conversione del
+relativo shard di circa 77 MB. Una stima realistica per 1000 shard è quindi
+circa 82 GB di raw più 78 GB di database convertito. Aggiungendo PG, runtime,
+immagini Docker e temporanei, è prudente avere almeno 200 GB liberi; 250 GB
+offrono un margine più sicuro.
+
 Durante il secondo `apt-get update` devi vedere una riga riferita a
 `packages.cloud.google.com`. Se `google-cloud-cli` non viene trovato, il
 repository non è stato registrato correttamente.
@@ -72,12 +104,20 @@ Il comando mostrerà un URL da copiare nel browser Windows.
 
 ## Pipeline automatica
 
-Le impostazioni sono in `.env` e partono da `.env.example`:
+Le impostazioni personali e di macchina sono in `.env` e partono da
+`.env.example`. I default scientifici della pipeline sono invece versionati in
+[`conf/scenarios/pipeline_v1.yaml`](../../conf/scenarios/pipeline_v1.yaml) e
+possono essere sovrascritti dal `.env` senza modificarli:
 
 - `WAYMO_GCS_URI` e `WAYMO_GCS_OBJECT_PATTERN`: sorgente Google Cloud;
 - `WAYMO_RAW_DATA_PATH`: directory raw sul host;
 - `WAYMO_NUM_FILES=1`: smoke test iniziale; vuoto per tutti i file già scaricati;
 - `WAYMO_NUM_WORKERS` e `WAYMO_OVERWRITE`: opzioni del converter.
+
+In particolare, target PG, seed, politica di split e numero di worker dei check
+provengono dal file YAML quando le relative variabili `.env` sono vuote. Il
+`.env` resta quindi dedicato soprattutto a path, macchina, download e override
+locali.
 
 Con l'autenticazione già configurata, il comando unico è:
 

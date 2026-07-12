@@ -674,6 +674,7 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | ISS-007 | BASSA | RISOLTO | L'immagine runtime non include il client `git`, necessario solo per rilevare commit e worktree state. | Implementato fallback read-only per commit; dirty state resta `null` senza client. |
 | ISS-008 | BASSA | APERTO | La suite completa ha 2 failure non correlate (258 test passati): component name mancante nel tool forced-rule e preset test che attende `td3` mentre la config usa `td3_sb3`. | Non correggere nella pipeline ScenarioNet; aprire issue separata sul baseline. |
 | ISS-017 | MEDIA | RISOLTO | Le funzioni core per catalogo/split/runtime/soglie non erano ancora esposte come pipeline CLI unica. | Aggiunte quattro CLI, `make scenarionet-pipeline`, configurazione `.env`, controlli finali e test smoke. |
+| ISS-018 | BASSA | RISOLTO | `.env` mescolava override macchina e default scientifici della pipeline. | Aggiunto `conf/scenarios/pipeline_v1.yaml` con resolver CLI; `.env` ora contiene solo override opzionali, path e configurazione host. |
 | ISS-009 | MEDIA | RISOLTO | I token `numpy.str_` dei profili complessi non erano serializzabili da PyYAML nei generation manifest. | Normalizzati a `str` in `GenerationSpec`; pilot complesso 5/5 e 10/10 riusciti. |
 | ISS-010 | MEDIA | ACCETTATO | Il converter Waymo locale richiede TensorFlow e file raw `training_20s`; il dataset raw resta esterno al repository. | TensorFlow è isolato nel container dedicato; la conversione reale resta subordinata a dataset/licenza dell'utente. |
 | ISS-011 | BASSA | RISOLTO | L'ultima esecuzione Docker dei test F6 era stata rifiutata dal limite di approvazioni dell'ambiente. | Test mirati rieseguiti: 80 passati, Ruff e mypy verdi. |
@@ -706,6 +707,7 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | DEC-015 | CONFERMATA | Ambiente conversione Waymo | Container separato `Dockerfile.waymo` + profilo `compose.waymo.yaml` per TensorFlow 2.11 e converter; runtime RL leggero | build riuscito; import e CLI verificati; ISS-006 |
 | DEC-016 | CONFERMATA | Autenticazione/download Waymo | Google Cloud CLI con OAuth utente una tantum; URI, pattern e path in `.env`; nessuna API key o service-account JSON nel repository | `make waymo-auth`, `scripts/prepare_waymo.sh`, documentazione setup |
 | DEC-017 | CONFERMATA | Conteggi split finali | Default: target 1000/250/500 per sorgente, assegnazione automatica di gruppi interi e conteggi effettivi persistiti nel manifest; modalità esatta disponibile con `SCENARIONET_AUTO_SPLIT=false` | Evita conteggi impossibili sui gruppi Waymo senza introdurre riduzioni silenziose |
+| DEC-018 | CONFERMATA | Credenziali non interattive opzionali | Supportato `GOOGLE_APPLICATION_CREDENTIALS` come percorso esterno a un JSON di service account già autorizzato; OAuth gcloud resta il default | Automatizza l’esecuzione senza inserire segreti nel repository o nel contenuto di `.env` |
 
 ---
 
@@ -766,6 +768,7 @@ dataset o decisioni.
 | 2026-07-12 | Regressione | Rieseguita suite completa dopo l’orchestratore finale | 257 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
 | 2026-07-12 | F9 | Reso automatico lo split per gruppi interi verso i target baseline | Target 1000/250/500 configurabili; conteggi effettivi persistiti nel manifest; test di disgiunzione passati | Evita conteggi manuali incompatibili con shard Waymo |
 | 2026-07-12 | F9 | Corretto il pipeline per selezionare il sottoinsieme target dal pool convertito | I gruppi non selezionati restano sul disco ma non entrano nel catalogo/runtime finale; esclusioni persistite nel manifest | Evita di usare accidentalmente tutti gli scenari dei 1000 shard |
+| 2026-07-12 | F9 | Separati default scientifici e override macchina | Aggiunto `conf/scenarios/pipeline_v1.yaml` e resolver; supportato service account tramite path esterno | ISS-018 risolto; login OAuth interattivo resta il percorso predefinito |
 | 2026-07-12 | Regressione | Rieseguita suite completa dopo split automatico | 258 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
 
 ---
