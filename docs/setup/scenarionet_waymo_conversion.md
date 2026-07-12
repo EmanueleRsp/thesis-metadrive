@@ -12,14 +12,15 @@ leggeri.
 - directory raw contenente file con nome `training_20s.tfrecord*`;
 - spazio disco sufficiente per i file convertiti.
 
-L'accettazione della licenza e l'autenticazione Google non sono automatizzate;
-il download dei file viene invece automatizzato dalla pipeline dopo il login.
+Initial Google/Waymo authorization and license acceptance require user
+confirmation; file downloads are automated by the pipeline after login.
 
 ## Autenticazione Google Cloud (una sola volta)
 
 `gcloud` è il programma da riga di comando per autenticarsi a Google Cloud e
 leggere il bucket che contiene i TFRecord. Non è una dipendenza Python del
-progetto e non richiede di inserire password, token o file JSON in `.env`.
+project. In the normal workflow, no credential needs to be placed in `.env`:
+`gcloud` stores the OAuth login locally.
 
 Installa il [Google Cloud CLI](https://cloud.google.com/sdk/docs/install), poi
 esegui una sola volta:
@@ -55,7 +56,14 @@ GOOGLE_APPLICATION_CREDENTIALS=/percorso/privato/waymo-service-account.json
 ```
 
 La pipeline attiva quel service account con `gcloud` prima del download. Il
-file JSON non deve essere committato né copiato dentro `.env`.
+The JSON file must not be committed or pasted into `.env`: only its path goes
+in `.env`, for example `/home/me/secrets/waymo-sa.json`, with `chmod 600`
+permissions. Leave this variable empty when using the normal OAuth login.
+
+There is intentionally no `GOOGLE_API_KEY` field: an API key identifies a
+project and quota for some APIs, but does not grant the IAM authorization
+required to read this private Cloud Storage bucket. This workflow requires
+OAuth, ADC/service-account credentials, or a federated identity.
 
 ## Numero di scenari e spazio disco
 
@@ -106,18 +114,19 @@ Il comando mostrerà un URL da copiare nel browser Windows.
 
 Le impostazioni personali e di macchina sono in `.env` e partono da
 `.env.example`. I default scientifici della pipeline sono invece versionati in
-[`conf/scenarios/pipeline_v1.yaml`](../../conf/scenarios/pipeline_v1.yaml) e
-possono essere sovrascritti dal `.env` senza modificarli:
+[`conf/scenarios/pipeline_v1.yaml`](../../conf/scenarios/pipeline_v1.yaml):
+this YAML is the single source of truth for counts, seeds, split targets, and
+checks. Edit that file directly to change them; do not duplicate them in `.env`.
 
 - `WAYMO_GCS_URI` e `WAYMO_GCS_OBJECT_PATTERN`: sorgente Google Cloud;
 - `WAYMO_RAW_DATA_PATH`: directory raw sul host;
-- `WAYMO_NUM_FILES=1`: smoke test iniziale; vuoto per tutti i file già scaricati;
+- `WAYMO_NUM_FILES=1`: initial smoke test; with a wildcard pattern this limits
+  both download and conversion; leave empty for all shards;
 - `WAYMO_NUM_WORKERS` e `WAYMO_OVERWRITE`: opzioni del converter.
 
-In particolare, target PG, seed, politica di split e numero di worker dei check
-provengono dal file YAML quando le relative variabili `.env` sono vuote. Il
-`.env` resta quindi dedicato soprattutto a path, macchina, download e override
-locali.
+The resolver reads the YAML at startup and passes those values to the pipeline
+inside the container, making executions reproducible and independent of hidden
+scientific environment variables.
 
 Con l'autenticazione già configurata, il comando unico è:
 
@@ -130,7 +139,8 @@ presenza di `training_20s.tfrecord*`, costruisce il container dedicato e avvia
 la conversione. Il default scarica un solo shard e lo converte per lo smoke
 test, evitando un download completo accidentale.
 
-Per il dataset completo, dopo aver verificato lo smoke test, imposta in `.env`:
+To convert all shards after verifying the smoke test, set the following in
+`.env`:
 
 ```dotenv
 WAYMO_NUM_FILES=
@@ -139,6 +149,33 @@ WAYMO_SKIP_DOWNLOAD_IF_PRESENT=false
 ```
 
 e rilancia `make waymo-pipeline`. I file già presenti non vengono riscaricati.
+
+Downloading all shards is not required: the baseline requires 1,750 Waymo
+scenarios in total. Since the verified shard contains 61 scenarios and Waymo
+splits preserve whole groups, a practical run can use approximately 30--35
+shards:
+
+```dotenv
+WAYMO_NUM_FILES=35
+WAYMO_GCS_OBJECT_PATTERN=training_20s.tfrecord-*
+```
+
+The manifest records the effective counts. For the most conservative
+reproduction using the complete pool, leave `WAYMO_NUM_FILES` empty.
+
+To inspect the number of available shards and their size without downloading
+them, run:
+
+```bash
+make waymo-inventory
+```
+
+`.env.example` already uses the full wildcard; `WAYMO_NUM_FILES=1` still limits
+the smoke test to the first shard.
+
+The command queries Cloud Storage, reports the number of objects matching the
+pattern, and prints the total size in bytes. It only requires an authenticated
+`gcloud` session.
 
 ## Build manuale dell'immagine dedicata
 
@@ -182,6 +219,20 @@ Prima dell'avvio vengono rifiutate directory inesistenti o varianti Waymo
 diverse da `training_20s`. Dopo la conversione, la pipeline F5 carica i pickle,
 estrae il catalogo e assegna gli split interni senza rompere i gruppi logici.
 
+The raw files and converted database only need to coexist during conversion:
+the converter reads the TFRecords and writes the ScenarioNet database used by
+the rest of the project. After a successful conversion, avoid keeping both by
+setting:
+
+```dotenv
+WAYMO_CLEANUP_RAW_AFTER_CONVERSION=true
+```
+
+The pipeline verifies that the database contains files before deleting
+anything, and removes only `training_20s.tfrecord*` from the raw directory. If
+you need to reconvert later, the TFRecords must be downloaded again; therefore
+the default remains `false`.
+
 ## Verifiche successive
 
 La conversione reale non è inclusa nei test ordinari perché richiede dati
@@ -213,24 +264,23 @@ Per impostazione predefinita il pipeline usa i target baseline della specifica
 effettivi nel manifest. In questo modo gruppi Waymo da 61 scenari, ad esempio,
 non richiedono conteggi manuali impossibili.
 
-Se vuoi imporre conteggi esatti, disabilita l'assegnazione automatica e compila
-in `.env` i sei conteggi:
+To enforce exact counts, set `split.auto` to `false` in the YAML and keep the
+six values in `split.targets`; in this mode the targets are interpreted as exact
+counts and the command fails when Waymo groups make them impossible:
 
-```dotenv
-SCENARIONET_AUTO_SPLIT=false
-SCENARIONET_WAYMO_TRAIN_COUNT=...
-SCENARIONET_WAYMO_VALIDATION_COUNT=...
-SCENARIONET_WAYMO_TEST_COUNT=...
-SCENARIONET_PG_TRAIN_COUNT=...
-SCENARIONET_PG_VALIDATION_COUNT=...
-SCENARIONET_PG_TEST_COUNT=...
+```yaml
+split:
+  auto: false
+  targets:
+    waymo: {train: 1000, validation: 250, test: 500}
+    pg: {train: 1000, validation: 250, test: 500}
 ```
 
-Con `SCENARIONET_AUTO_SPLIT=true` i gruppi Waymo possono produrre conteggi
-leggermente diversi dai target; la riduzione è esplicita nel
-`split_manifest.json`. Con `false`, il pipeline fallisce se i gruppi rendono i
-conteggi incompatibili. I path catalogo, manifest, soglie e runtime possono
-essere personalizzati in `.env`; i default sono sotto
+With `split.auto: true`, Waymo groups may produce counts slightly different
+from the targets; the reduction is explicit in `split_manifest.json`. With
+`false`, the pipeline fails when groups make the counts incompatible. Catalog,
+manifest, threshold, and runtime paths can be customized through their
+dedicated path variables; defaults are under
 `${SCENARIONET_DATA_ROOT}`.
 
 In caso di errore TensorFlow/protobuf, conservare l'output del container nel

@@ -705,9 +705,9 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | DEC-013 | CONFERMATA | PG native topology mapping | `S/C`; `y/r/R/O`; `X/T` verificati headless sul commit MetaDrive locale | smoke API F4 |
 | DEC-014 | CONFERMATA | PG pilot development size | 2 scenari per profilo; pilot utente configurato a 20 per profilo | report F4, invalid rate 0% |
 | DEC-015 | CONFERMATA | Ambiente conversione Waymo | Container separato `Dockerfile.waymo` + profilo `compose.waymo.yaml` per TensorFlow 2.11 e converter; runtime RL leggero | build riuscito; import e CLI verificati; ISS-006 |
-| DEC-016 | CONFERMATA | Autenticazione/download Waymo | Google Cloud CLI con OAuth utente una tantum; URI, pattern e path in `.env`; nessuna API key o service-account JSON nel repository | `make waymo-auth`, `scripts/prepare_waymo.sh`, documentazione setup |
-| DEC-017 | CONFERMATA | Conteggi split finali | Default: target 1000/250/500 per sorgente, assegnazione automatica di gruppi interi e conteggi effettivi persistiti nel manifest; modalità esatta disponibile con `SCENARIONET_AUTO_SPLIT=false` | Evita conteggi impossibili sui gruppi Waymo senza introdurre riduzioni silenziose |
-| DEC-018 | CONFERMATA | Credenziali non interattive opzionali | Supportato `GOOGLE_APPLICATION_CREDENTIALS` come percorso esterno a un JSON di service account già autorizzato; OAuth gcloud resta il default | Automatizza l’esecuzione senza inserire segreti nel repository o nel contenuto di `.env` |
+| DEC-016 | CONFIRMED | Waymo authentication/download | Google Cloud CLI with one-time user OAuth; URI, pattern, and paths in `.env`; no API key (it does not replace IAM) and no JSON contents in the repository | `make waymo-auth`, `scripts/prepare_waymo.sh`, setup documentation |
+| DEC-017 | CONFIRMED | Final split counts | Default targets 1000/250/500 per source, whole-group assignment, and effective counts persisted in the manifest; edit `conf/scenarios/pipeline_v1.yaml` directly | Avoids duplication between YAML and `.env`; avoids impossible Waymo group counts without silent reductions |
+| DEC-018 | CONFIRMED | Optional non-interactive credentials | Supports `GOOGLE_APPLICATION_CREDENTIALS` as a path to an external, authorized service-account JSON; gcloud OAuth remains the default; API keys are unsupported because they do not grant IAM on the bucket | Enables automation without placing the secret or JSON contents in the repository or `.env` |
 
 ---
 
@@ -764,12 +764,15 @@ dataset o decisioni.
 | 2026-07-12 | F9 | Profilato smoke headless e cleanup env | 3 reset+2 step: `1.933/0.488/0.684 s`, max RSS `755220 KB`; ogni env chiuso correttamente | Misura indicativa della fixture, non del dataset completo |
 | 2026-07-12 | Regressione | Rieseguita suite completa dopo guardia catalogo/runtime e random smoke | 256 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
 | 2026-07-12 | F9 | Aggiunte CLI finali e pipeline unica configurabile | Smoke 182 record: catalogo, split, soglie train-only, runtime train/validation/test e help CLI verificati | ISS-017 risolto; dataset completo resta F10 |
-| 2026-07-12 | F9 | Aggiunti installer gcloud e configurazione `.env` per pipeline unica | `make install-gcloud` verificato; `make scenarionet-pipeline` fallisce in modo sicuro se mancano i sei conteggi split | OAuth resta interattivo per sicurezza; nessun secret in `.env` |
+| 2026-07-12 | F9 | Added gcloud installer and single-command pipeline configuration | `make install-gcloud` verified; `make scenarionet-pipeline` resolves counts directly from YAML and fails if YAML is incomplete | OAuth remains interactive for safety; `.env` contains at most an external credential path |
 | 2026-07-12 | Regressione | Rieseguita suite completa dopo l’orchestratore finale | 257 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
 | 2026-07-12 | F9 | Reso automatico lo split per gruppi interi verso i target baseline | Target 1000/250/500 configurabili; conteggi effettivi persistiti nel manifest; test di disgiunzione passati | Evita conteggi manuali incompatibili con shard Waymo |
 | 2026-07-12 | F9 | Corretto il pipeline per selezionare il sottoinsieme target dal pool convertito | I gruppi non selezionati restano sul disco ma non entrano nel catalogo/runtime finale; esclusioni persistite nel manifest | Evita di usare accidentalmente tutti gli scenari dei 1000 shard |
 | 2026-07-12 | F9 | Separati default scientifici e override macchina | Aggiunto `conf/scenarios/pipeline_v1.yaml` e resolver; supportato service account tramite path esterno | ISS-018 risolto; login OAuth interattivo resta il percorso predefinito |
 | 2026-07-12 | Regressione | Rieseguita suite completa dopo split automatico | 258 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
+| 2026-07-12 | F9 | Made `conf/scenarios/pipeline_v1.yaml` the single source for scientific parameters | `compileall`, `bash -n`, and `git diff --check` passed | Removed duplicate overrides from `.env.example`, Compose, and orchestration; credentials remain OAuth or an external service-account path; API keys excluded because they do not grant IAM on the bucket |
+| 2026-07-12 | F5/F10 | Added remote inventory and optional raw cleanup | `make waymo-inventory` queries count/size without downloading; `WAYMO_CLEANUP_RAW_AFTER_CONVERSION=true` deletes TFRecords only after a non-empty database is verified | Avoids keeping raw and converted data simultaneously while preserving a conservative default |
+| 2026-07-12 | F5/F10 | Fixed `WAYMO_NUM_FILES` with wildcard patterns | The limit now selects shards before download and is also applied during conversion | Prevents accidental full-bucket downloads when a subset is requested |
 
 ---
 

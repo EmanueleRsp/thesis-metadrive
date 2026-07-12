@@ -1,16 +1,20 @@
-"""Resolve versioned ScenarioNet pipeline defaults with environment overrides."""
+"""Resolve the versioned ScenarioNet pipeline configuration.
+
+The YAML file is the single source of truth for scientific/data-policy
+parameters.  Host paths, download options and credentials are deliberately
+handled by the shell orchestration layer and are not merged into this file.
+"""
 
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
 
-_ENV_PATHS: dict[str, tuple[str, ...]] = {
+_CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "SCENARIONET_PG_COUNT": ("pg", "count_per_profile"),
     "SCENARIONET_PG_SEED_START": ("pg", "seed_start"),
     "SCENARIONET_SPLIT_SEED": ("split", "seed"),
@@ -48,9 +52,8 @@ def main() -> int:
     payload = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"pipeline config must be a mapping: {args.config}")
-    for env_name, path in _ENV_PATHS.items():
-        configured = os.environ.get(env_name, "")
-        value = configured if configured != "" else _lookup(payload, path)
+    for env_name, path in _CONFIG_PATHS.items():
+        value = _lookup(payload, path)
         print(f"{env_name}\t{_format_value(value)}")
     return 0
 

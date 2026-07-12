@@ -1,4 +1,4 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-convert waymo-pipeline scenarionet-pipeline up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline scenarionet-pipeline up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu
 
 setup:
 	./setup.sh
@@ -30,6 +30,9 @@ install-gcloud:
 waymo-auth:
 	@command -v gcloud >/dev/null 2>&1 || (echo "gcloud CLI is required; install it from https://cloud.google.com/sdk/docs/install" >&2; exit 2)
 	gcloud init $(GCLOUD_INIT_FLAGS)
+
+waymo-inventory:
+	bash scripts/inspect_waymo_dataset.sh
 
 waymo-convert:
 	@test -n "$(WAYMO_RAW_DATA_PATH)" || (echo "WAYMO_RAW_DATA_PATH is required" >&2; exit 2)
