@@ -13,6 +13,7 @@ from thesis_rl.scenarios.pipeline import group_ids_for_entries
 from thesis_rl.scenarios.pg.loader import load_exported_pg_entries
 from thesis_rl.scenarios.reports import compute_arm_distribution, compute_feature_statistics, write_json_report
 from thesis_rl.scenarios.waymo import load_converted_waymo_entries
+from thesis_rl.cli.scenarios.ui import console, print_key_value_table, print_panel
 
 
 def main() -> int:
@@ -43,38 +44,51 @@ def main() -> int:
         args.report_output or paths.root / "catalog" / "catalog_report.json"
     )
 
-    waymo_entries, _waymo_groups = load_converted_waymo_entries(
-        waymo_database, data_root=paths.root
-    )
-    pg_entries = load_exported_pg_entries(
-        pg_database,
-        data_root=paths.root,
-        split="train",
-        seed_start=args.pg_seed_start,
-        count_per_profile=args.pg_count,
-    )
+    with console.status("Loading converted Waymo and PG scenarios", spinner="dots"):
+        waymo_entries, _waymo_groups = load_converted_waymo_entries(
+            waymo_database, data_root=paths.root
+        )
+        pg_entries = load_exported_pg_entries(
+            pg_database,
+            data_root=paths.root,
+            split="train",
+            seed_start=args.pg_seed_start,
+            count_per_profile=args.pg_count,
+        )
     entries = tuple(waymo_entries) + tuple(pg_entries)
-    write_scenario_catalog(entries, output, overwrite=args.overwrite)
+    with console.status("Writing unified ScenarioNet catalog and group mapping", spinner="dots"):
+        write_scenario_catalog(entries, output, overwrite=args.overwrite)
 
-    groups_output.parent.mkdir(parents=True, exist_ok=True)
-    if groups_output.exists() and not args.overwrite:
-        raise FileExistsError(f"refusing to overwrite group mapping: {groups_output}")
-    groups_output.write_text(
-        json.dumps(group_ids_for_entries(entries), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+        groups_output.parent.mkdir(parents=True, exist_ok=True)
+        if groups_output.exists() and not args.overwrite:
+            raise FileExistsError(f"refusing to overwrite group mapping: {groups_output}")
+        groups_output.write_text(
+            json.dumps(group_ids_for_entries(entries), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    source_counts = {
+        source: sum(entry.record.source == source for entry in entries)
+        for source in ("waymo", "pg")
+    }
     report = {
         "catalog": str(output.expanduser().resolve()),
         "groups": str(groups_output.expanduser().resolve()),
         "total": len(entries),
-        "by_source": {
-            source: sum(entry.record.source == source for entry in entries)
-            for source in ("waymo", "pg")
-        },
+        "by_source": source_counts,
         "features": compute_feature_statistics(entries),
         "arms": compute_arm_distribution(entries),
     }
     write_json_report(report, report_output, overwrite=args.overwrite)
+    print_panel(
+        "Catalog built",
+        f"Total scenarios: {report['total']}\n"
+        f"Catalog: {output}\n"
+        f"Groups: {groups_output}",
+    )
+    print_key_value_table(
+        "Catalog source counts",
+        list(source_counts.items()),
+    )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 

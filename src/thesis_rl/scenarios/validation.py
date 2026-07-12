@@ -4,7 +4,7 @@ import pickle
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -19,6 +19,11 @@ class ScenarioValidationResult:
     warnings: tuple[str, ...]
     scenario_length: int | None
     reset_smoke_passed: bool | None = None
+
+
+ValidationProgressCallback = Callable[
+    [int, int, ScenarioRecord, ScenarioValidationResult], None
+]
 
 
 def validate_scenario_file(
@@ -68,18 +73,21 @@ def validate_records(
     *,
     data_root: str | Path,
     run_feature_extraction: bool = True,
+    progress_callback: ValidationProgressCallback | None = None,
 ) -> tuple[ScenarioValidationResult, ...]:
     root = Path(data_root).expanduser().resolve()
     results: list[ScenarioValidationResult] = []
-    for record in records:
+    total = len(records)
+    for index, record in enumerate(records, start=1):
         path = root / Path(record.relative_path)
-        results.append(
-            validate_scenario_file(
-                path,
-                record,
-                run_feature_extraction=run_feature_extraction,
-            )
+        result = validate_scenario_file(
+            path,
+            record,
+            run_feature_extraction=run_feature_extraction,
         )
+        results.append(result)
+        if progress_callback is not None:
+            progress_callback(index, total, record, result)
     return tuple(results)
 
 

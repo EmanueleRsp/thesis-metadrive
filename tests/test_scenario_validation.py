@@ -6,6 +6,7 @@ from pathlib import Path
 from thesis_rl.scenarios.records import ScenarioRecord
 from thesis_rl.scenarios.validation import (
     validate_scenario_file,
+    validate_records,
     validation_summary,
     write_validation_summary,
 )
@@ -60,3 +61,21 @@ def test_malformed_scenario_is_invalid(tmp_path: Path) -> None:
         [result], tmp_path / "validation_summary.json", catalog_hash="hash"
     )
     assert path.exists()
+
+
+def test_validation_progress_callback_reports_each_record(tmp_path: Path) -> None:
+    path = tmp_path / "broken.pkl"
+    with path.open("wb") as handle:
+        pickle.dump({"id": "broken"}, handle)
+
+    events: list[tuple[int, int, str, str]] = []
+    results = validate_records(
+        [_record(path.name)],
+        data_root=tmp_path,
+        progress_callback=lambda index, total, record, result: events.append(
+            (index, total, record.scenario_uid, result.status)
+        ),
+    )
+
+    assert len(results) == 1
+    assert events == [(1, 1, "waymo:v1:fixture", "invalid")]

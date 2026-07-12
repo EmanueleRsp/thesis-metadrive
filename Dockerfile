@@ -1,13 +1,10 @@
 # syntax=docker/dockerfile:1.4
-FROM python:3.10.20-slim-bookworm@sha256:ff7161e2b8e2a56fc6a62a6099ff8feb72f1a6dbae9860cdcb9a6c65cf4c6be9
+FROM python:3.10.20-slim-bookworm@sha256:ff7161e2b8e2a56fc6a62a6099ff8feb72f1a6dbae9860cdcb9a6c65cf4c6be9 AS base
 
 ARG USER_NAME=appuser
 ARG HOST_UID=1000
 ARG HOST_GID=1000
 ARG UV_VERSION=0.11.28
-ARG TORCH_VERSION=2.8.0
-ARG TORCH_BACKEND=cu128
-
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     UV_NO_CACHE=1 \
@@ -52,6 +49,30 @@ RUN uv sync --frozen --no-install-project
 COPY . .
 RUN mkdir -p /workspace/.container-home /workspace/outputs /workspace/data/scenarionet /workspace/data/metadrive
 RUN uv sync --frozen --extra dev
+
+# Keep the shared base free of PyTorch. Dataset preparation uses MetaDrive,
+# ScenarioNet, NumPy and PyArrow, but never imports the RL/training stack.
+
+# CPU-only image for ScenarioNet dataset preparation. It deliberately has no
+# PyTorch and no CUDA runtime; Waymo conversion remains in Dockerfile.waymo.
+FROM base AS pipeline
+
+RUN chown -R "${HOST_UID}:${HOST_GID}" \
+    /workspace/.container-home /workspace/outputs /workspace/data
+
+CMD ["bash"]
+
+# The main development image adds the machine-specific PyTorch backend only in
+# this target. The pipeline target above reuses the base layers without
+# downloading PyTorch or CUDA runtime libraries.
+FROM base AS dev
+
+ARG TORCH_VERSION=2.8.0
+ARG TORCH_BACKEND=cu128
+ARG UV_HTTP_TIMEOUT=300
+
+ENV UV_HTTP_TIMEOUT=${UV_HTTP_TIMEOUT}
+
 # Torch is intentionally installed after uv sync because it comes from the
 # dedicated CUDA wheel index and is excluded from the portable project lock.
 RUN case "${TORCH_BACKEND}" in cpu|cu126|cu128) ;; *) echo "Unsupported TORCH_BACKEND=${TORCH_BACKEND}" >&2; exit 2;; esac \

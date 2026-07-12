@@ -4,6 +4,30 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+started_at="$(date +%s)"
+current_stage="startup"
+
+on_exit() {
+  status=$?
+  elapsed=$(( $(date +%s) - started_at ))
+  if [[ "$status" -eq 0 ]]; then
+    echo
+    echo "ScenarioNet pipeline completed successfully in ${elapsed}s."
+  else
+    echo >&2
+    echo "ScenarioNet pipeline stopped in stage '${current_stage}' after ${elapsed}s (exit ${status})." >&2
+  fi
+}
+trap on_exit EXIT
+
+stage() {
+  current_stage="$1"
+  echo
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "$current_stage"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
 if [[ -f .env ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -24,14 +48,16 @@ is_true() {
 }
 
 pipeline_config="${SCENARIONET_PIPELINE_CONFIG:-/workspace/thesis-metadrive/conf/scenarios/pipeline_v1.yaml}"
+pipeline_service="${SCENARIONET_PIPELINE_SERVICE:-dataset-pipeline}"
 echo "Resolving pipeline configuration (single YAML source): $pipeline_config"
-docker compose build dev >/dev/null
+stage "[0/7] Preparing the CPU-only dataset pipeline container"
+docker compose --progress plain build "$pipeline_service"
 while IFS=$'\t' read -r key value; do
   [[ -n "$key" ]] || continue
   printf -v "$key" '%s' "$value"
   export "$key"
 done < <(
-  docker compose run --rm -T dev uv run --no-sync python \
+  docker compose run --rm -T "$pipeline_service" uv run --no-sync python \
     -m thesis_rl.cli.scenarios.pipeline_config --config "$pipeline_config"
 )
 
@@ -57,19 +83,26 @@ pg_test_target="${SCENARIONET_PG_TEST_TARGET:?pipeline YAML must define pg test 
 check_workers="${SCENARIONET_CHECK_WORKERS:?pipeline YAML must define checks.workers}"
 run_simulation_check="${SCENARIONET_RUN_SIMULATION_CHECK:?pipeline YAML must define checks.simulation}"
 
+echo "Resolved pipeline parameters:"
+echo "  PG: ${pg_count} scenarios/profile, seed=${pg_seed_start}"
+echo "  Waymo targets: train=${waymo_train_target}, validation=${waymo_validation_target}, test=${waymo_test_target}"
+echo "  PG targets: train=${pg_train_target}, validation=${pg_validation_target}, test=${pg_test_target}"
+echo "  Split mode: auto=${auto_split}, seed=${split_seed}"
+echo "  Official simulation check: ${run_simulation_check} (workers=${check_workers})"
+
 if ! is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
-  echo "[1/7] Downloading/converting Waymo..."
+  stage "[1/7] Downloading/converting Waymo training_20s"
   make waymo-pipeline
 else
-  echo "[1/7] Waymo skipped: SCENARIONET_SKIP_WAYMO=true"
+  stage "[1/7] Waymo skipped: SCENARIONET_SKIP_WAYMO=true"
 fi
 
-echo "[2/7] Generating PG (${pg_count} scenarios per profile)..."
+stage "[2/7] Generating PG (${pg_count} scenarios per profile)"
 pg_overwrite=()
 if is_true "$overwrite"; then
   pg_overwrite+=(--overwrite)
 fi
-docker compose run --rm dev uv run --no-sync python \
+docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.generate_pg_dataset \
   --data-root "$data_root" \
   --repo-root /workspace/thesis-metadrive \
@@ -82,8 +115,8 @@ if is_true "$overwrite"; then
   catalog_overwrite+=(--overwrite)
 fi
 
-echo "[3/7] Building catalog and groups..."
-docker compose run --rm dev uv run --no-sync python \
+stage "[3/7] Building catalog and groups"
+docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.build_catalog \
   --data-root "$data_root" \
   --pg-seed-start "$pg_seed_start" \
@@ -92,7 +125,7 @@ docker compose run --rm dev uv run --no-sync python \
   --groups-output "$groups_path" \
   "${catalog_overwrite[@]}"
 
-echo "[4/7] Building splits..."
+stage "[4/7] Building leakage-free train/validation/test splits"
 split_args=(
   --catalog "$catalog_raw"
   --output "$catalog_split"
@@ -120,19 +153,19 @@ else
     --pg-test "$pg_test_target"
   )
 fi
-docker compose run --rm dev uv run --no-sync python \
+docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.build_splits "${split_args[@]}" "${catalog_overwrite[@]}"
 
-echo "[5/7] Computing thresholds and arms..."
-docker compose run --rm dev uv run --no-sync python \
+stage "[5/7] Computing train-only thresholds and assigning arms"
+docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.compute_arm_thresholds \
   --catalog "$catalog_split" \
   --output-catalog "$catalog_final" \
   --thresholds "$thresholds_path" \
   "${catalog_overwrite[@]}"
 
-echo "[6/7] Building train, validation, and test runtime views..."
-docker compose run --rm dev uv run --no-sync python \
+stage "[6/7] Building train/validation/test runtime views"
+docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.build_runtime_databases \
   --catalog "$catalog_final" \
   --data-root "$data_root" \
@@ -140,20 +173,21 @@ docker compose run --rm dev uv run --no-sync python \
   --output-catalog "$catalog_final" \
   "${catalog_overwrite[@]}"
 
-echo "[7/7] Validating mappings and running official checks..."
+stage "[7/7] Validating mappings and running official ScenarioNet checks"
 for split in train validation test; do
   runtime_path="${data_root}/runtime/${split}"
-  docker compose run --rm dev uv run --no-sync python \
+  docker compose run --rm "$pipeline_service" uv run --no-sync python \
     -m thesis_rl.cli.scenarios.validate_database "$runtime_path" \
     --data-root "$data_root" \
+    --split "$split" \
     --catalog "$catalog_final"
-  docker compose run --rm dev uv run --no-sync python \
+  docker compose run --rm "$pipeline_service" uv run --no-sync python \
     -m thesis_rl.cli.scenarios.check_database existence "$runtime_path" \
     --error-file-path "${data_root}/validation/${split}" \
     --num-workers "$check_workers" \
     --overwrite
   if is_true "$run_simulation_check"; then
-    docker compose run --rm dev uv run --no-sync python \
+    docker compose run --rm "$pipeline_service" uv run --no-sync python \
       -m thesis_rl.cli.scenarios.check_database simulation "$runtime_path" \
       --error-file-path "${data_root}/validation/${split}_simulation" \
       --num-workers "$check_workers" \
@@ -164,7 +198,7 @@ done
 for pair in \
   "train validation" "train test" "validation test"; do
   read -r left right <<<"$pair"
-  docker compose run --rm dev uv run --no-sync python \
+  docker compose run --rm "$pipeline_service" uv run --no-sync python \
     -m thesis_rl.cli.scenarios.check_database overlap \
     "${data_root}/runtime/${left}" \
     --other-database-path "${data_root}/runtime/${right}"

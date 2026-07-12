@@ -1,15 +1,39 @@
+x-project-build-args: &project-build-args
+  USER_NAME: "${USER_NAME:-appuser}"
+  HOST_UID: "${HOST_UID:-1000}"
+  HOST_GID: "${HOST_GID:-1000}"
+  UV_VERSION: "${UV_VERSION:-0.11.28}"
+
+x-project-environment: &project-environment
+  USER_NAME: "${USER_NAME:-appuser}"
+  USER: "${USER_NAME:-appuser}"
+  LOGNAME: "${USER_NAME:-appuser}"
+  HOME: "${CONTAINER_HOME_DIR:-/workspace/.container-home}"
+  UV_PROJECT_ENVIRONMENT: /opt/venv
+  OUTPUTS_ROOT: "${OUTPUTS_ROOT:-/workspace/outputs}"
+  DATA_ROOT: "${DATA_ROOT:-/workspace/data}"
+  SCENARIONET_DATA_ROOT: "${SCENARIONET_DATA_ROOT:-/workspace/data/scenarionet}"
+  METADRIVE_DATA_ROOT: "${METADRIVE_DATA_ROOT:-/workspace/data/metadrive}"
+  WANDB_MODE: "${WANDB_MODE:-offline}"
+  HYDRA_FULL_ERROR: "${HYDRA_FULL_ERROR:-1}"
+
+x-project-volumes: &project-volumes
+  - .:/workspace/thesis-metadrive
+  - ${HOST_OUTPUTS_DIR:-./outputs}:${CONTAINER_OUTPUTS_DIR:-/workspace/outputs}
+  - ${HOST_DATA_DIR:-./data}:${CONTAINER_DATA_DIR:-/workspace/data}
+  - ${HOST_CONTAINER_HOME_DIR:-./.container-home}:${CONTAINER_HOME_DIR:-/workspace/.container-home}
+
 services:
   dev:
     build:
       context: .
       dockerfile: Dockerfile
+      target: dev
       args:
-        USER_NAME: "${USER_NAME:-appuser}"
-        HOST_UID: "${HOST_UID:-1000}"
-        HOST_GID: "${HOST_GID:-1000}"
-        UV_VERSION: "${UV_VERSION:-0.11.28}"
+        <<: *project-build-args
         TORCH_VERSION: "${TORCH_VERSION:-2.8.0}"
         TORCH_BACKEND: "${TORCH_BACKEND:-cu128}"
+        UV_HTTP_TIMEOUT: "${UV_HTTP_TIMEOUT:-300}"
     working_dir: /workspace/thesis-metadrive
     stdin_open: true
     tty: true
@@ -17,20 +41,21 @@ services:
       memlock: -1
       stack: 67108864
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
-    environment:
-      USER_NAME: "${USER_NAME:-appuser}"
-      USER: "${USER_NAME:-appuser}"
-      LOGNAME: "${USER_NAME:-appuser}"
-      HOME: "${CONTAINER_HOME_DIR:-/workspace/.container-home}"
-      UV_PROJECT_ENVIRONMENT: /opt/venv
-      OUTPUTS_ROOT: "${OUTPUTS_ROOT:-/workspace/outputs}"
-      DATA_ROOT: "${DATA_ROOT:-/workspace/data}"
-      SCENARIONET_DATA_ROOT: "${SCENARIONET_DATA_ROOT:-/workspace/data/scenarionet}"
-      METADRIVE_DATA_ROOT: "${METADRIVE_DATA_ROOT:-/workspace/data/metadrive}"
-      WANDB_MODE: "${WANDB_MODE:-offline}"
-      HYDRA_FULL_ERROR: "${HYDRA_FULL_ERROR:-1}"
-    volumes:
-      - .:/workspace/thesis-metadrive
-      - ${HOST_OUTPUTS_DIR:-./outputs}:${CONTAINER_OUTPUTS_DIR:-/workspace/outputs}
-      - ${HOST_DATA_DIR:-./data}:${CONTAINER_DATA_DIR:-/workspace/data}
-      - ${HOST_CONTAINER_HOME_DIR:-./.container-home}:${CONTAINER_HOME_DIR:-/workspace/.container-home}
+    environment: *project-environment
+    volumes: *project-volumes
+
+  dataset-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: pipeline
+      args: *project-build-args
+    working_dir: /workspace/thesis-metadrive
+    stdin_open: true
+    tty: true
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment: *project-environment
+    volumes: *project-volumes

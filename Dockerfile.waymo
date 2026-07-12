@@ -39,6 +39,7 @@ RUN pip install \
     "requests" \
     "pygame" \
     "progressbar" \
+    "rich" \
     "pillow" \
     "lxml" \
     "psutil" \

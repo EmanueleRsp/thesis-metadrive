@@ -58,6 +58,11 @@ For Docker builds, the repository starts from the official minimal Python
 3.10 image. PyTorch 2.8 is installed from the backend selected per machine by
 `TORCH_BACKEND` and excluded from the platform-neutral uv lock.
 
+Dataset preparation uses the separate `dataset-pipeline` Compose service. It
+shares the pre-PyTorch Docker layers with `dev` and does not install PyTorch or
+CUDA; the Waymo conversion remains isolated in the TensorFlow-only
+`waymo-converter` service.
+
 ## Requirements
 
 The repository is Docker-first and currently optimized for Linux/NVIDIA hosts.

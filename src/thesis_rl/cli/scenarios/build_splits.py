@@ -17,6 +17,7 @@ from thesis_rl.scenarios.pipeline import (
 )
 from thesis_rl.scenarios.reports import write_json_report
 from thesis_rl.scenarios.runtime_database import sha256_file
+from thesis_rl.cli.scenarios.ui import console, print_key_value_table, print_panel
 
 
 def _counts_from_args(args: argparse.Namespace) -> dict[str, dict[str, int]]:
@@ -67,34 +68,37 @@ def main() -> int:
         args.split_manifest
         or output_path.parent.parent / "splits" / "split_manifest.json"
     ).expanduser().resolve()
-    catalog = read_scenario_catalog(catalog_path)
-    if args.auto_targets:
-        targets = {
-            source: {
-                split: (
-                    0
-                    if getattr(args, f"{source}_target_{split}") is None
-                    else int(getattr(args, f"{source}_target_{split}"))
-                )
-                for split in SPLITS
+    with console.status("Reading catalog and assigning leakage-free splits", spinner="dots"):
+        catalog = read_scenario_catalog(catalog_path)
+        if args.auto_targets:
+            targets = {
+                source: {
+                    split: (
+                        0
+                        if getattr(args, f"{source}_target_{split}") is None
+                        else int(getattr(args, f"{source}_target_{split}"))
+                    )
+                    for split in SPLITS
+                }
+                for source in SOURCES
             }
-            for source in SOURCES
-        }
-        if not any(value > 0 for source in targets.values() for value in source.values()):
-            raise ValueError("auto-targets requires at least one positive split target")
-        entries = assign_source_splits_to_targets(
-            catalog.entries,
-            targets=targets,
-            seed=int(args.split_seed),
-        )
-    else:
-        counts = _counts_from_args(args)
-        entries = assign_source_splits(
-            catalog.entries,
-            counts=counts,
-            seed=int(args.split_seed),
-        )
-    write_scenario_catalog(entries, output_path, overwrite=args.overwrite)
+            if not any(value > 0 for source in targets.values() for value in source.values()):
+                raise ValueError("auto-targets requires at least one positive split target")
+            entries = assign_source_splits_to_targets(
+                catalog.entries,
+                targets=targets,
+                seed=int(args.split_seed),
+            )
+            selection_mode = "grouped_target"
+        else:
+            counts = _counts_from_args(args)
+            entries = assign_source_splits(
+                catalog.entries,
+                counts=counts,
+                seed=int(args.split_seed),
+            )
+            selection_mode = "exact"
+        write_scenario_catalog(entries, output_path, overwrite=args.overwrite)
 
     split_counts = {
         split: {
@@ -118,7 +122,7 @@ def main() -> int:
                 "pg": "pg_seed",
             },
             "selection": {
-                "mode": "grouped_target" if args.auto_targets else "exact",
+                "mode": selection_mode,
                 "input_records": len(catalog.entries),
                 "selected_records": len(entries),
                 "excluded_records": len(catalog.entries) - len(entries),
@@ -145,6 +149,22 @@ def main() -> int:
         report,
         output_path.parent / "split_report.json",
         overwrite=args.overwrite,
+    )
+    print_panel(
+        "Splits built",
+        f"Selected {len(entries)}/{len(catalog.entries)} catalog records\n"
+        f"Mode: {selection_mode}\n"
+        f"Manifest: {manifest_path}",
+    )
+    print_key_value_table(
+        "Effective split counts",
+        [
+            (
+                split,
+                ", ".join(f"{source}={split_counts[split][source]}" for source in SOURCES),
+            )
+            for split in SPLITS
+        ],
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0

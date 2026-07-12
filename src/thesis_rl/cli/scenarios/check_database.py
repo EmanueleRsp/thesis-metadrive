@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from thesis_rl.scenarios.official_checks import run_official_check
+from thesis_rl.cli.scenarios.ui import console, print_panel
 
 
 def main() -> int:
@@ -17,19 +18,28 @@ def main() -> int:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--show-id", action="store_true")
     args = parser.parse_args()
-    result = run_official_check(
-        args.check,
-        database_path=args.database_path,
-        other_database_path=args.other_database_path,
-        error_file_path=args.error_file_path,
-        num_workers=args.num_workers,
-        overwrite=args.overwrite,
-        show_id=args.show_id,
-    )
+    with console.status(
+        f"Running ScenarioNet official {args.check} check on {args.database_path}",
+        spinner="dots",
+    ):
+        result = run_official_check(
+            args.check,
+            database_path=args.database_path,
+            other_database_path=args.other_database_path,
+            error_file_path=args.error_file_path,
+            num_workers=args.num_workers,
+            overwrite=args.overwrite,
+            show_id=args.show_id,
+        )
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="")
+    print_panel(
+        f"Official {args.check} check completed",
+        f"Database: {args.database_path}\nExit code: {result.returncode}",
+        style="green" if result.returncode == 0 else "red",
+    )
     return int(result.returncode)
 
 

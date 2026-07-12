@@ -577,6 +577,8 @@ dell'utente.
 - [ ] Eseguire pilot visivo Waymo per scegliere 50 oppure 0 extra step.
 - [x] Eseguire pilot PG di default e, al massimo, una revisione manuale dei
       profili secondo i criteri della specifica.
+- [x] Aggiungere output Rich alla pipeline: stadi, spinner, progress bar per
+      generazione/validazione e riepiloghi leggibili senza alterare i report JSON.
 - [ ] Congelare manifest software, profili PG e decisioni data-dependent.
 - [x] Documentare i comandi destinati all'utente per la generazione completa.
 
@@ -594,7 +596,7 @@ dell'utente.
   reset/step e shape uniforme passati;
 - simulation ufficiale: 82/82 scenari caricati e simulati senza errori;
 - overlap ufficiale Waymo↔PG: nessuna sovrapposizione;
-- regressione: 258 test passati, 2 failure baseline non correlati;
+- regressione: 259 test passati, 2 failure baseline non correlati;
 - pilot PG default: 100/100 generati, invalid rate 0%, matrice profilo-arm
   persistita in `data/scenarionet/pg/pilot/pg_pilot_report.json`;
 - training-only smoke 20 step con reward custom passato; audit causale statico e
@@ -773,6 +775,7 @@ dataset o decisioni.
 | 2026-07-12 | F9 | Made `conf/scenarios/pipeline_v1.yaml` the single source for scientific parameters | `compileall`, `bash -n`, and `git diff --check` passed | Removed duplicate overrides from `.env.example`, Compose, and orchestration; credentials remain OAuth or an external service-account path; API keys excluded because they do not grant IAM on the bucket |
 | 2026-07-12 | F5/F10 | Added remote inventory and optional raw cleanup | `make waymo-inventory` queries count/size without downloading; `WAYMO_CLEANUP_RAW_AFTER_CONVERSION=true` deletes TFRecords only after a non-empty database is verified | Avoids keeping raw and converted data simultaneously while preserving a conservative default |
 | 2026-07-12 | F5/F10 | Fixed `WAYMO_NUM_FILES` with wildcard patterns | The limit now selects shards before download and is also applied during conversion | Prevents accidental full-bucket downloads when a subset is requested |
+| 2026-07-12 | F9 | Added Rich observability to the ScenarioNet pipeline | Stage timing/config summary, PG and validation progress bars, runtime/check spinners, and human summaries are sent to stderr while JSON stdout remains stable; Ruff/mypy and 259 tests pass with the 2 known baseline failures | Makes long dataset preparation runs inspectable without changing pipeline semantics |
 
 ---
 

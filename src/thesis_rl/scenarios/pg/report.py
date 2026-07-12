@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from thesis_rl.scenarios.arms import assign_primary_arm
 from thesis_rl.scenarios.pg.generator import PGGenerationResult, generate_pg_scenario
@@ -30,6 +30,9 @@ class PGPilotReport:
         }
 
 
+PGProgressCallback = Callable[[int, int, str, int, bool], None]
+
+
 def run_pg_pilot(
     *,
     data_root: str | Path,
@@ -38,6 +41,7 @@ def run_pg_pilot(
     overwrite: bool = False,
     generator_commit: str | None = None,
     exporter_commit: str | None = None,
+    progress_callback: PGProgressCallback | None = None,
 ) -> tuple[PGPilotReport, tuple[PGGenerationResult, ...]]:
     if count_per_profile < 1:
         raise ValueError("count_per_profile must be positive")
@@ -45,9 +49,12 @@ def run_pg_pilot(
     failures: list[dict[str, Any]] = []
     matrix: dict[str, Counter[str]] = defaultdict(Counter)
     profile_stride = 1_000_000
+    requested = len(PG_PROFILES) * count_per_profile
+    processed = 0
     for profile_index, profile in enumerate(PG_PROFILES):
         for offset in range(count_per_profile):
             seed = int(seed_start) + profile_index * profile_stride + offset
+            succeeded = False
             try:
                 result = generate_pg_scenario(
                     profile.name,
@@ -66,10 +73,14 @@ def run_pg_pilot(
                         "error": str(exc),
                     }
                 )
-                continue
-            results.append(result)
-            matrix[profile.name][assign_primary_arm(result.entry.features)] += 1
-    requested = len(PG_PROFILES) * count_per_profile
+            else:
+                results.append(result)
+                matrix[profile.name][assign_primary_arm(result.entry.features)] += 1
+                succeeded = True
+            finally:
+                processed += 1
+                if progress_callback is not None:
+                    progress_callback(processed, requested, profile.name, seed, succeeded)
     report = PGPilotReport(
         requested=requested,
         generated=len(results),

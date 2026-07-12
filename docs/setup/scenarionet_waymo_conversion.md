@@ -242,11 +242,26 @@ nel tracker [`scenarionet_integration_implementation_plan.md`](../specs/scenario
 
 ## Pipeline completa con un solo comando
 
+Durante l'esecuzione il comando mostra gli stadi numerati, i parametri risolti
+e il tempo totale. Le CLI usano Rich per visualizzare una progress bar durante
+la generazione PG e la validazione degli scenari, oltre a spinner e riepiloghi
+per catalogo, split, soglie, runtime e check ufficiali.
+
+L'output umano viene scritto su `stderr`, mentre i report JSON su `stdout`
+restano disponibili per script e log machine-readable. In terminali non
+interattivi o CI Rich riduce automaticamente l'output a righe leggibili.
+
 Dopo aver autenticato `gcloud`, il comando consigliato è:
 
 ```bash
 make scenarionet-pipeline
 ```
+
+La pipeline usa il servizio Compose `dataset-pipeline`, costruito dal target
+CPU-only condiviso con l'immagine principale: non installa PyTorch né le
+librerie CUDA. Il solo stadio che usa una dipendenza pesante separata è la
+conversione Waymo, eseguita da `waymo-converter` con TensorFlow 2.11. Il
+container `dev` resta riservato a training ed evaluation RL.
 
 Il comando esegue, nell'ordine:
 

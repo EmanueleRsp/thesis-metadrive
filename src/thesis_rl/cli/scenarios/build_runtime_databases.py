@@ -10,6 +10,7 @@ from pathlib import Path
 from thesis_rl.scenarios.catalog import read_scenario_catalog, write_scenario_catalog
 from thesis_rl.scenarios.pipeline import SPLITS, assign_catalog_runtime_indices
 from thesis_rl.scenarios.runtime_database import build_runtime_database, verify_runtime_mapping
+from thesis_rl.cli.scenarios.ui import make_progress, print_key_value_table, print_panel
 
 
 def main() -> int:
@@ -25,27 +26,32 @@ def main() -> int:
 
     data_root = Path(args.data_root).expanduser().resolve()
     runtime_root = Path(args.runtime_root or data_root / "runtime").expanduser().resolve()
-    catalog = read_scenario_catalog(args.catalog)
-    assigned = assign_catalog_runtime_indices(catalog.entries)
-    summary: dict[str, int] = {}
-    for split in SPLITS:
-        split_entries = tuple(entry for entry in assigned if entry.record.split == split)
-        valid_entries = tuple(
-            entry
-            for entry in split_entries
-            if entry.record.validation_status in {"valid", "warning"}
-        )
-        if not valid_entries:
-            raise ValueError(f"cannot build empty runtime view for split={split!r}")
-        runtime_directory = runtime_root / split
-        build_runtime_database(
-            [entry.record for entry in valid_entries],
-            data_root=data_root,
-            runtime_directory=runtime_directory,
-            overwrite=args.overwrite,
-        )
-        verify_runtime_mapping(runtime_directory)
-        summary[split] = len(valid_entries)
+    progress = make_progress()
+    task_id = progress.add_task("Building runtime views", total=len(SPLITS))
+    with progress:
+        catalog = read_scenario_catalog(args.catalog)
+        assigned = assign_catalog_runtime_indices(catalog.entries)
+        summary: dict[str, int] = {}
+        for split in SPLITS:
+            progress.update(task_id, description=f"Building runtime/{split}")
+            split_entries = tuple(entry for entry in assigned if entry.record.split == split)
+            valid_entries = tuple(
+                entry
+                for entry in split_entries
+                if entry.record.validation_status in {"valid", "warning"}
+            )
+            if not valid_entries:
+                raise ValueError(f"cannot build empty runtime view for split={split!r}")
+            runtime_directory = runtime_root / split
+            build_runtime_database(
+                [entry.record for entry in valid_entries],
+                data_root=data_root,
+                runtime_directory=runtime_directory,
+                overwrite=args.overwrite,
+            )
+            verify_runtime_mapping(runtime_directory)
+            summary[split] = len(valid_entries)
+            progress.advance(task_id)
 
     output_catalog = Path(args.output_catalog or args.catalog).expanduser().resolve()
     write_scenario_catalog(assigned, output_catalog, overwrite=True)
@@ -54,6 +60,12 @@ def main() -> int:
         "runtime_root": str(runtime_root),
         "runtime_counts": summary,
     }
+    print_panel(
+        "Runtime views ready",
+        "\n".join(f"runtime/{split}: {count} scenarios" for split, count in summary.items())
+        + f"\nRoot: {runtime_root}",
+    )
+    print_key_value_table("Runtime counts", list(summary.items()))
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
