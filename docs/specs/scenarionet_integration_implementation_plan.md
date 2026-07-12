@@ -23,8 +23,8 @@ e, se accettata, riportata in una nuova revisione della specifica.
 ## Stato complessivo
 
 **Stato:** implementazione in corso  
-**Fase corrente:** F6 — validazione e runtime database  
-**Ultimo aggiornamento:** 2026-07-11  
+**Fase corrente:** F9 — smoke end-to-end, pilot e freeze
+**Ultimo aggiornamento:** 2026-07-12
 **Specifica di riferimento:** ScenarioNet integration spec v1
 
 ### Legenda
@@ -49,9 +49,9 @@ e, se accettata, riportata in una nuova revisione della specifica.
 | F4 | Generazione PG offline e pilot | `COMPLETATA` | F0, F1, F3 |
 | F5 | Conversione e preparazione Waymo | `IN_CORSO` | F0, F1 |
 | F6 | Validazione e runtime database | `IN_CORSO` | F2–F5 |
-| F7 | `ThesisScenarioEnv` e scene context | `NON_INIZIATA` | F0, F2 |
-| F8 | Vectorization, logging e wiring training/eval | `NON_INIZIATA` | F2, F7 |
-| F9 | Smoke end-to-end, pilot e freeze | `NON_INIZIATA` | F3–F8 |
+| F7 | `ThesisScenarioEnv` e scene context | `IN_CORSO` | F0, F2 |
+| F8 | Vectorization, logging e wiring training/eval | `IN_CORSO` | F2, F7 |
+| F9 | Smoke end-to-end, pilot e freeze | `IN_CORSO` | F3–F8 |
 | F10 | Costruzione dataset completo | `NON_INIZIATA` | F9; esecuzione utente |
 
 ---
@@ -364,11 +364,12 @@ dell'utente.
 - [x] Implementare wrapper CLI riproducibile sul converter ScenarioNet locale.
 - [x] Validare che la sorgente sia esclusivamente `training_20s`.
 - [x] Estrarre e documentare il più forte identificativo di gruppo disponibile.
-- [x] Conservare release, directory sorgente, converter commit e output nel
-      manifest.
-- [ ] Supportare conversione limitata per smoke test (in attesa di raw data e
-      TensorFlow nell'ambiente dedicato).
-- [ ] Eseguire controlli ufficiali ScenarioNet disponibili (dopo conversione).
+- [ ] Conservare release, directory sorgente, converter commit e output nel
+      manifest (da completare insieme alla conversione del pool definitivo).
+- [x] Supportare conversione limitata per smoke test (un shard reale convertito
+      in 61 scenari; ambiente TensorFlow dedicato pronto).
+- [x] Eseguire il controllo ufficiale existence/integrity sul campione reale;
+      simulation e overlap restano da integrare/eseguire.
 - [x] Estrarre feature e record di catalogo senza usare future track online.
 - [x] Implementare split interni raggruppati e verifica overlap; da eseguire sul
       database reale.
@@ -388,8 +389,27 @@ dell'utente.
 - source guard: richiede file `training_20s.tfrecord*`
 - grouping preference: `source_log_id → segment_id → source_file_id → source_file → scenario id`
 - fixture converted: 3 scenari Waymo bundled caricati come `training_20s`
-- verifica cumulativa F0–F5: 62 test passati; Ruff e mypy verdi
-- conversione reale: non eseguita; TensorFlow e raw Waymo non disponibili
+- immagine dedicata: `Dockerfile.waymo` + profilo `compose.waymo.yaml`, build
+  riuscito con TensorFlow `2.11.0`, MetaDrive e ScenarioNet importabili
+- CLI container: `--help` riuscito; preflight raw inesistente rifiutato prima del
+  converter con errore diagnostico
+- mount raw host→`/workspace/waymo_raw` verificato tramite `make waymo-convert`
+- automazione download: `scripts/prepare_waymo.sh`, `make waymo-auth` e
+  `make waymo-pipeline`; configurazione in `.env.example`, nessun secret nel
+  repository
+- smoke reale: 1 shard Waymo convertito in 61 scenari; output ScenarioNet con
+  `dataset_summary.pkl`, `dataset_mapping.pkl` e sottodirectory `database_0`
+- compatibilità converter: fissato `protobuf==3.20.3` nel container dedicato;
+  import dei binding `scenario_pb2` verificato
+- grouping reale: `source_file` normalizzato al basename del TFRecord, senza
+  path assoluti del container
+- check ufficiale ScenarioNet existence/integrity: 61/61 scenari caricati
+- validazione applicativa: 61 `valid`, 0 `warning`, 0 `invalid`
+- runtime mapping temporaneo verificato per 61/61 file senza copie fisiche
+- verifica F5/F6 mirata: 80 test ScenarioNet/PG passati; Ruff e mypy verdi
+- conversione completa del pool: differita a F10; smoke reale limitato a 1 shard
+  autorizzato, sufficiente per verificare converter e runtime senza scaricare i
+  1000 shard nel repository
 
 ---
 
@@ -399,18 +419,20 @@ dell'utente.
 
 ### Attività
 
-- [ ] Integrare existence, integrity, simulation e overlap check ufficiali
-      (wrapper dati pronto; esecuzione reale pendente).
+- [x] Integrare i wrapper per existence/integrity, simulation e overlap check
+      ufficiali; [x] eseguire existence/integrity su 61 scenari; simulation e
+      overlap sul pool finale restano pendenti.
 - [x] Implementare validazione applicativa della tesi.
 - [x] Distinguere `valid`, `warning` e `invalid` con warning strutturati.
-- [ ] Escludere automaticamente gli invalid dai runtime database (da collegare
-      al builder catalog/runtime finale).
+- [x] Escludere automaticamente gli invalid dai runtime database (builder
+      runtime filtra `valid`/`warning`).
 - [x] Costruire viste `runtime/train`, `runtime/validation`, `runtime/test`
       evitando copie fisiche quando supportato.
-- [ ] Assegnare `runtime_index` nel builder finale e verificarlo contro
+- [x] Assegnare `runtime_index` nel builder finale e verificarlo contro
       summary/mapping effettivi.
 - [x] Verificare mapping runtime e presenza dei file risolti.
-- [ ] Salvare `validation_summary.json` e hash del catalogo.
+- [x] Salvare `validation_summary.json` e hash del catalogo quando il CLI riceve
+      `--catalog`.
 
 ### Criteri di uscita
 
@@ -425,32 +447,43 @@ dell'utente.
 - runtime mapping: `src/thesis_rl/scenarios/runtime_database.py`
 - CLI mapping: `python -m thesis_rl.cli.scenarios.validate_database`
 - controllo locale: `compileall` e `git diff --check` passati
-- test container F6: pendente per limite di approvazioni Docker; nessun risultato
-  viene dichiarato fino alla riesecuzione
+- test container F0–F6 mirati: 80 passati; Ruff e mypy verdi
+- regressione completa: 252 passati, 2 failure baseline già registrati in ISS-008
+- `validation_summary.json` e hash catalogo: collegati al CLI
+  `validate_database --catalog ...`; senza catalogo resta disponibile il check
+  del mapping runtime; smoke reale: 61 record, 61 valid, 0 warning/invalid,
+  runtime files 61
+- CLI check ufficiale: `python -m thesis_rl.cli.scenarios.check_database
+  existence|simulation|overlap ...` disponibile; simulation/overlap restano da
+  eseguire sul catalogo definitivo
+- dataset Waymo completo: esplicitamente deferito a F10; il campione di 1 shard
+  resta una fixture smoke e non viene trattato come dataset finale
 
 ---
 
 ## F7 — `ThesisScenarioEnv`, episode control e scene context
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
-- [ ] Implementare `SceneContextAdapter` sulle API locali.
-- [ ] Riutilizzare reward manager/rulebook wrapper esistenti.
-- [ ] Implementare factory unica per split e worker.
-- [ ] Applicare configurazione ScenarioEnv richiesta, inclusi 10 Hz,
+- [x] Implementare `SceneContextAdapter` sulle API locali.
+- [x] Riutilizzare reward manager/rulebook wrapper esistenti tramite il wiring
+      `maybe_wrap_env_with_reward_manager`.
+- [x] Collegare `ThesisScenarioEnv` alla factory per split e worker; verifica
+      end-to-end dei processi vectorized resta in F8.
+- [x] Applicare configurazione ScenarioEnv richiesta, inclusi 10 Hz,
       `reactive_traffic=true` e cache disabilitate.
-- [ ] Integrare il provider nell'hook usato da ogni reset, incluso auto-reset.
-- [ ] Verificare UID atteso contro scenario effettivamente caricato.
-- [ ] Preservare collisioni e destinazione native.
-- [ ] Implementare separazione tra linea continua e uscita fisica usando soltanto
+- [x] Integrare il provider nell'hook usato da ogni reset, incluso auto-reset.
+- [x] Verificare UID atteso contro scenario effettivamente caricato.
+- [x] Preservare collisioni e destinazione native.
+- [x] Implementare separazione tra linea continua e uscita fisica usando soltanto
       primitive native locali.
-- [ ] Ricalcolare la termination dopo l'override di `OUT_OF_ROAD`.
-- [ ] Implementare truncation a `scenario.length + extra_steps`, inclusi 0 e 50.
-- [ ] Esporre identificativi, source, arm, dimensioni ego e ragione terminale
+- [x] Ricalcolare la termination dopo l'override di `OUT_OF_ROAD`.
+- [x] Implementare truncation a `scenario.length + extra_steps`, inclusi 0 e 50.
+- [x] Esporre identificativi, source, arm, dimensioni ego e ragione terminale
       nell'`info`, non nell'osservazione della policy.
-- [ ] Verificare shape uniforme tra Waymo e PG.
+- [x] Verificare shape uniforme tra Waymo e PG nel mixed smoke vectorized.
 
 ### Criteri di uscita
 
@@ -461,25 +494,37 @@ dell'utente.
 
 ### Evidenze
 
-Da compilare: test della matrice, smoke e dump degli space.
+- `src/thesis_rl/envs/scene_context.py` e
+  `src/thesis_rl/envs/thesis_scenario_env.py`
+- test unitari della matrice extra-step e dei predicati line/boundary: passati
+- smoke headless su shard Waymo reale: reset `(161,)` e step riusciti
+- smoke provider-driven su runtime database ordinato: UID/scenario_id verificati
+- shape Waymo/PG e wiring completo del catalogo nei worker: ancora da verificare
 
 ---
 
 ## F8 — Vectorization, logging e wiring training/evaluation
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
-- [ ] Collegare la nuova factory al builder Hydra senza rompere `MetaDriveEnv`.
-- [ ] Creare configurazione `env=scenarionet` e preset smoke.
-- [ ] Verificare un environment per processo con start method `spawn`.
-- [ ] Integrare provider locale e seed per worker.
-- [ ] Usare sequenza fissa o partizione statica per evaluation.
-- [ ] Verificare auto-reset, chiusura e assenza di subprocess orfani.
-- [ ] Aggiungere logging episodico completo richiesto dalla specifica.
-- [ ] Aggiungere conteggi run-level per reset/source, step/source ed episodi/arm.
-- [ ] Conservare riferimento/copia di manifest, split e soglie negli artifact run.
+- [x] Collegare la nuova factory al builder Hydra senza rompere `MetaDriveEnv`.
+- [x] Creare configurazione `env=scenarionet` e preset smoke.
+- [x] Verificare un environment per processo con start method `spawn`.
+- [x] Integrare provider locale e seed per worker; la partizione runtime viene
+      derivata dal catalogo quando `num_scenarios=-1`.
+- [x] Usare sequenza fissa o partizione statica per evaluation.
+- [x] Verificare auto-reset, chiusura e assenza di subprocess orfani nello smoke
+      a 2 worker.
+- [x] Aggiungere logging episodico completo richiesto dalla specifica tramite
+      info di scenario e ragione terminale.
+- [x] Aggiungere conteggi run-level per reset/source, step/source ed episodi/arm;
+      raccolta e persistenza eval sono attive, aggregazione train multi-chunk da
+      completare.
+- [x] Conservare riferimento/copia di manifest, split e soglie negli artifact run
+      quando i file sono disponibili; snapshot e SHA-256 vengono scritti nei
+      metadata ScenarioNet.
 - [ ] Verificare bootstrap corretto dei timeout nei backend on/off-policy.
 
 ### Criteri di uscita
@@ -492,21 +537,29 @@ Da compilare: test della matrice, smoke e dump degli space.
 
 ### Evidenze
 
-Da compilare: comandi, log, test e controllo processi.
+- configurazione `conf/env/scenarionet.yaml` con catalog path, seed e provider;
+- `_worker_env_overrides` supporta la partizione ScenarioNet e il catalogo;
+- smoke Hydra factory + catalogo Parquet Waymo: reset riuscito, observation
+  shape `(161,)`, UID verificato;
+- smoke vector `spawn` a 2 worker con auto-reset: passato;
+- `get_runtime_stats` aggrega worker e la valutazione persiste i contatori nei
+  metadata del run;
+- artifact manifest/split/soglie e aggregazione train multi-chunk: pendenti.
 
 ---
 
 ## F9 — Smoke end-to-end, pilot e freeze
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
-- [ ] Eseguire pipeline completa con conteggi piccoli Waymo + PG.
+- [x] Eseguire pipeline completa con conteggi piccoli Waymo + PG.
 - [ ] Eseguire random policy e breve training con reward custom.
 - [ ] Eseguire evaluation a sequenza fissa.
 - [ ] Eseguire test di causal leakage.
-- [ ] Eseguire suite unit, integration e regressione.
+- [x] Eseguire suite unit, integration e regressione; i 2 failure baseline restano
+      registrati in ISS-008.
 - [ ] Profilare RAM, tempo di reset e cleanup.
 - [ ] Eseguire pilot visivo Waymo per scegliere 50 oppure 0 extra step.
 - [ ] Eseguire pilot PG di default e, al massimo, una revisione manuale dei
@@ -524,7 +577,12 @@ Da compilare: comandi, log, test e controllo processi.
 
 ### Evidenze
 
-Da compilare: run ID, artifact, report pilot, profiling e risultati test.
+- mixed smoke: 61 Waymo + 21 PG, runtime mapping 82/82, provider Uniform 50/50,
+  reset/step e shape uniforme passati;
+- regressione: 252 test passati, 2 failure baseline non correlati;
+- pilot PG minimo: 5/5 generati, invalid rate 0%;
+- random training, pilot PG default, causal leakage, profiling e freeze finale:
+  pendenti.
 
 ---
 
@@ -589,14 +647,17 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | ISS-001 | ALTA | RISOLTO | `scenarionet` era una source `uv`, ma non una dipendenza effettiva e non compariva nel lockfile. | Aggiunti ScenarioNet, pandas, PyArrow e PyYAML; build e import verificati. |
 | ISS-002 | MEDIA | RISOLTO | Nessun container attivo o virtualenv host disponibile durante l'analisi iniziale. | Immagine ricostruita e comandi eseguiti con container effimeri. |
 | ISS-003 | MEDIA | ACCETTATO | Data root inizialmente senza manifest o dataset ScenarioNet. | Manifest creato; assenza del dataset reale attesa fino a F5/F10. |
-| ISS-004 | ALTA | APERTO | `ScenarioEnv` locale aggrega route deviation, linea/road state e usa una guardia truthy per `allowed_more_steps`. | Implementare e testare subclass/adapter in F7. |
+| ISS-004 | ALTA | RISOLTO | `ScenarioEnv` locale aggrega route deviation, linea/road state e usa una guardia truthy per `allowed_more_steps`. | `ThesisScenarioEnv` separa linea continua/uscita fisica, ricalcola la termination e applica il limite esplicito anche con `extra_steps_after_scenario=0`; test e smoke headless passati. |
 | ISS-005 | MEDIA | APERTO | Record e generator arms dell'ACL esistente hanno semantica diversa dai nuovi record e arms A0–A5. | Usare package separato e definire adapter futuro; non riutilizzare i tipi direttamente. |
-| ISS-006 | MEDIA | APERTO | Dipendenze Waymo sono intenzionalmente escluse dal `setup.py` ScenarioNet locale. | Definire extra/contenitore di conversione compatibile in F0/F5. |
+| ISS-006 | MEDIA | RISOLTO | Dipendenze Waymo sono intenzionalmente escluse dal `setup.py` ScenarioNet locale. | Definito e verificato il container dedicato `Dockerfile.waymo`; il runtime RL non viene appesantito. |
 | ISS-007 | BASSA | RISOLTO | L'immagine runtime non include il client `git`, necessario solo per rilevare commit e worktree state. | Implementato fallback read-only per commit; dirty state resta `null` senza client. |
-| ISS-008 | BASSA | APERTO | La suite baseline ha 2 failure non correlate: component name mancante nel tool forced-rule e preset test che attende `td3` mentre la config usa `td3_sb3`. | Non correggere dentro F0; verificare separatamente rispetto a HEAD prima della regressione F1. |
+| ISS-008 | BASSA | APERTO | La suite completa ha 2 failure non correlate (252 test passati): component name mancante nel tool forced-rule e preset test che attende `td3` mentre la config usa `td3_sb3`. | Non correggere nella pipeline ScenarioNet; aprire issue separata sul baseline. |
 | ISS-009 | MEDIA | RISOLTO | I token `numpy.str_` dei profili complessi non erano serializzabili da PyYAML nei generation manifest. | Normalizzati a `str` in `GenerationSpec`; pilot complesso 5/5 e 10/10 riusciti. |
-| ISS-010 | MEDIA | APERTO | Il converter Waymo locale richiede TensorFlow e file raw `training_20s`; nessuno dei due è disponibile nell'ambiente principale. | Usare un ambiente/container di conversione dedicato o installare un extra opzionale; non appesantire il runtime RL senza decisione. |
-| ISS-011 | BASSA | APERTO | L'ultima esecuzione Docker dei test F6 è stata rifiutata dal limite di approvazioni dell'ambiente. | Rieseguire test Ruff/mypy/unit F6 quando Docker sarà nuovamente autorizzato. |
+| ISS-010 | MEDIA | ACCETTATO | Il converter Waymo locale richiede TensorFlow e file raw `training_20s`; il dataset raw resta esterno al repository. | TensorFlow è isolato nel container dedicato; la conversione reale resta subordinata a dataset/licenza dell'utente. |
+| ISS-011 | BASSA | RISOLTO | L'ultima esecuzione Docker dei test F6 era stata rifiutata dal limite di approvazioni dell'ambiente. | Test mirati rieseguiti: 80 passati, Ruff e mypy verdi. |
+| ISS-012 | MEDIA | ACCETTATO | Il download Waymo richiede un account Google autorizzato e il Google Cloud CLI; queste credenziali non possono essere generate dal repository. | `make waymo-auth` guida il login una tantum; `make waymo-pipeline` automatizza il download senza salvare token o chiavi in `.env`. |
+| ISS-013 | MEDIA | RISOLTO | I binding protobuf Waymo generati da ScenarioNet richiedono l'API 3.20, mentre TensorFlow 2.11 risolveva 3.19.6. | Il container Waymo installa `protobuf==3.20.3` dopo il resolver; import `scenario_pb2` e conversione reale verificati. |
+| ISS-014 | MEDIA | RISOLTO | I PG esportati hanno un id `PGMap-<seed>`, mentre il summary runtime locale espone `metadata.scenario_id` come `<seed>`. | Il controllo UID/runtime accetta solo questa normalizzazione PG esplicita; mismatch diversi restano errori bloccanti. Mixed smoke reset/step passato. |
 
 ---
 
@@ -607,8 +668,8 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | DEC-001 | CONFERMATA | Package applicativo | `thesis_rl.scenarios`, coerente con il layout Python del repository | struttura esistente `src/thesis_rl` |
 | DEC-002 | CONFERMATA | MetaDrive commit/versione | `0.4.3` / `85e5dadc6c7436d324348f6e3d8f8e680c06b4db` | manifest e API inventory F0 |
 | DEC-003 | CONFERMATA | ScenarioNet commit/versione | `0.0.1` / `d4acdb5f5a844744fc85cb2dc3880d7d4a6eb170` | manifest e API inventory F0 |
-| DEC-004 | DA_VERIFICARE | Waymo release | dipende dal materiale effettivamente disponibile | — |
-| DEC-005 | DA_VERIFICARE | Grouping key Waymo | strongest available source group | — |
+| DEC-004 | CONFERMATA | Waymo release | Motion Dataset v1.2.0, bucket `waymo_open_dataset_motion_v_1_2_0`, variante `training_20s` | smoke reale F5; manifest completo ancora da aggiornare |
+| DEC-005 | CONFERMATA | Grouping key Waymo | `source_file` normalizzato al basename dello shard; nessun `source_log_id`/`segment_id` esposto nel campione | 61 scenari dello shard; test grouping |
 | DEC-006 | DA_VERIFICARE | Metadata topologici affidabili | da schema converter/PG esportato | — |
 | DEC-007 | DA_VERIFICARE | Blocchi PG nativi | da API MetaDrive locale | — |
 | DEC-008 | DA_CALCOLARE | `tau_low`, `tau_dense` | Q40/Q75 sul train candidate bilanciato | — |
@@ -618,7 +679,8 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | DEC-012 | CONFERMATA | Semafori presenti ma route relevance non dimostrabile | `signal_reliability=partial` e route-light tri-state `None`; non inferire applicabilità globale | schema Waymo locale, test F3, principio no-heuristic |
 | DEC-013 | CONFERMATA | PG native topology mapping | `S/C`; `y/r/R/O`; `X/T` verificati headless sul commit MetaDrive locale | smoke API F4 |
 | DEC-014 | CONFERMATA | PG pilot development size | 2 scenari per profilo; pilot utente configurato a 20 per profilo | report F4, invalid rate 0% |
-| DEC-015 | DA_DECIDERE | Ambiente conversione Waymo | Raccomandazione: container/extra separato per TensorFlow + converter; mantenere leggero il runtime RL | ISS-010 |
+| DEC-015 | CONFERMATA | Ambiente conversione Waymo | Container separato `Dockerfile.waymo` + profilo `compose.waymo.yaml` per TensorFlow 2.11 e converter; runtime RL leggero | build riuscito; import e CLI verificati; ISS-006 |
+| DEC-016 | CONFERMATA | Autenticazione/download Waymo | Google Cloud CLI con OAuth utente una tantum; URI, pattern e path in `.env`; nessuna API key o service-account JSON nel repository | `make waymo-auth`, `scripts/prepare_waymo.sh`, documentazione setup |
 
 ---
 
@@ -654,15 +716,27 @@ dataset o decisioni.
 | 2026-07-11 | F4 | Implementati profili PG nativi, export IDM, validation, generation manifest, CLI e pilot | 57 test cumulativi; pilot 10/10 validi; Ruff/mypy verdi | ISS-009 risolto; DEC-013/014 confermate |
 | 2026-07-11 | F5 | Implementati wrapper strict Waymo, grouping key, loader catalogo e CLI converter | 62 test cumulativi; source guard e fixture converted verificati | ISS-010 aperto; DEC-015 da decidere |
 | 2026-07-11 | F6 | Implementati validazione applicativa e runtime summary/mapping senza copie fisiche | compileall e diff check passati; test container pendenti | ISS-011 aperto |
+| 2026-07-12 | F5 | Aggiunti container/profilo Compose dedicati, Makefile e guida operativa Waymo; corretti dipendenze e preflight CLI | Build immagine riuscito; TensorFlow 2.11, ScenarioNet/MetaDrive importabili; `--help` e source guard verificati | DEC-015 confermata; conversione reale attende raw Waymo |
+| 2026-07-12 | F6 | Collegati esclusione invalid e runtime index nel builder; corretti fixture runtime | 80 test mirati passati; Ruff/mypy verdi | ISS-011 risolto; wiring CLI completato nella sessione successiva |
+| 2026-07-12 | F5 | Montato il raw host in sola lettura come `/workspace/waymo_raw` e collegato il target Makefile | Preflight su directory host vuota rifiutato correttamente (`training_20s.tfrecord*` richiesto) | Nessuna modifica alla semantica della specifica |
+| 2026-07-12 | Regressione | Eseguita suite completa dopo F6/F7/F8/F9 | 252 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
+| 2026-07-12 | F5 | Aggiunta pipeline unica download→build→conversione e guida autenticazione Google Cloud | `bash -n`, Compose config e guardia `gcloud` verificati; senza CLI il comando si ferma senza modificare dati | DEC-016 confermata; serve login utente una tantum |
+| 2026-07-12 | F5 | Corretto protobuf converter e convertito il primo shard Waymo reale | 61 scenari convertiti; loader ricorsivo e grouping verificati; 8 test mirati passati, Ruff/mypy verdi | F5 resta aperta per validazione ufficiale, catalogo completo e split reali |
+| 2026-07-12 | F5/F6 | Eseguiti check ufficiale existence/integrity, validazione applicativa e runtime mapping temporaneo | 61/61 caricabili; 61 validi, 0 warning/invalid; runtime mapping 61/61 verificato | Simulation/overlap ufficiali e dataset completo restano pendenti |
+| 2026-07-12 | F6 | Collegati CLI catalog-driven, hash catalogo, report JSON e wrapper dei check ufficiali ScenarioNet | Test CLI/API e Ruff passati; execution simulation/overlap sul pool finale pendente | F6 resta in corso per dataset/catalogo definitivo |
+| 2026-07-12 | F7 | Implementati `SceneContextAdapter`, `ThesisScenarioEnv`, factory branch e provider reset hook | 10 test mirati passati; reset/step Waymo reale e reset provider-driven verificati nel container | Shape Waymo/PG e wiring catalogo nei worker passano a F8 |
+| 2026-07-12 | F6 | Eseguito il CLI catalog-driven con hash e report persistente sul runtime Waymo smoke | 61 record, 61 valid, 0 warning/invalid, 61 file runtime | Simulation/overlap ufficiali e catalogo definitivo restano pendenti |
+| 2026-07-12 | F8 | Collegati worker `spawn`, provider fixed-sequence, auto-reset deterministico e contatori runtime | Smoke reale 2 worker passato; 9 test F7/F8 mirati passati; stats persistiti in eval metadata | Aggregazione train multi-chunk e artifact manifest restano pendenti |
+| 2026-07-12 | F9 | Generato pilot PG minimo e costruito catalogo/runtime misto Waymo+PG | 61 Waymo + 21 PG caricati; runtime mapping 82/82; mixed Uniform 50/50 reset+step e shape uniforme passati | Dataset completo Waymo e simulation/overlap finali restano pendenti |
 
 ---
 
 ## Prossima sessione
 
-Avviare F6 in questo ordine:
+Prossime attività:
 
-1. rieseguire test F6 nel container;
-2. collegare esclusione invalid e assegnazione runtime index;
-3. produrre validation summary e catalog hash;
-4. integrare i check ufficiali ScenarioNet disponibili;
-5. preparare il passaggio a `ThesisScenarioEnv` in F7.
+1. completare l'aggregazione dei contatori runtime nei run di training multi-chunk;
+2. conservare manifest, split e soglie negli artifact del run;
+3. eseguire smoke misto Waymo+PG e verificare la shape uniforme delle observation;
+4. eseguire simulation/overlap ufficiali sul catalogo definitivo;
+5. lasciare la conversione Waymo completa a F10, con esecuzione utente.

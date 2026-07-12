@@ -100,13 +100,19 @@ def _worker(
                     info["terminal_observation"] = observation
                     start, count = _extract_seed_bounds(env)
                     if start is not None and count is not None and count > 0:
-                        if auto_reset_seed is None:
-                            if last_reset_seed is None:
-                                auto_reset_seed = int(start)
-                            else:
-                                auto_reset_seed = _normalize_seed_to_window(last_reset_seed, start, count)
-                        auto_reset_seed = _next_seed_in_window(auto_reset_seed, start, count)
-                        observation, reset_info = env.reset(seed=auto_reset_seed)
+                        if getattr(env, "scenario_provider", None) is not None:
+                            # Provider-driven ScenarioNet resets must sample the
+                            # next record; forcing a seed here would bypass the
+                            # worker/source partition and break strict sampling.
+                            observation, reset_info = env.reset()
+                        else:
+                            if auto_reset_seed is None:
+                                if last_reset_seed is None:
+                                    auto_reset_seed = int(start)
+                                else:
+                                    auto_reset_seed = _normalize_seed_to_window(last_reset_seed, start, count)
+                            auto_reset_seed = _next_seed_in_window(auto_reset_seed, start, count)
+                            observation, reset_info = env.reset(seed=auto_reset_seed)
                     else:
                         observation, reset_info = env.reset()
                 remote.send((observation, reward, done, info, reset_info))

@@ -2,8 +2,11 @@ name: scenarionet
 env_id: ThesisScenarioEnv
 
 split: train
+catalog_path: null
+global_seed: 0
 
 config:
+  data_directory: null
   curriculum_level: 1
   horizon: null
   allowed_more_steps: null

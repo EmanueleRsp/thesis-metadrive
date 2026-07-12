@@ -1,0 +1,13 @@
+services:
+  waymo-converter:
+    build:
+      context: .
+      dockerfile: Dockerfile.waymo
+    profiles: [waymo]
+    working_dir: /workspace/thesis-metadrive
+    environment:
+      SCENARIONET_DATA_ROOT: "${SCENARIONET_DATA_ROOT:-/workspace/data/scenarionet}"
+    volumes:
+      - .:/workspace/thesis-metadrive
+      - ${HOST_DATA_DIR:-./data}:${CONTAINER_DATA_DIR:-/workspace/data}
+      - ${WAYMO_RAW_DATA_PATH:-./data/waymo_raw}:/workspace/waymo_raw:ro

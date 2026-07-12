@@ -1,5 +1,8 @@
 from datetime import datetime
 from pathlib import Path
+import hashlib
+import os
+import shutil
 import socket
 import subprocess
 
@@ -34,6 +37,36 @@ def _cfg_get(cfg: DictConfig, key: str, default=None):
     return default if value is None else value
 
 
+def _snapshot_scenarionet_artifacts(cfg: DictConfig, artifacts_dir: Path) -> dict[str, str]:
+    """Copy small dataset-definition artifacts and return their run-relative paths."""
+
+    data_root = Path(
+        os.environ.get("SCENARIONET_DATA_ROOT", "data/scenarionet")
+    ).expanduser()
+    candidates: dict[str, Path] = {
+        "dataset_manifest": data_root / "manifest.yaml",
+        "split_manifest": data_root / "splits" / "split_manifest.yaml",
+        "arm_thresholds": data_root / "catalog" / "arm_thresholds.json",
+    }
+    catalog_path = _cfg_get(cfg, "env.catalog_path")
+    if catalog_path:
+        candidates["scenario_catalog"] = Path(str(catalog_path)).expanduser()
+
+    snapshot_dir = artifacts_dir / "scenarionet"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    result: dict[str, str] = {}
+    for name, source in candidates.items():
+        if not source.is_file():
+            continue
+        target = snapshot_dir / source.name
+        if source.resolve() != target.resolve():
+            shutil.copy2(source, target)
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        result[name] = str(target.relative_to(artifacts_dir))
+        result[f"{name}_sha256"] = digest
+    return result
+
+
 def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
     """Create or overwrite artifacts/run_metadata.yaml for the current run."""
     artifacts_dir = Path(artifacts_dir)
@@ -64,8 +97,21 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
         },
         "status": "running",
     }
+    if str(_cfg_get(cfg, "env.name", default="")).lower() == "scenarionet":
+        metadata["scenarionet"] = {
+            "split": _cfg_get(cfg, "env.split", default="train"),
+            "catalog_path": _cfg_get(cfg, "env.catalog_path"),
+            "global_seed": _cfg_get(cfg, "env.global_seed", default=0),
+            "provider": OmegaConf.to_container(
+                OmegaConf.select(cfg, "env.provider"), resolve=True
+            ),
+        }
 
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    if str(_cfg_get(cfg, "env.name", default="")).lower() == "scenarionet":
+        metadata["scenarionet"]["artifact_snapshots"] = _snapshot_scenarionet_artifacts(
+            cfg, artifacts_dir
+        )
 
     with open(metadata_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(metadata, f, sort_keys=False)

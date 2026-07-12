@@ -1,4 +1,4 @@
-.PHONY: setup verify verify-gpu build build-gpu up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu
+.PHONY: setup verify verify-gpu build build-gpu build-waymo waymo-auth waymo-convert waymo-pipeline up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu
 
 setup:
 	./setup.sh
@@ -20,6 +20,25 @@ build:
 
 build-gpu:
 	docker compose -f compose.yaml -f compose.gpu.yaml build
+
+build-waymo:
+	docker compose -f compose.yaml -f compose.waymo.yaml --profile waymo build waymo-converter
+
+waymo-auth:
+	@command -v gcloud >/dev/null 2>&1 || (echo "gcloud CLI is required; install it from https://cloud.google.com/sdk/docs/install" >&2; exit 2)
+	gcloud init $(GCLOUD_INIT_FLAGS)
+
+waymo-convert:
+	@test -n "$(WAYMO_RAW_DATA_PATH)" || (echo "WAYMO_RAW_DATA_PATH is required" >&2; exit 2)
+	WAYMO_RAW_DATA_PATH="$(WAYMO_RAW_DATA_PATH)" docker compose -f compose.yaml -f compose.waymo.yaml --profile waymo run --rm waymo-converter \
+		--raw-data-path /workspace/waymo_raw \
+		$(if $(DATABASE_PATH),--database-path "$(DATABASE_PATH)",) \
+		$(if $(NUM_WORKERS),--num-workers "$(NUM_WORKERS)",) \
+		$(if $(NUM_FILES),--num-files "$(NUM_FILES)",) \
+		$(if $(OVERWRITE),--overwrite,)
+
+waymo-pipeline:
+	bash scripts/prepare_waymo.sh
 
 up:
 	docker compose up -d

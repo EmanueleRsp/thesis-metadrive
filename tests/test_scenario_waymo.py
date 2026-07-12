@@ -36,6 +36,12 @@ def test_training_source_rejects_other_waymo_variant(tmp_path: Path) -> None:
 def test_waymo_group_id_prefers_source_log_then_source_file() -> None:
     assert waymo_group_id({"id": "s", "metadata": {"source_log_id": "log"}}) == "log"
     assert waymo_group_id({"id": "s", "metadata": {"source_file": "shard"}}) == "shard"
+    assert (
+        waymo_group_id(
+            {"id": "s", "metadata": {"source_file": "/tmp/training_20s.tfrecord-00000"}}
+        )
+        == "training_20s.tfrecord-00000"
+    )
     assert waymo_group_id({"id": "s", "metadata": {}}) == "scenario:s"
 
 

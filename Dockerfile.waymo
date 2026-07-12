@@ -1,0 +1,71 @@
+# Dedicated conversion image. It intentionally does not include the RL runtime
+# or PyTorch; TensorFlow is isolated here because the ScenarioNet Waymo
+# converter requires it and its protobuf constraints should not affect training.
+FROM python:3.10.20-slim-bookworm@sha256:ff7161e2b8e2a56fc6a62a6099ff8feb72f1a6dbae9860cdcb9a6c65cf4c6be9
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DEFAULT_TIMEOUT=1800 \
+    PIP_RETRIES=10 \
+    SCENARIONET_DATA_ROOT=/workspace/data/scenarionet \
+    PYTHONPATH=/workspace/thesis-metadrive/src:/workspace/thesis-metadrive/third_party/scenarionet:/workspace/thesis-metadrive/third_party/metadrive
+
+WORKDIR /workspace/thesis-metadrive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY third_party/metadrive /workspace/thesis-metadrive/third_party/metadrive
+COPY third_party/scenarionet /workspace/thesis-metadrive/third_party/scenarionet
+
+# These versions follow the Waymo dependency notes in the checked-out
+# ScenarioNet setup.py. They are isolated from the main uv environment.
+# ScenarioNet's checked-in Waymo protobuf bindings require the 3.20 API.
+# TensorFlow 2.11 asks for an older range, so this converter-only image
+# deliberately applies the compatible protobuf after dependency solving.
+RUN pip install \
+    "setuptools<81" \
+    "numpy>=1.23,<2" \
+    "pandas" \
+    "pyarrow>=14" \
+    "pyyaml>=6" \
+    "matplotlib" \
+    "tqdm" \
+    "geopandas<1.0" \
+    "yapf" \
+    "shapely" \
+    "requests" \
+    "pygame" \
+    "progressbar" \
+    "pillow" \
+    "lxml" \
+    "psutil" \
+    "filelock" \
+    "Pygments" \
+    "mediapy" \
+    "panda3d>=1.10.14" \
+    "panda3d-gltf>=0.13,<1.0" \
+    "gymnasium>=0.28" \
+    "opencv-python" \
+    "tensorflow==2.11.0" \
+    && pip install --no-deps -e /workspace/thesis-metadrive/third_party/metadrive \
+    && pip install --no-deps -e /workspace/thesis-metadrive/third_party/scenarionet \
+    && pip install --no-deps "protobuf==3.20.3"
+
+COPY src /workspace/thesis-metadrive/src
+COPY scripts /workspace/thesis-metadrive/scripts
+
+RUN python - <<'PY'
+import importlib.util
+import tensorflow as tf
+import scenarionet
+from scenarionet.converter.waymo.waymo_protos import scenario_pb2
+assert importlib.util.find_spec("scenarionet.converter.waymo.utils") is not None
+print("tensorflow=", tf.__version__)
+print("protobuf=", scenario_pb2.DESCRIPTOR is not None)
+print("scenarionet=", scenarionet.__file__)
+PY
+
+ENTRYPOINT ["python", "-m", "thesis_rl.cli.scenarios.convert_waymo"]

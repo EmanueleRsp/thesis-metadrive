@@ -17,6 +17,11 @@ from thesis_rl.scenarios.provider import (
     ScenarioProvider,
     UniformScenarioProvider,
 )
+from thesis_rl.scenarios.pg.loader import load_exported_pg_entries
+from thesis_rl.scenarios.official_checks import (
+    build_official_check_command,
+    run_official_check,
+)
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
 from thesis_rl.scenarios.runtime_database import (
     assign_runtime_indices,
@@ -55,6 +60,9 @@ __all__ = [
     "ScenarioRecord",
     "UniformScenarioProvider",
     "FixedSequenceScenarioProvider",
+    "build_official_check_command",
+    "run_official_check",
+    "load_exported_pg_entries",
     "ScenarioValidationResult",
     "build_runtime_database",
     "assign_runtime_indices",

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import traceback
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +25,47 @@ if TYPE_CHECKING:
     from thesis_rl.agent.planners.interfaces.planner import BasePlanner
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def collect_scenario_runtime_stats(env: Any) -> dict[str, Any] | None:
+    """Collect and merge ScenarioNet counters from direct or vectorized envs."""
+
+    if hasattr(env, "env_method"):
+        raw_stats = env.env_method("get_runtime_stats")
+    else:
+        base_env = getattr(env, "unwrapped", env)
+        getter = getattr(base_env, "get_runtime_stats", None)
+        raw_stats = [getter()] if callable(getter) else []
+    if not raw_stats:
+        return None
+
+    merged: dict[str, Any] = {
+        "resets": 0,
+        "steps": 0,
+        "episodes": 0,
+        "resets_by_source": Counter(),
+        "steps_by_source": Counter(),
+        "episodes_by_arm": Counter(),
+        "termination_reasons": Counter(),
+    }
+    for stats in raw_stats:
+        if not isinstance(stats, dict):
+            continue
+        for key in ("resets", "steps", "episodes"):
+            merged[key] += int(stats.get(key, 0))
+        for key in (
+            "resets_by_source",
+            "steps_by_source",
+            "episodes_by_arm",
+            "termination_reasons",
+        ):
+            values = stats.get(key, {})
+            if isinstance(values, dict):
+                merged[key].update({str(name): int(count) for name, count in values.items()})
+    return {
+        key: (dict(value) if isinstance(value, Counter) else value)
+        for key, value in merged.items()
+    }
 
 
 class _CrashLoggingEnvWrapper(gym.Wrapper):
@@ -260,8 +303,40 @@ def _worker_env_overrides(
     num_envs: int,
 ) -> dict[str, Any]:
     overrides = dict(env_overrides or {})
-    base_start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
+    env_name = str(cfg.env.get("name", "")).lower()
+    if env_name == "scenarionet":
+        base_start_seed = int(
+            overrides.get(
+                "start_scenario_index",
+                cfg.env.config.get("start_scenario_index", 0),
+            )
+        )
+    else:
+        base_start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
     total_scenarios = int(overrides.get("num_scenarios", cfg.env.config.num_scenarios))
+    if env_name == "scenarionet" and total_scenarios <= 0:
+        catalog_path = cfg.env.get("catalog_path") or os.environ.get("SCENARIONET_CATALOG_PATH")
+        if not catalog_path:
+            raise ValueError(
+                "ScenarioNet vectorization requires env.catalog_path or "
+                "SCENARIONET_CATALOG_PATH when num_scenarios=-1."
+            )
+        from thesis_rl.scenarios.catalog import read_scenario_catalog
+
+        catalog = read_scenario_catalog(str(catalog_path))
+        total_scenarios = len(catalog.valid_records(split=str(cfg.env.get("split", "train"))))
+    provider_kind = str(cfg.env.get("provider", {}).get("kind", "uniform")).lower()
+    if env_name == "scenarionet" and provider_kind == "uniform" and int(num_envs) > 1:
+        # Keep the native ScenarioDataManager on one complete index range and
+        # partition provider records round-robin. This preserves both sources
+        # in every worker and lets provider-driven auto-reset remain strict.
+        overrides["start_scenario_index"] = int(base_start_seed)
+        overrides["num_scenarios"] = int(total_scenarios)
+        overrides["worker_index"] = 0
+        overrides["num_workers"] = 1
+        overrides["provider_worker_index"] = int(rank)
+        overrides["provider_worker_count"] = int(num_envs)
+        return overrides
     if total_scenarios <= 0:
         raise ValueError(f"Training env `num_scenarios` must be > 0, got {total_scenarios}.")
 
@@ -274,7 +349,9 @@ def _worker_env_overrides(
         + int(rank) * base
         + min(int(rank), remainder)
     )
-    overrides["start_seed"] = int(worker_start_seed)
+    overrides["start_scenario_index" if env_name == "scenarionet" else "start_seed"] = int(
+        worker_start_seed
+    )
     overrides["num_scenarios"] = int(worker_scenarios)
     return overrides
 

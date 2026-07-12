@@ -53,7 +53,7 @@ def _source_database(root: Path, name: str) -> tuple[Path, str]:
 
 def test_runtime_database_uses_relative_mapping_without_copying_scenarios(tmp_path: Path) -> None:
     source, filename = _source_database(tmp_path, "one")
-    record = _record(source.relative_to(tmp_path).as_posix())
+    record = _record((source / filename).relative_to(tmp_path).as_posix())
     runtime = tmp_path / "runtime" / "train"
 
     build_runtime_database([record], data_root=tmp_path, runtime_directory=runtime)
@@ -86,5 +86,5 @@ def test_runtime_indices_are_deterministic_and_invalid_records_are_excluded() ->
     assigned = assign_runtime_indices([second, first])
 
     assert [record.runtime_index for record in assigned] == [0, 1]
-    assert [record.scenario_uid for record in assigned] == ["pg:v1:0", "pg:v1:second"]
+    assert [record.scenario_uid for record in assigned] == ["pg:v1:99", "pg:v1:second"]
     assert invalid.validation_status == "invalid"

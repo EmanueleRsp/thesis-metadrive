@@ -20,6 +20,7 @@ from thesis_rl.runtime.wiring.builders import (
     build_adapter,
     build_env,
     build_preprocessor,
+    collect_scenario_runtime_stats,
     load_planner,
     merge_env_config_with_overrides,
 )
@@ -463,6 +464,7 @@ def run_evaluation(cfg: DictConfig) -> None:
                 "checkpoint_global_step": 0,
             },
         )
+        scenario_runtime_stats = collect_scenario_runtime_stats(env)
         env.close()
         duration_seconds = round(time.time() - start_time, 2)
         eval_logger.info("Eval run completed | duration_seconds=%.2f", duration_seconds)
@@ -473,11 +475,14 @@ def run_evaluation(cfg: DictConfig) -> None:
         )
 
         # Update metadata
-        update_run_metadata(artifacts_dir, {
+        metadata_updates: dict[str, object] = {
             "status": "completed",
             "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "duration_seconds": duration_seconds,
-        })
+        }
+        if scenario_runtime_stats is not None:
+            metadata_updates["scenarionet_runtime_stats"] = scenario_runtime_stats
+        update_run_metadata(artifacts_dir, metadata_updates)
     
     except Exception as e:
         duration_seconds = round(time.time() - start_time, 2)

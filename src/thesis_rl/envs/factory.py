@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
@@ -77,7 +79,12 @@ def _configure_agent_observation(
     )
 
 
-def make_env(cfg_env: Any):
+def make_env(
+    cfg_env: Any,
+    *,
+    scenario_provider: Any | None = None,
+    catalog: Any | None = None,
+):
     """Create a MetaDrive environment from Hydra env config."""
 
     # try to import metadrive, and raise a clear error if it's not installed
@@ -105,5 +112,101 @@ def make_env(cfg_env: Any):
     elif isinstance(env_cfg.get("agent_policy"), str):
         # Allow direct config override like env_overrides["agent_policy"] = "expert_policy".
         env_cfg["agent_policy"] = _resolve_agent_policy(str(env_cfg["agent_policy"]))
+
+    env_name = str(getattr(cfg_env, "name", "metadrive")).strip().lower()
+    env_id = str(getattr(cfg_env, "env_id", "")).strip().lower()
+    if env_name == "scenarionet" or env_id == "thesisscenarioenv":
+        from thesis_rl.envs.thesis_scenario_env import ThesisScenarioEnv
+        from thesis_rl.scenarios.catalog import read_scenario_catalog
+        from thesis_rl.scenarios.provider import (
+            FixedSequenceScenarioProvider,
+            UniformScenarioProvider,
+        )
+
+        split = str(getattr(cfg_env, "split", "train"))
+        episode_control = _to_plain_dict(getattr(cfg_env, "episode_control", {}))
+        if "extra_steps_after_scenario" in episode_control:
+            env_cfg["extra_steps_after_scenario"] = int(
+                episode_control["extra_steps_after_scenario"]
+            )
+        if not env_cfg.get("data_directory"):
+            data_root = os.environ.get("SCENARIONET_DATA_ROOT")
+            if data_root:
+                env_cfg["data_directory"] = str(
+                    (Path(data_root).expanduser() / "runtime" / split).resolve()
+                )
+        provider_worker_id = int(
+            env_cfg.pop("provider_worker_index", env_cfg.get("worker_index", 0))
+        )
+        provider_worker_count = int(env_cfg.pop("provider_worker_count", 1))
+        worker_id = provider_worker_id
+        catalog_path = getattr(cfg_env, "catalog_path", None) or os.environ.get(
+            "SCENARIONET_CATALOG_PATH"
+        )
+        if catalog_path and catalog is None:
+            catalog = read_scenario_catalog(str(catalog_path))
+        if scenario_provider is None and catalog is not None:
+            provider_cfg = _to_plain_dict(getattr(cfg_env, "provider", {}))
+            provider_kind = str(provider_cfg.get("kind", "uniform")).lower()
+            start_index = int(env_cfg.get("start_scenario_index", 0))
+            num_scenarios = int(env_cfg.get("num_scenarios", -1))
+            records = tuple(
+                record
+                for record in catalog.records
+                if (
+                    provider_worker_count > 1
+                    and record.runtime_index is not None
+                    and record.runtime_index % provider_worker_count == provider_worker_id
+                )
+                or (
+                    provider_worker_count <= 1
+                    and (
+                        num_scenarios <= 0
+                        or (
+                            record.runtime_index is not None
+                            and start_index <= record.runtime_index < start_index + num_scenarios
+                        )
+                    )
+                )
+            )
+            if not records:
+                raise ValueError(
+                    "ScenarioNet catalog has no records in the configured worker range: "
+                    f"start_scenario_index={start_index}, num_scenarios={num_scenarios}"
+                )
+            if provider_kind == "uniform":
+                probabilities = provider_cfg.get("source_probability", {})
+                scenario_provider = UniformScenarioProvider(
+                    records,
+                    global_seed=int(getattr(cfg_env, "global_seed", 0)),
+                    source_probabilities={
+                        "waymo": float(probabilities.get("waymo", 0.5)),
+                        "pg": float(probabilities.get("pg", 0.5)),
+                    },
+                    strict=bool(provider_cfg.get("strict", True)),
+                    allow_fallback=bool(provider_cfg.get("allow_fallback", False)),
+                )
+            elif provider_kind == "fixed_sequence":
+                scenario_provider = FixedSequenceScenarioProvider(
+                    tuple(
+                        sorted(
+                            (record for record in records if record.split == split),
+                            key=lambda record: (
+                                record.runtime_index is None,
+                                record.runtime_index if record.runtime_index is not None else 0,
+                            ),
+                        )
+                    ),
+                    repeat=bool(provider_cfg.get("repeat", False)),
+                )
+            else:
+                raise ValueError(f"Unsupported ScenarioNet provider kind: {provider_kind!r}")
+        return ThesisScenarioEnv(
+            env_cfg,
+            scenario_provider=scenario_provider,
+            catalog=catalog,
+            split=split,
+            worker_id=worker_id,
+        )
 
     return MetaDriveEnv(env_cfg)

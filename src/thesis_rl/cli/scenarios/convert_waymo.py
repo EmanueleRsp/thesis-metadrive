@@ -4,7 +4,7 @@ import argparse
 import os
 from pathlib import Path
 
-from thesis_rl.scenarios.waymo import convert_waymo_training_20s
+from thesis_rl.scenarios.waymo import WaymoConversionError, convert_waymo_training_20s
 
 
 def main() -> int:
@@ -22,13 +22,16 @@ def main() -> int:
         / "waymo"
         / "database"
     )
-    command = convert_waymo_training_20s(
-        raw_data_path=args.raw_data_path,
-        database_path=database_path,
-        num_workers=args.num_workers,
-        num_files=args.num_files,
-        overwrite=args.overwrite,
-    )
+    try:
+        command = convert_waymo_training_20s(
+            raw_data_path=args.raw_data_path,
+            database_path=database_path,
+            num_workers=args.num_workers,
+            num_files=args.num_files,
+            overwrite=args.overwrite,
+        )
+    except (FileNotFoundError, ValueError, WaymoConversionError) as exc:
+        parser.error(str(exc))
     print("Executed:", " ".join(command))
     return 0
 

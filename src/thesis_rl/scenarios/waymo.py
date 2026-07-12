@@ -116,7 +116,10 @@ def waymo_group_id(scenario: dict[str, Any]) -> str:
     for key in ("source_log_id", "segment_id", "source_file_id", "source_file"):
         value = metadata.get(key)
         if value is not None and str(value).strip():
-            return str(value)
+            normalized = str(value)
+            if key in {"source_file_id", "source_file"}:
+                normalized = Path(normalized).name
+            return normalized
     scenario_id = str(scenario.get("id") or metadata.get("scenario_id") or "")
     if not scenario_id:
         raise ValueError("Waymo scenario has no grouping metadata or scenario id")
@@ -135,7 +138,7 @@ def load_converted_waymo_entries(
     files = tuple(
         sorted(
             path
-            for path in root.glob("*.pkl")
+            for path in root.rglob("*.pkl")
             if path.name not in {"dataset_summary.pkl", "dataset_mapping.pkl"}
         )
     )

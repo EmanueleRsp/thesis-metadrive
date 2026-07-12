@@ -67,12 +67,19 @@ def validate_records(
     records: Sequence[ScenarioRecord],
     *,
     data_root: str | Path,
+    run_feature_extraction: bool = True,
 ) -> tuple[ScenarioValidationResult, ...]:
     root = Path(data_root).expanduser().resolve()
     results: list[ScenarioValidationResult] = []
     for record in records:
         path = root / Path(record.relative_path)
-        results.append(validate_scenario_file(path, record))
+        results.append(
+            validate_scenario_file(
+                path,
+                record,
+                run_feature_extraction=run_feature_extraction,
+            )
+        )
     return tuple(results)
 
 

@@ -1,0 +1,244 @@
+"""ScenarioNet environment with the thesis-specific episode contract."""
+
+from __future__ import annotations
+
+from collections import Counter
+from collections.abc import Mapping
+from typing import Any
+
+from thesis_rl.envs.scene_context import SceneContextAdapter
+
+
+def scenario_time_limit_reached(
+    *, episode_steps: int, scenario_length: int, extra_steps_after_scenario: int
+) -> bool:
+    """Return whether the exported scenario horizon (plus the configured tail) is met."""
+
+    if episode_steps < 0 or scenario_length <= 0 or extra_steps_after_scenario < 0:
+        raise ValueError("episode_steps >= 0, scenario_length > 0 and extra_steps >= 0 are required")
+    return episode_steps >= scenario_length + extra_steps_after_scenario
+
+
+try:  # keep importing the package possible in lightweight tooling environments
+    from metadrive.constants import TerminationState  # type: ignore[import-not-found]
+    from metadrive.envs.scenario_env import ScenarioEnv  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # pragma: no cover - exercised in the dedicated container
+    ScenarioEnv = object  # type: ignore[assignment,misc]
+    TerminationState = type("TerminationState", (), {
+        "SUCCESS": "arrive_dest",
+        "OUT_OF_ROAD": "out_of_road",
+        "MAX_STEP": "max_step",
+        "CRASH": "crash",
+        "CRASH_VEHICLE": "crash_vehicle",
+        "CRASH_HUMAN": "crash_human",
+        "CRASH_OBJECT": "crash_object",
+        "CRASH_BUILDING": "crash_building",
+        "CRASH_SIDEWALK": "crash_sidewalk",
+    })
+
+
+class ThesisScenarioEnv(ScenarioEnv):
+
+    @classmethod
+    def default_config(cls):
+        config = super().default_config()
+        config.update(
+            {
+                "horizon": None,
+                "allowed_more_steps": None,
+                "truncate_as_terminate": False,
+                "reactive_traffic": True,
+                "store_data": False,
+                "store_map": False,
+                "extra_steps_after_scenario": 50,
+            }
+        )
+        return config
+
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        scenario_provider: Any | None = None,
+        catalog: Any | None = None,
+        split: str = "train",
+        worker_id: int = 0,
+        scene_context: SceneContextAdapter | None = None,
+    ) -> None:
+        super().__init__(config)
+        self.scenario_provider = scenario_provider
+        self.catalog = catalog
+        self.split = str(split)
+        self.worker_id = int(worker_id)
+        self.scene_context = scene_context or SceneContextAdapter()
+        self.current_scenario_record: Any | None = None
+        self._last_done_info: dict[str, Any] = {}
+        self._runtime_stats: dict[str, Any] = {
+            "resets": 0,
+            "steps": 0,
+            "episodes": 0,
+            "resets_by_source": Counter(),
+            "steps_by_source": Counter(),
+            "episodes_by_arm": Counter(),
+            "termination_reasons": Counter(),
+        }
+
+    def _select_provider_seed(self, force_seed: int | None) -> int | None:
+        if force_seed is not None:
+            if self.catalog is not None:
+                record = self.catalog.get_by_runtime_index(
+                    split=self.split, runtime_index=int(force_seed)
+                ).record
+                self.current_scenario_record = record
+            return int(force_seed)
+        if self.scenario_provider is None:
+            return None
+        record = self.scenario_provider.sample(split=self.split, worker_id=self.worker_id)
+        if record.runtime_index is None:
+            raise ValueError(f"scenario provider returned record without runtime_index: {record.scenario_uid}")
+        self.current_scenario_record = record
+        return int(record.runtime_index)
+
+    def _reset_global_seed(self, force_seed=None):
+        provider_seed = self._select_provider_seed(force_seed)
+        if provider_seed is not None:
+            self.seed(provider_seed)
+            return
+        super()._reset_global_seed(force_seed)
+
+    @staticmethod
+    def _recompute_terminated(done_info: Mapping[str, Any]) -> bool:
+        return any(
+            bool(done_info.get(key, False))
+            for key in (
+                TerminationState.SUCCESS,
+                TerminationState.CRASH_HUMAN,
+                TerminationState.CRASH_VEHICLE,
+                TerminationState.CRASH_OBJECT,
+                TerminationState.CRASH_BUILDING,
+                TerminationState.CRASH_SIDEWALK,
+                TerminationState.OUT_OF_ROAD,
+            )
+        )
+
+    def _scenario_length(self) -> int:
+        return int(self.engine.data_manager.current_scenario_length)
+
+    def done_function(self, vehicle_id: str):
+        done, done_info = super().done_function(vehicle_id)
+        vehicle = self.agents[vehicle_id]
+        line_only = self.scene_context.is_on_continuous_line(vehicle)
+        physical_out = self.scene_context.is_physically_out_of_road(self, vehicle)
+
+        # ScenarioEnv's predicate also includes line flags and (in this local
+        # version) negative route completion. Neither is a thesis terminal
+        # condition unless the native physical-boundary primitives agree.
+        if not physical_out:
+            done_info[TerminationState.OUT_OF_ROAD] = False
+            done = self._recompute_terminated(done_info)
+        if physical_out:
+            done_info[TerminationState.OUT_OF_ROAD] = True
+            done = True
+
+        # Do not use the native truthy allowed_more_steps branch: zero is a
+        # meaningful value in the thesis contract.
+        if not done and scenario_time_limit_reached(
+            episode_steps=int(self.episode_lengths[vehicle_id]),
+            scenario_length=self._scenario_length(),
+            extra_steps_after_scenario=int(self.config.get("extra_steps_after_scenario", 50)),
+        ):
+            done_info[TerminationState.MAX_STEP] = True
+            done = False
+
+        done_info["crossed_continuous_line"] = bool(line_only)
+        done_info["physical_out_of_road"] = bool(physical_out)
+        done_info["termination_reason"] = self.scene_context.get_termination_reason(
+            self, vehicle, done_info
+        )
+        self._last_done_info = dict(done_info)
+        return done, done_info
+
+    def _scenario_metadata(self) -> dict[str, Any]:
+        record = self.current_scenario_record
+        vehicle = self.scene_context.get_ego_vehicle(self)
+        dimensions = self.scene_context.get_ego_dimensions(vehicle) if vehicle is not None else None
+        data_manager = getattr(self.engine, "data_manager", None)
+        scenario_id = getattr(data_manager, "current_scenario_id", None)
+        payload: dict[str, Any] = {
+            "scenario_id": str(scenario_id) if scenario_id is not None else None,
+            "scenario_length": int(data_manager.current_scenario_length)
+            if data_manager is not None
+            else None,
+            "scenario_uid": getattr(record, "scenario_uid", None),
+            "scenario_source": getattr(record, "source", None),
+            "scenario_arm": getattr(record, "primary_arm", None),
+            "source": getattr(record, "source", None),
+            "arm": getattr(record, "primary_arm", None),
+            "ego_length": dimensions[0] if dimensions else None,
+            "ego_width": dimensions[1] if dimensions else None,
+        }
+        expected_id = str(record.scenario_id) if record is not None else None
+        loaded_id = str(scenario_id) if scenario_id is not None else None
+        pg_runtime_id_match = (
+            expected_id is not None
+            and loaded_id is not None
+            and expected_id.startswith("PGMap-")
+            and loaded_id == expected_id.removeprefix("PGMap-")
+        )
+        if (
+            record is not None
+            and scenario_id is not None
+            and loaded_id != expected_id
+            and not pg_runtime_id_match
+        ):
+            raise RuntimeError(
+                "ScenarioNet catalog/runtime mismatch: "
+                f"expected scenario_id={record.scenario_id!r}, loaded={scenario_id!r}"
+            )
+        return payload
+
+    def reset(self, seed: int | None = None, **kwargs):
+        observation, info = super().reset(seed=seed, **kwargs)
+        info = dict(info)
+        metadata = self._scenario_metadata()
+        info.update(metadata)
+        source = str(metadata.get("source") or "unknown")
+        self._runtime_stats["resets"] += 1
+        self._runtime_stats["resets_by_source"][source] += 1
+        return observation, info
+
+    def step(self, action):
+        observation, reward, terminated, truncated, info = super().step(action)
+        info = dict(info)
+        metadata = self._scenario_metadata()
+        info.update(metadata)
+        info["termination_reason"] = self._last_done_info.get("termination_reason")
+        info["crossed_continuous_line"] = bool(
+            self._last_done_info.get("crossed_continuous_line", False)
+        )
+        source = str(metadata.get("source") or "unknown")
+        self._runtime_stats["steps"] += 1
+        self._runtime_stats["steps_by_source"][source] += 1
+        if terminated or truncated:
+            arm = str(metadata.get("arm") or "unknown")
+            reason = str(info.get("termination_reason") or ("truncated" if truncated else "terminated"))
+            self._runtime_stats["episodes"] += 1
+            self._runtime_stats["episodes_by_arm"][arm] += 1
+            self._runtime_stats["termination_reasons"][reason] += 1
+        return observation, reward, terminated, truncated, info
+
+    def get_runtime_stats(self) -> dict[str, Any]:
+        """Return JSON-safe counters for parent-process/run-level aggregation."""
+
+        return {
+            "resets": int(self._runtime_stats["resets"]),
+            "steps": int(self._runtime_stats["steps"]),
+            "episodes": int(self._runtime_stats["episodes"]),
+            "resets_by_source": dict(self._runtime_stats["resets_by_source"]),
+            "steps_by_source": dict(self._runtime_stats["steps_by_source"]),
+            "episodes_by_arm": dict(self._runtime_stats["episodes_by_arm"]),
+            "termination_reasons": dict(self._runtime_stats["termination_reasons"]),
+        }
+
+
+__all__ = ["SceneContextAdapter", "ThesisScenarioEnv", "scenario_time_limit_reached"]

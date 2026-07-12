@@ -1,0 +1,37 @@
+"""Run the checked-out ScenarioNet official database verifiers."""
+
+from __future__ import annotations
+
+import argparse
+
+from thesis_rl.scenarios.official_checks import run_official_check
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run an official ScenarioNet database check.")
+    parser.add_argument("check", choices=("existence", "simulation", "overlap"))
+    parser.add_argument("database_path")
+    parser.add_argument("--other-database-path")
+    parser.add_argument("--error-file-path")
+    parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--show-id", action="store_true")
+    args = parser.parse_args()
+    result = run_official_check(
+        args.check,
+        database_path=args.database_path,
+        other_database_path=args.other_database_path,
+        error_file_path=args.error_file_path,
+        num_workers=args.num_workers,
+        overwrite=args.overwrite,
+        show_id=args.show_id,
+    )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="")
+    return int(result.returncode)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
