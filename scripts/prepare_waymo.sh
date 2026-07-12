@@ -23,6 +23,7 @@ overwrite="${WAYMO_OVERWRITE:-false}"
 cleanup_raw="${WAYMO_CLEANUP_RAW_AFTER_CONVERSION:-false}"
 host_data_dir="${HOST_DATA_DIR:-./data}"
 database_dir="${host_data_dir%/}/scenarionet/waymo/database"
+temporary_files=()
 
 is_true() {
   case "${1,,}" in
@@ -35,6 +36,15 @@ die() {
   echo "waymo-pipeline: $*" >&2
   exit 2
 }
+
+cleanup_temporary_files() {
+  local status=$?
+  if ((${#temporary_files[@]} > 0)); then
+    rm -f "${temporary_files[@]}"
+  fi
+  return "$status"
+}
+trap cleanup_temporary_files EXIT
 
 command -v gcloud >/dev/null 2>&1 || die \
   "gcloud CLI not found. Run 'make waymo-auth' after installing the Google Cloud CLI."
@@ -69,7 +79,7 @@ else
     object_list="$(mktemp)"
     selected_list="$(mktemp)"
     sorted_list="$(mktemp)"
-    trap 'rm -f "$object_list" "$selected_list" "$sorted_list"' EXIT
+    temporary_files=("$object_list" "$selected_list" "$sorted_list")
     gcloud storage ls "$source_uri" | awk '/^gs:\/\// {print}' > "$object_list"
     available_count="$(awk 'NF {n++} END {print n+0}' "$object_list")"
     (( available_count >= num_files )) || die \
@@ -78,6 +88,8 @@ else
     head -n "$num_files" "$sorted_list" > "$selected_list"
     echo "Selected $num_files shards out of $available_count available"
     gcloud storage cp --read-paths-from-stdin "$raw_dir/" < "$selected_list"
+    rm -f "${temporary_files[@]}"
+    temporary_files=()
   else
     gcloud storage cp "$source_uri" "$raw_dir/"
   fi

@@ -1158,11 +1158,16 @@ low/dense traffic → tag quantitativi relativi al train set
   "tau_low": null,
   "tau_dense": null,
   "computed_on_split": "train",
-  "balanced_sources": true
+  "balanced_sources": true,
+  "balanced_source_count": 1000
 }
 ```
 
-Le soglie non vengono mai ricalcolate sui set di evaluation.
+`balanced_source_count` indica quanti scenari per sorgente sono stati usati per
+stimare le soglie. Il catalogo train può contenere un numero leggermente
+diverso di scenari per sorgente quando lo split per gruppi supera il target;
+la stima resta comunque bilanciata usando un sottoinsieme deterministico. Le
+soglie non vengono mai ricalcolate sui set di evaluation.
 
 ---
 

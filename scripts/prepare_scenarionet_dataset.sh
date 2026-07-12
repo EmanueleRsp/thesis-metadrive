@@ -70,6 +70,7 @@ split_manifest="${SCENARIONET_SPLIT_MANIFEST_PATH:-${data_root}/splits/split_man
 thresholds_path="${SCENARIONET_THRESHOLDS_PATH:-${data_root}/splits/arm_thresholds.json}"
 pg_count="${SCENARIONET_PG_COUNT:?pipeline YAML must define pg.count_per_profile}"
 pg_seed_start="${SCENARIONET_PG_SEED_START:?pipeline YAML must define pg.seed_start}"
+pg_workers="${SCENARIONET_PG_WORKERS:?pipeline YAML must define pg.workers}"
 split_seed="${SCENARIONET_SPLIT_SEED:?pipeline YAML must define split.seed}"
 overwrite="${SCENARIONET_OVERWRITE:-false}"
 auto_split="${SCENARIONET_AUTO_SPLIT:?pipeline YAML must define split.auto}"
@@ -85,6 +86,7 @@ run_simulation_check="${SCENARIONET_RUN_SIMULATION_CHECK:?pipeline YAML must def
 
 echo "Resolved pipeline parameters:"
 echo "  PG: ${pg_count} scenarios/profile, seed=${pg_seed_start}"
+echo "  PG workers: ${pg_workers}"
 echo "  Waymo targets: train=${waymo_train_target}, validation=${waymo_validation_target}, test=${waymo_test_target}"
 echo "  PG targets: train=${pg_train_target}, validation=${pg_validation_target}, test=${pg_test_target}"
 echo "  Split mode: auto=${auto_split}, seed=${split_seed}"
@@ -108,6 +110,7 @@ docker compose run --rm "$pipeline_service" uv run --no-sync python \
   --repo-root /workspace/thesis-metadrive \
   --count "$pg_count" \
   --seed-start "$pg_seed_start" \
+  --workers "$pg_workers" \
   "${pg_overwrite[@]}"
 
 catalog_overwrite=()
@@ -162,6 +165,7 @@ docker compose run --rm "$pipeline_service" uv run --no-sync python \
   --catalog "$catalog_split" \
   --output-catalog "$catalog_final" \
   --thresholds "$thresholds_path" \
+  --balance-seed "$split_seed" \
   "${catalog_overwrite[@]}"
 
 stage "[6/7] Building train/validation/test runtime views"

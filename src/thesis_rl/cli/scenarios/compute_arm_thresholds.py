@@ -21,6 +21,12 @@ def main() -> int:
     parser.add_argument("--output-catalog", required=True)
     parser.add_argument("--thresholds", required=True)
     parser.add_argument("--feature-version", default="v1")
+    parser.add_argument(
+        "--balance-seed",
+        type=int,
+        default=0,
+        help="Seed for deterministic balancing when source train counts differ.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -35,6 +41,7 @@ def main() -> int:
         thresholds = compute_arm_thresholds(
             train_entries,
             feature_version=str(args.feature_version),
+            balance_seed=int(args.balance_seed),
         )
         classified = tuple(
             classify_catalog_entry(entry, thresholds) for entry in catalog.entries
@@ -62,6 +69,7 @@ def main() -> int:
     print_panel(
         "Thresholds and arms ready",
         f"Train candidates: {len(train_entries)}\n"
+        f"Balanced threshold sample/source: {thresholds.balanced_source_count}\n"
         f"tau_low={thresholds.tau_low}, tau_dense={thresholds.tau_dense}\n"
         f"Thresholds: {args.thresholds}\n"
         f"Catalog: {args.output_catalog}",

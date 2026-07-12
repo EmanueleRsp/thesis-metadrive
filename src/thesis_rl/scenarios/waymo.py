@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import pickle
 import subprocess
 import sys
 import importlib.util
+from collections import deque
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -15,6 +17,7 @@ from thesis_rl.scenarios.splits import (
     assert_waymo_training_20s,
     assign_grouped_splits,
 )
+from thesis_rl.scenarios.waymo_monitor import NullProgressSink, ProgressSink
 
 
 class WaymoConversionError(RuntimeError):
@@ -80,6 +83,7 @@ def convert_waymo_training_20s(
     num_workers: int = 8,
     num_files: int | None = None,
     overwrite: bool = False,
+    progress_sink: ProgressSink | None = None,
 ) -> list[str]:
     dependency_status = waymo_dependency_status()
     if not dependency_status["tensorflow"]:
@@ -88,6 +92,7 @@ def convert_waymo_training_20s(
             "but is not installed. Use the dedicated Waymo conversion environment "
             "or install the project conversion extra before retrying."
         )
+    raw_files = validate_training_20s_source(raw_data_path)
     command = build_converter_command(
         raw_data_path=raw_data_path,
         database_path=database_path,
@@ -95,16 +100,44 @@ def convert_waymo_training_20s(
         num_files=num_files,
         overwrite=overwrite,
     )
+    monitor = progress_sink or NullProgressSink()
+    total_files = len(raw_files) if num_files is None else min(num_files, len(raw_files))
+    monitor.emit({"kind": "started", "total_files": total_files})
+    child_env = os.environ.copy()
+    # Waymo conversion is intentionally CPU-only. Keep expected TensorFlow
+    # CUDA/TensorRT diagnostics out of the user-facing terminal; failures are
+    # still reported through the monitor and the exception below.
+    child_env.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    tail: deque[str] = deque(maxlen=40)
     try:
-        subprocess.run(command, check=True)
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=child_env,
+        )
+        assert process.stdout is not None
+        from thesis_rl.scenarios.waymo_monitor import parse_converter_line
+
+        for line in process.stdout:
+            clean_line = line.strip()
+            if clean_line:
+                tail.append(clean_line)
+            for event in parse_converter_line(line):
+                monitor.emit(event)
+        return_code = process.wait()
+        monitor.emit({"kind": "finished", "exit_code": return_code})
+        if return_code:
+            details = "\n".join(tail)
+            raise WaymoConversionError(
+                "ScenarioNet Waymo conversion failed. "
+                f"Check converter output (exit code {return_code}).\n{details}"
+            )
     except FileNotFoundError as exc:
         raise WaymoConversionError(
             "Python executable for ScenarioNet converter is unavailable"
-        ) from exc
-    except subprocess.CalledProcessError as exc:
-        raise WaymoConversionError(
-            "ScenarioNet Waymo conversion failed. Check optional TensorFlow/Waymo "
-            f"dependencies and converter output (exit code {exc.returncode})."
         ) from exc
     return command
 

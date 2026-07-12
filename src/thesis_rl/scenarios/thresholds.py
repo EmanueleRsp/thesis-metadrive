@@ -22,6 +22,7 @@ class ArmThresholds:
     tau_dense: int
     computed_on_split: str = "train"
     balanced_sources: bool = True
+    balanced_source_count: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -36,18 +37,39 @@ def compute_arm_thresholds(
     temporal_quantile: float = 0.90,
     low_traffic_quantile: float = 0.40,
     dense_traffic_quantile: float = 0.75,
+    balance_seed: int = 0,
 ) -> ArmThresholds:
     if not entries:
         raise ValueError("threshold computation requires train entries")
     non_train = [entry.record.scenario_uid for entry in entries if entry.record.split != "train"]
     if non_train:
         raise ValueError(f"threshold computation is train-only; received: {non_train}")
-    source_values: dict[str, list[float]] = {"waymo": [], "pg": []}
+    source_entries: dict[str, list[ScenarioCatalogEntry]] = {"waymo": [], "pg": []}
     for entry in entries:
-        source_values[entry.record.source].append(entry.features.relevant_agents_q90)
-    counts = {source: len(values) for source, values in source_values.items()}
-    if not counts["waymo"] or counts["waymo"] != counts["pg"]:
-        raise ValueError(f"threshold computation requires balanced non-empty sources: {counts}")
+        source_entries[entry.record.source].append(entry)
+    counts = {source: len(source_entries[source]) for source in source_entries}
+    if not counts["waymo"] or not counts["pg"]:
+        raise ValueError(f"threshold computation requires non-empty sources: {counts}")
+
+    # Whole-group splitting is intentionally allowed to overshoot a target. Use
+    # a deterministic balanced train subset for threshold estimation instead of
+    # failing when, for example, Waymo has 1054 entries and PG has 1000.
+    balanced_count = min(counts.values())
+    source_values: dict[str, list[float]] = {}
+    for source_index, source in enumerate(("waymo", "pg")):
+        candidates = sorted(
+            source_entries[source],
+            key=lambda entry: entry.record.scenario_uid,
+        )
+        if len(candidates) > balanced_count:
+            rng = np.random.default_rng(int(balance_seed) + source_index)
+            selected = np.sort(
+                rng.choice(len(candidates), size=balanced_count, replace=False)
+            )
+            candidates = [candidates[int(index)] for index in selected]
+        source_values[source] = [
+            entry.features.relevant_agents_q90 for entry in candidates
+        ]
     values = np.asarray(source_values["waymo"] + source_values["pg"], dtype=np.float64)
     tau_low = int(np.rint(np.quantile(values, low_traffic_quantile)))
     tau_dense = int(np.rint(np.quantile(values, dense_traffic_quantile)))
@@ -60,6 +82,7 @@ def compute_arm_thresholds(
         dense_traffic_quantile=dense_traffic_quantile,
         tau_low=tau_low,
         tau_dense=tau_dense,
+        balanced_source_count=balanced_count,
     )
 
 

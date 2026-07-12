@@ -263,6 +263,13 @@ librerie CUDA. Il solo stadio che usa una dipendenza pesante separata è la
 conversione Waymo, eseguita da `waymo-converter` con TensorFlow 2.11. Il
 container `dev` resta riservato a training ed evaluation RL.
 
+La pipeline resta in un unico terminale: la conversione Waymo cattura l'output
+dei worker e lo riduce a un'unica dashboard Rich aggiornata in-place. Anche la
+generazione PG usa processi MetaDrive isolati (`pg.workers`, 4 nel profilo
+baseline) e una sola barra aggregata; i riepiloghi stampati da ogni scenario
+non vengono propagati al terminale. Non viene creata alcuna sessione o pane
+`tmux`.
+
 Il comando esegue, nell'ordine:
 
 1. download e conversione Waymo tramite `make waymo-pipeline`;

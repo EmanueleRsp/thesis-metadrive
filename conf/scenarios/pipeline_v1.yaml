@@ -4,6 +4,7 @@ pipeline_version: scenarionet_pipeline_v1
 pg:
   count_per_profile: 350
   seed_start: 920000
+  workers: 10
 
 split:
   seed: 0

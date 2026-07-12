@@ -18,6 +18,12 @@ def main() -> int:
     parser.add_argument("--repo-root", default=".")
     parser.add_argument("--count", type=int, default=20, help="Scenarios per profile.")
     parser.add_argument("--seed-start", type=int, default=0)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of isolated MetaDrive generation processes.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     if not args.data_root:
@@ -51,6 +57,7 @@ def main() -> int:
             data_root=args.data_root,
             count_per_profile=args.count,
             seed_start=args.seed_start,
+            workers=args.workers,
             overwrite=args.overwrite,
             generator_commit=git["metadrive"]["commit"],
             exporter_commit=git["metadrive"]["commit"],
@@ -59,7 +66,9 @@ def main() -> int:
     report_path = write_pg_pilot_report(report, args.data_root, overwrite=args.overwrite)
     style = "green" if report.failed == 0 else "red"
     print_panel(
-        "PG generation completed" if report.failed == 0 else "PG generation completed with failures",
+        "PG generation completed"
+        if report.failed == 0
+        else "PG generation completed with failures",
         f"Generated {report.generated}/{report.requested} scenarios\n"
         f"Failed: {report.failed}\n"
         f"Report: {report_path}",
@@ -72,7 +81,9 @@ def main() -> int:
             for profile, arms in report.by_profile_arm.items()
         ],
     )
-    print(json.dumps({**report.to_dict(), "report_path": str(report_path)}, indent=2, sort_keys=True))
+    print(
+        json.dumps({**report.to_dict(), "report_path": str(report_path)}, indent=2, sort_keys=True)
+    )
     return 0 if report.failed == 0 else 1
 
 

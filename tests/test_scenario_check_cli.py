@@ -16,4 +16,6 @@ def test_check_database_parser_exposes_official_check_choices(monkeypatch, capsy
 
     monkeypatch.setattr(check_database, "run_official_check", lambda *args, **kwargs: _Result())
     assert check_database.main() == 0
-    assert "No overlapping" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "No overlapping" not in captured.out
+    assert "Official overlap check completed" in captured.err

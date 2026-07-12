@@ -31,10 +31,17 @@ def main() -> int:
             overwrite=args.overwrite,
             show_id=args.show_id,
         )
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="")
+    if result.returncode != 0:
+        # The official verifier output contains one progress bar per worker.
+        # Keep successful checks quiet; expose only a compact tail on failure.
+        diagnostics = "\n".join(
+            line
+            for stream in (result.stdout, result.stderr)
+            for line in stream.splitlines()[-20:]
+        )
+        if diagnostics:
+            console.print("Verifier diagnostics (last 20 lines):", style="bold red")
+            console.print(diagnostics, style="red")
     print_panel(
         f"Official {args.check} check completed",
         f"Database: {args.database_path}\nExit code: {result.returncode}",

@@ -79,11 +79,15 @@ def test_thresholds_are_computed_on_balanced_train_sources() -> None:
     assert applied.features.dense_traffic is False
 
 
-def test_thresholds_reject_evaluation_and_unbalanced_sources() -> None:
+def test_thresholds_reject_evaluation_and_balance_effective_counts() -> None:
     with pytest.raises(ValueError, match="train-only"):
         compute_arm_thresholds([_entry(0, "waymo", 1), _entry(1, "pg", 1, split="test")])
-    with pytest.raises(ValueError, match="balanced"):
-        compute_arm_thresholds([_entry(0, "waymo", 1)])
+    thresholds = compute_arm_thresholds(
+        [_entry(0, "waymo", 1), _entry(1, "waymo", 3), _entry(2, "pg", 5)],
+        balance_seed=7,
+    )
+    assert thresholds.balanced_sources is True
+    assert thresholds.balanced_source_count == 1
 
 
 def test_threshold_file_round_trip_and_catalog_classification(tmp_path) -> None:
