@@ -53,6 +53,14 @@ def _configure_agent_observation(
         semantic_cfg = dict(observation_cfg)
         semantic_cfg.pop("type", None)
         semantic_cfg.pop("name", None)
+        if bool(semantic_cfg.get("expose_time_indexed_future_trajectory", False)):
+            raise ValueError(
+                "Causal observation contract forbids exposing future time-indexed trajectories."
+            )
+        if bool(semantic_cfg.get("expose_future_signal_phase", False)):
+            raise ValueError(
+                "Causal observation contract forbids exposing future signal phases."
+            )
 
         SemanticStateObservation.set_external_config(semantic_cfg)
         env_cfg["agent_observation"] = SemanticStateObservation
@@ -77,6 +85,38 @@ def _configure_agent_observation(
         f"Unsupported observation type '{obs_type}'. "
         "Supported values: lidar_state, semantic_state"
     )
+
+
+def _validate_scenarionet_catalog_runtime(catalog: Any, *, split: str, data_directory: str) -> None:
+    """Fail early when a catalog and ScenarioNet runtime view do not match."""
+
+    from thesis_rl.scenarios.runtime_database import verify_runtime_mapping
+
+    runtime = Path(data_directory).expanduser().resolve()
+    if not (runtime / "dataset_summary.pkl").is_file():
+        raise FileNotFoundError(
+            "ScenarioNet runtime database is missing dataset_summary.pkl: "
+            f"{runtime}. Set env.config.data_directory to the matching runtime view."
+        )
+    available = set(verify_runtime_mapping(runtime))
+    expected = {
+        Path(record.relative_path).name
+        for record in catalog.valid_records(split=split)
+    }
+    missing = sorted(expected.difference(available))
+    unexpected = sorted(available.difference(expected))
+    if missing or unexpected:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing={missing[:3]}")
+        if unexpected:
+            details.append(f"unexpected={unexpected[:3]}")
+        raise ValueError(
+            "ScenarioNet catalog/runtime mismatch for "
+            f"split={split!r} at {runtime}: "
+            + ", ".join(details)
+            + ". Set env.config.data_directory to the runtime view built from this catalog."
+        )
 
 
 def make_env(
@@ -145,6 +185,26 @@ def make_env(
         )
         if catalog_path and catalog is None:
             catalog = read_scenario_catalog(str(catalog_path))
+        if catalog is not None:
+            data_directory = env_cfg.get("data_directory")
+            if not data_directory:
+                raise ValueError(
+                    "ScenarioNet requires env.config.data_directory or "
+                    "SCENARIONET_DATA_ROOT pointing to the matching runtime view."
+                )
+            _validate_scenarionet_catalog_runtime(
+                catalog,
+                split=split,
+                data_directory=str(data_directory),
+            )
+        if catalog is not None and int(env_cfg.get("num_scenarios", -1)) <= 0:
+            split_records = catalog.valid_records(split=split)
+            if not split_records:
+                raise ValueError(f"ScenarioNet catalog has no valid records for split={split!r}")
+            # MetaDrive's engine computes its seed modulus before the data
+            # manager expands num_scenarios=-1. Resolve it before construction
+            # so provider-selected runtime indices are not collapsed to zero.
+            env_cfg["num_scenarios"] = len(split_records)
         if scenario_provider is None and catalog is not None:
             provider_cfg = _to_plain_dict(getattr(cfg_env, "provider", {}))
             provider_kind = str(provider_cfg.get("kind", "uniform")).lower()

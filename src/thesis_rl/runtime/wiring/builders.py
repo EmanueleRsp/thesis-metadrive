@@ -68,6 +68,37 @@ def collect_scenario_runtime_stats(env: Any) -> dict[str, Any] | None:
     }
 
 
+def merge_scenario_runtime_stats(
+    accumulated: dict[str, Any] | None,
+    current: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Add one worker/chunk counter snapshot to an accumulated snapshot."""
+
+    if current is None:
+        return accumulated
+    if accumulated is None:
+        return {
+            key: (dict(value) if isinstance(value, dict) else value)
+            for key, value in current.items()
+        }
+    for key in ("resets", "steps", "episodes"):
+        accumulated[key] = int(accumulated.get(key, 0)) + int(current.get(key, 0))
+    for key in (
+        "resets_by_source",
+        "steps_by_source",
+        "episodes_by_arm",
+        "termination_reasons",
+    ):
+        target = accumulated.setdefault(key, {})
+        if not isinstance(target, dict):
+            target = accumulated[key] = {}
+        values = current.get(key, {})
+        if isinstance(values, dict):
+            for name, count in values.items():
+                target[str(name)] = int(target.get(str(name), 0)) + int(count)
+    return accumulated
+
+
 class _CrashLoggingEnvWrapper(gym.Wrapper):
     """Persist worker-side traceback on reset/step failures."""
 
@@ -260,7 +291,14 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
 
 def merge_env_config_with_overrides(cfg_env: DictConfig, env_overrides: dict[str, Any]) -> DictConfig:
     merged_cfg_env = OmegaConf.create(OmegaConf.to_container(cfg_env, resolve=True))
-    merged_cfg_env.config = OmegaConf.merge(merged_cfg_env.config, dict(env_overrides))
+    config_overrides = dict(env_overrides)
+    # ScenarioNet keeps split/provider/episode-control outside the native
+    # MetaDrive config. Moving these fields here prevents unknown-key errors
+    # while allowing evaluation to select validation/test runtime views.
+    for top_level_key in ("split", "catalog_path", "global_seed", "provider", "episode_control"):
+        if top_level_key in config_overrides:
+            setattr(merged_cfg_env, top_level_key, config_overrides.pop(top_level_key))
+    merged_cfg_env.config = OmegaConf.merge(merged_cfg_env.config, config_overrides)
     return merged_cfg_env
 
 

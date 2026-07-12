@@ -12,6 +12,7 @@ from thesis_rl.scenarios.arms import assign_primary_arm, derive_scenario_tags
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 from thesis_rl.scenarios.features import extract_scenario_features
 from thesis_rl.scenarios.pg.validation import validate_exported_scenario
+from thesis_rl.scenarios.pg.profiles import PG_PROFILES
 from thesis_rl.scenarios.records import ScenarioRecord
 
 
@@ -29,6 +30,8 @@ def load_exported_pg_entries(
     data_root: str | Path,
     split: str = "train",
     dataset_version: str = "scenarionet_v1",
+    seed_start: int | None = None,
+    count_per_profile: int | None = None,
 ) -> tuple[ScenarioCatalogEntry, ...]:
     """Load PG files while preserving realized topology from generation manifests."""
 
@@ -70,6 +73,20 @@ def load_exported_pg_entries(
         profile = str(generation.get("profile") or path.parent.parent.name)
         seed_value = generation.get("seed")
         seed = int(seed_value) if seed_value is not None else int(path.parent.name)
+        if seed_start is not None or count_per_profile is not None:
+            if seed_start is None or count_per_profile is None or count_per_profile < 1:
+                raise ValueError(
+                    "seed_start and count_per_profile must be provided together and count_per_profile > 0"
+                )
+            profile_stride = 1_000_000
+            in_window = any(
+                int(seed_start) + profile_index * profile_stride
+                <= seed
+                < int(seed_start) + profile_index * profile_stride + int(count_per_profile)
+                for profile_index in range(len(PG_PROFILES))
+            )
+            if not in_window:
+                continue
         block_sequence = realized_metadata.get("block_sequence", []) if realized_metadata else []
         map_id = "".join(str(token) for token in block_sequence) or profile
         record = ScenarioRecord(

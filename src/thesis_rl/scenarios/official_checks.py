@@ -69,6 +69,9 @@ def run_official_check(
     other_database_path: str | Path | None = None,
     show_id: bool = False,
 ) -> subprocess.CompletedProcess[str]:
+    if check in {"existence", "simulation"}:
+        validation_dir = Path(error_file_path or Path(database_path).parent / "validation")
+        validation_dir.expanduser().resolve().mkdir(parents=True, exist_ok=True)
     command = build_official_check_command(
         check,
         database_path=database_path,

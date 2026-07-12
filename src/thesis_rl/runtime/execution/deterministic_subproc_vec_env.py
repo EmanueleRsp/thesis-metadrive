@@ -100,7 +100,8 @@ def _worker(
                     info["terminal_observation"] = observation
                     start, count = _extract_seed_bounds(env)
                     if start is not None and count is not None and count > 0:
-                        if getattr(env, "scenario_provider", None) is not None:
+                        provider_env = getattr(env, "unwrapped", env)
+                        if getattr(provider_env, "scenario_provider", None) is not None:
                             # Provider-driven ScenarioNet resets must sample the
                             # next record; forcing a seed here would bypass the
                             # worker/source partition and break strict sampling.
@@ -137,7 +138,10 @@ def _worker(
             elif cmd == "get_spaces":
                 remote.send((env.observation_space, env.action_space))
             elif cmd == "env_method":
-                method = getattr(env, data[0])
+                base_env = getattr(env, "unwrapped", env)
+                method = getattr(base_env, data[0], None)
+                if not callable(method):
+                    method = getattr(env, data[0])
                 remote.send(method(*data[1], **data[2]))
             elif cmd == "get_attr":
                 remote.send(getattr(env, data))

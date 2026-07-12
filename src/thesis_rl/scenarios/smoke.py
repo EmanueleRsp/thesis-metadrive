@@ -12,9 +12,13 @@ def smoke_test_scenario_env(
     scenario_index: int = 0,
     steps: int = 10,
     reactive_traffic: bool = True,
+    policy: str = "zero",
 ) -> dict[str, Any]:
     if steps < 1:
         raise ValueError("steps must be at least 1")
+    action_policy = str(policy).strip().lower()
+    if action_policy not in {"zero", "random"}:
+        raise ValueError("policy must be either 'zero' or 'random'")
 
     from metadrive.envs.scenario_env import ScenarioEnv  # type: ignore[import-not-found]
     from metadrive.policy.env_input_policy import EnvInputPolicy  # type: ignore[import-not-found]
@@ -42,6 +46,7 @@ def smoke_test_scenario_env(
     )
     try:
         observation, _reset_info = env.reset(seed=int(scenario_index))
+        env.action_space.seed(int(scenario_index))
         observation_array = np.asarray(observation)
         if not np.isfinite(observation_array).all():
             raise ValueError("ScenarioEnv reset returned a non-finite observation")
@@ -52,7 +57,11 @@ def smoke_test_scenario_env(
         terminated = False
         truncated = False
         for _ in range(steps):
-            action = np.zeros(env.action_space.shape, dtype=env.action_space.dtype)
+            action = (
+                env.action_space.sample()
+                if action_policy == "random"
+                else np.zeros(env.action_space.shape, dtype=env.action_space.dtype)
+            )
             observation, reward, terminated, truncated, _step_info = env.step(action)
             if not np.isfinite(np.asarray(observation)).all():
                 raise ValueError("ScenarioEnv step returned a non-finite observation")
@@ -73,6 +82,7 @@ def smoke_test_scenario_env(
             "terminated": bool(terminated),
             "truncated": bool(truncated),
             "reactive_traffic": bool(reactive_traffic),
+            "policy": action_policy,
         }
     finally:
         env.close()

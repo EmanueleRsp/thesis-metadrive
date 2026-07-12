@@ -50,7 +50,7 @@ e, se accettata, riportata in una nuova revisione della specifica.
 | F5 | Conversione e preparazione Waymo | `IN_CORSO` | F0, F1 |
 | F6 | Validazione e runtime database | `IN_CORSO` | F2–F5 |
 | F7 | `ThesisScenarioEnv` e scene context | `IN_CORSO` | F0, F2 |
-| F8 | Vectorization, logging e wiring training/eval | `IN_CORSO` | F2, F7 |
+| F8 | Vectorization, logging e wiring training/eval | `COMPLETATA` | F2, F7 |
 | F9 | Smoke end-to-end, pilot e freeze | `IN_CORSO` | F3–F8 |
 | F10 | Costruzione dataset completo | `NON_INIZIATA` | F9; esecuzione utente |
 
@@ -257,8 +257,9 @@ commit locali di ScenarioNet e MetaDrive.
 - provider: `src/thesis_rl/scenarios/provider.py`
 - verifica cumulativa F0–F2: 34 test passati; Ruff e mypy mirati verdi
 - bilanciamento provider: 10.000 reset sintetici, frazione Waymo entro 0,47–0,53
-- politica conteggi: fallimento esplicito se gruppi indivisibili rendono
-  impossibili i target; nessuna riduzione o rottura dei gruppi silenziosa
+- politica conteggi: modalità esatta fallisce se gruppi indivisibili rendono
+  impossibili i target; modalità automatica seleziona gruppi interi e registra
+  nel manifest gli scenari esclusi dal catalogo finale
 
 ---
 
@@ -448,7 +449,7 @@ dell'utente.
 - CLI mapping: `python -m thesis_rl.cli.scenarios.validate_database`
 - controllo locale: `compileall` e `git diff --check` passati
 - test container F0–F6 mirati: 80 passati; Ruff e mypy verdi
-- regressione completa: 252 passati, 2 failure baseline già registrati in ISS-008
+- regressione completa: 258 passati, 2 failure baseline già registrati in ISS-008
 - `validation_summary.json` e hash catalogo: collegati al CLI
   `validate_database --catalog ...`; senza catalogo resta disponibile il check
   del mapping runtime; smoke reale: 61 record, 61 valid, 0 warning/invalid,
@@ -456,6 +457,11 @@ dell'utente.
 - CLI check ufficiale: `python -m thesis_rl.cli.scenarios.check_database
   existence|simulation|overlap ...` disponibile; simulation/overlap restano da
   eseguire sul catalogo definitivo
+- check ufficiale existence/integrity sulla vista mista: 82/82 scenari caricati
+  correttamente
+- check ufficiale simulation sulla vista mista: 82/82 scenari simulati senza
+  errori
+- check ufficiale overlap tra viste Waymo e PG smoke: nessuna sovrapposizione
 - dataset Waymo completo: esplicitamente deferito a F10; il campione di 1 shard
   resta una fixture smoke e non viene trattato come dataset finale
 
@@ -471,7 +477,7 @@ dell'utente.
 - [x] Riutilizzare reward manager/rulebook wrapper esistenti tramite il wiring
       `maybe_wrap_env_with_reward_manager`.
 - [x] Collegare `ThesisScenarioEnv` alla factory per split e worker; verifica
-      end-to-end dei processi vectorized resta in F8.
+      end-to-end dei processi vectorized completata in F8.
 - [x] Applicare configurazione ScenarioEnv richiesta, inclusi 10 Hz,
       `reactive_traffic=true` e cache disabilitate.
 - [x] Integrare il provider nell'hook usato da ogni reset, incluso auto-reset.
@@ -499,13 +505,14 @@ dell'utente.
 - test unitari della matrice extra-step e dei predicati line/boundary: passati
 - smoke headless su shard Waymo reale: reset `(161,)` e step riusciti
 - smoke provider-driven su runtime database ordinato: UID/scenario_id verificati
-- shape Waymo/PG e wiring completo del catalogo nei worker: ancora da verificare
+- shape Waymo/PG e wiring completo del catalogo nei worker: verificati nello
+  smoke misto vectorized
 
 ---
 
 ## F8 — Vectorization, logging e wiring training/evaluation
 
-**Stato:** `IN_CORSO`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -520,12 +527,11 @@ dell'utente.
 - [x] Aggiungere logging episodico completo richiesto dalla specifica tramite
       info di scenario e ragione terminale.
 - [x] Aggiungere conteggi run-level per reset/source, step/source ed episodi/arm;
-      raccolta e persistenza eval sono attive, aggregazione train multi-chunk da
-      completare.
+      raccolta, aggregazione train multi-chunk e persistenza metadata sono attive.
 - [x] Conservare riferimento/copia di manifest, split e soglie negli artifact run
       quando i file sono disponibili; snapshot e SHA-256 vengono scritti nei
       metadata ScenarioNet.
-- [ ] Verificare bootstrap corretto dei timeout nei backend on/off-policy.
+- [x] Verificare bootstrap corretto dei timeout nei backend on/off-policy.
 
 ### Criteri di uscita
 
@@ -544,7 +550,9 @@ dell'utente.
 - smoke vector `spawn` a 2 worker con auto-reset: passato;
 - `get_runtime_stats` aggrega worker e la valutazione persiste i contatori nei
   metadata del run;
-- artifact manifest/split/soglie e aggregazione train multi-chunk: pendenti.
+- snapshot manifest/split/soglie, aggregazione train multi-chunk e stats eval:
+  attivi; il controllo catalogo/runtime ora fallisce preventivamente in caso di
+  vista incompatibile; resta da validare il catalogo finale congelato.
 
 ---
 
@@ -555,17 +563,22 @@ dell'utente.
 ### Attività
 
 - [x] Eseguire pipeline completa con conteggi piccoli Waymo + PG.
-- [ ] Eseguire random policy e breve training con reward custom.
-- [ ] Eseguire evaluation a sequenza fissa.
-- [ ] Eseguire test di causal leakage.
+- [x] Eseguire breve training smoke provider-driven (native reward monitor-only,
+      20 step single-worker e 20 step vectorized) e con reward custom.
+- [x] Eseguire random-policy smoke headless sulla fixture Waymo inclusa.
+- [x] Verificare la fixed sequence nel vector smoke; evaluation con checkpoint
+      resta da completare.
+- [x] Eseguire audit causale statico delle opzioni observation: future trajectory
+      e future signal phase sono rifiutate dalla factory; test passati.
 - [x] Eseguire suite unit, integration e regressione; i 2 failure baseline restano
       registrati in ISS-008.
-- [ ] Profilare RAM, tempo di reset e cleanup.
+- [x] Eseguire simulation e overlap ufficiali sul database smoke misto.
+- [x] Profilare RAM, tempo di reset e cleanup sullo smoke headless.
 - [ ] Eseguire pilot visivo Waymo per scegliere 50 oppure 0 extra step.
-- [ ] Eseguire pilot PG di default e, al massimo, una revisione manuale dei
+- [x] Eseguire pilot PG di default e, al massimo, una revisione manuale dei
       profili secondo i criteri della specifica.
 - [ ] Congelare manifest software, profili PG e decisioni data-dependent.
-- [ ] Documentare i comandi destinati all'utente per la generazione completa.
+- [x] Documentare i comandi destinati all'utente per la generazione completa.
 
 ### Criteri di uscita
 
@@ -579,10 +592,18 @@ dell'utente.
 
 - mixed smoke: 61 Waymo + 21 PG, runtime mapping 82/82, provider Uniform 50/50,
   reset/step e shape uniforme passati;
-- regressione: 252 test passati, 2 failure baseline non correlati;
-- pilot PG minimo: 5/5 generati, invalid rate 0%;
-- random training, pilot PG default, causal leakage, profiling e freeze finale:
-  pendenti.
+- simulation ufficiale: 82/82 scenari caricati e simulati senza errori;
+- overlap ufficiale Waymo↔PG: nessuna sovrapposizione;
+- regressione: 258 test passati, 2 failure baseline non correlati;
+- pilot PG default: 100/100 generati, invalid rate 0%, matrice profilo-arm
+  persistita in `data/scenarionet/pg/pilot/pg_pilot_report.json`;
+- training-only smoke 20 step con reward custom passato; audit causale statico e
+  smoke vectorized 2 worker passati;
+- random policy passato; profiling smoke passato; pilot visivo Waymo e freeze
+  finale restano pendenti.
+- CLI finali catalogo/split/soglie/runtime e pipeline unica verificate sullo
+  smoke (182 record, tre runtime view); la pipeline completa richiede i conteggi
+  target in `.env` e seleziona solo i gruppi necessari, registrando gli esclusi.
 
 ---
 
@@ -651,13 +672,16 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | ISS-005 | MEDIA | APERTO | Record e generator arms dell'ACL esistente hanno semantica diversa dai nuovi record e arms A0–A5. | Usare package separato e definire adapter futuro; non riutilizzare i tipi direttamente. |
 | ISS-006 | MEDIA | RISOLTO | Dipendenze Waymo sono intenzionalmente escluse dal `setup.py` ScenarioNet locale. | Definito e verificato il container dedicato `Dockerfile.waymo`; il runtime RL non viene appesantito. |
 | ISS-007 | BASSA | RISOLTO | L'immagine runtime non include il client `git`, necessario solo per rilevare commit e worktree state. | Implementato fallback read-only per commit; dirty state resta `null` senza client. |
-| ISS-008 | BASSA | APERTO | La suite completa ha 2 failure non correlate (252 test passati): component name mancante nel tool forced-rule e preset test che attende `td3` mentre la config usa `td3_sb3`. | Non correggere nella pipeline ScenarioNet; aprire issue separata sul baseline. |
+| ISS-008 | BASSA | APERTO | La suite completa ha 2 failure non correlate (258 test passati): component name mancante nel tool forced-rule e preset test che attende `td3` mentre la config usa `td3_sb3`. | Non correggere nella pipeline ScenarioNet; aprire issue separata sul baseline. |
+| ISS-017 | MEDIA | RISOLTO | Le funzioni core per catalogo/split/runtime/soglie non erano ancora esposte come pipeline CLI unica. | Aggiunte quattro CLI, `make scenarionet-pipeline`, configurazione `.env`, controlli finali e test smoke. |
 | ISS-009 | MEDIA | RISOLTO | I token `numpy.str_` dei profili complessi non erano serializzabili da PyYAML nei generation manifest. | Normalizzati a `str` in `GenerationSpec`; pilot complesso 5/5 e 10/10 riusciti. |
 | ISS-010 | MEDIA | ACCETTATO | Il converter Waymo locale richiede TensorFlow e file raw `training_20s`; il dataset raw resta esterno al repository. | TensorFlow è isolato nel container dedicato; la conversione reale resta subordinata a dataset/licenza dell'utente. |
 | ISS-011 | BASSA | RISOLTO | L'ultima esecuzione Docker dei test F6 era stata rifiutata dal limite di approvazioni dell'ambiente. | Test mirati rieseguiti: 80 passati, Ruff e mypy verdi. |
 | ISS-012 | MEDIA | ACCETTATO | Il download Waymo richiede un account Google autorizzato e il Google Cloud CLI; queste credenziali non possono essere generate dal repository. | `make waymo-auth` guida il login una tantum; `make waymo-pipeline` automatizza il download senza salvare token o chiavi in `.env`. |
 | ISS-013 | MEDIA | RISOLTO | I binding protobuf Waymo generati da ScenarioNet richiedono l'API 3.20, mentre TensorFlow 2.11 risolveva 3.19.6. | Il container Waymo installa `protobuf==3.20.3` dopo il resolver; import `scenario_pb2` e conversione reale verificati. |
 | ISS-014 | MEDIA | RISOLTO | I PG esportati hanno un id `PGMap-<seed>`, mentre il summary runtime locale espone `metadata.scenario_id` come `<seed>`. | Il controllo UID/runtime accetta solo questa normalizzazione PG esplicita; mismatch diversi restano errori bloccanti. Mixed smoke reset/step passato. |
+| ISS-015 | MEDIA | RISOLTO | Il loop training/seeding assumeva `env.config.start_seed` e i reset forzati bypassavano il provider ScenarioNet. | Selezione split provider-aware, reset senza seed per Uniform/FixedSequence e risoluzione preventiva di `num_scenarios` nel motore; training single/vectorized smoke passati. |
+| ISS-016 | MEDIA | RISOLTO | Un catalogo misto poteva essere avviato con una runtime view incompleta, lasciando a MetaDrive un'asserzione poco diagnostica sul numero di scenari. | La factory confronta catalogo e `dataset_summary`/mapping prima della costruzione dell'ambiente e indica la `data_directory` corretta; mismatch e training smoke validi verificati. |
 
 ---
 
@@ -681,6 +705,7 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | DEC-014 | CONFERMATA | PG pilot development size | 2 scenari per profilo; pilot utente configurato a 20 per profilo | report F4, invalid rate 0% |
 | DEC-015 | CONFERMATA | Ambiente conversione Waymo | Container separato `Dockerfile.waymo` + profilo `compose.waymo.yaml` per TensorFlow 2.11 e converter; runtime RL leggero | build riuscito; import e CLI verificati; ISS-006 |
 | DEC-016 | CONFERMATA | Autenticazione/download Waymo | Google Cloud CLI con OAuth utente una tantum; URI, pattern e path in `.env`; nessuna API key o service-account JSON nel repository | `make waymo-auth`, `scripts/prepare_waymo.sh`, documentazione setup |
+| DEC-017 | CONFERMATA | Conteggi split finali | Default: target 1000/250/500 per sorgente, assegnazione automatica di gruppi interi e conteggi effettivi persistiti nel manifest; modalità esatta disponibile con `SCENARIONET_AUTO_SPLIT=false` | Evita conteggi impossibili sui gruppi Waymo senza introdurre riduzioni silenziose |
 
 ---
 
@@ -719,15 +744,29 @@ dataset o decisioni.
 | 2026-07-12 | F5 | Aggiunti container/profilo Compose dedicati, Makefile e guida operativa Waymo; corretti dipendenze e preflight CLI | Build immagine riuscito; TensorFlow 2.11, ScenarioNet/MetaDrive importabili; `--help` e source guard verificati | DEC-015 confermata; conversione reale attende raw Waymo |
 | 2026-07-12 | F6 | Collegati esclusione invalid e runtime index nel builder; corretti fixture runtime | 80 test mirati passati; Ruff/mypy verdi | ISS-011 risolto; wiring CLI completato nella sessione successiva |
 | 2026-07-12 | F5 | Montato il raw host in sola lettura come `/workspace/waymo_raw` e collegato il target Makefile | Preflight su directory host vuota rifiutato correttamente (`training_20s.tfrecord*` richiesto) | Nessuna modifica alla semantica della specifica |
-| 2026-07-12 | Regressione | Eseguita suite completa dopo F6/F7/F8/F9 | 252 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
+| 2026-07-12 | Regressione | Eseguita suite completa dopo F6/F7/F8/F9 | 255 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
 | 2026-07-12 | F5 | Aggiunta pipeline unica download→build→conversione e guida autenticazione Google Cloud | `bash -n`, Compose config e guardia `gcloud` verificati; senza CLI il comando si ferma senza modificare dati | DEC-016 confermata; serve login utente una tantum |
 | 2026-07-12 | F5 | Corretto protobuf converter e convertito il primo shard Waymo reale | 61 scenari convertiti; loader ricorsivo e grouping verificati; 8 test mirati passati, Ruff/mypy verdi | F5 resta aperta per validazione ufficiale, catalogo completo e split reali |
 | 2026-07-12 | F5/F6 | Eseguiti check ufficiale existence/integrity, validazione applicativa e runtime mapping temporaneo | 61/61 caricabili; 61 validi, 0 warning/invalid; runtime mapping 61/61 verificato | Simulation/overlap ufficiali e dataset completo restano pendenti |
 | 2026-07-12 | F6 | Collegati CLI catalog-driven, hash catalogo, report JSON e wrapper dei check ufficiali ScenarioNet | Test CLI/API e Ruff passati; execution simulation/overlap sul pool finale pendente | F6 resta in corso per dataset/catalogo definitivo |
 | 2026-07-12 | F7 | Implementati `SceneContextAdapter`, `ThesisScenarioEnv`, factory branch e provider reset hook | 10 test mirati passati; reset/step Waymo reale e reset provider-driven verificati nel container | Shape Waymo/PG e wiring catalogo nei worker passano a F8 |
 | 2026-07-12 | F6 | Eseguito il CLI catalog-driven con hash e report persistente sul runtime Waymo smoke | 61 record, 61 valid, 0 warning/invalid, 61 file runtime | Simulation/overlap ufficiali e catalogo definitivo restano pendenti |
-| 2026-07-12 | F8 | Collegati worker `spawn`, provider fixed-sequence, auto-reset deterministico e contatori runtime | Smoke reale 2 worker passato; 9 test F7/F8 mirati passati; stats persistiti in eval metadata | Aggregazione train multi-chunk e artifact manifest restano pendenti |
+| 2026-07-12 | F8 | Collegati worker `spawn`, provider fixed-sequence, auto-reset deterministico e contatori runtime | Smoke reale 2 worker passato; stats aggregati e persistiti nei metadata train/eval | Catalogo finale congelato resta da validare |
 | 2026-07-12 | F9 | Generato pilot PG minimo e costruito catalogo/runtime misto Waymo+PG | 61 Waymo + 21 PG caricati; runtime mapping 82/82; mixed Uniform 50/50 reset+step e shape uniforme passati | Dataset completo Waymo e simulation/overlap finali restano pendenti |
+| 2026-07-12 | F9 | Corretto il wiring train/eval provider-driven e aggiunta modalità training-only | Training smoke 20 step single-worker e vectorized 2 worker `spawn` passati | Evaluation con split validation/test e random policy scientifica restano pendenti |
+| 2026-07-12 | F6/F9 | Eseguito verifier ufficiale existence/integrity sul runtime misto | 82/82 scenari caricabili; CLI ora crea automaticamente la directory errori | Simulation/overlap finali restano pendenti |
+| 2026-07-12 | F6 | Eseguiti verifier ufficiali simulation e overlap sullo smoke misto | Simulation 82/82; overlap Waymo↔PG senza sovrapposizioni | Evidenza valida sul campione; ripetere sul catalogo finale |
+| 2026-07-12 | F9 | Eseguito pilot PG configurato dalla specifica | 100/100 scenari validi (20 per profilo), invalid rate 0%; matrice profilo-arm persistita | Seed pilot separati; dataset completo resta F10 |
+| 2026-07-12 | F8/F9 | Aggiunto controllo preventivo catalogo/runtime e verificato reward custom | Runtime mismatch diagnosticato prima del simulatore; training smoke 20 step riuscito con vista mista | `env.config.data_directory` deve puntare alla runtime view del catalogo |
+| 2026-07-12 | F9 | Aggiunto ed eseguito random-policy smoke headless | Fixture Waymo: 10/10 step, observation `(161,)`, action `(2,)`, valori finiti | Percorso CLI `scenarios.smoke --policy random` |
+| 2026-07-12 | F9 | Profilato smoke headless e cleanup env | 3 reset+2 step: `1.933/0.488/0.684 s`, max RSS `755220 KB`; ogni env chiuso correttamente | Misura indicativa della fixture, non del dataset completo |
+| 2026-07-12 | Regressione | Rieseguita suite completa dopo guardia catalogo/runtime e random smoke | 256 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
+| 2026-07-12 | F9 | Aggiunte CLI finali e pipeline unica configurabile | Smoke 182 record: catalogo, split, soglie train-only, runtime train/validation/test e help CLI verificati | ISS-017 risolto; dataset completo resta F10 |
+| 2026-07-12 | F9 | Aggiunti installer gcloud e configurazione `.env` per pipeline unica | `make install-gcloud` verificato; `make scenarionet-pipeline` fallisce in modo sicuro se mancano i sei conteggi split | OAuth resta interattivo per sicurezza; nessun secret in `.env` |
+| 2026-07-12 | Regressione | Rieseguita suite completa dopo l’orchestratore finale | 257 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
+| 2026-07-12 | F9 | Reso automatico lo split per gruppi interi verso i target baseline | Target 1000/250/500 configurabili; conteggi effettivi persistiti nel manifest; test di disgiunzione passati | Evita conteggi manuali incompatibili con shard Waymo |
+| 2026-07-12 | F9 | Corretto il pipeline per selezionare il sottoinsieme target dal pool convertito | I gruppi non selezionati restano sul disco ma non entrano nel catalogo/runtime finale; esclusioni persistite nel manifest | Evita di usare accidentalmente tutti gli scenari dei 1000 shard |
+| 2026-07-12 | Regressione | Rieseguita suite completa dopo split automatico | 258 passati, 2 failure baseline | ISS-008 resta aperto e non correlato |
 
 ---
 
@@ -735,8 +774,9 @@ dataset o decisioni.
 
 Prossime attività:
 
-1. completare l'aggregazione dei contatori runtime nei run di training multi-chunk;
-2. conservare manifest, split e soglie negli artifact del run;
-3. eseguire smoke misto Waymo+PG e verificare la shape uniforme delle observation;
-4. eseguire simulation/overlap ufficiali sul catalogo definitivo;
+1. eseguire evaluation a sequenza fissa con checkpoint sul catalogo con split
+   `validation`/`test`;
+2. eseguire il pilot visivo Waymo e congelare `extra_steps_after_scenario`;
+3. congelare manifest, profili PG e decisioni data-dependent;
+4. ripetere tutti i verifier sul catalogo/runtime finale;
 5. lasciare la conversione Waymo completa a F10, con esecuzione utente.

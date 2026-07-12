@@ -78,6 +78,11 @@ def apply_eval_scenario_seed_split(
 ) -> dict[str, object]:
     """Return env overrides with a deterministic disjoint MetaDrive scenario pool."""
     overrides = dict(eval_env_overrides or {})
+    if str(cfg.env.get("name", "")).lower() == "scenarionet":
+        # ScenarioNet selection is provider/catalog driven. Seed offsets used
+        # by native MetaDrive would bypass the provider and mix splits.
+        overrides["split"] = str(split).lower()
+        return overrides
     base_start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
     split_stride, split_offsets = scenario_split_settings(cfg)
     split_name = str(split).lower()
@@ -103,8 +108,10 @@ def apply_eval_scenario_seed_split(
 def eval_base_seed_from_env_overrides(
     eval_env_overrides: dict[str, object],
     cfg: DictConfig,
-) -> int:
+) -> int | None:
     """Return the first valid MetaDrive scenario seed for an evaluation env."""
+    if str(cfg.env.get("name", "")).lower() == "scenarionet":
+        return None
     return int(eval_env_overrides.get("start_seed", cfg.env.config.start_seed))
 
 
@@ -130,9 +137,11 @@ def train_episode_seed_from_env_overrides(
     chunk_id: int,
     episode_index: int,
     stage_index: int = 0,
-) -> int:
+) -> int | None:
     """Return a deterministic pseudo-random training scenario seed inside the train pool."""
     overrides = dict(train_env_overrides or {})
+    if str(cfg.env.get("name", "")).lower() == "scenarionet":
+        return None
     start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
     num_scenarios = int(overrides.get("num_scenarios", cfg.env.config.num_scenarios))
     if num_scenarios <= 0:

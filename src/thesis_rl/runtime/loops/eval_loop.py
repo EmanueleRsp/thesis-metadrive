@@ -387,7 +387,9 @@ def run_evaluation(cfg: DictConfig) -> None:
         episode_video_recorded_live = list(per_episode.get("video_recorded_live", []))
         episode_replay_warnings = list(per_episode.get("replay_warning", []))
         for episode_idx in range(len(episode_returns)):
-            scenario_seed = int(eval_base_seed + episode_idx)
+            scenario_seed = (
+                int(eval_base_seed + episode_idx) if eval_base_seed is not None else None
+            )
             recorder.append_row(
                 "eval_episodes.csv",
                 {

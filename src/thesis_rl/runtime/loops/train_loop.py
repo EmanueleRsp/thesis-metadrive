@@ -36,6 +36,8 @@ from thesis_rl.runtime.wiring.builders import (
     build_env,
     build_planner,
     build_preprocessor,
+    collect_scenario_runtime_stats,
+    merge_scenario_runtime_stats,
     build_train_env,
     is_vectorized_training_enabled,
     load_planner,
@@ -539,6 +541,7 @@ def run_training(cfg: DictConfig) -> None:
         env = build_train_env(cfg, current_train_overrides)
         seed_env_spaces(env, run_seed)
         train_env_count = count_envs(env)
+        scenario_runtime_stats_total: dict[str, Any] | None = None
 
         # Agent
         preprocessor = build_preprocessor(cfg)
@@ -948,7 +951,7 @@ def run_training(cfg: DictConfig) -> None:
 
             ###### TRAINING ######
 
-            def train_reset_seed_for_episode(episode_index: int) -> int:
+            def train_reset_seed_for_episode(episode_index: int) -> int | None:
                 return train_episode_seed_from_env_overrides(
                     current_train_overrides,
                     cfg,
@@ -960,6 +963,11 @@ def run_training(cfg: DictConfig) -> None:
 
             # Agent training
             train_fn = agent.train_vectorized if vectorized_training else agent.train
+            provider_driven_scenarionet = (
+                str(cfg.env.get("name", "")).lower() == "scenarionet"
+                and str(cfg.env.get("provider", {}).get("kind", "uniform")).lower()
+                in {"uniform", "fixed_sequence"}
+            )
             chunk_summary = train_fn(
                 env=env,
                 chunk_timesteps=chunk_steps,
@@ -968,7 +976,9 @@ def run_training(cfg: DictConfig) -> None:
                 stage_name=current_stage_name,
                 deterministic=False,
                 log_interval=log_interval,
-                reset_seed_fn=train_reset_seed_for_episode,
+                reset_seed_fn=(
+                    None if provider_driven_scenarionet else train_reset_seed_for_episode
+                ),
             )
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
             remaining = max(0, remaining - actual_chunk_steps)
@@ -1043,6 +1053,10 @@ def run_training(cfg: DictConfig) -> None:
                 curriculum_manager.record_train_steps(actual_chunk_steps)
 
             # MetaDrive uses a global engine singleton: close training env before creating eval env.
+            scenario_runtime_stats_total = merge_scenario_runtime_stats(
+                scenario_runtime_stats_total,
+                collect_scenario_runtime_stats(env),
+            )
             env.close()
             
             ###### EVALUATION ######
@@ -1052,6 +1066,15 @@ def run_training(cfg: DictConfig) -> None:
             if curriculum_manager is not None:
                 eval_env_overrides = curriculum_manager.get_env_config(evaluation=True)
             eval_episode_count = int(cfg.experiment.eval_episodes)
+            if eval_episode_count <= 0:
+                # Explicitly support training-only smoke runs. The training
+                # environment was closed above, so rebuild it for another
+                # chunk when work remains and skip validation artifacts.
+                if remaining > 0:
+                    env = build_train_env(cfg, current_train_overrides)
+                    seed_env_spaces(env, run_seed + 300_000 + (total_timesteps - remaining))
+                    set_planner_env_if_compatible(planner, env)
+                continue
             eval_env_overrides = apply_eval_scenario_seed_split(
                 base_run_seed=run_seed,
                 eval_env_overrides=eval_env_overrides,
@@ -1148,7 +1171,11 @@ def run_training(cfg: DictConfig) -> None:
             episode_replay_warnings = list(per_episode.get("replay_warning", []))
             episode_count = len(episode_returns)
             for episode_idx in range(episode_count):
-                scenario_seed = int(eval_base_seed + episode_idx)
+                scenario_seed = (
+                    int(eval_base_seed + episode_idx)
+                    if eval_base_seed is not None
+                    else None
+                )
                 recorder.append_row(
                     "eval_episodes.csv",
                     {
@@ -1479,6 +1506,27 @@ def run_training(cfg: DictConfig) -> None:
 
         # Environment
         env.close()
+        final_eval_episode_count = int(
+            cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)
+        )
+        if final_eval_episode_count <= 0:
+            duration_seconds = round(time.time() - start_time, 2)
+            update_run_metadata(
+                artifacts_dir,
+                {
+                    "status": "completed",
+                    "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "duration_seconds": duration_seconds,
+                    "final_evaluation": "skipped",
+                    "scenarionet_runtime_stats": scenario_runtime_stats_total,
+                },
+            )
+            train_logger.info(
+                "Run completed without final evaluation | total_timesteps=%d | duration_seconds=%.2f",
+                total_timesteps,
+                duration_seconds,
+            )
+            return
         final_eval_env_overrides = None
         final_stage_name = "baseline"
         final_stage_index = 0
@@ -1516,7 +1564,7 @@ def run_training(cfg: DictConfig) -> None:
             base_run_seed=run_seed,
             eval_env_overrides=final_eval_env_overrides,
             cfg=cfg,
-            n_eval_episodes=int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
+            n_eval_episodes=final_eval_episode_count,
             split="test",
         )
         final_eval_base_seed = eval_base_seed_from_env_overrides(final_eval_env_overrides, cfg)
@@ -1550,7 +1598,7 @@ def run_training(cfg: DictConfig) -> None:
         )
         metrics = eval_agent.evaluate(
             env=eval_env,
-            n_eval_episodes=int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
+            n_eval_episodes=final_eval_episode_count,
             deterministic=bool(cfg.experiment.eval_deterministic),
             base_seed=final_eval_base_seed,
             return_episode_metrics=True,
@@ -1564,7 +1612,7 @@ def run_training(cfg: DictConfig) -> None:
             metrics=metrics,
             stage=final_stage_name,
             global_step=total_timesteps,
-            episodes=int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
+            episodes=final_eval_episode_count,
             base_seed=final_eval_base_seed,
             details_path=eval_log_path,
             checkpoint_path=final_checkpoint_zip,
@@ -1612,7 +1660,7 @@ def run_training(cfg: DictConfig) -> None:
                 "stage": final_stage_name,
                 "stage_index": final_stage_index,
                 "global_step": total_timesteps,
-                "eval_episodes": int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
+                "eval_episodes": final_eval_episode_count,
                 "deterministic": bool(cfg.experiment.eval_deterministic),
                 "mean_reward": float(metrics.get("mean_reward", 0.0)),
                 "std_reward": float(metrics.get("std_reward", 0.0)),
@@ -1674,7 +1722,11 @@ def run_training(cfg: DictConfig) -> None:
         episode_video_recorded_live = list(per_episode.get("video_recorded_live", []))
         episode_replay_warnings = list(per_episode.get("replay_warning", []))
         for episode_idx in range(len(episode_returns)):
-            scenario_seed = int(final_eval_base_seed + episode_idx)
+            scenario_seed = (
+                int(final_eval_base_seed + episode_idx)
+                if final_eval_base_seed is not None
+                else None
+            )
             recorder.append_row(
                 "eval_episodes.csv",
                 {
@@ -1723,7 +1775,7 @@ def run_training(cfg: DictConfig) -> None:
                 "final_stage_index": final_stage_index,
                 "final_stage_reached": bool(curriculum_manager.is_finished()) if curriculum_manager is not None else True,
                 "steps_to_final_stage": int(steps_to_final_stage),
-                "final_eval_episodes": int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)),
+                "final_eval_episodes": final_eval_episode_count,
                 "deterministic": bool(cfg.experiment.eval_deterministic),
                 "mean_reward": float(metrics.get("mean_reward", 0.0)),
                 "std_reward": float(metrics.get("std_reward", 0.0)),
@@ -1771,6 +1823,7 @@ def run_training(cfg: DictConfig) -> None:
             "status": "completed",
             "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "duration_seconds": duration_seconds,
+            "scenarionet_runtime_stats": scenario_runtime_stats_total,
         })
     
     except KeyboardInterrupt:

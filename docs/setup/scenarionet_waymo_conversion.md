@@ -37,6 +37,15 @@ sudo apt-get install -y google-cloud-cli
 gcloud --version
 ```
 
+Su Ubuntu/WSL il repository include anche un installer assistito:
+
+```bash
+make install-gcloud
+```
+
+L'installer installa solo il client locale. Non esegue il login al posto
+dell'utente: l'autorizzazione Waymo richiede una conferma OAuth interattiva.
+
 Durante il secondo `apt-get update` devi vedere una riga riferita a
 `packages.cloud.google.com`. Se `google-cloud-cli` non viene trovato, il
 repository non è stato registrato correttamente.
@@ -139,6 +148,50 @@ La conversione reale non è inclusa nei test ordinari perché richiede dati
 licenziati. Una volta disponibile il database, eseguire nell'ambiente del
 progetto i comandi di validazione e costruzione delle viste runtime descritti
 nel tracker [`scenarionet_integration_implementation_plan.md`](../specs/scenarionet_integration_implementation_plan.md).
+
+## Pipeline completa con un solo comando
+
+Dopo aver autenticato `gcloud`, il comando consigliato è:
+
+```bash
+make scenarionet-pipeline
+```
+
+Il comando esegue, nell'ordine:
+
+1. download e conversione Waymo tramite `make waymo-pipeline`;
+2. generazione PG offline;
+3. costruzione del catalogo unificato;
+4. split train/validation/test senza leakage;
+5. calcolo delle soglie train-only e assegnazione degli arms;
+6. costruzione delle viste `runtime/train`, `runtime/validation` e
+   `runtime/test`;
+7. validazione applicativa e check ufficiali existence, simulation e overlap.
+
+Per impostazione predefinita il pipeline usa i target baseline della specifica
+(1000/250/500 per sorgente) e assegna gruppi interi, registrando i conteggi
+effettivi nel manifest. In questo modo gruppi Waymo da 61 scenari, ad esempio,
+non richiedono conteggi manuali impossibili.
+
+Se vuoi imporre conteggi esatti, disabilita l'assegnazione automatica e compila
+in `.env` i sei conteggi:
+
+```dotenv
+SCENARIONET_AUTO_SPLIT=false
+SCENARIONET_WAYMO_TRAIN_COUNT=...
+SCENARIONET_WAYMO_VALIDATION_COUNT=...
+SCENARIONET_WAYMO_TEST_COUNT=...
+SCENARIONET_PG_TRAIN_COUNT=...
+SCENARIONET_PG_VALIDATION_COUNT=...
+SCENARIONET_PG_TEST_COUNT=...
+```
+
+Con `SCENARIONET_AUTO_SPLIT=true` i gruppi Waymo possono produrre conteggi
+leggermente diversi dai target; la riduzione è esplicita nel
+`split_manifest.json`. Con `false`, il pipeline fallisce se i gruppi rendono i
+conteggi incompatibili. I path catalogo, manifest, soglie e runtime possono
+essere personalizzati in `.env`; i default sono sotto
+`${SCENARIONET_DATA_ROOT}`.
 
 In caso di errore TensorFlow/protobuf, conservare l'output del container nel
 tracker: non installare automaticamente queste dipendenze nell'immagine RL.

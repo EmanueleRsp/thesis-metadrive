@@ -16,12 +16,19 @@ def main() -> int:
         action="store_true",
         help="Disable reactive traffic for API diagnostics.",
     )
+    parser.add_argument(
+        "--policy",
+        choices=("zero", "random"),
+        default="zero",
+        help="Action policy used during the headless rollout.",
+    )
     args = parser.parse_args()
     result = smoke_test_scenario_env(
         args.data_directory,
         scenario_index=args.scenario_index,
         steps=args.steps,
         reactive_traffic=not args.no_reactive_traffic,
+        policy=args.policy,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

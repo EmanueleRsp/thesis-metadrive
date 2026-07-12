@@ -1,4 +1,4 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo waymo-auth waymo-convert waymo-pipeline up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-convert waymo-pipeline scenarionet-pipeline up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu
 
 setup:
 	./setup.sh
@@ -24,6 +24,9 @@ build-gpu:
 build-waymo:
 	docker compose -f compose.yaml -f compose.waymo.yaml --profile waymo build waymo-converter
 
+install-gcloud:
+	bash scripts/install_gcloud.sh
+
 waymo-auth:
 	@command -v gcloud >/dev/null 2>&1 || (echo "gcloud CLI is required; install it from https://cloud.google.com/sdk/docs/install" >&2; exit 2)
 	gcloud init $(GCLOUD_INIT_FLAGS)
@@ -39,6 +42,9 @@ waymo-convert:
 
 waymo-pipeline:
 	bash scripts/prepare_waymo.sh
+
+scenarionet-pipeline:
+	bash scripts/prepare_scenarionet_dataset.sh
 
 up:
 	docker compose up -d
