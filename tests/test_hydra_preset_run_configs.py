@@ -99,6 +99,9 @@ def test_scenarionet_acl_composes_with_six_semantic_arms() -> None:
     assert str(cfg.curriculum.scenario_acl.arm_space) == "scenario"
     assert int(cfg.curriculum.scenario_acl.mab.num_arms) == 6
     assert bool(cfg.curriculum.scenario_acl.use_scenario_buffer) is False
+    assert str(cfg.agent.planner.algorithm.name) == "sac_sb3"
+    assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
+    assert str(cfg.agent.planner.encoder.name) == "lq"
 
 
 def test_run_profile_medium_overrides_experiment_budget() -> None:

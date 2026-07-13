@@ -11,7 +11,7 @@ defaults:
   - agent/preprocessor: identity       # Observation preprocessor in `conf/agent/preprocessor/*`
   - agent/planner/encoder: lq          # Planner feature encoder in `conf/agent/planner/encoder/*`
   - agent/planner/decoder: mlp_encoded # Planner head decoder profile in `conf/agent/planner/decoder/*`
-  - agent/planner/algorithm: sac       # Planner backend in `conf/agent/planner/algorithm/*`
+  - agent/planner/algorithm: sac_sb3   # Planner backend in `conf/agent/planner/algorithm/*`
   - agent/adapter: identity            # Action adapter in `conf/agent/adapter/*`
 
   - reward: monitor_only    # native | monitor_only | scalar_reward
