@@ -41,6 +41,10 @@ config:
   out_of_route_done: false
   relax_out_of_road_done: false
   truncate_as_terminate: false
+  # Do not inherit ScenarioEnv's short-route success shortcut: routes below
+  # 10 m are not meaningful RL episodes.
+  success_route_completion_threshold: 0.95
+  minimum_success_route_length_m: 10.0
   log_level: 50
 
 episode_control:

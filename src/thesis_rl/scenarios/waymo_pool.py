@@ -51,7 +51,10 @@ def summarize_waymo_pool(
         raise ValueError(f"converted Waymo pool contains duplicate scenarios: {duplicates[:5]}")
 
     eligible_entries = [
-        entry for entry in entries if entry.features.signal_reliability in allowed
+        entry
+        for entry in entries
+        if entry.record.validation_status in {"valid", "warning"}
+        and entry.features.signal_reliability in allowed
     ]
     signal_counts = Counter(entry.features.signal_reliability for entry in entries)
     arm_counts = Counter(entry.record.primary_arm for entry in eligible_entries)

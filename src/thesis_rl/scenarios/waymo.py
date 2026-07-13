@@ -25,6 +25,9 @@ class WaymoConversionError(RuntimeError):
     pass
 
 
+MINIMUM_WAYMO_ROUTE_LENGTH_M = 10.0
+
+
 def waymo_dependency_status() -> dict[str, bool]:
     return {"tensorflow": importlib.util.find_spec("tensorflow") is not None}
 
@@ -188,6 +191,15 @@ def load_converted_waymo_entries(
         if not scenario_id:
             raise ValueError(f"scenario file has no id: {path}")
         features = extract_scenario_features(scenario, "waymo")
+        route_is_degenerate = features.route_length_m < MINIMUM_WAYMO_ROUTE_LENGTH_M
+        validation_warnings = (
+            (
+                f"degenerate SDC route: {features.route_length_m:.3f} m < "
+                f"{MINIMUM_WAYMO_ROUTE_LENGTH_M:.1f} m",
+            )
+            if route_is_degenerate
+            else ()
+        )
         group_id = waymo_group_id(scenario)
         relative_path = path.relative_to(base).as_posix()
         record = ScenarioRecord(
@@ -209,8 +221,11 @@ def load_converted_waymo_entries(
             primary_arm=assign_primary_arm(features),
             tags=derive_scenario_tags(features),
             signal_reliability=features.signal_reliability,
-            validation_status="valid",
-            validation_warnings=(),
+            # ScenarioEnv has a short-route success shortcut. Keep routes
+            # shorter than the thesis 10 m minimum in the raw catalog for
+            # auditability, but exclude them from runtime views.
+            validation_status="invalid" if route_is_degenerate else "valid",
+            validation_warnings=validation_warnings,
         )
         entries.append(ScenarioCatalogEntry(record=record, features=features))
         groups[record.scenario_uid] = group_id

@@ -68,6 +68,60 @@ def test_scenario_time_limit_rejects_invalid_values() -> None:
         )
 
 
+def test_thesis_success_rejects_short_reference_trajectory() -> None:
+    env = object.__new__(thesis_env_module.ThesisScenarioEnv)
+    env.config = {
+        "minimum_success_route_length_m": 10.0,
+        "success_route_completion_threshold": 0.95,
+    }
+    vehicle = SimpleNamespace(
+        navigation=SimpleNamespace(
+            route_completion=0.03,
+            reference_trajectory=SimpleNamespace(length=5.0),
+        )
+    )
+
+    assert env._is_thesis_success(vehicle) is False
+
+
+def test_thesis_route_completion_is_bounded_for_metrics() -> None:
+    assert thesis_env_module.ThesisScenarioEnv._normalise_route_completion(1.25) == (1.0, 1.25)
+    assert thesis_env_module.ThesisScenarioEnv._normalise_route_completion(-0.25) == (0.0, -0.25)
+
+
+def test_thesis_reward_suppresses_native_short_route_bonus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = object.__new__(thesis_env_module.ThesisScenarioEnv)
+    env.config = {
+        "minimum_success_route_length_m": 10.0,
+        "success_route_completion_threshold": 0.95,
+    }
+    vehicle = SimpleNamespace(
+        navigation=SimpleNamespace(
+            route_completion=0.03,
+            reference_trajectory=SimpleNamespace(length=1.5),
+        )
+    )
+    env.agent_manager = SimpleNamespace(active_agents={"default_agent": vehicle})
+    monkeypatch.setattr(
+        thesis_env_module.ScenarioEnv,
+        "reward_function",
+        lambda _self, _vehicle_id: (5.0, {"step_reward": 0.12}),
+    )
+    monkeypatch.setattr(
+        thesis_env_module.ThesisScenarioEnv,
+        "_is_arrive_destination",
+        staticmethod(lambda _vehicle: True),
+    )
+
+    reward, info = env.reward_function("default_agent")
+
+    assert reward == pytest.approx(0.12)
+    assert info["success_reward_suppressed"] is True
+    assert info["thesis_success"] is False
+
+
 def _make_done_test_env(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -78,12 +132,23 @@ def _make_done_test_env(
     extra_steps: int = 50,
     lateral: float = 0.0,
     continuous_line: bool = False,
+    route_completion: float = 0.4,
+    reference_route_length: float | None = None,
 ):
+    reference_trajectory = (
+        SimpleNamespace(length=reference_route_length)
+        if reference_route_length is not None
+        else None
+    )
     vehicle = SimpleNamespace(
         on_yellow_continuous_line=continuous_line,
         on_white_continuous_line=False,
         crash_sidewalk=False,
-        navigation=SimpleNamespace(current_lateral=lateral, route_completion=0.4),
+        navigation=SimpleNamespace(
+            current_lateral=lateral,
+            route_completion=route_completion,
+            reference_trajectory=reference_trajectory,
+        ),
         LENGTH=4.5,
         WIDTH=1.9,
     )
@@ -159,6 +224,24 @@ def test_thesis_done_preserves_native_collision_termination(
 
     assert done is True
     assert info["termination_reason"] == "crash_vehicle"
+
+
+def test_thesis_done_rejects_native_short_route_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=True,
+        done_info={"arrive_dest": True},
+        route_completion=0.03,
+        reference_route_length=5.0,
+    )
+
+    done, info = env.done_function("default_agent")
+
+    assert done is False
+    assert info["arrive_dest"] is False
+    assert info["termination_reason"] is None
 
 
 def test_thesis_done_preserves_generic_collision_termination(

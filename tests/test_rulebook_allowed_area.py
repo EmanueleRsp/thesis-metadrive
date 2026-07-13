@@ -22,6 +22,29 @@ def test_allowed_area_prefers_navigation_reference_lanes() -> None:
     assert area.area == pytest.approx(60.0)
 
 
+def test_drivable_area_repairs_invalid_lane_polygons() -> None:
+    shapely = pytest.importorskip("shapely.geometry")
+    # A bow-tie polygon is invalid and used to make unary_union fail for the
+    # entire Waymo map.
+    invalid_lane = SimpleNamespace(
+        shapely_polygon=shapely.Polygon([(0, 0), (2, 2), (0, 2), (2, 0), (0, 0)])
+    )
+    valid_lane = SimpleNamespace(shapely_polygon=shapely.box(2.0, 0.0, 4.0, 2.0))
+    env = SimpleNamespace(
+        current_map=SimpleNamespace(
+            road_network=SimpleNamespace(get_all_lanes=lambda: [invalid_lane, valid_lane])
+        )
+    )
+    wrapper = object.__new__(RuleRewardWrapper)
+    wrapper._cached_drivable_area = None
+
+    area = wrapper._extract_drivable_area(env)
+
+    assert area is not None
+    assert area.is_valid
+    assert area.area > 0.0
+
+
 def test_route_progress_uses_scenario_env_step_info() -> None:
     progress, source = RuleRewardWrapper._extract_route_progress(
         SimpleNamespace(navigation=SimpleNamespace()),

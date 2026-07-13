@@ -707,9 +707,7 @@ class RuleRewardWrapper(gym.Wrapper):
             return None
 
         try:
-            from shapely.ops import unary_union
-
-            self._cached_drivable_area = unary_union(polygons)
+            self._cached_drivable_area = self._union_lane_polygons(polygons)
             return self._cached_drivable_area
         except Exception:
             self._warn_once(
@@ -717,6 +715,37 @@ class RuleRewardWrapper(gym.Wrapper):
                 "Failed to compute drivable area union from lane polygons.",
             )
             return None
+
+    @staticmethod
+    def _union_lane_polygons(polygons: list[Any]) -> Any:
+        """Union lane polygons while tolerating invalid converted-map geometry.
+
+        Waymo map-feature polygons can contain self-intersections after their
+        coordinate conversion.  GEOS rejects a direct unary union of those
+        shapes, which previously disabled all drivable-area rules for the
+        episode.  Repair each individual polygon before the union so one bad
+        lane cannot discard the whole map.
+        """
+
+        from shapely import make_valid
+        from shapely.ops import unary_union
+
+        repaired: list[Any] = []
+        for polygon in polygons:
+            if bool(getattr(polygon, "is_empty", False)):
+                continue
+            candidate = polygon
+            if not bool(getattr(candidate, "is_valid", True)):
+                candidate = make_valid(candidate)
+            if bool(getattr(candidate, "is_empty", False)):
+                continue
+            repaired.append(candidate)
+        if not repaired:
+            raise ValueError("no usable lane polygons")
+        union = unary_union(repaired)
+        if bool(getattr(union, "is_empty", False)):
+            raise ValueError("lane polygon union is empty")
+        return union
 
     def _extract_opposite_carriageway(self, base_env: Any, ego_vehicle: Any) -> Any | None:
         navigation = getattr(ego_vehicle, "navigation", None)
@@ -755,9 +784,7 @@ class RuleRewardWrapper(gym.Wrapper):
             return None
 
         try:
-            from shapely.ops import unary_union
-
-            union_poly = unary_union(polygons)
+            union_poly = self._union_lane_polygons(polygons)
             self._cached_opposite_carriageway_by_road[road_key] = union_poly
             return union_poly
         except Exception:

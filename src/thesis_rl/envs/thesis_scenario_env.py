@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
+import math
 from typing import Any
 
 from thesis_rl.envs.scene_context import SceneContextAdapter
@@ -51,6 +52,12 @@ class ThesisScenarioEnv(ScenarioEnv):
                 "store_data": False,
                 "store_map": False,
                 "extra_steps_after_scenario": 50,
+                # ScenarioEnv treats a reference trajectory shorter than two
+                # metres as an immediate success.  That is useful for its
+                # replay use case, but corrupts an RL success metric: some
+                # converted Waymo SDC tracks are stationary or near-stationary.
+                "success_route_completion_threshold": 0.95,
+                "minimum_success_route_length_m": 10.0,
             }
         )
         return config
@@ -132,6 +139,83 @@ class ThesisScenarioEnv(ScenarioEnv):
     def _scenario_length(self) -> int:
         return int(self.engine.data_manager.current_scenario_length)
 
+    @staticmethod
+    def _normalise_route_completion(value: Any) -> tuple[float | None, float | None]:
+        """Return ``(bounded, raw)`` for a ScenarioEnv route-completion value.
+
+        TrajectoryNavigation projects the vehicle onto an unbounded reference
+        line, so a vehicle past the final point legitimately yields a raw value
+        above one.  Metrics and rewards, however, use route *completion* and
+        must remain in [0, 1].
+        """
+
+        try:
+            raw = float(value)
+        except (TypeError, ValueError):
+            return None, None
+        if not math.isfinite(raw):
+            return None, None
+        return min(1.0, max(0.0, raw)), raw
+
+    def _is_thesis_success(self, vehicle: Any) -> bool:
+        """Reject ScenarioEnv's short/static-trajectory success shortcut."""
+
+        navigation = getattr(vehicle, "navigation", None)
+        completion, _raw = self._normalise_route_completion(
+            getattr(navigation, "route_completion", None)
+        )
+        if completion is None:
+            return False
+
+        reference_trajectory = getattr(navigation, "reference_trajectory", None)
+        route_length = getattr(reference_trajectory, "length", None)
+        try:
+            route_length_value = float(route_length) if route_length is not None else None
+        except (TypeError, ValueError):
+            route_length_value = None
+        if route_length_value is not None and (
+            not math.isfinite(route_length_value)
+            or route_length_value < float(self.config.get("minimum_success_route_length_m", 10.0))
+        ):
+            return False
+
+        return completion >= float(self.config.get("success_route_completion_threshold", 0.95))
+
+    def _attach_route_metrics(self, info: dict[str, Any]) -> None:
+        vehicle = self.scene_context.get_ego_vehicle(self)
+        navigation = getattr(vehicle, "navigation", None)
+        completion, raw_completion = self._normalise_route_completion(
+            info.get("route_completion", getattr(navigation, "route_completion", None))
+        )
+        if completion is not None:
+            info["route_completion"] = completion
+        if raw_completion is not None and raw_completion != completion:
+            info["raw_route_completion"] = raw_completion
+        reference_trajectory = getattr(navigation, "reference_trajectory", None)
+        route_length = getattr(reference_trajectory, "length", None)
+        try:
+            route_length_value = float(route_length)
+        except (TypeError, ValueError):
+            route_length_value = None
+        if route_length_value is not None and math.isfinite(route_length_value):
+            info["reference_route_length_m"] = route_length_value
+
+    def reward_function(self, vehicle_id: str):
+        """Remove ScenarioEnv's terminal bonus for a degenerate Waymo route."""
+
+        reward, step_info = super().reward_function(vehicle_id)
+        vehicle = self.agents[vehicle_id]
+        native_success = bool(self._is_arrive_destination(vehicle))
+        thesis_success = self._is_thesis_success(vehicle)
+        if native_success and not thesis_success:
+            # ScenarioEnv stores the dense pre-terminal reward before it
+            # replaces it with ``success_reward``. Restore that value instead
+            # of training the policy to exploit a stationary SDC snippet.
+            reward = float(step_info.get("step_reward", reward))
+            step_info["success_reward_suppressed"] = True
+        step_info["thesis_success"] = thesis_success
+        return reward, step_info
+
     def done_function(self, vehicle_id: str):
         done, done_info = super().done_function(vehicle_id)
         vehicle = self.agents[vehicle_id]
@@ -147,6 +231,12 @@ class ThesisScenarioEnv(ScenarioEnv):
         if physical_out:
             done_info[TerminationState.OUT_OF_ROAD] = True
             done = True
+
+        # MetaDrive ScenarioEnv declares every route shorter than 2 m a
+        # success. The thesis additionally rejects routes shorter than 10 m,
+        # which are too short to provide a meaningful RL episode.
+        done_info[TerminationState.SUCCESS] = self._is_thesis_success(vehicle)
+        done = self._recompute_terminated(done_info)
 
         # Do not use the native truthy allowed_more_steps branch: zero is a
         # meaningful value in the thesis contract.
@@ -221,6 +311,7 @@ class ThesisScenarioEnv(ScenarioEnv):
     def step(self, action):
         observation, reward, terminated, truncated, info = super().step(action)
         info = dict(info)
+        self._attach_route_metrics(info)
         metadata = self._scenario_metadata()
         info.update(metadata)
         info["termination_reason"] = self._last_done_info.get("termination_reason")

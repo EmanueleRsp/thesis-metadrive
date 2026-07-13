@@ -104,13 +104,6 @@ def _short_arm_name(value: object | None) -> str | None:
     return str(value).split("_", maxsplit=1)[0]
 
 
-def _short_scenario_id(value: object | None) -> str | None:
-    if value is None:
-        return None
-    scenario_id = str(value)
-    return scenario_id.rsplit("-", maxsplit=1)[-1]
-
-
 def _format_optional_float(value: object | None) -> str | None:
     if value is None:
         return None
@@ -809,13 +802,6 @@ def run_scenario_acl_training(
                         getattr(record, "primary_arm", selection.get("arm"))
                     ),
                     source=getattr(record, "source", None),
-                    scenario_id=_short_scenario_id(
-                        getattr(
-                            record,
-                            "scenario_uid",
-                            getattr(record, "scenario_id", None),
-                        )
-                    ),
                     selection_probability=selection.get("selection_probability"),
                     usefulness=episode_usefulness,
                     usefulness_norm=normalized_episode_usefulness,
@@ -837,13 +823,6 @@ def run_scenario_acl_training(
                         getattr(record, "primary_arm", selection.get("arm"))
                     ),
                     "source": getattr(record, "source", None),
-                    "scenario_id": _short_scenario_id(
-                        getattr(
-                            record,
-                            "scenario_uid",
-                            getattr(record, "scenario_id", None),
-                        )
-                    ),
                     "origin": (
                         f"{selection.get('origin')} |"
                         if selection.get("usefulness") is not None
