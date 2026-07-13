@@ -29,11 +29,15 @@ def print_evaluation_summary(
     stage: str,
     global_step: int,
     episodes: int,
-    base_seed: int,
+    base_seed: int | None,
     details_path: Path,
     checkpoint_path: str | None = None,
 ) -> None:
-    seed_end = int(base_seed) + max(int(episodes), 1) - 1
+    if base_seed is None:
+        scenario_seed_summary = "provider-selected"
+    else:
+        seed_end = int(base_seed) + max(int(episodes), 1) - 1
+        scenario_seed_summary = f"{int(base_seed)}..{seed_end}"
     table = Table(title=title, expand=False)
     table.add_column("Metric", style="cyan", no_wrap=True)
     table.add_column("Value", style="white")
@@ -42,7 +46,7 @@ def print_evaluation_summary(
         ("Stage", stage),
         ("Global step", str(int(global_step))),
         ("Episodes", str(int(episodes))),
-        ("Scenario seeds", f"{int(base_seed)}..{seed_end}"),
+        ("Scenario seeds", scenario_seed_summary),
         ("Mean reward", _format_metric(metrics.get("mean_reward"))),
         ("Std reward", _format_metric(metrics.get("std_reward"))),
         ("Success rate", _format_metric(metrics.get("success_rate"))),

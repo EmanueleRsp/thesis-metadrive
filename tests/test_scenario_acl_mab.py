@@ -14,10 +14,13 @@ from thesis_rl.curriculum import (
 )
 from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer
 from thesis_rl.curriculum.scenario_acl.driver import (
+    EpisodeAclOutcome,
+    IterationSpec,
     _build_record_from_catalog_entry,
     _choose_iteration_spec,
     _select_waymo_eval_arm,
     _selection_source_override,
+    _summarize_episode_acl_outcomes,
 )
 
 
@@ -178,3 +181,49 @@ def test_catalog_record_adapter_preserves_semantic_arm_and_runtime_index() -> No
     assert record.scenario_arm == "A2_junction"
     assert record.scenario_index == 42
     assert record.dataset_directory == "/data/scenarionet/runtime/train"
+
+
+def test_semantic_acl_statistics_count_mixed_modes_per_completed_episode() -> None:
+    sampled = IterationSpec(
+        mode="sample",
+        arm_index=1,
+        arm_name="A1_traffic",
+        arm_probabilities=[0.5, 0.5],
+        scenario_seed=0,
+        train_env_overrides={},
+        replay_record=None,
+        replay_probabilities=None,
+    )
+    replayed = IterationSpec(
+        mode="exploit_replay",
+        arm_index=2,
+        arm_name="A2_junction",
+        arm_probabilities=[0.5, 0.5],
+        scenario_seed=0,
+        train_env_overrides=None,
+        replay_record=None,
+        replay_probabilities=[1.0],
+    )
+
+    summary = _summarize_episode_acl_outcomes(
+        [
+            EpisodeAclOutcome(
+                spec=sampled,
+                record=SimpleNamespace(primary_arm="A1_traffic"),
+                metrics={},
+            ),
+            EpisodeAclOutcome(
+                spec=replayed,
+                record=SimpleNamespace(primary_arm="A3_complex_junction"),
+                metrics={},
+            ),
+        ]
+    )
+
+    assert summary == {
+        "generate_count": 1,
+        "replay_count": 1,
+        "modes": ["exploit_replay", "sample"],
+        "arms": ["A1_traffic", "A3_complex_junction"],
+        "mode": "mixed",
+    }
