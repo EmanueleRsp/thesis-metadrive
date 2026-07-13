@@ -98,6 +98,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         record = self.scenario_provider.sample(
             split=self.split,
             worker_id=self.worker_id,
+            source=getattr(self, "scenario_source", None),
             arm=self.scenario_arm,
         )
         if record.runtime_index is None:
@@ -170,20 +171,23 @@ class ThesisScenarioEnv(ScenarioEnv):
         dimensions = self.scene_context.get_ego_dimensions(vehicle) if vehicle is not None else None
         data_manager = getattr(self.engine, "data_manager", None)
         scenario_id = getattr(data_manager, "current_scenario_id", None)
+        record_scenario_id = getattr(record, "scenario_id", None)
+        record_uid = getattr(record, "scenario_uid", record_scenario_id)
+        record_arm = getattr(record, "primary_arm", getattr(record, "scenario_arm", None))
         payload: dict[str, Any] = {
             "scenario_id": str(scenario_id) if scenario_id is not None else None,
             "scenario_length": int(data_manager.current_scenario_length)
             if data_manager is not None
             else None,
-            "scenario_uid": getattr(record, "scenario_uid", None),
+            "scenario_uid": record_uid,
             "scenario_source": getattr(record, "source", None),
-            "scenario_arm": getattr(record, "primary_arm", None),
+            "scenario_arm": record_arm,
             "source": getattr(record, "source", None),
-            "arm": getattr(record, "primary_arm", None),
+            "arm": record_arm,
             "ego_length": dimensions[0] if dimensions else None,
             "ego_width": dimensions[1] if dimensions else None,
         }
-        expected_id = str(record.scenario_id) if record is not None else None
+        expected_id = str(record_scenario_id) if record_scenario_id is not None else None
         loaded_id = str(scenario_id) if scenario_id is not None else None
         pg_runtime_id_match = (
             expected_id is not None

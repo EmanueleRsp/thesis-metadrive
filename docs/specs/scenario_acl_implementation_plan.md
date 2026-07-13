@@ -55,6 +55,12 @@ mutation, but its replay buffer stores the exact selected catalog record and
 replays it through the ScenarioNet runtime. The legacy generator ACL retains
 its existing export/buffer/replay path.
 
+ScenarioNet ACL replay uses `ThesisScenarioEnv` as well as the sampled path.
+The replay environment inherits the canonical ScenarioNet configuration:
+native `horizon` and `allowed_more_steps` remain disabled, while the effective
+episode limit is `scenario_length + env.episode_control.extra_steps_after_scenario`.
+Legacy generator replay continues to use the native `ScenarioEnv` path.
+
 The default warm-up is 100 scenarios in the ACL buffer, matching the original
 ACL design; completed catalog records are collected episode by episode and
 mutation remains disabled by contract.

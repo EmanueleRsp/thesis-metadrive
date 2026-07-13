@@ -33,11 +33,11 @@ def compute_learning_potential(
 ) -> float:
     """Return the current algorithm's scenario-level learning signal.
 
-    ACL trains each chunk on exactly one generated/replayed scenario.  The
-    critic/value loss emitted by that backend is therefore a direct signal of
-    remaining prediction error on that scenario: value loss for PPO and critic
-    loss for TD3/SAC.  Missing or non-finite losses are rejected rather than
-    replaced with an evaluation-based proxy.
+    Semantic ACL selects a generated or replayed scenario before every
+    episode. The critic/value loss available when that episode finishes is
+    the learning signal used for its MAB feedback: value loss for PPO and
+    critic loss for TD3/SAC. Missing or non-finite losses are rejected rather
+    than replaced with an evaluation-based proxy.
     """
     backend = str(planner_name).strip().lower()
     if backend not in {"ppo", "ppo_sb3", "td3", "td3_sb3", "sac", "sac_sb3"}:

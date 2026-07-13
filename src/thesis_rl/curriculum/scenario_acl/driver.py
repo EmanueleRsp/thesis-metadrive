@@ -18,6 +18,7 @@ from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.scenario_acl.arms import (
     GeneratorArm,
     ScenarioArm,
+    SCENARIO_ARM_NAMES,
     build_default_generator_arms,
     build_default_scenario_arms,
 )
@@ -76,6 +77,84 @@ class IterationSpec:
 
 def _is_replay_iteration(spec: IterationSpec) -> bool:
     return spec.mode == "exploit_replay"
+
+
+def _selection_source_override(spec: IterationSpec) -> str | None:
+    """Return a forced source only for one-sided semantic arms."""
+
+    if spec.train_env_overrides is None:
+        return None
+    provider = spec.train_env_overrides.get("provider")
+    if not isinstance(provider, dict):
+        return None
+    probabilities = provider.get("source_probability")
+    if not isinstance(probabilities, dict):
+        return None
+    selected = [str(source) for source, probability in probabilities.items() if float(probability) == 1.0]
+    return selected[0] if len(selected) == 1 else None
+
+
+def _base_env(env: Any) -> Any:
+    return getattr(env, "unwrapped", env)
+
+
+def _short_arm_name(value: object | None) -> str | None:
+    if value is None:
+        return None
+    return str(value).split("_", maxsplit=1)[0]
+
+
+def _short_scenario_id(value: object | None) -> str | None:
+    if value is None:
+        return None
+    scenario_id = str(value)
+    return scenario_id.rsplit("-", maxsplit=1)[-1]
+
+
+def _format_optional_float(value: object | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        return f"{float(value):.4f}"
+    except (TypeError, ValueError):
+        return None
+
+
+_WAYMO_EVAL_ARMS = tuple(arm for arm in SCENARIO_ARM_NAMES if arm != "A0_simple_low_traffic")
+_WAYMO_STRATIFIED_SET = "waymo_stratified_a1_a5"
+
+
+def _select_waymo_eval_arm(episode_index: int) -> str:
+    """Cycle uniformly over Waymo-supported semantic arms A1-A5."""
+
+    return _WAYMO_EVAL_ARMS[int(episode_index) % len(_WAYMO_EVAL_ARMS)]
+
+
+def _configure_waymo_eval_episode(env: Any, episode_index: int) -> None:
+    """Apply the deterministic arm schedule before a ScenarioNet eval reset."""
+
+    base_env = _base_env(env)
+    base_env.scenario_arm = _select_waymo_eval_arm(episode_index)
+    base_env.scenario_source = "waymo"
+
+
+def _semantic_catalog_overrides(cfg: DictConfig) -> dict[str, object]:
+    """Resolve the catalog required for semantic-arm filtering and ACL records."""
+
+    configured = cfg.env.get("catalog_path")
+    catalog_path = (
+        Path(str(configured)).expanduser()
+        if configured not in (None, "", "null")
+        else Path(str(cfg.paths.scenarionet_data_root)).expanduser()
+        / "catalog"
+        / "scenario_catalog.parquet"
+    )
+    if not catalog_path.is_file():
+        raise FileNotFoundError(
+            "Semantic Scenario ACL requires the classified ScenarioNet catalog at "
+            f"{catalog_path}. Set env.catalog_path or prepare the dataset catalog."
+        )
+    return {"catalog_path": str(catalog_path)}
 
 
 def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
@@ -478,8 +557,10 @@ def run_scenario_acl_training(
                 "scenario_acl.arm_space='scenario' requires env=scenarionet."
             )
         arms: list[GeneratorArm | ScenarioArm] = list(build_default_scenario_arms())
+        semantic_env_overrides = _semantic_catalog_overrides(cfg)
     else:
         arms = list(build_default_generator_arms())
+        semantic_env_overrides: dict[str, object] = {}
     expected_arms = int(scenario_cfg.mab.num_arms)
     if len(arms) != expected_arms:
         raise ValueError(
@@ -512,7 +593,12 @@ def run_scenario_acl_training(
         rng=rng,
         chunk_id=current_chunk_id + 1,
     )
-    if not _is_replay_iteration(first_spec):
+    if scenario_cfg.arm_space == "scenario":
+        # Arms are assigned immediately before every reset below.  Construct
+        # an unfiltered provider here so a previous episode cannot constrain
+        # the next arm or source.
+        env = build_env(cfg, semantic_env_overrides)
+    elif not _is_replay_iteration(first_spec):
         env = build_env(cfg, first_spec.train_env_overrides)
     else:
         if first_spec.replay_record is None:
@@ -572,7 +658,10 @@ def run_scenario_acl_training(
             current_spec = next_spec
             current_catalog_records: list[Any] = []
             if current_chunk_id > 1:
-                if not _is_replay_iteration(current_spec):
+                if scenario_cfg.arm_space == "scenario":
+                    env = build_env(cfg, semantic_env_overrides)
+                    seed_env_spaces(env, run_seed + 400_000 + current_chunk_id)
+                elif not _is_replay_iteration(current_spec):
                     env = build_env(cfg, current_spec.train_env_overrides)
                     seed_env_spaces(env, run_seed + 400_000 + current_chunk_id)
                 else:
@@ -594,31 +683,63 @@ def run_scenario_acl_training(
                 replay_count += 1
 
             curriculum_logger.info(
-                "Scenario ACL iteration started | chunk_id=%d | mode=%s | arm=%s | scenario_seed=%d",
+                "Scenario ACL chunk started | chunk_id=%d | arm_selection=per_episode",
                 current_chunk_id,
-                current_spec.mode,
-                current_spec.arm_name,
-                current_spec.scenario_seed,
             )
             log_event(
                 paths.events_log_path,
-                "scenario_acl_iteration_started",
+                "scenario_acl_chunk_started",
                 chunk_id=current_chunk_id,
-                mode=current_spec.mode,
-                arm_name=current_spec.arm_name,
-                arm_index=current_spec.arm_index,
-                scenario_seed=current_spec.scenario_seed,
-                arm_probabilities=current_spec.arm_probabilities,
-                replay_probabilities=current_spec.replay_probabilities,
-                replay_scenario_id=(
-                    current_spec.replay_record.scenario_id
-                    if current_spec.replay_record is not None
-                    else None
-                ),
-                env_overrides=current_spec.train_env_overrides,
+                arm_selection="per_episode" if scenario_cfg.arm_space == "scenario" else "per_chunk",
+                arm_probabilities=[float(value) for value in bandit.probabilities().tolist()],
+                mab=bandit.state_dict(),
             )
 
+            episode_specs: list[IterationSpec] = []
+
+            def choose_acl_episode(training_env: Any, episode_index: int) -> None:
+                if scenario_cfg.arm_space != "scenario":
+                    return
+                spec = _choose_iteration_spec(
+                    cfg=cfg,
+                    curriculum_cfg=curriculum_cfg,
+                    arms=arms,
+                    bandit=bandit,
+                    buffer=buffer,
+                    rng=rng,
+                    chunk_id=current_chunk_id,
+                )
+                episode_specs.append(spec)
+                base_env = _base_env(training_env)
+                if _is_replay_iteration(spec):
+                    if spec.replay_record is None:
+                        raise RuntimeError("Replay selection requires a scenario record.")
+                    base_env.scenario_arm = spec.replay_record.scenario_arm
+                    base_env.scenario_source = spec.replay_record.source
+                else:
+                    base_env.scenario_arm = spec.arm_name
+                    base_env.scenario_source = _selection_source_override(spec)
+                base_env._acl_episode_selection = {
+                    "origin": "scenario_buffer" if _is_replay_iteration(spec) else "new",
+                    "arm": spec.arm_name,
+                    "arm_index": spec.arm_index,
+                    "selection_probability": (
+                        float(spec.arm_probabilities[spec.arm_index])
+                        if not _is_replay_iteration(spec)
+                        else None
+                    ),
+                }
+
             def train_reset_seed_for_episode(episode_index: int) -> int | None:
+                if scenario_cfg.arm_space == "scenario":
+                    spec = episode_specs[episode_index]
+                    if _is_replay_iteration(spec):
+                        if spec.replay_record is None:
+                            raise RuntimeError("Replay selection requires a scenario record.")
+                        return int(spec.replay_record.reset_seed)
+                    # Let the provider sample a fresh catalog record filtered
+                    # by the arm selected immediately before this reset.
+                    return None
                 if current_spec.mode == "sample":
                     # The ScenarioNet provider must choose the record by arm;
                     # reset(seed=...) would bypass it and select a raw index.
@@ -641,20 +762,113 @@ def run_scenario_acl_training(
                 episode_index: int,
                 episode_metrics: dict[str, Any],
             ) -> None:
-                del episode_index, episode_metrics
                 if scenario_cfg.arm_space != "scenario":
                     return
-                base_env = getattr(training_env, "unwrapped", training_env)
+                base_env = _base_env(training_env)
                 record = getattr(base_env, "current_scenario_record", None)
-                if record is not None:
+                spec = episode_specs[episode_index - 1]
+                selection = getattr(base_env, "_acl_episode_selection", {})
+                episode_usefulness: float | None = None
+                normalized_episode_usefulness: float | None = None
+                try:
+                    episode_usefulness = compute_learning_potential(
+                        episode_metrics,
+                        planner_name=str(cfg.agent.planner.algorithm.name),
+                    )
+                except ValueError:
+                    # Before learning_starts no critic update exists yet; the
+                    # episode remains valid but provides no MAB feedback.
+                    pass
+                if episode_usefulness is not None:
+                    normalized_episode_usefulness = _normalize_learning_potential(
+                        episode_usefulness, recent_usefulness
+                    )
+                    recent_usefulness.append(episode_usefulness)
+                    max_recent = int(scenario_cfg.recent_window_size)
+                    if len(recent_usefulness) > max_recent:
+                        del recent_usefulness[:-max_recent]
+                    if bool(scenario_cfg.use_mab) and not _is_replay_iteration(spec):
+                        bandit.update(
+                            arm_index=spec.arm_index,
+                            normalized_usefulness=normalized_episode_usefulness,
+                            selection_probability=float(
+                                spec.arm_probabilities[spec.arm_index]
+                            ),
+                        )
+                    selection["usefulness"] = episode_usefulness
+                    selection["usefulness_norm"] = normalized_episode_usefulness
+                    episode_metrics["usefulness"] = episode_usefulness
+                    episode_metrics["usefulness_norm"] = normalized_episode_usefulness
+                log_event(
+                    paths.events_log_path,
+                    "scenario_acl_episode_ended",
+                    chunk_id=current_chunk_id,
+                    episode_index=episode_index,
+                    origin=selection.get("origin"),
+                    arm_name=_short_arm_name(
+                        getattr(record, "primary_arm", selection.get("arm"))
+                    ),
+                    source=getattr(record, "source", None),
+                    scenario_id=_short_scenario_id(
+                        getattr(
+                            record,
+                            "scenario_uid",
+                            getattr(record, "scenario_id", None),
+                        )
+                    ),
+                    selection_probability=selection.get("selection_probability"),
+                    usefulness=episode_usefulness,
+                    usefulness_norm=normalized_episode_usefulness,
+                    metrics=episode_metrics,
+                )
+                if record is not None and not _is_replay_iteration(spec):
                     current_catalog_records.append(record)
+
+            def episode_context(
+                training_env: Any, _info: dict[str, Any]
+            ) -> dict[str, Any] | None:
+                if scenario_cfg.arm_space != "scenario":
+                    return None
+                base_env = _base_env(training_env)
+                record = getattr(base_env, "current_scenario_record", None)
+                selection = getattr(base_env, "_acl_episode_selection", {})
+                return {
+                    "arm": _short_arm_name(
+                        getattr(record, "primary_arm", selection.get("arm"))
+                    ),
+                    "source": getattr(record, "source", None),
+                    "scenario_id": _short_scenario_id(
+                        getattr(
+                            record,
+                            "scenario_uid",
+                            getattr(record, "scenario_id", None),
+                        )
+                    ),
+                    "origin": (
+                        f"{selection.get('origin')} |"
+                        if selection.get("usefulness") is not None
+                        else selection.get("origin")
+                    ),
+                    "U": _format_optional_float(selection.get("usefulness")),
+                    "U_norm": _format_optional_float(
+                        selection.get("usefulness_norm")
+                    ),
+                }
+
+            def mab_monitor_rows() -> list[tuple[str, str]]:
+                probabilities = bandit.probabilities()
+                labels = ", ".join(
+                    f"{_short_arm_name(arm.name)}={probability:.3f}"
+                    for arm, probability in zip(arms, probabilities, strict=True)
+                )
+                return [("ACL arm probabilities", labels)]
 
             chunk_summary = agent.train(
                 env=env,
                 chunk_timesteps=chunk_steps,
                 global_total_timesteps=total_timesteps,
                 global_steps_done=current_global_step,
-                stage_name=(
+                stage_name="scenario_acl_episode_sampling" if scenario_cfg.arm_space == "scenario" else (
                     current_spec.arm_name
                     if not _is_replay_iteration(current_spec)
                     else f"replay:{current_spec.arm_name}"
@@ -663,6 +877,9 @@ def run_scenario_acl_training(
                 log_interval=log_interval,
                 reset_seed_fn=train_reset_seed_for_episode,
                 episode_end_callback=collect_catalog_episode,
+                before_episode_reset_callback=choose_acl_episode,
+                episode_context_callback=episode_context,
+                monitor_extra_rows_callback=mab_monitor_rows,
             )
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
             current_global_step = min(total_timesteps, current_global_step + actual_chunk_steps)
@@ -715,7 +932,19 @@ def run_scenario_acl_training(
 
             eval_metrics: dict[str, Any]
             eval_agent: Agent
-            if not _is_replay_iteration(current_spec):
+            if scenario_cfg.arm_space == "scenario":
+                eval_env_overrides = apply_eval_scenario_seed_split(
+                    base_run_seed=run_seed,
+                    eval_env_overrides=None,
+                    cfg=cfg,
+                    n_eval_episodes=int(cfg.experiment.eval_episodes),
+                    split="validation",
+                )
+                eval_env_overrides.update(semantic_env_overrides)
+                eval_base_seed = None
+                eval_env = build_env(cfg, eval_env_overrides)
+                seed_env_spaces(eval_env, run_seed + 500_000 + current_chunk_id)
+            elif not _is_replay_iteration(current_spec):
                 eval_env_overrides = apply_eval_scenario_seed_split(
                     base_run_seed=run_seed,
                     eval_env_overrides=current_spec.train_env_overrides,
@@ -754,6 +983,11 @@ def run_scenario_acl_training(
                 return_episode_metrics=False,
                 error_priority_base=float(cfg.reward.get("a", 2.01)),
                 show_progress=True,
+                before_episode_reset_callback=(
+                    _configure_waymo_eval_episode
+                    if scenario_cfg.arm_space == "scenario"
+                    else None
+                ),
             )
             eval_env.close()
             Path(f"{eval_snapshot_stem}.zip").unlink(missing_ok=True)
@@ -767,10 +1001,6 @@ def run_scenario_acl_training(
                 learning_potential,
                 recent_usefulness,
             )
-            recent_usefulness.append(learning_potential)
-            max_recent = int(scenario_cfg.recent_window_size)
-            if len(recent_usefulness) > max_recent:
-                recent_usefulness = recent_usefulness[-max_recent:]
 
             export_path: str | None = None
             buffer_action = "none"
@@ -778,14 +1008,6 @@ def run_scenario_acl_training(
             if not _is_replay_iteration(current_spec):
                 if current_spec.train_env_overrides is None:
                     raise RuntimeError("Generate iteration requires training env overrides.")
-                if bool(scenario_cfg.use_mab):
-                    bandit.update(
-                        arm_index=current_spec.arm_index,
-                        normalized_usefulness=normalized_usefulness,
-                        selection_probability=float(
-                            current_spec.arm_probabilities[current_spec.arm_index]
-                        ),
-                    )
                 if scenario_cfg.arm_space == "scenario":
                     if not current_catalog_records:
                         raise RuntimeError(
@@ -883,7 +1105,9 @@ def run_scenario_acl_training(
                     "eval_id": current_eval_id,
                     "eval_type": "intermediate",
                     "scenario_set": (
-                        "scenario_acl_generate_eval"
+                        f"validation_{_WAYMO_STRATIFIED_SET}"
+                        if scenario_cfg.arm_space == "scenario"
+                        else "scenario_acl_generate_eval"
                         if current_spec.mode == "generate"
                         else "scenario_acl_arm_eval"
                         if current_spec.mode == "sample"
@@ -968,6 +1192,15 @@ def run_scenario_acl_training(
             }
             _append_jsonl(artifact_paths["history"], history_payload)
             _append_jsonl(artifact_paths["iterations"], history_payload)
+            log_event(
+                paths.events_log_path,
+                "scenario_acl_chunk_finished",
+                chunk_id=current_chunk_id,
+                global_step=current_global_step,
+                usefulness=float(learning_potential),
+                usefulness_norm=float(normalized_usefulness),
+                buffer_size=len(buffer),
+            )
             artifact_paths["state"].write_text(
                 json.dumps(
                     {
@@ -1046,6 +1279,8 @@ def run_scenario_acl_training(
             ),
             split="test",
         )
+        if scenario_cfg.arm_space == "scenario":
+            final_eval_env_overrides.update(semantic_env_overrides)
         final_eval_base_seed = eval_base_seed_from_env_overrides(
             final_eval_env_overrides,
             cfg,
@@ -1081,7 +1316,7 @@ def run_scenario_acl_training(
             resolved_env_config=resolved_final_eval_env_config,
             eval_id=final_eval_id,
             eval_type="final",
-            scenario_set="test",
+            scenario_set=f"test_{_WAYMO_STRATIFIED_SET}",
             stage="scenario_acl",
             stage_index=0,
             checkpoint_path=str(
@@ -1101,6 +1336,11 @@ def run_scenario_acl_training(
             error_priority_base=float(cfg.reward.get("a", 2.01)),
             show_progress=True,
             artifact_recorder_factory=artifact_factory,
+            before_episode_reset_callback=(
+                _configure_waymo_eval_episode
+                if scenario_cfg.arm_space == "scenario"
+                else None
+            ),
         )
         final_eval_env.close()
         print_evaluation_summary(
@@ -1118,7 +1358,7 @@ def run_scenario_acl_training(
             {
                 **base_csv_fields,
                 "eval_type": "final",
-                "scenario_set": "test",
+                "scenario_set": f"test_{_WAYMO_STRATIFIED_SET}",
                 "total_timesteps": current_global_step,
                 "final_stage": "scenario_acl",
                 "final_stage_index": 0,

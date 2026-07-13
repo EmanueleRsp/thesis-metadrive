@@ -71,6 +71,9 @@ class ScenarioAclMabConfig:
     eta: float = 0.2
     alpha: float = 0.005
     initial_weight: float = 1.0
+    # Consecutive arms start with probability ratio ``initial_weight_decay``.
+    # A value of one preserves a uniform initialization.
+    initial_weight_decay: float = 1.0
     use_target_mab: bool = True
     target_sync_interval: int = 5
     weight_clip_min: float = -5.0
@@ -335,6 +338,7 @@ def _parse_scenario_acl_config(
     target_sync_interval = int(mab_payload.get("target_sync_interval", 5))
     weight_clip_min = float(mab_payload.get("weight_clip_min", -5.0))
     weight_clip_max = float(mab_payload.get("weight_clip_max", 5.0))
+    initial_weight_decay = float(mab_payload.get("initial_weight_decay", 1.0))
     if num_arms <= 0:
         raise ValueError("scenario_acl.mab.num_arms must be > 0.")
     if target_sync_interval <= 0:
@@ -343,6 +347,10 @@ def _parse_scenario_acl_config(
         raise ValueError(
             "scenario_acl.mab.weight_clip_min must be <= "
             "scenario_acl.mab.weight_clip_max."
+        )
+    if not 0.0 < initial_weight_decay <= 1.0:
+        raise ValueError(
+            "scenario_acl.mab.initial_weight_decay must be in (0, 1]."
         )
 
     return ScenarioAclConfig(
@@ -363,6 +371,7 @@ def _parse_scenario_acl_config(
             eta=float(mab_payload.get("eta", 0.2)),
             alpha=float(mab_payload.get("alpha", 0.005)),
             initial_weight=float(mab_payload.get("initial_weight", 1.0)),
+            initial_weight_decay=initial_weight_decay,
             use_target_mab=bool(mab_payload.get("use_target_mab", True)),
             target_sync_interval=target_sync_interval,
             weight_clip_min=weight_clip_min,

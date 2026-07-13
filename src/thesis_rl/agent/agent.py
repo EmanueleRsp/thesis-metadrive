@@ -72,6 +72,9 @@ class Agent:
         reset_seed: int | None = None,
         reset_seed_fn: Callable[[int], int | None] | None = None,
         episode_end_callback: Callable[[Any, int, dict[str, Any]], None] | None = None,
+        before_episode_reset_callback: Callable[[Any, int], None] | None = None,
+        episode_context_callback: Callable[[Any, dict[str, Any]], dict[str, Any] | None] | None = None,
+        monitor_extra_rows_callback: Callable[[], list[tuple[str, str]]] | None = None,
     ) -> dict[str, float | int]:
         '''Train the agent in the given environment for a specified number of timesteps.
         Args:
@@ -86,6 +89,12 @@ class Agent:
                 episode reset, where index 0 is the first reset of this chunk.
             episode_end_callback: Optional callback invoked after each completed
                 episode as ``callback(env, episode_index, metrics)``.
+            before_episode_reset_callback: Optional callback invoked immediately
+                before every reset, including the first reset (index zero).
+            episode_context_callback: Optional callback providing metadata to
+                append to each completed-episode monitor event.
+            monitor_extra_rows_callback: Optional callback providing live
+                monitor rows as ``(metric, value)`` pairs.
         Returns:
             Dictionary with chunk-level summary metrics (episodes, moving averages, update stats, fps).
         '''
@@ -106,6 +115,8 @@ class Agent:
         # Reset environment and preprocessor state at the start of training
         self.preprocessor.reset()
         reset_seeds_used: list[int] = []
+        if before_episode_reset_callback is not None:
+            before_episode_reset_callback(env, 0)
         first_reset_seed = reset_seed_fn(0) if reset_seed_fn is not None else reset_seed
         if first_reset_seed is not None:
             reset_seeds_used.append(int(first_reset_seed))
@@ -197,6 +208,9 @@ class Agent:
             table.add_row("learning_rate", f"{latest_learning_rate:.3g}")
             table.add_row("update_calls_chunk", str(total_update_calls))
             table.add_row("grad_steps_chunk", str(total_gradient_steps))
+            if monitor_extra_rows_callback is not None:
+                for metric, value in monitor_extra_rows_callback():
+                    table.add_row(str(metric), str(value))
             return table
 
         def _build_logs_panel(logs: deque[str]) -> Panel:
@@ -306,9 +320,6 @@ class Agent:
                             reason = "out_of_road"
                         else:
                             reason = "timeout"
-                        event_logs.appendleft(
-                            f"Episode {episodes + 1} ended | len={episode_len} reward={episode_scalar_reward:.2f} | reason={reason} route_completion={episode_route_completion:.2f}"
-                        )
                         # Increment episode count and record episode metrics
                         episodes += 1
                         recent_episode_lens.append(episode_len)
@@ -323,19 +334,38 @@ class Agent:
                         chunk_episode_out_of_road.append(1.0 if episode_out_of_road else 0.0)
                         chunk_episode_route_completion.append(float(episode_route_completion))
 
+                        episode_critic_loss = float(
+                            getattr(lifecycle, "last_critic_loss", float("nan"))
+                        )
+                        episode_metrics: dict[str, Any] = {
+                            "length": episode_len,
+                            "reward": episode_scalar_reward,
+                            "success": episode_success,
+                            "collision": episode_collision,
+                            "out_of_road": episode_out_of_road,
+                            "route_completion": episode_route_completion,
+                            "update_calls": int(getattr(lifecycle, "update_count", 0)),
+                        }
+                        if math.isfinite(episode_critic_loss):
+                            episode_metrics["critic_loss"] = episode_critic_loss
                         if episode_end_callback is not None:
                             episode_end_callback(
                                 env,
                                 episodes,
-                                {
-                                    "length": episode_len,
-                                    "reward": episode_scalar_reward,
-                                    "success": episode_success,
-                                    "collision": episode_collision,
-                                    "out_of_road": episode_out_of_road,
-                                    "route_completion": episode_route_completion,
-                                },
+                                episode_metrics,
                             )
+                        context_suffix = ""
+                        if episode_context_callback is not None:
+                            episode_context = episode_context_callback(env, step_info)
+                            if episode_context:
+                                context_suffix = " | " + " ".join(
+                                    f"{key}={value}"
+                                    for key, value in episode_context.items()
+                                    if value is not None
+                                )
+                        event_logs.appendleft(
+                            f"Episode {episodes} ended | len={episode_len} reward={episode_scalar_reward:.2f} | reason={reason} route_completion={episode_route_completion:.2f}{context_suffix}"
+                        )
 
                         # Reset episode tracking variables
                         episode_len = 0
@@ -352,6 +382,8 @@ class Agent:
 
                         # Reset environment and preprocessor state for next episode
                         self.preprocessor.reset()
+                        if before_episode_reset_callback is not None:
+                            before_episode_reset_callback(env, episodes)
                         next_reset_seed = reset_seed_fn(episodes) if reset_seed_fn is not None else None
                         if next_reset_seed is not None:
                             reset_seeds_used.append(int(next_reset_seed))
@@ -852,12 +884,15 @@ class Agent:
         error_priority_base: float = 2.01,
         show_progress: bool = True,
         artifact_recorder_factory: Any | None = None,
+        before_episode_reset_callback: Callable[[Any, int], None] | None = None,
     ) -> dict[str, Any]:
         '''Evaluate the agent in the given environment for a specified number of episodes.
         Args:
             env: The environment to evaluate in. Must have `reset()` and `step()` methods.
             n_eval_episodes: Number of episodes to evaluate for.
             deterministic: Whether to use deterministic actions during evaluation.
+            before_episode_reset_callback: Optional callback invoked immediately
+                before each episode reset.
         Returns:
             Aggregate metrics for the full evaluation set. If `return_episode_metrics=True`,
             the output also includes a `per_episode` section with raw episode vectors.
@@ -913,6 +948,8 @@ class Agent:
             for episode_idx in range(n_eval_episodes):
                 # Reset preprocessor and environment state at the start of each episode
                 self.preprocessor.reset()
+                if before_episode_reset_callback is not None:
+                    before_episode_reset_callback(env, episode_idx)
                 scenario_seed = int(base_seed) + episode_idx if base_seed is not None else None
                 if base_seed is not None:
                     obs, _ = env.reset(seed=scenario_seed)

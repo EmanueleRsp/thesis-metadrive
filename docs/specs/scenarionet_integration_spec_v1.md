@@ -1421,7 +1421,7 @@ scenario_env:
   relax_out_of_road_done: false
   truncate_as_terminate: false
 
-thesis_episode_control:
+episode_control:
   extra_steps_after_scenario: 50
 ```
 

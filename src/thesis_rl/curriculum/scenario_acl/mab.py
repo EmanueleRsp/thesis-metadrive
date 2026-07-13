@@ -16,8 +16,14 @@ class GeneratorArmBandit:
 
     def __post_init__(self) -> None:
         initial = float(self.config.initial_weight)
-        self.weights = np.full(int(self.config.num_arms), initial, dtype=np.float64)
-        self.target_weights = np.full(int(self.config.num_arms), initial, dtype=np.float64)
+        decay = float(self.config.initial_weight_decay)
+        if not 0.0 < decay <= 1.0:
+            raise ValueError("initial_weight_decay must be in (0, 1].")
+        # ``weights`` are softmax logits.  Log-spaced offsets therefore give
+        # an exact exponential probability schedule: p(A_i)/p(A_0)=decay**i.
+        offsets = np.arange(int(self.config.num_arms), dtype=np.float64) * np.log(decay)
+        self.weights = initial + offsets
+        self.target_weights = self.weights.copy()
 
     def probabilities(self) -> np.ndarray:
         logits = np.clip(

@@ -24,7 +24,10 @@ scenario_acl:
     eta: 0.2
     alpha: 0.005
     initial_weight: 1.0
+    # p(A_i) is proportional to 0.5**i at startup: A0 is sampled most often.
+    initial_weight_decay: 0.5
     use_target_mab: true
+    # N_MAB: copy target weights into sampling weights every 5 generated episodes.
     target_sync_interval: 5
     weight_clip_min: -5.0
     weight_clip_max: 5.0

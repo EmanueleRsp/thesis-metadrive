@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from thesis_rl.envs.scene_context import SceneContextAdapter
+from thesis_rl.envs import thesis_scenario_env as thesis_env_module
 from thesis_rl.envs.thesis_scenario_env import scenario_time_limit_reached
 from thesis_rl.runtime.wiring.builders import collect_scenario_runtime_stats
 
@@ -65,6 +66,118 @@ def test_scenario_time_limit_rejects_invalid_values() -> None:
             scenario_length=0,
             extra_steps_after_scenario=0,
         )
+
+
+def _make_done_test_env(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    base_done: bool,
+    done_info: dict[str, bool],
+    episode_steps: int = 1,
+    scenario_length: int = 100,
+    extra_steps: int = 50,
+    lateral: float = 0.0,
+    continuous_line: bool = False,
+):
+    vehicle = SimpleNamespace(
+        on_yellow_continuous_line=continuous_line,
+        on_white_continuous_line=False,
+        crash_sidewalk=False,
+        navigation=SimpleNamespace(current_lateral=lateral, route_completion=0.4),
+        LENGTH=4.5,
+        WIDTH=1.9,
+    )
+    env = object.__new__(thesis_env_module.ThesisScenarioEnv)
+    env.agent_manager = SimpleNamespace(active_agents={"default_agent": vehicle})
+    env.episode_lengths = {"default_agent": episode_steps}
+    env.config = {"max_lateral_dist": 4.0, "extra_steps_after_scenario": extra_steps}
+    fake_engine = SimpleNamespace(
+        data_manager=SimpleNamespace(current_scenario_length=scenario_length)
+    )
+    monkeypatch.setattr(
+        thesis_env_module.ThesisScenarioEnv,
+        "engine",
+        property(lambda _self: fake_engine),
+    )
+    env.scene_context = SceneContextAdapter()
+    env._last_done_info = {}
+    monkeypatch.setattr(
+        thesis_env_module.ScenarioEnv,
+        "done_function",
+        lambda _self, _vehicle_id: (base_done, dict(done_info)),
+    )
+    return env
+
+
+def test_thesis_done_makes_continuous_line_only_non_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=True,
+        done_info={"out_of_road": True},
+        continuous_line=True,
+    )
+
+    done, info = env.done_function("default_agent")
+
+    assert done is False
+    assert info["crossed_continuous_line"] is True
+    assert info["physical_out_of_road"] is False
+    assert info["out_of_road"] is False
+
+
+def test_thesis_done_keeps_physical_exit_terminal_with_line_crossing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=True,
+        done_info={"out_of_road": True},
+        continuous_line=True,
+        lateral=5.0,
+    )
+
+    done, info = env.done_function("default_agent")
+
+    assert done is True
+    assert info["crossed_continuous_line"] is True
+    assert info["physical_out_of_road"] is True
+    assert info["out_of_road"] is True
+
+
+def test_thesis_done_preserves_native_collision_termination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=True,
+        done_info={"crash_vehicle": True},
+    )
+
+    done, info = env.done_function("default_agent")
+
+    assert done is True
+    assert info["termination_reason"] == "crash_vehicle"
+
+
+def test_thesis_done_adds_custom_timeout_without_termination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=False,
+        done_info={},
+        episode_steps=10,
+        scenario_length=10,
+        extra_steps=0,
+    )
+
+    done, info = env.done_function("default_agent")
+
+    assert done is False
+    assert info["max_step"] is True
+    assert info["termination_reason"] == "time_limit"
 
 
 def test_collect_scenario_runtime_stats_merges_vector_workers() -> None:

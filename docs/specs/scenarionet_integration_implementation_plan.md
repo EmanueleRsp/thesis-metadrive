@@ -516,6 +516,8 @@ dell'utente.
       primitive native locali.
 - [x] Ricalcolare la termination dopo l'override di `OUT_OF_ROAD`.
 - [x] Implementare truncation a `scenario.length + extra_steps`, inclusi 0 e 50.
+- [x] Riallineare il replay ACL ScenarioNet a `ThesisScenarioEnv`, mantenendo
+      l'horizon canonico e la semantica `terminated`/`truncated`.
 - [x] Esporre identificativi, source, arm, dimensioni ego e ragione terminale
       nell'`info`, non nell'osservazione della policy.
 - [x] Verificare shape uniforme tra Waymo e PG nel mixed smoke vectorized.
@@ -531,7 +533,8 @@ dell'utente.
 
 - `src/thesis_rl/envs/scene_context.py` e
   `src/thesis_rl/envs/thesis_scenario_env.py`
-- test unitari della matrice extra-step e dei predicati line/boundary: passati
+- test unitari della matrice extra-step, dei predicati line/boundary e del replay
+  ACL ScenarioNet: 17 passati
 - smoke headless su shard Waymo reale: reset `(161,)` e step riusciti
 - smoke provider-driven su runtime database ordinato: UID/scenario_id verificati
 - shape Waymo/PG e wiring completo del catalogo nei worker: verificati nello

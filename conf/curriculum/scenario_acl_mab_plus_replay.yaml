@@ -10,3 +10,5 @@ scenario_acl:
   use_replay: true
   mab:
     num_arms: 7
+    # Generator arms have no shared easy-to-hard ordering.
+    initial_weight_decay: 1.0
