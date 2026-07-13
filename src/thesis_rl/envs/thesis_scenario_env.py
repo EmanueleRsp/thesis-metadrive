@@ -63,6 +63,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         catalog: Any | None = None,
         split: str = "train",
         worker_id: int = 0,
+        scenario_arm: str | None = None,
         scene_context: SceneContextAdapter | None = None,
     ) -> None:
         super().__init__(config)
@@ -70,6 +71,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         self.catalog = catalog
         self.split = str(split)
         self.worker_id = int(worker_id)
+        self.scenario_arm = scenario_arm
         self.scene_context = scene_context or SceneContextAdapter()
         self.current_scenario_record: Any | None = None
         self._last_done_info: dict[str, Any] = {}
@@ -93,7 +95,11 @@ class ThesisScenarioEnv(ScenarioEnv):
             return int(force_seed)
         if self.scenario_provider is None:
             return None
-        record = self.scenario_provider.sample(split=self.split, worker_id=self.worker_id)
+        record = self.scenario_provider.sample(
+            split=self.split,
+            worker_id=self.worker_id,
+            arm=self.scenario_arm,
+        )
         if record.runtime_index is None:
             raise ValueError(f"scenario provider returned record without runtime_index: {record.scenario_uid}")
         self.current_scenario_record = record

@@ -11,13 +11,16 @@ from thesis_rl.curriculum.interfaces import CurriculumStrategy
 from thesis_rl.curriculum.manager import CurriculumManager
 from thesis_rl.curriculum.registry import build_curriculum_strategy, register_curriculum_strategy
 from thesis_rl.curriculum.scenario_acl import (
+    SCENARIO_ARM_NAMES,
     GeneratorArm,
+    ScenarioArm,
     GeneratorArmBandit,
     ScenarioBuffer,
     ScenarioAclCurriculum,
     ScenarioAclDriverPaths,
     ScenarioRecord,
     build_default_generator_arms,
+    build_default_scenario_arms,
     build_scenario_replay_env,
     compute_replay_probabilities,
     scenario_env_runtime_config,
@@ -43,8 +46,11 @@ __all__ = [
     "ScenarioBuffer",
     "GeneratorArmBandit",
     "GeneratorArm",
+    "ScenarioArm",
+    "SCENARIO_ARM_NAMES",
     "ScenarioRecord",
     "build_default_generator_arms",
+    "build_default_scenario_arms",
     "build_scenario_replay_env",
     "compute_replay_probabilities",
     "scenario_env_runtime_config",

@@ -164,6 +164,8 @@ def make_env(
         )
 
         split = str(getattr(cfg_env, "split", "train"))
+        provider_cfg = _to_plain_dict(getattr(cfg_env, "provider", {}))
+        scenario_arm = provider_cfg.get("arm")
         episode_control = _to_plain_dict(getattr(cfg_env, "episode_control", {}))
         if "extra_steps_after_scenario" in episode_control:
             env_cfg["extra_steps_after_scenario"] = int(
@@ -206,7 +208,6 @@ def make_env(
             # so provider-selected runtime indices are not collapsed to zero.
             env_cfg["num_scenarios"] = len(split_records)
         if scenario_provider is None and catalog is not None:
-            provider_cfg = _to_plain_dict(getattr(cfg_env, "provider", {}))
             provider_kind = str(provider_cfg.get("kind", "uniform")).lower()
             start_index = int(env_cfg.get("start_scenario_index", 0))
             num_scenarios = int(env_cfg.get("num_scenarios", -1))
@@ -245,6 +246,7 @@ def make_env(
                     },
                     strict=bool(provider_cfg.get("strict", True)),
                     allow_fallback=bool(provider_cfg.get("allow_fallback", False)),
+                    default_arm=str(scenario_arm) if scenario_arm is not None else None,
                 )
             elif provider_kind == "fixed_sequence":
                 scenario_provider = FixedSequenceScenarioProvider(
@@ -258,6 +260,7 @@ def make_env(
                         )
                     ),
                     repeat=bool(provider_cfg.get("repeat", False)),
+                    default_arm=str(scenario_arm) if scenario_arm is not None else None,
                 )
             else:
                 raise ValueError(f"Unsupported ScenarioNet provider kind: {provider_kind!r}")
@@ -267,6 +270,7 @@ def make_env(
             catalog=catalog,
             split=split,
             worker_id=worker_id,
+            scenario_arm=str(scenario_arm) if scenario_arm is not None else None,
         )
 
     return MetaDriveEnv(env_cfg)

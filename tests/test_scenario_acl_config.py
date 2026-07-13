@@ -33,6 +33,25 @@ def test_curriculum_config_parses_scenario_acl_block() -> None:
     assert curriculum.scenario_acl.mode == "mab_generate_only"
     assert curriculum.scenario_acl.buffer_capacity == 32
     assert curriculum.scenario_acl.mab.num_arms == 4
+    assert curriculum.scenario_acl.arm_space == "generator"
+
+
+def test_curriculum_config_parses_scenarionet_semantic_acl_block() -> None:
+    curriculum = CurriculumConfig.from_mapping(
+        {
+            "enabled": True,
+            "kind": "scenario_acl",
+            "scenario_acl": {
+                "arm_space": "scenario",
+                "use_scenario_buffer": False,
+                "use_replay": False,
+                "mab": {"num_arms": 6},
+            },
+        }
+    )
+
+    assert curriculum.scenario_acl.arm_space == "scenario"
+    assert curriculum.scenario_acl.mab.num_arms == 6
 
 
 def test_curriculum_manager_supports_scenario_acl_placeholder_strategy() -> None:
@@ -98,6 +117,30 @@ def test_scenario_acl_runtime_validation_is_explicit_until_driver_exists() -> No
     )
 
     validate_scenario_acl_runtime_support(cfg, curriculum, context="training")
+
+
+def test_scenario_acl_semantic_mode_requires_scenarionet_env() -> None:
+    cfg = OmegaConf.create(
+        {
+            "env": {"name": "metadrive", "vectorized": {"enabled": False}},
+            "reward": {"behavior": "monitor_only"},
+        }
+    )
+    curriculum = CurriculumConfig.from_mapping(
+        {
+            "enabled": True,
+            "kind": "scenario_acl",
+            "scenario_acl": {
+                "arm_space": "scenario",
+                "use_scenario_buffer": False,
+                "use_replay": False,
+                "mab": {"num_arms": 6},
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="requires env=scenarionet"):
+        validate_scenario_acl_runtime_support(cfg, curriculum, context="training")
 
 
 def test_scenario_acl_config_rejects_invalid_probability_sum() -> None:

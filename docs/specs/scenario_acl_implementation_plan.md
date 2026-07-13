@@ -38,6 +38,30 @@ Important:
   next major implementation step is not mutation, but returning to rulebook
   work first
 
+### Generator arms versus ScenarioNet semantic arms
+
+The ACL MAB supports two explicit arm spaces. `arm_space=generator` samples
+seven procedural profiles whose names (`broad_random`, `simple_low_risk`, and
+so on) describe parameter distributions. `arm_space=scenario` samples the six
+canonical ScenarioNet arms A0–A5 and delegates selection to the strict catalog
+provider. The two namespaces remain distinct; in particular, PG generation
+does not provide the VRU context required by A4.
+
+The ScenarioNet provider now accepts an optional `arm` filter, the staged
+ScenarioNet preset uses it for the six A0–A5 stages, and
+`curriculum=scenario_acl_scenarionet` uses the same filter under MAB control.
+Semantic ACL is catalog-based and does not enable procedural export or replay;
+the legacy generator ACL retains its existing buffer/replay path.
+
+Example invocation:
+
+```bash
+python -m thesis_rl.cli.train \
+  env=scenarionet \
+  curriculum=scenario_acl_scenarionet \
+  env.vectorized.enabled=false
+```
+
 The target integration model is:
 
 - selectable via Hydra config like the other components

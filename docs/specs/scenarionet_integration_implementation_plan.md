@@ -67,13 +67,40 @@ e, se accettata, riportata in una nuova revisione della specifica.
    test e falliscono con un messaggio esplicito quando manca la fixture richiesta.
 5. Tutti i path persistiti nel catalogo sono relativi a
    `SCENARIONET_DATA_ROOT`.
-6. Il catalogo e gli arms della nuova pipeline restano separati dai record e
-   dagli arms generator-level dell'ACL esistente. L'integrazione futura avverrà
-   tramite adapter, senza sovraccaricare gli attuali tipi ACL.
+6. Il catalogo usa un'unica tassonomia semantica canonica A0–A5. Gli arms
+   generator-level dell'ACL restano invece profili procedurali: non vengono
+   rinominati in A0–A5 perché un profilo di generazione non garantisce la
+   categoria dello scenario realizzato e PG non genera il contesto VRU A4.
+   L'integrazione avviene tramite il filtro del provider, senza confondere i
+   due livelli.
 7. Nessun valore data-dependent viene inventato: viene ispezionato, calcolato o
    lasciato `unknown` come richiesto dalla specifica.
 8. Il test finale della tesi non viene usato per calibrazione, tuning o decisioni
    implementative.
+
+### Allineamento ACL e staged
+
+La distinzione operativa è la seguente:
+
+| Livello | Identificatore | Significato |
+|---|---|---|
+| Generazione ACL | `broad_random`, `simple_low_risk`, ... | Distribuzione di parametri PG scelta dal MAB; sono 7 profili storici (`arm_space=generator`). |
+| ScenarioNet | `A0_simple_low_traffic` ... `A5_critical_mixed` | Classe primaria assegnata dopo l'estrazione delle feature e la classificazione. |
+| Staged ScenarioNet | stage nominato `A0` ... `A5` | Selezione progressiva di uno degli arms semantici tramite `provider.arm`. |
+| ACL ScenarioNet | MAB su `A0` ... `A5` | Selezione adattiva di record già classificati tramite `arm_space=scenario`. |
+
+È stato aggiunto `conf/curriculum/stages_scenarionet.yaml`, selezionabile con
+`curriculum=stages_scenarionet`. Ogni stage conserva lo stesso filtro per train,
+validation e test. Il bilanciamento 50/50 Waymo/PG resta attivo dove entrambe le
+sorgenti sono disponibili; A4 usa esplicitamente Waymo-only perché PG non
+contiene VRU. Il provider rifiuta arm sconosciuti e non applica fallback: se una
+combinazione source × split × arm è vuota l'errore è esplicito.
+
+ACL ora supporta entrambi i percorsi. Il percorso storico mantiene i generator
+arms PG; il percorso `scenario_acl_scenarionet` usa direttamente il catalogo e
+aggiorna il MAB sui sei arms semantici, senza generare o rilabelizzare scenari.
+Il percorso semantico è volutamente strict e, per il catalogo congelato, usa
+PG-only per A0 e Waymo-only per A4, perché le altre combinazioni sono vuote.
 
 ---
 
@@ -894,7 +921,7 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | ISS-002 | MEDIA | RISOLTO | Nessun container attivo o virtualenv host disponibile durante l'analisi iniziale. | Immagine ricostruita e comandi eseguiti con container effimeri. |
 | ISS-003 | MEDIA | ACCETTATO | Data root inizialmente senza manifest o dataset ScenarioNet. | Manifest creato; assenza del dataset reale attesa fino a F5/F10. |
 | ISS-004 | ALTA | RISOLTO | `ScenarioEnv` locale aggrega route deviation, linea/road state e usa una guardia truthy per `allowed_more_steps`. | `ThesisScenarioEnv` separa linea continua/uscita fisica, ricalcola la termination e applica il limite esplicito anche con `extra_steps_after_scenario=0`; test e smoke headless passati. |
-| ISS-005 | MEDIA | APERTO | Record e generator arms dell'ACL esistente hanno semantica diversa dai nuovi record e arms A0–A5. | Usare package separato e definire adapter futuro; non riutilizzare i tipi direttamente. |
+| ISS-005 | MEDIA | RISOLTO | Record e generator arms dell'ACL esistente hanno semantica diversa dai nuovi record e arms A0–A5. | Aggiunti due arm space espliciti: `generator` mantiene i 7 profili PG, `scenario` usa il MAB sui sei arms A0–A5 del catalogo; staged usa lo stesso filtro semantico. |
 | ISS-006 | MEDIA | RISOLTO | Dipendenze Waymo sono intenzionalmente escluse dal `setup.py` ScenarioNet locale. | Definito e verificato il container dedicato `Dockerfile.waymo`; il runtime RL non viene appesantito. |
 | ISS-007 | BASSA | RISOLTO | L'immagine runtime non include il client `git`, necessario solo per rilevare commit e worktree state. | Implementato fallback read-only per commit; dirty state resta `null` senza client. |
 | ISS-008 | BASSA | APERTO | La suite completa ha 2 failure non correlate (258 test passati): component name mancante nel tool forced-rule e preset test che attende `td3` mentre la config usa `td3_sb3`. | Non correggere nella pipeline ScenarioNet; aprire issue separata sul baseline. |

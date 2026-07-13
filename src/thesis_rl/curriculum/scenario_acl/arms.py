@@ -5,10 +5,24 @@ from typing import Any
 
 import numpy as np
 
+from thesis_rl.scenarios.arms import ARMS as SCENARIO_ARMS
+
+
+# These are the canonical labels assigned to realized ScenarioNet scenarios.
+# They intentionally do not replace GENERATOR_ARMS: ACL currently samples
+# procedural MetaDrive distributions, while ScenarioNet labels the resulting
+# scenarios after feature extraction. In particular, PG does not generate the
+# VRU context represented by A4.
+SCENARIO_ARM_NAMES = SCENARIO_ARMS
+
 
 @dataclass(frozen=True)
 class GeneratorArm:
-    """Safe subset of the specification that preserves observation shape."""
+    """Procedural MetaDrive generation profile used by the ACL MAB.
+
+    ``GeneratorArm.name`` is a generator-profile identifier, not a realized
+    ScenarioNet semantic arm. The latter is exposed as ``SCENARIO_ARM_NAMES``.
+    """
 
     name: str
     map_choices: tuple[int, ...]
@@ -42,6 +56,42 @@ class GeneratorArm:
             "num_scenarios": 1,
             "log_level": int(base_env_config.get("log_level", 50)),
         }
+
+
+@dataclass(frozen=True)
+class ScenarioArm:
+    """Selector for a realized ScenarioNet semantic arm.
+
+    The provider performs the actual filtering over catalog records. This
+    object only adapts the shared arm names to the ACL MAB interface.
+    """
+
+    name: str
+
+    def __post_init__(self) -> None:
+        if self.name not in SCENARIO_ARM_NAMES:
+            raise ValueError(
+                f"unsupported ScenarioNet arm {self.name!r}; "
+                f"expected one of {SCENARIO_ARM_NAMES}"
+            )
+
+    def sample_env_overrides(
+        self,
+        *,
+        rng: np.random.Generator,
+        scenario_seed: int,
+        base_env_config: dict[str, Any],
+    ) -> dict[str, object]:
+        del rng, scenario_seed, base_env_config
+        provider: dict[str, object] = {"arm": self.name}
+        # The frozen ScenarioNet catalog has no selected Waymo A0 records and
+        # no PG A4 records. Avoid asking the strict provider for an impossible
+        # source × split × arm combination.
+        if self.name == "A0_simple_low_traffic":
+            provider["source_probability"] = {"waymo": 0.0, "pg": 1.0}
+        elif self.name == "A4_vru":
+            provider["source_probability"] = {"waymo": 1.0, "pg": 0.0}
+        return {"provider": provider}
 
 
 def build_default_generator_arms() -> tuple[GeneratorArm, ...]:
@@ -103,3 +153,9 @@ def build_default_generator_arms() -> tuple[GeneratorArm, ...]:
             random_lane_num_prob=0.60,
         ),
     )
+
+
+def build_default_scenario_arms() -> tuple[ScenarioArm, ...]:
+    """Return the canonical A0-A5 arms in curriculum order."""
+
+    return tuple(ScenarioArm(name=name) for name in SCENARIO_ARM_NAMES)

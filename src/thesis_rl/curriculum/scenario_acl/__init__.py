@@ -1,4 +1,10 @@
-from thesis_rl.curriculum.scenario_acl.arms import GeneratorArm, build_default_generator_arms
+from thesis_rl.curriculum.scenario_acl.arms import (
+    SCENARIO_ARM_NAMES,
+    GeneratorArm,
+    ScenarioArm,
+    build_default_scenario_arms,
+    build_default_generator_arms,
+)
 from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer, ScenarioReplaySelection
 from thesis_rl.curriculum.scenario_acl.driver import (
     ScenarioAclDriverPaths,
@@ -27,7 +33,10 @@ __all__ = [
     "ScenarioReplaySelection",
     "GeneratorArmBandit",
     "GeneratorArm",
+    "ScenarioArm",
+    "SCENARIO_ARM_NAMES",
     "build_default_generator_arms",
+    "build_default_scenario_arms",
     "ScenarioRecord",
     "compute_replay_probabilities",
     "build_scenario_replay_env",

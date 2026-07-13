@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import numpy as np
+from omegaconf import OmegaConf
 
 from thesis_rl.curriculum import (
+    CurriculumConfig,
     GeneratorArmBandit,
+    SCENARIO_ARM_NAMES,
     ScenarioAclMabConfig,
     build_default_generator_arms,
+    build_default_scenario_arms,
 )
+from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer
+from thesis_rl.curriculum.scenario_acl.driver import _choose_iteration_spec
 
 
 def test_generator_arm_bandit_probabilities_sum_to_one() -> None:
@@ -55,3 +61,52 @@ def test_default_generator_arms_preserve_single_scenario_sampling_and_agent_mode
     assert sample["num_scenarios"] == 1
     assert sample["start_seed"] == 123
     assert sample["random_agent_model"] is True
+
+
+def test_default_scenario_arms_match_canonical_scenarionet_taxonomy() -> None:
+    arms = build_default_scenario_arms()
+
+    assert tuple(arm.name for arm in arms) == SCENARIO_ARM_NAMES
+    assert arms[0].sample_env_overrides(
+        rng=np.random.default_rng(42),
+        scenario_seed=123,
+        base_env_config={},
+    ) == {
+        "provider": {
+            "arm": "A0_simple_low_traffic",
+            "source_probability": {"waymo": 0.0, "pg": 1.0},
+        }
+    }
+
+
+def test_scenario_acl_driver_selects_catalog_arm_without_forcing_runtime_seed() -> None:
+    curriculum = CurriculumConfig.from_mapping(
+        {
+            "enabled": True,
+            "kind": "scenario_acl",
+            "scenario_acl": {
+                "arm_space": "scenario",
+                "use_scenario_buffer": False,
+                "use_replay": False,
+                "mab": {"num_arms": 6},
+            },
+        }
+    )
+    arms = list(build_default_scenario_arms())
+    from thesis_rl.curriculum import GeneratorArmBandit
+
+    bandit = GeneratorArmBandit(curriculum.scenario_acl.mab)
+    spec = _choose_iteration_spec(
+        cfg=OmegaConf.create({"env": {"config": {"start_seed": 0}}}),
+        curriculum_cfg=curriculum,
+        arms=arms,
+        bandit=bandit,
+        buffer=ScenarioBuffer(capacity=4),
+        rng=np.random.default_rng(0),
+        chunk_id=1,
+    )
+
+    assert spec.mode == "sample"
+    assert spec.arm_name in SCENARIO_ARM_NAMES
+    assert spec.train_env_overrides is not None
+    assert spec.train_env_overrides["provider"]["arm"] == spec.arm_name

@@ -3,6 +3,7 @@ enabled: true
 kind: scenario_acl
 scenario_acl:
   mode: mab_generate_only
+  arm_space: generator
 
   buffer_capacity: 1000
   warmup_buffer_size: 100

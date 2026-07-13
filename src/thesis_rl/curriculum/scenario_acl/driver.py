@@ -15,7 +15,12 @@ from omegaconf import DictConfig, OmegaConf
 from thesis_rl.agent.agent import Agent
 from thesis_rl.agent.planners.core.utils import count_envs
 from thesis_rl.curriculum.config import CurriculumConfig
-from thesis_rl.curriculum.scenario_acl.arms import GeneratorArm, build_default_generator_arms
+from thesis_rl.curriculum.scenario_acl.arms import (
+    GeneratorArm,
+    ScenarioArm,
+    build_default_generator_arms,
+    build_default_scenario_arms,
+)
 from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer
 from thesis_rl.curriculum.scenario_acl.mab import GeneratorArmBandit
 from thesis_rl.curriculum.scenario_acl.record import ScenarioRecord
@@ -69,6 +74,10 @@ class IterationSpec:
     replay_probabilities: list[float] | None
 
 
+def _is_replay_iteration(spec: IterationSpec) -> bool:
+    return spec.mode == "exploit_replay"
+
+
 def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -103,7 +112,7 @@ def _normalize_learning_potential(
 
 def _sample_iteration_env(
     *,
-    arm: GeneratorArm,
+    arm: GeneratorArm | ScenarioArm,
     rng: np.random.Generator,
     chunk_id: int,
     cfg: DictConfig,
@@ -330,7 +339,7 @@ def _choose_iteration_spec(
     *,
     cfg: DictConfig,
     curriculum_cfg: CurriculumConfig,
-    arms: list[GeneratorArm],
+    arms: list[GeneratorArm | ScenarioArm],
     bandit: GeneratorArmBandit,
     buffer: ScenarioBuffer,
     rng: np.random.Generator,
@@ -373,7 +382,7 @@ def _choose_iteration_spec(
         cfg=cfg,
     )
     return IterationSpec(
-        mode="generate",
+        mode="sample" if scenario_cfg.arm_space == "scenario" else "generate",
         arm_index=arm_index,
         arm_name=arm.name,
         arm_probabilities=[float(x) for x in arm_probs.tolist()],
@@ -410,7 +419,19 @@ def run_scenario_acl_training(
     artifact_paths = _scenario_acl_artifact_paths(paths.artifacts_dir)
     rng = np.random.default_rng(run_seed)
 
-    arms = build_default_generator_arms()
+    if scenario_cfg.arm_space == "scenario":
+        if str(cfg.env.get("name", "")).strip().lower() != "scenarionet":
+            raise ValueError(
+                "scenario_acl.arm_space='scenario' requires env=scenarionet."
+            )
+        if bool(scenario_cfg.use_scenario_buffer) or bool(scenario_cfg.use_replay):
+            raise ValueError(
+                "ScenarioNet semantic ACL currently supports MAB selection over the "
+                "catalog only; disable scenario buffer and replay."
+            )
+        arms: list[GeneratorArm | ScenarioArm] = list(build_default_scenario_arms())
+    else:
+        arms = list(build_default_generator_arms())
     expected_arms = int(scenario_cfg.mab.num_arms)
     if len(arms) != expected_arms:
         raise ValueError(
@@ -443,7 +464,7 @@ def run_scenario_acl_training(
         rng=rng,
         chunk_id=current_chunk_id + 1,
     )
-    if first_spec.mode == "generate":
+    if not _is_replay_iteration(first_spec):
         env = build_env(cfg, first_spec.train_env_overrides)
     else:
         if first_spec.replay_record is None:
@@ -502,7 +523,7 @@ def run_scenario_acl_training(
             current_chunk_id += 1
             current_spec = next_spec
             if current_chunk_id > 1:
-                if current_spec.mode == "generate":
+                if not _is_replay_iteration(current_spec):
                     env = build_env(cfg, current_spec.train_env_overrides)
                     seed_env_spaces(env, run_seed + 400_000 + current_chunk_id)
                 else:
@@ -518,7 +539,7 @@ def run_scenario_acl_training(
 
             chunk_steps = min(eval_interval, remaining)
             steps_start = current_global_step
-            if current_spec.mode == "generate":
+            if not _is_replay_iteration(current_spec):
                 generate_count += 1
             else:
                 replay_count += 1
@@ -549,6 +570,10 @@ def run_scenario_acl_training(
             )
 
             def train_reset_seed_for_episode(episode_index: int) -> int | None:
+                if current_spec.mode == "sample":
+                    # The ScenarioNet provider must choose the record by arm;
+                    # reset(seed=...) would bypass it and select a raw index.
+                    return None
                 if current_spec.train_env_overrides is not None:
                     return train_episode_seed_from_env_overrides(
                         current_spec.train_env_overrides,
@@ -569,7 +594,7 @@ def run_scenario_acl_training(
                 global_steps_done=current_global_step,
                 stage_name=(
                     current_spec.arm_name
-                    if current_spec.mode == "generate"
+                    if not _is_replay_iteration(current_spec)
                     else f"replay:{current_spec.arm_name}"
                 ),
                 deterministic=False,
@@ -586,7 +611,7 @@ def run_scenario_acl_training(
                     "chunk_id": current_chunk_id,
                     "stage": (
                         current_spec.arm_name
-                        if current_spec.mode == "generate"
+                        if not _is_replay_iteration(current_spec)
                         else f"replay:{current_spec.arm_name}"
                     ),
                     "stage_index": current_spec.arm_index,
@@ -627,7 +652,7 @@ def run_scenario_acl_training(
 
             eval_metrics: dict[str, Any]
             eval_agent: Agent
-            if current_spec.mode == "generate":
+            if not _is_replay_iteration(current_spec):
                 eval_env_overrides = apply_eval_scenario_seed_split(
                     base_run_seed=run_seed,
                     eval_env_overrides=current_spec.train_env_overrides,
@@ -687,7 +712,7 @@ def run_scenario_acl_training(
             export_path: str | None = None
             buffer_action = "none"
             scenario_record_id: str | None = None
-            if current_spec.mode == "generate":
+            if not _is_replay_iteration(current_spec):
                 if current_spec.train_env_overrides is None:
                     raise RuntimeError("Generate iteration requires training env overrides.")
                 if bool(scenario_cfg.use_mab):
@@ -768,12 +793,14 @@ def run_scenario_acl_training(
                     "scenario_set": (
                         "scenario_acl_generate_eval"
                         if current_spec.mode == "generate"
+                        else "scenario_acl_arm_eval"
+                        if current_spec.mode == "sample"
                         else "scenario_acl_replay_eval"
                     ),
                     "chunk_id": current_chunk_id,
                     "stage": (
                         current_spec.arm_name
-                        if current_spec.mode == "generate"
+                        if not _is_replay_iteration(current_spec)
                         else f"replay:{current_spec.arm_name}"
                     ),
                     "stage_index": current_spec.arm_index,
@@ -818,7 +845,7 @@ def run_scenario_acl_training(
                 "scenario_seed": current_spec.scenario_seed,
                 "selection_probability": (
                     float(current_spec.arm_probabilities[current_spec.arm_index])
-                    if current_spec.mode == "generate"
+                    if not _is_replay_iteration(current_spec)
                     else None
                 ),
                 "arm_probabilities": current_spec.arm_probabilities,

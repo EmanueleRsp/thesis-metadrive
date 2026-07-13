@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
+from omegaconf import OmegaConf
 
 from thesis_rl.curriculum import (
     CurriculumConfig,
@@ -13,6 +14,7 @@ from thesis_rl.curriculum import (
     register_curriculum_strategy,
 )
 from thesis_rl.curriculum.config import StageConfig
+from thesis_rl.runtime.wiring.builders import merge_env_config_with_overrides
 
 
 def _staged_config() -> CurriculumConfig:
@@ -92,6 +94,54 @@ def test_build_curriculum_strategy_returns_protocol_compatible_strategy() -> Non
 
     assert protocol_view.get_current_stage().name == "stage1"
     assert protocol_view.get_env_config(evaluation=True)["map"] == 2
+
+
+def test_staged_curriculum_preserves_scenarionet_arm_provider_override() -> None:
+    config = CurriculumConfig.from_mapping(
+        {
+            "enabled": True,
+            "kind": "staged",
+            "staged": {
+                "mode": "fixed",
+                "fixed_stage": "A2_junction",
+                "stages": [
+                    {
+                        "name": "A2_junction",
+                        "env": {
+                            "provider": {"arm": "A2_junction"},
+                            "start_seed": 10,
+                            "num_scenarios": 10,
+                        },
+                        "eval_env": {"start_seed": 20, "num_scenarios": 10},
+                    }
+                ],
+            },
+        }
+    )
+
+    manager = CurriculumManager(config)
+
+    assert manager.get_env_config()["provider"] == {"arm": "A2_junction"}
+
+
+def test_provider_stage_override_merges_with_scenarionet_defaults() -> None:
+    cfg_env = {
+        "provider": {
+            "kind": "uniform",
+            "strict": True,
+            "source_probability": {"waymo": 0.5, "pg": 0.5},
+        },
+        "config": {},
+    }
+
+    merged = merge_env_config_with_overrides(
+        OmegaConf.create(cfg_env),
+        {"provider": {"arm": "A4_vru", "source_probability": {"waymo": 1.0, "pg": 0.0}}},
+    )
+
+    assert merged.provider.kind == "uniform"
+    assert merged.provider.arm == "A4_vru"
+    assert merged.provider.source_probability.pg == 0.0
 
 
 def test_register_curriculum_strategy_supports_custom_kind() -> None:

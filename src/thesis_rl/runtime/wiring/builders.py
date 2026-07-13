@@ -297,7 +297,12 @@ def merge_env_config_with_overrides(cfg_env: DictConfig, env_overrides: dict[str
     # while allowing evaluation to select validation/test runtime views.
     for top_level_key in ("split", "catalog_path", "global_seed", "provider", "episode_control"):
         if top_level_key in config_overrides:
-            setattr(merged_cfg_env, top_level_key, config_overrides.pop(top_level_key))
+            override = config_overrides.pop(top_level_key)
+            if top_level_key == "provider" and isinstance(override, dict):
+                current = getattr(merged_cfg_env, top_level_key, {})
+                setattr(merged_cfg_env, top_level_key, OmegaConf.merge(current, override))
+            else:
+                setattr(merged_cfg_env, top_level_key, override)
     merged_cfg_env.config = OmegaConf.merge(merged_cfg_env.config, config_overrides)
     return merged_cfg_env
 

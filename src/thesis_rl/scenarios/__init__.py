@@ -6,6 +6,7 @@ from thesis_rl.scenarios.bootstrap import (
     initialize_bootstrap_artifacts,
 )
 from thesis_rl.scenarios.arms import (
+    ARMS,
     assign_primary_arm,
     classify_catalog_entry,
     derive_scenario_tags,
@@ -50,6 +51,7 @@ __all__ = [
     "collect_local_api_inventory",
     "create_initial_manifest",
     "assign_primary_arm",
+    "ARMS",
     "classify_catalog_entry",
     "derive_scenario_tags",
     "extract_scenario_features",

@@ -77,6 +77,30 @@ def test_reward_variants_compose() -> None:
     assert bool(cfg_scenario_acl_replay.curriculum.scenario_acl.use_replay) is True
 
 
+def test_scenarionet_staged_curriculum_composes_with_semantic_arms() -> None:
+    cfg = _compose("env=scenarionet", "curriculum=stages_scenarionet")
+
+    names = [str(stage.name) for stage in cfg.curriculum.staged.stages]
+    assert names == [
+        "A0_simple_low_traffic",
+        "A1_traffic",
+        "A2_junction",
+        "A3_complex_junction",
+        "A4_vru",
+        "A5_critical_mixed",
+    ]
+    assert str(cfg.curriculum.staged.stages[3].env.provider.arm) == "A3_complex_junction"
+    assert float(cfg.curriculum.staged.stages[4].env.provider.source_probability.pg) == 0.0
+
+
+def test_scenarionet_acl_composes_with_six_semantic_arms() -> None:
+    cfg = _compose("env=scenarionet", "curriculum=scenario_acl_scenarionet")
+
+    assert str(cfg.curriculum.scenario_acl.arm_space) == "scenario"
+    assert int(cfg.curriculum.scenario_acl.mab.num_arms) == 6
+    assert bool(cfg.curriculum.scenario_acl.use_scenario_buffer) is False
+
+
 def test_run_profile_medium_overrides_experiment_budget() -> None:
     cfg = _compose("run_profile=medium")
 

@@ -15,7 +15,7 @@ defaults:
   - agent/adapter: identity            # Action adapter in `conf/agent/adapter/*`
 
   - reward: monitor_only    # native | monitor_only | scalar_reward
-  - curriculum: disabled    # disabled | stages | scenario_acl
+  - curriculum: disabled    # disabled | stages | stages_scenarionet | scenario_acl | scenario_acl_scenarionet
   
   - video: default          # Video/replay pipeline settings in `conf/video/*`
   - override hydra/job_logging: disabled

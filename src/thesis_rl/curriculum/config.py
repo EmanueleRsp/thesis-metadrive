@@ -105,6 +105,9 @@ class ScenarioAclScenarioEnvConfig:
 @dataclass(frozen=True)
 class ScenarioAclConfig:
     mode: str = "mab_generate_only"
+    # ``generator`` preserves the legacy procedural ACL; ``scenario`` makes
+    # the MAB select the canonical ScenarioNet A0-A5 semantic arms.
+    arm_space: str = "generator"
     buffer_capacity: int = 1000
     warmup_buffer_size: int = 100
     exploit_probability: float = 0.8
@@ -278,6 +281,13 @@ def _parse_scenario_acl_config(
             f"'{mode}'. Expected one of: {', '.join(sorted(allowed_modes))}."
         )
 
+    arm_space = str(payload.get("arm_space", "generator")).strip().lower()
+    if arm_space not in {"generator", "scenario"}:
+        raise ValueError(
+            "Unsupported scenario_acl.arm_space "
+            f"'{arm_space}'. Expected 'generator' or 'scenario'."
+        )
+
     buffer_capacity = int(payload.get("buffer_capacity", 1000))
     warmup_buffer_size = int(payload.get("warmup_buffer_size", 100))
     recent_window_size = int(payload.get("recent_window_size", 100))
@@ -337,6 +347,7 @@ def _parse_scenario_acl_config(
 
     return ScenarioAclConfig(
         mode=mode,
+        arm_space=arm_space,
         buffer_capacity=buffer_capacity,
         warmup_buffer_size=warmup_buffer_size,
         exploit_probability=exploit_probability,

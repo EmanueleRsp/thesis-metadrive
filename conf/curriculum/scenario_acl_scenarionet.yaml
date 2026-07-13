@@ -1,0 +1,15 @@
+defaults:
+  - scenario_acl
+
+name: scenario_acl_scenarionet
+enabled: true
+kind: scenario_acl
+
+scenario_acl:
+  mode: mab_generate_only
+  arm_space: scenario
+  use_mab: true
+  use_scenario_buffer: false
+  use_replay: false
+  mab:
+    num_arms: 6

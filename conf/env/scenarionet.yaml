@@ -48,6 +48,9 @@ provider:
   kind: uniform
   strict: true
   allow_fallback: false
+  # Optional semantic arm filter. Staged ScenarioNet curricula override this
+  # with one of A0...A5; null keeps the global source-balanced provider.
+  arm: null
   source_probability:
     waymo: 0.5
     pg: 0.5

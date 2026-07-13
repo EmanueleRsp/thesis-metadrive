@@ -6,6 +6,7 @@ from typing import Sequence
 
 import numpy as np
 
+from thesis_rl.scenarios.arms import ARMS
 from thesis_rl.scenarios.records import ScenarioRecord
 
 
@@ -37,6 +38,7 @@ class UniformScenarioProvider(ScenarioProvider):
         source_probabilities: dict[str, float] | None = None,
         strict: bool = True,
         allow_fallback: bool = False,
+        default_arm: str | None = None,
     ) -> None:
         if not strict or allow_fallback:
             raise ValueError("ScenarioNet v1 provider requires strict=true and allow_fallback=false")
@@ -55,6 +57,7 @@ class UniformScenarioProvider(ScenarioProvider):
             [probabilities[name] for name in self._source_names], dtype=np.float64
         )
         self._global_seed = int(global_seed)
+        self._default_arm = _validate_arm(default_arm)
         self._rng_by_worker: dict[int, np.random.Generator] = {}
         self.reset_counts: dict[str, int] = defaultdict(int)
 
@@ -77,6 +80,7 @@ class UniformScenarioProvider(ScenarioProvider):
     ) -> ScenarioRecord:
         rng = self._rng(worker_id)
         requested_source = source
+        requested_arm = _validate_arm(arm) if arm is not None else self._default_arm
         if requested_source is None:
             requested_source = str(rng.choice(self._source_names, p=self._source_probabilities))
         if requested_source not in self._source_names:
@@ -86,10 +90,10 @@ class UniformScenarioProvider(ScenarioProvider):
             for record in self._records
             if record.split == split
             and record.source == requested_source
-            and (arm is None or record.primary_arm == arm)
+            and (requested_arm is None or record.primary_arm == requested_arm)
         ]
         if not candidates:
-            filters = f"split={split!r}, source={requested_source!r}, arm={arm!r}"
+            filters = f"split={split!r}, source={requested_source!r}, arm={requested_arm!r}"
             raise LookupError(f"no valid scenarios for {filters}; fallback is disabled")
         selected = candidates[int(rng.integers(0, len(candidates)))]
         self.reset_counts[selected.source] += 1
@@ -97,7 +101,13 @@ class UniformScenarioProvider(ScenarioProvider):
 
 
 class FixedSequenceScenarioProvider(ScenarioProvider):
-    def __init__(self, records: Sequence[ScenarioRecord], *, repeat: bool = False) -> None:
+    def __init__(
+        self,
+        records: Sequence[ScenarioRecord],
+        *,
+        repeat: bool = False,
+        default_arm: str | None = None,
+    ) -> None:
         self._records = _valid_records(records)
         if len(self._records) != len(records):
             raise ValueError("fixed sequence contains invalid scenarios")
@@ -106,6 +116,7 @@ class FixedSequenceScenarioProvider(ScenarioProvider):
         if len({record.scenario_uid for record in self._records}) != len(self._records):
             raise ValueError("fixed sequence contains duplicate scenario_uid values")
         self._repeat = bool(repeat)
+        self._default_arm = _validate_arm(default_arm)
         self._position = 0
 
     def sample(
@@ -129,7 +140,19 @@ class FixedSequenceScenarioProvider(ScenarioProvider):
             )
         if source is not None and record.source != source:
             raise LookupError(f"fixed sequence record does not match requested source {source!r}")
-        if arm is not None and record.primary_arm != arm:
-            raise LookupError(f"fixed sequence record does not match requested arm {arm!r}")
+        requested_arm = _validate_arm(arm) if arm is not None else self._default_arm
+        if requested_arm is not None and record.primary_arm != requested_arm:
+            raise LookupError(
+                f"fixed sequence record does not match requested arm {requested_arm!r}"
+            )
         self._position += 1
         return record
+
+
+def _validate_arm(arm: str | None) -> str | None:
+    if arm is None:
+        return None
+    value = str(arm).strip()
+    if value not in ARMS:
+        raise ValueError(f"unsupported scenario arm: {value!r}; expected one of {ARMS}")
+    return value

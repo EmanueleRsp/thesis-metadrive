@@ -57,6 +57,23 @@ def test_uniform_provider_source_balance_and_strict_failure() -> None:
         provider.sample(split="test", worker_id=0, source="waymo")
 
 
+def test_uniform_provider_can_pin_a_semantic_scenario_arm() -> None:
+    records = [
+        replace(_record(0, "waymo"), primary_arm="A1_traffic"),
+        replace(_record(1, "pg"), primary_arm="A1_traffic"),
+    ]
+    provider = UniformScenarioProvider(records, global_seed=0, default_arm="A1_traffic")
+
+    selected = [provider.sample(split="train", worker_id=0) for _ in range(20)]
+
+    assert {record.primary_arm for record in selected} == {"A1_traffic"}
+
+
+def test_uniform_provider_rejects_unknown_semantic_arm() -> None:
+    with pytest.raises(ValueError, match="unsupported scenario arm"):
+        UniformScenarioProvider([_record(0, "pg")], global_seed=0, default_arm="stage1")
+
+
 def test_uniform_provider_rejects_fallback_mode() -> None:
     with pytest.raises(ValueError, match="strict=true"):
         UniformScenarioProvider([_record(0, "pg")], global_seed=0, allow_fallback=True)
