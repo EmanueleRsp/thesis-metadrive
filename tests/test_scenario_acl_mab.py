@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from omegaconf import OmegaConf
+from types import SimpleNamespace
 
 from thesis_rl.curriculum import (
     CurriculumConfig,
@@ -12,7 +13,10 @@ from thesis_rl.curriculum import (
     build_default_scenario_arms,
 )
 from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer
-from thesis_rl.curriculum.scenario_acl.driver import _choose_iteration_spec
+from thesis_rl.curriculum.scenario_acl.driver import (
+    _build_record_from_catalog_entry,
+    _choose_iteration_spec,
+)
 
 
 def test_generator_arm_bandit_probabilities_sum_to_one() -> None:
@@ -110,3 +114,26 @@ def test_scenario_acl_driver_selects_catalog_arm_without_forcing_runtime_seed() 
     assert spec.arm_name in SCENARIO_ARM_NAMES
     assert spec.train_env_overrides is not None
     assert spec.train_env_overrides["provider"]["arm"] == spec.arm_name
+
+
+def test_catalog_record_adapter_preserves_semantic_arm_and_runtime_index() -> None:
+    catalog_record = SimpleNamespace(
+        split="train",
+        scenario_uid="pg:v1:42",
+        source="pg",
+        primary_arm="A2_junction",
+        relative_path="pg/database/42.pkl",
+        runtime_index=42,
+    )
+    record = _build_record_from_catalog_entry(
+        catalog_record=catalog_record,
+        cfg=OmegaConf.create({"paths": {"scenarionet_data_root": "/data/scenarionet"}}),
+        chunk_id=1,
+        learning_potential=0.5,
+        normalized_usefulness=0.5,
+        metrics={},
+    )
+
+    assert record.scenario_arm == "A2_junction"
+    assert record.scenario_index == 42
+    assert record.dataset_directory == "/data/scenarionet/runtime/train"

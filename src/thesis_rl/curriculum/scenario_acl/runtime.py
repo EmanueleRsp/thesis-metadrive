@@ -30,11 +30,6 @@ def validate_scenario_acl_runtime_support(
             raise ValueError(
                 "scenario_acl.arm_space='scenario' requires env=scenarionet."
             )
-        if curriculum_cfg.scenario_acl.use_scenario_buffer or curriculum_cfg.scenario_acl.use_replay:
-            raise ValueError(
-                "ScenarioNet semantic ACL currently requires "
-                "use_scenario_buffer=false and use_replay=false."
-            )
 
     vectorized_cfg = cfg.env.get("vectorized", {})
     if bool(vectorized_cfg.get("enabled", False)):

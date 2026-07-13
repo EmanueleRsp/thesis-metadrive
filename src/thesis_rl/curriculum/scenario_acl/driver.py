@@ -212,6 +212,53 @@ def _metrics_summary(metrics: dict[str, Any], *, generator_config_id: str) -> di
     }
 
 
+def _build_record_from_catalog_entry(
+    *,
+    catalog_record: Any,
+    cfg: DictConfig,
+    chunk_id: int,
+    learning_potential: float,
+    normalized_usefulness: float,
+    metrics: dict[str, Any],
+) -> ScenarioRecord:
+    """Adapt one selected ScenarioNet record to the ACL buffer contract."""
+
+    split = str(catalog_record.split)
+    data_root = Path(str(cfg.paths.scenarionet_data_root)).expanduser()
+    runtime_directory = data_root / "runtime" / split
+    scenario_uid = str(catalog_record.scenario_uid)
+    scenario_arm = str(catalog_record.primary_arm)
+    usefulness = compute_scenario_usefulness(
+        metrics,
+        learning_potential=learning_potential,
+    )
+    return ScenarioRecord(
+        scenario_id=scenario_uid,
+        source=str(catalog_record.source),
+        parent_id=None,
+        scenario_description_path=str(data_root / str(catalog_record.relative_path)),
+        scenario_description_hash=hashlib.sha256(scenario_uid.encode("utf-8")).hexdigest(),
+        dataset_directory=str(runtime_directory),
+        scenario_index=int(catalog_record.runtime_index),
+        env_config={"provider": {"arm": scenario_arm}, "split": split},
+        reset_seed=int(catalog_record.runtime_index),
+        generator_arm=None,
+        mutation_type=None,
+        mutation_params=None,
+        validation_status="valid",
+        rule_criticality=float(usefulness.rule_criticality),
+        learning_potential=float(usefulness.learning_potential),
+        usefulness=float(usefulness.value),
+        usefulness_norm=float(normalized_usefulness),
+        rank=0,
+        num_seen=1,
+        last_seen_step=int(chunk_id),
+        num_children=0,
+        metrics_summary=_metrics_summary(metrics, generator_config_id=scenario_arm),
+        scenario_arm=scenario_arm,
+    )
+
+
 def _build_record_from_export(
     *,
     export_path: str,
@@ -276,7 +323,9 @@ def _update_replay_record(
     record.last_seen_step = int(chunk_id)
     record.metrics_summary = _metrics_summary(
         metrics,
-        generator_config_id=str(record.generator_arm or record.source),
+        generator_config_id=str(
+            record.scenario_arm or record.generator_arm or record.source
+        ),
     )
     return record
 
@@ -361,7 +410,11 @@ def _choose_iteration_spec(
         return IterationSpec(
             mode="exploit_replay",
             arm_index=-1,
-            arm_name=str(selection.record.generator_arm or selection.record.source),
+            arm_name=str(
+                selection.record.scenario_arm
+                or selection.record.generator_arm
+                or selection.record.source
+            ),
             arm_probabilities=[],
             scenario_seed=int(selection.record.reset_seed),
             train_env_overrides=None,
@@ -423,11 +476,6 @@ def run_scenario_acl_training(
         if str(cfg.env.get("name", "")).strip().lower() != "scenarionet":
             raise ValueError(
                 "scenario_acl.arm_space='scenario' requires env=scenarionet."
-            )
-        if bool(scenario_cfg.use_scenario_buffer) or bool(scenario_cfg.use_replay):
-            raise ValueError(
-                "ScenarioNet semantic ACL currently supports MAB selection over the "
-                "catalog only; disable scenario buffer and replay."
             )
         arms: list[GeneratorArm | ScenarioArm] = list(build_default_scenario_arms())
     else:
@@ -522,6 +570,7 @@ def run_scenario_acl_training(
         while remaining > 0:
             current_chunk_id += 1
             current_spec = next_spec
+            current_catalog_records: list[Any] = []
             if current_chunk_id > 1:
                 if not _is_replay_iteration(current_spec):
                     env = build_env(cfg, current_spec.train_env_overrides)
@@ -587,6 +636,19 @@ def run_scenario_acl_training(
                 # For replay we must not pass arbitrary seeds or we will go out of range.
                 return None
 
+            def collect_catalog_episode(
+                training_env: Any,
+                episode_index: int,
+                episode_metrics: dict[str, Any],
+            ) -> None:
+                del episode_index, episode_metrics
+                if scenario_cfg.arm_space != "scenario":
+                    return
+                base_env = getattr(training_env, "unwrapped", training_env)
+                record = getattr(base_env, "current_scenario_record", None)
+                if record is not None:
+                    current_catalog_records.append(record)
+
             chunk_summary = agent.train(
                 env=env,
                 chunk_timesteps=chunk_steps,
@@ -600,6 +662,7 @@ def run_scenario_acl_training(
                 deterministic=False,
                 log_interval=log_interval,
                 reset_seed_fn=train_reset_seed_for_episode,
+                episode_end_callback=collect_catalog_episode,
             )
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
             current_global_step = min(total_timesteps, current_global_step + actual_chunk_steps)
@@ -723,7 +786,36 @@ def run_scenario_acl_training(
                             current_spec.arm_probabilities[current_spec.arm_index]
                         ),
                     )
-                if bool(scenario_cfg.use_scenario_buffer):
+                if scenario_cfg.arm_space == "scenario":
+                    if not current_catalog_records:
+                        raise RuntimeError(
+                            "Semantic Scenario ACL did not expose completed catalog records."
+                        )
+                    if bool(scenario_cfg.use_scenario_buffer):
+                        for catalog_record in current_catalog_records:
+                            record = _build_record_from_catalog_entry(
+                                catalog_record=catalog_record,
+                                cfg=cfg,
+                                chunk_id=current_chunk_id,
+                                learning_potential=learning_potential,
+                                normalized_usefulness=normalized_usefulness,
+                                metrics=eval_metrics,
+                            )
+                            inserted = buffer.insert(record)
+                            buffer_action = "inserted" if inserted else "rejected"
+                            scenario_record_id = record.scenario_id
+                            _append_jsonl(
+                                artifact_paths["buffer_events"],
+                                {
+                                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                                    "chunk_id": current_chunk_id,
+                                    "action": buffer_action,
+                                    "scenario_id": record.scenario_id,
+                                    "scenario_hash": record.scenario_description_hash,
+                                    "usefulness": float(learning_potential),
+                                },
+                            )
+                elif bool(scenario_cfg.use_scenario_buffer):
                     export_path = _export_scenario_dataset(
                         cfg=cfg,
                         env_overrides=current_spec.train_env_overrides,

@@ -50,8 +50,14 @@ does not provide the VRU context required by A4.
 The ScenarioNet provider now accepts an optional `arm` filter, the staged
 ScenarioNet preset uses it for the six A0–A5 stages, and
 `curriculum=scenario_acl_scenarionet` uses the same filter under MAB control.
-Semantic ACL is catalog-based and does not enable procedural export or replay;
-the legacy generator ACL retains its existing buffer/replay path.
+Semantic ACL is catalog-based: it does not perform procedural export or
+mutation, but its replay buffer stores the exact selected catalog record and
+replays it through the ScenarioNet runtime. The legacy generator ACL retains
+its existing export/buffer/replay path.
+
+The default warm-up is 100 scenarios in the ACL buffer, matching the original
+ACL design; completed catalog records are collected episode by episode and
+mutation remains disabled by contract.
 
 Example invocation:
 

@@ -2,8 +2,8 @@ name: scenario_acl
 enabled: true
 kind: scenario_acl
 scenario_acl:
-  mode: mab_generate_only
-  arm_space: generator
+  mode: mab_plus_replay
+  arm_space: scenario
 
   buffer_capacity: 1000
   warmup_buffer_size: 100
@@ -13,14 +13,14 @@ scenario_acl:
 
   use_mab: true
   use_scenario_buffer: true
-  use_replay: false
+  use_replay: true
   use_staleness: true
   use_rule_criticality: true
 
   recent_window_size: 100
 
   mab:
-    num_arms: 7
+    num_arms: 6
     eta: 0.2
     alpha: 0.005
     initial_weight: 1.0

@@ -3,6 +3,10 @@ defaults:
 
 scenario_acl:
   mode: mab_plus_replay
+  arm_space: generator
+  warmup_buffer_size: 100
   use_mab: true
   use_scenario_buffer: true
   use_replay: true
+  mab:
+    num_arms: 7

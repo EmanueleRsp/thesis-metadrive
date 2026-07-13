@@ -3,6 +3,9 @@ defaults:
 
 scenario_acl:
   mode: mab_generate_only
+  arm_space: generator
   use_mab: true
   use_scenario_buffer: true
   use_replay: false
+  mab:
+    num_arms: 7

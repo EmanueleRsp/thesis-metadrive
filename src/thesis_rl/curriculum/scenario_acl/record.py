@@ -28,6 +28,7 @@ class ScenarioRecord:
     last_seen_step: int
     num_children: int
     metrics_summary: dict[str, Any]
+    scenario_arm: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

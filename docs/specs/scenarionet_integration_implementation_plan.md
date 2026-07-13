@@ -97,10 +97,12 @@ contiene VRU. Il provider rifiuta arm sconosciuti e non applica fallback: se una
 combinazione source × split × arm è vuota l'errore è esplicito.
 
 ACL ora supporta entrambi i percorsi. Il percorso storico mantiene i generator
-arms PG; il percorso `scenario_acl_scenarionet` usa direttamente il catalogo e
-aggiorna il MAB sui sei arms semantici, senza generare o rilabelizzare scenari.
-Il percorso semantico è volutamente strict e, per il catalogo congelato, usa
-PG-only per A0 e Waymo-only per A4, perché le altre combinazioni sono vuote.
+arms PG; il percorso `scenario_acl_scenarionet` usa direttamente il catalogo,
+aggiorna il MAB sui sei arms semantici e usa il replay buffer sui record esatti
+selezionati, senza generare o rilabelizzare scenari. La mutazione resta
+disabilitata. Il percorso semantico è volutamente strict e, per il catalogo
+congelato, usa PG-only per A0 e Waymo-only per A4, perché le altre combinazioni
+sono vuote.
 
 ---
 

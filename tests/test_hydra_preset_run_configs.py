@@ -72,7 +72,7 @@ def test_reward_variants_compose() -> None:
     assert float(cfg_scalar_reward.reward.lambda_rule) == 1.0
     assert cfg_scenario_acl.reward.name == "monitor_only"
     assert str(cfg_scenario_acl.curriculum.kind) == "scenario_acl"
-    assert str(cfg_scenario_acl.curriculum.scenario_acl.mode) == "mab_generate_only"
+    assert str(cfg_scenario_acl.curriculum.scenario_acl.mode) == "mab_plus_replay"
     assert str(cfg_scenario_acl_replay.curriculum.scenario_acl.mode) == "mab_plus_replay"
     assert bool(cfg_scenario_acl_replay.curriculum.scenario_acl.use_replay) is True
 
@@ -98,7 +98,8 @@ def test_scenarionet_acl_composes_with_six_semantic_arms() -> None:
 
     assert str(cfg.curriculum.scenario_acl.arm_space) == "scenario"
     assert int(cfg.curriculum.scenario_acl.mab.num_arms) == 6
-    assert bool(cfg.curriculum.scenario_acl.use_scenario_buffer) is False
+    assert bool(cfg.curriculum.scenario_acl.use_scenario_buffer) is True
+    assert bool(cfg.curriculum.scenario_acl.use_replay) is True
     assert str(cfg.agent.planner.algorithm.name) == "sac_sb3"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
     assert str(cfg.agent.planner.encoder.name) == "lq"

@@ -71,6 +71,7 @@ class Agent:
         log_interval: int = 1000,
         reset_seed: int | None = None,
         reset_seed_fn: Callable[[int], int | None] | None = None,
+        episode_end_callback: Callable[[Any, int, dict[str, Any]], None] | None = None,
     ) -> dict[str, float | int]:
         '''Train the agent in the given environment for a specified number of timesteps.
         Args:
@@ -83,6 +84,8 @@ class Agent:
             reset_seed: Optional seed for environment reset at the start of training.
             reset_seed_fn: Optional callable returning the environment seed for each
                 episode reset, where index 0 is the first reset of this chunk.
+            episode_end_callback: Optional callback invoked after each completed
+                episode as ``callback(env, episode_index, metrics)``.
         Returns:
             Dictionary with chunk-level summary metrics (episodes, moving averages, update stats, fps).
         '''
@@ -319,6 +322,20 @@ class Agent:
                         chunk_episode_collision.append(1.0 if episode_collision else 0.0)
                         chunk_episode_out_of_road.append(1.0 if episode_out_of_road else 0.0)
                         chunk_episode_route_completion.append(float(episode_route_completion))
+
+                        if episode_end_callback is not None:
+                            episode_end_callback(
+                                env,
+                                episodes,
+                                {
+                                    "length": episode_len,
+                                    "reward": episode_scalar_reward,
+                                    "success": episode_success,
+                                    "collision": episode_collision,
+                                    "out_of_road": episode_out_of_road,
+                                    "route_completion": episode_route_completion,
+                                },
+                            )
 
                         # Reset episode tracking variables
                         episode_len = 0
