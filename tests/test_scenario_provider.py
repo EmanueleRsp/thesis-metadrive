@@ -25,7 +25,7 @@ def _record(index: int, source: str, *, split: str = "train") -> ScenarioRecord:
         pg_profile=None if source == "waymo" else "P0_simple",
         pg_seed=None if source == "waymo" else index,
         map_id="S",
-        primary_arm="A0_simple_lane_follow",
+        primary_arm="A0_simple_low_traffic",
         tags=(),
         signal_reliability="not_applicable",
         validation_status="valid",

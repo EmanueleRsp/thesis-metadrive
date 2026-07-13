@@ -36,7 +36,9 @@ class ScenarioCatalogEntry:
     @classmethod
     def from_flat_dict(cls, payload: dict[str, Any]) -> "ScenarioCatalogEntry":
         record_payload = {key: payload.get(key) for key in _RECORD_FIELDS}
-        feature_payload = {key: payload.get(key) for key in _FEATURE_FIELDS}
+        # Keep dataclass defaults when reading catalogs written before optional
+        # feature columns were introduced.
+        feature_payload = {key: payload[key] for key in _FEATURE_FIELDS if key in payload}
         return cls(
             record=ScenarioRecord.from_dict(record_payload),
             features=ScenarioFeatures.from_dict(feature_payload),

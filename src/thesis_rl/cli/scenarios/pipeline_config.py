@@ -15,6 +15,11 @@ import yaml  # type: ignore[import-untyped]
 
 
 _CONFIG_PATHS: dict[str, tuple[str, ...]] = {
+    "SCENARIONET_WAYMO_AUTO_EXPAND": ("waymo", "auto_expand"),
+    "SCENARIONET_WAYMO_BATCH_SHARDS": ("waymo", "batch_shards"),
+    "SCENARIONET_WAYMO_MAX_NEW_SHARDS": ("waymo", "max_new_shards"),
+    "SCENARIONET_WAYMO_WORKERS": ("waymo", "workers"),
+    "SCENARIONET_WAYMO_KEEP_RAW_BATCHES": ("waymo", "keep_raw_batches"),
     "SCENARIONET_PG_COUNT": ("pg", "count_per_profile"),
     "SCENARIONET_PG_SEED_START": ("pg", "seed_start"),
     "SCENARIONET_PG_WORKERS": ("pg", "workers"),

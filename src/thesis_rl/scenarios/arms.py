@@ -8,33 +8,75 @@ from thesis_rl.scenarios.thresholds import ArmThresholds, apply_traffic_threshol
 
 
 ARMS = (
-    "A0_simple_lane_follow",
-    "A1_vehicle_interaction",
-    "A2_merge_or_roundabout",
-    "A3_intersection",
-    "A4_vru_interaction",
-    "A5_complex_mixed",
+    "A0_simple_low_traffic",
+    "A1_traffic",
+    "A2_junction",
+    "A3_complex_junction",
+    "A4_vru",
+    "A5_critical_mixed",
 )
+
+A0_MAX_RELEVANT_VEHICLES_Q90 = 8.0
+A1_JUNCTION_MAX_RELEVANT_AGENTS_Q90 = 8.0
+A1_JUNCTION_MAX_VEHICLE_CONFLICT_COUNT = 1
+ARM_COMPLEX_RELEVANT_AGENTS_Q90 = 25.0
+ARM_COMPLEX_VEHICLE_CONFLICT_COUNT = 4
+ARM_MIXED_TOPOLOGY_CONFLICT_COUNT = 3
+ARM_CRITICAL_RELEVANT_AGENTS_Q90 = 30.0
+ARM_CRITICAL_VEHICLE_CONFLICT_COUNT = 6
 
 
 def assign_primary_arm(features: ScenarioFeatures) -> str:
-    merge_roundabout = features.has_merge_or_roundabout is True
-    intersection = features.has_intersection is True
-    vru_context = features.vru_interaction
-    vehicle_interaction = features.relevant_vehicles_q90 > 0
-    semantic_count = sum((merge_roundabout, intersection, vru_context))
+    topology = (
+        features.has_merge_or_roundabout is True
+        or features.has_intersection is True
+    )
+    mixed_topology = (
+        features.has_merge_or_roundabout is True
+        and features.has_intersection is True
+    )
+    vru_context = features.vru_interaction or features.vru_conflict_count > 0
+    complex_traffic = (
+        features.relevant_agents_q90 >= ARM_COMPLEX_RELEVANT_AGENTS_Q90
+        or features.vehicle_conflict_count >= ARM_COMPLEX_VEHICLE_CONFLICT_COUNT
+    )
+    vehicle_conflicts = features.vehicle_conflict_count
+    critical = topology and (
+        features.vru_conflict_count > 0
+        or (
+            mixed_topology
+            and vehicle_conflicts >= ARM_MIXED_TOPOLOGY_CONFLICT_COUNT
+        )
+        or (
+            features.relevant_agents_q90 >= ARM_CRITICAL_RELEVANT_AGENTS_Q90
+            and vehicle_conflicts >= ARM_CRITICAL_VEHICLE_CONFLICT_COUNT
+        )
+    )
 
-    if semantic_count >= 2:
-        return "A5_complex_mixed"
+    if critical:
+        return "A5_critical_mixed"
     if vru_context:
-        return "A4_vru_interaction"
-    if intersection:
-        return "A3_intersection"
-    if merge_roundabout:
-        return "A2_merge_or_roundabout"
-    if vehicle_interaction:
-        return "A1_vehicle_interaction"
-    return "A0_simple_lane_follow"
+        return "A4_vru"
+    if topology and complex_traffic:
+        return "A3_complex_junction"
+    if topology:
+        if (
+            features.relevant_agents_q90
+            <= A1_JUNCTION_MAX_RELEVANT_AGENTS_Q90
+            and vehicle_conflicts <= A1_JUNCTION_MAX_VEHICLE_CONFLICT_COUNT
+        ):
+            return "A1_traffic"
+        return "A2_junction"
+    known_simple = (
+        features.has_merge_or_roundabout is False
+        and features.has_intersection is False
+    )
+    if (
+        known_simple
+        and features.relevant_vehicles_q90 <= A0_MAX_RELEVANT_VEHICLES_Q90
+    ):
+        return "A0_simple_low_traffic"
+    return "A1_traffic"
 
 
 def derive_scenario_tags(
@@ -61,6 +103,10 @@ def derive_scenario_tags(
         tags.append("has_crosswalk")
     if features.vru_interaction:
         tags.append("has_vru")
+    if features.vehicle_conflict_count > 0:
+        tags.append("has_vehicle_conflict")
+    if features.vru_conflict_count > 0:
+        tags.append("has_vru_conflict")
     if features.has_unknown_signal:
         tags.append("has_unknown_signal")
     if has_static_obstacle:

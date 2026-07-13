@@ -51,7 +51,7 @@ pipeline_config="${SCENARIONET_PIPELINE_CONFIG:-/workspace/thesis-metadrive/conf
 pipeline_service="${SCENARIONET_PIPELINE_SERVICE:-dataset-pipeline}"
 echo "Resolving pipeline configuration (single YAML source): $pipeline_config"
 stage "[0/7] Preparing the CPU-only dataset pipeline container"
-docker compose --progress plain build "$pipeline_service"
+docker compose --progress quiet build "$pipeline_service"
 while IFS=$'\t' read -r key value; do
   [[ -n "$key" ]] || continue
   printf -v "$key" '%s' "$value"
@@ -83,6 +83,11 @@ pg_validation_target="${SCENARIONET_PG_VALIDATION_TARGET:?pipeline YAML must def
 pg_test_target="${SCENARIONET_PG_TEST_TARGET:?pipeline YAML must define pg test target}"
 check_workers="${SCENARIONET_CHECK_WORKERS:?pipeline YAML must define checks.workers}"
 run_simulation_check="${SCENARIONET_RUN_SIMULATION_CHECK:?pipeline YAML must define checks.simulation}"
+waymo_auto_expand="${SCENARIONET_WAYMO_AUTO_EXPAND:?pipeline YAML must define waymo.auto_expand}"
+waymo_batch_shards="${SCENARIONET_WAYMO_BATCH_SHARDS:?pipeline YAML must define waymo.batch_shards}"
+waymo_max_new_shards="${SCENARIONET_WAYMO_MAX_NEW_SHARDS:?pipeline YAML must define waymo.max_new_shards}"
+waymo_workers="${SCENARIONET_WAYMO_WORKERS:?pipeline YAML must define waymo.workers}"
+waymo_keep_raw_batches="${SCENARIONET_WAYMO_KEEP_RAW_BATCHES:?pipeline YAML must define waymo.keep_raw_batches}"
 
 echo "Resolved pipeline parameters:"
 echo "  PG: ${pg_count} scenarios/profile, seed=${pg_seed_start}"
@@ -93,25 +98,39 @@ echo "  Split mode: auto=${auto_split}, seed=${split_seed}"
 echo "  Official simulation check: ${run_simulation_check} (workers=${check_workers})"
 
 if ! is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
-  stage "[1/7] Downloading/converting Waymo training_20s"
-  make waymo-pipeline
+  if is_true "$waymo_auto_expand"; then
+    stage "[1/7] Expanding the eligible Waymo pool to its configured target"
+    WAYMO_REQUIRED_ELIGIBLE="$((waymo_train_target + waymo_validation_target + waymo_test_target))" \
+      WAYMO_BATCH_SHARDS="$waymo_batch_shards" \
+      WAYMO_MAX_NEW_SHARDS="$waymo_max_new_shards" \
+      WAYMO_NUM_WORKERS="$waymo_workers" \
+      WAYMO_KEEP_RAW_BATCHES="$waymo_keep_raw_batches" \
+      make waymo-expand
+  else
+    stage "[1/7] Downloading/converting Waymo training_20s"
+    make waymo-pipeline
+  fi
 else
   stage "[1/7] Waymo skipped: SCENARIONET_SKIP_WAYMO=true"
 fi
 
-stage "[2/7] Generating PG (${pg_count} scenarios per profile)"
-pg_overwrite=()
-if is_true "$overwrite"; then
-  pg_overwrite+=(--overwrite)
+if ! is_true "${SCENARIONET_SKIP_PG:-false}"; then
+  stage "[2/7] Generating PG (${pg_count} scenarios per profile)"
+  pg_overwrite=()
+  if is_true "$overwrite"; then
+    pg_overwrite+=(--overwrite)
+  fi
+  docker compose run --rm "$pipeline_service" uv run --no-sync python \
+    -m thesis_rl.cli.scenarios.generate_pg_dataset \
+    --data-root "$data_root" \
+    --repo-root /workspace/thesis-metadrive \
+    --count "$pg_count" \
+    --seed-start "$pg_seed_start" \
+    --workers "$pg_workers" \
+    "${pg_overwrite[@]}"
+else
+  stage "[2/7] PG generation skipped: SCENARIONET_SKIP_PG=true"
 fi
-docker compose run --rm "$pipeline_service" uv run --no-sync python \
-  -m thesis_rl.cli.scenarios.generate_pg_dataset \
-  --data-root "$data_root" \
-  --repo-root /workspace/thesis-metadrive \
-  --count "$pg_count" \
-  --seed-start "$pg_seed_start" \
-  --workers "$pg_workers" \
-  "${pg_overwrite[@]}"
 
 catalog_overwrite=()
 if is_true "$overwrite"; then
@@ -135,6 +154,7 @@ split_args=(
   --groups "$groups_path"
   --split-manifest "$split_manifest"
   --split-seed "$split_seed"
+  --arm-minimums-config "$pipeline_config"
 )
 if is_true "$auto_split"; then
   split_args+=(

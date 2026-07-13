@@ -39,27 +39,58 @@ def _features(**overrides: object) -> ScenarioFeatures:
 @pytest.mark.parametrize(
     ("features", "expected"),
     [
-        (_features(), "A0_simple_lane_follow"),
-        (_features(has_vehicle=True, relevant_vehicles_q90=1.0), "A1_vehicle_interaction"),
+        (_features(), "A0_simple_low_traffic"),
+        (_features(has_vehicle=True, relevant_vehicles_q90=9.0), "A1_traffic"),
         (
             _features(
-                topology_tag="merge_or_roundabout", has_merge_or_roundabout=True
+                topology_tag="intersection",
+                has_intersection=True,
+                relevant_agents_q90=8.0,
+                vehicle_conflict_count=1,
             ),
-            "A2_merge_or_roundabout",
+            "A1_traffic",
         ),
-        (_features(topology_tag="intersection", has_intersection=True), "A3_intersection"),
-        (_features(vru_interaction=True), "A4_vru_interaction"),
+        (
+            _features(
+                topology_tag="merge_or_roundabout",
+                has_merge_or_roundabout=True,
+                relevant_agents_q90=9.0,
+            ),
+            "A2_junction",
+        ),
+        (
+            _features(
+                topology_tag="intersection",
+                has_intersection=True,
+                relevant_agents_q90=25.0,
+            ),
+            "A3_complex_junction",
+        ),
+        (_features(vru_interaction=True), "A4_vru"),
+        (
+            _features(
+                has_intersection=True,
+                vru_interaction=True,
+                vru_conflict_count=1,
+            ),
+            "A5_critical_mixed",
+        ),
         (
             _features(
                 topology_tag="mixed",
                 has_intersection=True,
                 has_merge_or_roundabout=True,
+                vehicle_conflict_count=3,
             ),
-            "A5_complex_mixed",
+            "A5_critical_mixed",
         ),
         (
-            _features(has_intersection=True, vru_interaction=True),
-            "A5_complex_mixed",
+            _features(
+                has_intersection=True,
+                relevant_agents_q90=30.0,
+                vehicle_conflict_count=6,
+            ),
+            "A5_critical_mixed",
         ),
     ],
 )
@@ -67,13 +98,14 @@ def test_assign_primary_arm(features: ScenarioFeatures, expected: str) -> None:
     assert assign_primary_arm(features) == expected
 
 
-def test_dense_vehicle_traffic_does_not_create_a5() -> None:
+def test_complex_junction_below_critical_threshold_is_a3() -> None:
     features = _features(
         has_intersection=True,
         relevant_vehicles_q90=5.0,
-        dense_traffic=True,
+        relevant_agents_q90=25.0,
+        vehicle_conflict_count=3,
     )
-    assert assign_primary_arm(features) == "A3_intersection"
+    assert assign_primary_arm(features) == "A3_complex_junction"
 
 
 def test_tags_keep_signal_uncertainty_independent() -> None:

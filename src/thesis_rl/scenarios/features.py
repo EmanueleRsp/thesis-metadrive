@@ -5,7 +5,9 @@ from typing import Any
 
 import numpy as np
 
+from thesis_rl.scenarios.conflicts import TrackConflict, closest_approach_conflict
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioSource
+from thesis_rl.scenarios.waymo_topology import infer_waymo_topology
 
 
 _DYNAMIC_TYPES = {"VEHICLE", "PEDESTRIAN", "CYCLIST"}
@@ -46,6 +48,30 @@ def _route_length(route: np.ndarray) -> float:
     if len(route) < 2:
         return 0.0
     return float(np.linalg.norm(np.diff(route[:, :2], axis=0), axis=1).sum())
+
+
+def _timestamps(metadata: Mapping[str, Any], length: int) -> np.ndarray:
+    values = np.asarray(metadata.get("ts", np.arange(length) * 0.1), dtype=np.float64)
+    if values.shape != (length,) or not np.isfinite(values).all():
+        raise ValueError("scenario metadata.ts must be a finite length-sized array")
+    if np.any(np.diff(values) <= 0):
+        raise ValueError("scenario timestamps must be strictly increasing")
+    return values
+
+
+def _minimum_conflict(
+    conflicts: list[TrackConflict],
+) -> tuple[int, float | None, float | None]:
+    active = [conflict for conflict in conflicts if conflict.is_conflict]
+    if not active:
+        return 0, None, None
+    selected = min(
+        active,
+        key=lambda conflict: float("inf")
+        if conflict.min_dcpa_m is None
+        else conflict.min_dcpa_m,
+    )
+    return len(active), selected.min_dcpa_m, selected.min_tcpa_s
 
 
 def _minimum_distance(points: np.ndarray, route: np.ndarray) -> float | None:
@@ -150,6 +176,12 @@ def extract_scenario_features(
     vertical_tolerance_m: float = 3.0,
     temporal_quantile: float = 0.90,
     vru_max_distance_to_route_m: float = 8.0,
+    waymo_lane_route_distance_m: float = 6.0,
+    waymo_control_route_distance_m: float = 15.0,
+    waymo_merge_min_entry_lanes: int = 2,
+    conflict_horizon_s: float = 5.0,
+    vehicle_conflict_distance_m: float = 4.0,
+    vru_conflict_distance_m: float = 3.0,
 ) -> ScenarioFeatures:
     if source not in {"waymo", "pg"}:
         raise ValueError(f"unsupported scenario source: {source!r}")
@@ -174,14 +206,18 @@ def extract_scenario_features(
         raise ValueError("SDC track must be a mapping")
     ego_positions = _positions(ego_track, length)
     ego_valid = _valid_mask(ego_track, length)
+    timestamps = _timestamps(metadata, length)
     ego_route = ego_positions[ego_valid]
     if len(ego_route) < 2 or not np.isfinite(ego_route).all():
         raise ValueError("SDC route is missing, non-finite, or degenerate")
 
     relevant_agents = np.zeros(length, dtype=np.int64)
     relevant_vehicles = np.zeros(length, dtype=np.int64)
+    relevant_vrus = np.zeros(length, dtype=np.int64)
     vehicle_distances: list[np.ndarray] = []
     vru_points: list[np.ndarray] = []
+    vehicle_conflicts: list[TrackConflict] = []
+    vru_conflicts: list[TrackConflict] = []
     present_types: set[str] = set()
 
     for track_id, track_value in tracks.items():
@@ -192,7 +228,8 @@ def extract_scenario_features(
             continue
         present_types.add(object_type)
         positions = _positions(track_value, length)
-        valid = _valid_mask(track_value, length) & ego_valid
+        track_valid = _valid_mask(track_value, length)
+        valid = track_valid & ego_valid
         finite = np.isfinite(positions).all(axis=1) & np.isfinite(ego_positions).all(axis=1)
         valid &= finite
         planar_distance = np.linalg.norm(positions[:, :2] - ego_positions[:, :2], axis=1)
@@ -206,8 +243,33 @@ def extract_scenario_features(
         if object_type == "VEHICLE":
             relevant_vehicles += relevant.astype(np.int64)
             vehicle_distances.append(planar_distance[valid])
+            vehicle_conflicts.append(
+                closest_approach_conflict(
+                    ego_positions,
+                    positions,
+                    valid,
+                    timestamps,
+                    horizon_s=conflict_horizon_s,
+                    distance_threshold_m=vehicle_conflict_distance_m,
+                    relevance_radius_m=relevant_radius_m,
+                    vertical_tolerance_m=vertical_tolerance_m,
+                )
+            )
         elif object_type in {"PEDESTRIAN", "CYCLIST"}:
-            vru_points.append(positions[_valid_mask(track_value, length) & finite])
+            relevant_vrus += relevant.astype(np.int64)
+            vru_points.append(positions[track_valid & finite])
+            vru_conflicts.append(
+                closest_approach_conflict(
+                    ego_positions,
+                    positions,
+                    valid,
+                    timestamps,
+                    horizon_s=conflict_horizon_s,
+                    distance_threshold_m=vru_conflict_distance_m,
+                    relevance_radius_m=relevant_radius_m,
+                    vertical_tolerance_m=vertical_tolerance_m,
+                )
+            )
 
     min_vehicle_distance = None
     if vehicle_distances and any(len(values) for values in vehicle_distances):
@@ -219,11 +281,47 @@ def extract_scenario_features(
     vru_interaction = bool(
         min_vru_distance is not None and min_vru_distance <= vru_max_distance_to_route_m
     )
-
-    has_intersection, has_merge, topology_tag = _topology(realized_generation_metadata)
-    route_light, route_stop, route_crosswalk, signal_reliability = _route_controls(
-        scenario, realized_generation_metadata
+    vehicle_conflict_count, vehicle_dcpa, vehicle_tcpa = _minimum_conflict(
+        vehicle_conflicts
     )
+    vru_conflict_count, vru_dcpa, vru_tcpa = _minimum_conflict(vru_conflicts)
+
+    topology_confidence = "unknown"
+    topology_evidence: tuple[str, ...] = ()
+    if source == "waymo" and realized_generation_metadata is None:
+        inferred = infer_waymo_topology(
+            scenario,
+            ego_route,
+            lane_route_distance_m=waymo_lane_route_distance_m,
+            control_route_distance_m=waymo_control_route_distance_m,
+            vertical_tolerance_m=vertical_tolerance_m,
+            merge_min_entry_lanes=waymo_merge_min_entry_lanes,
+        )
+        has_intersection = inferred.has_intersection
+        has_merge = inferred.has_merge_or_roundabout
+        route_light = inferred.has_route_traffic_light
+        route_stop = inferred.has_route_stop_sign
+        route_crosswalk = inferred.has_route_crosswalk
+        signal_reliability = inferred.signal_reliability
+        topology_confidence = inferred.confidence
+        topology_evidence = inferred.evidence
+        if has_intersection is True and has_merge is True:
+            topology_tag = "mixed"
+        elif has_intersection is True:
+            topology_tag = "intersection"
+        elif has_merge is True:
+            topology_tag = "merge_or_roundabout"
+        elif has_intersection is False and has_merge is False:
+            topology_tag = "simple"
+        else:
+            topology_tag = "unknown"
+    else:
+        has_intersection, has_merge, topology_tag = _topology(
+            realized_generation_metadata
+        )
+        route_light, route_stop, route_crosswalk, signal_reliability = _route_controls(
+            scenario, realized_generation_metadata
+        )
     scenario_id = str(scenario.get("id") or metadata.get("scenario_id") or "")
     if not scenario_id:
         raise ValueError("scenario has no id")
@@ -250,4 +348,13 @@ def extract_scenario_features(
         low_traffic=False,
         dense_traffic=False,
         vru_interaction=vru_interaction,
+        topology_confidence=topology_confidence,  # type: ignore[arg-type]
+        topology_evidence=topology_evidence,
+        relevant_vrus_q90=float(np.quantile(relevant_vrus, temporal_quantile)),
+        vehicle_conflict_count=vehicle_conflict_count,
+        vru_conflict_count=vru_conflict_count,
+        min_vehicle_conflict_dcpa_m=vehicle_dcpa,
+        min_vehicle_conflict_tcpa_s=vehicle_tcpa,
+        min_vru_conflict_dcpa_m=vru_dcpa,
+        min_vru_conflict_tcpa_s=vru_tcpa,
     )

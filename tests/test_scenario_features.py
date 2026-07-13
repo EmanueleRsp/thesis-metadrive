@@ -59,15 +59,39 @@ def _scenario(*, dynamic_lights: bool = False) -> dict:
     }
 
 
+def _waymo_topology_scenario() -> dict:
+    scenario = _scenario()
+    scenario["map_features"] = {
+        "10": {
+            "type": "LANE_SURFACE_STREET",
+            "polyline": np.column_stack(
+                (np.arange(10), np.zeros(10), np.zeros(10))
+            ),
+            "entry_lanes": ["8", "9"],
+            "exit_lanes": ["11"],
+        },
+        "crosswalk": {
+            "type": "CROSSWALK",
+            "polygon": np.asarray(
+                [[4.0, -3.0, 0.0], [4.0, 3.0, 0.0], [5.0, 3.0, 0.0]]
+            ),
+        },
+    }
+    return scenario
+
+
 def test_feature_extraction_counts_relevant_agents_and_vru() -> None:
     features = extract_scenario_features(_scenario(), "pg")
 
     assert features.route_length_m == 9.0
     assert features.relevant_agents_q90 == 2.0
     assert features.relevant_vehicles_q90 == 1.0
+    assert features.relevant_vrus_q90 == 1.0
     assert features.min_vehicle_distance_m == 10.0
     assert features.min_vru_distance_to_route_m == 6.0
     assert features.vru_interaction is True
+    assert features.vehicle_conflict_count == 0
+    assert features.vru_conflict_count == 0
     assert features.topology_tag == "unknown"
 
 
@@ -110,7 +134,44 @@ def test_complete_realized_route_controls() -> None:
     assert features.has_route_crosswalk is True
 
 
-def test_bundled_waymo_feature_extraction_uses_unknown_topology() -> None:
+def test_waymo_feature_extraction_uses_route_aware_topology() -> None:
+    features = extract_scenario_features(_waymo_topology_scenario(), "waymo")
+
+    assert features.has_intersection is True
+    assert features.has_merge_or_roundabout is False
+    assert features.topology_tag == "intersection"
+    assert features.topology_confidence == "high"
+    assert "route_crosswalk" in features.topology_evidence
+    assert "convergence_at_controlled_junction" in features.topology_evidence
+
+
+def test_route_light_with_only_unknown_states_is_missing() -> None:
+    scenario = _waymo_topology_scenario()
+    scenario["dynamic_map_states"] = {
+        "light": {
+            "type": "TRAFFIC_LIGHT",
+            "lane": "10",
+            "stop_point": np.asarray([4.0, 0.0, 0.0]),
+            "state": {"object_state": ["LANE_STATE_UNKNOWN"] * scenario["length"]},
+        }
+    }
+
+    features = extract_scenario_features(scenario, "waymo")
+
+    assert features.has_route_traffic_light is True
+    assert features.signal_reliability == "missing"
+
+
+def test_waymo_topology_stays_unknown_without_route_lane_evidence() -> None:
+    scenario = _scenario()
+    scenario["map_features"] = {}
+    features = extract_scenario_features(scenario, "waymo")
+
+    assert features.topology_tag == "unknown"
+    assert features.topology_confidence == "unknown"
+
+
+def test_bundled_waymo_feature_extraction_is_route_aware() -> None:
     fixture_dir = Path("third_party/metadrive/metadrive/assets/waymo")
     scenario_path = sorted(fixture_dir.glob("sd_*.pkl"))[0]
     with scenario_path.open("rb") as handle:
@@ -120,5 +181,7 @@ def test_bundled_waymo_feature_extraction_uses_unknown_topology() -> None:
 
     assert features.length == scenario["length"]
     assert features.route_length_m > 0
-    assert features.topology_tag == "unknown"
+    assert features.topology_tag in {
+        "simple", "merge_or_roundabout", "intersection", "mixed", "unknown"
+    }
     assert np.isfinite(features.relevant_agents_q90)

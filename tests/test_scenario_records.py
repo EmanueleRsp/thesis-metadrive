@@ -22,7 +22,7 @@ def _record(**overrides: object) -> ScenarioRecord:
         "pg_profile": "P0_simple",
         "pg_seed": 12,
         "map_id": "S",
-        "primary_arm": "A0_simple_lane_follow",
+        "primary_arm": "A0_simple_low_traffic",
         "tags": ("has_crosswalk",),
         "signal_reliability": "not_applicable",
         "validation_status": "valid",

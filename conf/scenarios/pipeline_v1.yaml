@@ -1,6 +1,13 @@
-pipeline_version: scenarionet_pipeline_v1
+pipeline_version: scenarionet_pipeline_v2
 
 # Scientific/data policy defaults. Host paths and credentials stay in .env.
+waymo:
+  auto_expand: true
+  batch_shards: 8
+  max_new_shards: 128
+  workers: 8
+  keep_raw_batches: false
+
 pg:
   count_per_profile: 350
   seed_start: 920000
@@ -9,6 +16,53 @@ pg:
 split:
   seed: 0
   auto: true
+  allowed_signal_reliabilities:
+    waymo: [complete, not_applicable]
+    pg: [complete, not_applicable]
+  # Curriculum-v2 minimum coverage. Groups remain indivisible and deficits are
+  # reported. Waymo A0 is intentionally non-zero to track additional mining.
+  arm_minimums:
+    waymo:
+      train:
+        A0_simple_low_traffic: 10
+        A1_traffic: 10
+        A2_junction: 50
+        A3_complex_junction: 160
+        A4_vru: 80
+        A5_critical_mixed: 100
+      validation:
+        A0_simple_low_traffic: 3
+        A1_traffic: 3
+        A2_junction: 15
+        A3_complex_junction: 40
+        A4_vru: 20
+        A5_critical_mixed: 25
+      test:
+        A0_simple_low_traffic: 5
+        A1_traffic: 5
+        A2_junction: 25
+        A3_complex_junction: 80
+        A4_vru: 40
+        A5_critical_mixed: 50
+    pg:
+      train:
+        A0_simple_low_traffic: 300
+        A1_traffic: 250
+        A2_junction: 100
+        A3_complex_junction: 20
+        A5_critical_mixed: 30
+      validation:
+        A0_simple_low_traffic: 75
+        A1_traffic: 60
+        A2_junction: 25
+        A3_complex_junction: 5
+        A5_critical_mixed: 8
+      test:
+        A0_simple_low_traffic: 150
+        A1_traffic: 125
+        A2_junction: 50
+        A3_complex_junction: 10
+        A5_critical_mixed: 15
   targets:
     waymo:
       train: 1000

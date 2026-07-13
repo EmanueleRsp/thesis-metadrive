@@ -31,7 +31,7 @@ def _entry(uid: str, *, runtime_index: int, source: str = "pg") -> ScenarioCatal
         pg_profile=None if source == "waymo" else "P0_simple",
         pg_seed=None if source == "waymo" else runtime_index,
         map_id="S",
-        primary_arm="A0_simple_lane_follow",
+        primary_arm="A0_simple_low_traffic",
         tags=("has_crosswalk",),
         signal_reliability="not_applicable",
         validation_status="valid",

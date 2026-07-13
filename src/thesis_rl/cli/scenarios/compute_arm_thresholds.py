@@ -20,7 +20,7 @@ def main() -> int:
     parser.add_argument("--catalog", required=True)
     parser.add_argument("--output-catalog", required=True)
     parser.add_argument("--thresholds", required=True)
-    parser.add_argument("--feature-version", default="v1")
+    parser.add_argument("--feature-version", default="v2")
     parser.add_argument(
         "--balance-seed",
         type=int,

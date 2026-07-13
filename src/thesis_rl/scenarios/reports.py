@@ -46,6 +46,27 @@ def compute_feature_statistics(entries: Sequence[ScenarioCatalogEntry]) -> dict[
         "relevant_agents_q90": numeric_summary(
             [entry.features.relevant_agents_q90 for entry in entries]
         ),
+        "relevant_vehicles_q90": numeric_summary(
+            [entry.features.relevant_vehicles_q90 for entry in entries]
+        ),
+        "relevant_vrus_q90": numeric_summary(
+            [entry.features.relevant_vrus_q90 for entry in entries]
+        ),
+        "vehicle_conflict_count": numeric_summary(
+            [float(entry.features.vehicle_conflict_count) for entry in entries]
+        ),
+        "vru_conflict_count": numeric_summary(
+            [float(entry.features.vru_conflict_count) for entry in entries]
+        ),
+        "scenarios_with_vehicle_conflict": sum(
+            entry.features.vehicle_conflict_count > 0 for entry in entries
+        ),
+        "scenarios_with_vru_conflict": sum(
+            entry.features.vru_conflict_count > 0 for entry in entries
+        ),
+        "scenarios_with_vru_interaction": sum(
+            entry.features.vru_interaction for entry in entries
+        ),
     }
 
 

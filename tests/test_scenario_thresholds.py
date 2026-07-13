@@ -31,7 +31,7 @@ def _entry(index: int, source: str, value: float, *, split: str = "train") -> Sc
         pg_profile=None if source == "waymo" else "P0_simple",
         pg_seed=None if source == "waymo" else index,
         map_id=None,
-        primary_arm="A0_simple_lane_follow",
+        primary_arm="A0_simple_low_traffic",
         tags=(),
         signal_reliability="not_applicable",
         validation_status="valid",
@@ -72,6 +72,7 @@ def test_thresholds_are_computed_on_balanced_train_sources() -> None:
     ]
     thresholds = compute_arm_thresholds(entries)
 
+    assert thresholds.feature_version == "v2"
     assert thresholds.tau_low == 2
     assert thresholds.tau_dense == 5
     applied = apply_traffic_thresholds(entries[0], thresholds)
@@ -104,7 +105,7 @@ def test_threshold_file_round_trip_and_catalog_classification(tmp_path) -> None:
     classified = classify_catalog_entry(entries[3], restored)
 
     assert restored == thresholds
-    assert classified.record.primary_arm == "A1_vehicle_interaction"
+    assert classified.record.primary_arm == "A1_traffic"
     assert "has_dense_traffic" in classified.record.tags
 
     distribution = compute_arm_distribution(

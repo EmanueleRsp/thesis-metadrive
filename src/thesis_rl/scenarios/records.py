@@ -9,6 +9,7 @@ ScenarioSource = Literal["waymo", "pg"]
 ScenarioSplit = Literal["train", "validation", "test"]
 TopologyTag = Literal["simple", "merge_or_roundabout", "intersection", "mixed", "unknown"]
 SignalReliability = Literal["not_applicable", "complete", "partial", "missing"]
+TopologyConfidence = Literal["unknown", "medium", "high"]
 ValidationStatus = Literal["valid", "warning", "invalid"]
 
 SOURCES = frozenset({"waymo", "pg"})
@@ -17,6 +18,7 @@ TOPOLOGY_TAGS = frozenset(
     {"simple", "merge_or_roundabout", "intersection", "mixed", "unknown"}
 )
 SIGNAL_RELIABILITIES = frozenset({"not_applicable", "complete", "partial", "missing"})
+TOPOLOGY_CONFIDENCES = frozenset({"unknown", "medium", "high"})
 VALIDATION_STATUSES = frozenset({"valid", "warning", "invalid"})
 
 
@@ -124,6 +126,15 @@ class ScenarioFeatures:
     low_traffic: bool
     dense_traffic: bool
     vru_interaction: bool
+    topology_confidence: TopologyConfidence = "unknown"
+    topology_evidence: tuple[str, ...] = ()
+    relevant_vrus_q90: float = 0.0
+    vehicle_conflict_count: int = 0
+    vru_conflict_count: int = 0
+    min_vehicle_conflict_dcpa_m: float | None = None
+    min_vehicle_conflict_tcpa_s: float | None = None
+    min_vru_conflict_dcpa_m: float | None = None
+    min_vru_conflict_tcpa_s: float | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty("scenario_id", self.scenario_id)
@@ -137,9 +148,28 @@ class ScenarioFeatures:
             raise ValueError(f"unsupported topology tag: {self.topology_tag!r}")
         if self.signal_reliability not in SIGNAL_RELIABILITIES:
             raise ValueError(f"unsupported signal reliability: {self.signal_reliability!r}")
-        if self.relevant_agents_q90 < 0 or self.relevant_vehicles_q90 < 0:
+        if self.topology_confidence not in TOPOLOGY_CONFIDENCES:
+            raise ValueError(
+                f"unsupported topology confidence: {self.topology_confidence!r}"
+            )
+        if len(set(self.topology_evidence)) != len(self.topology_evidence):
+            raise ValueError("topology evidence must not contain duplicates")
+        if (
+            self.relevant_agents_q90 < 0
+            or self.relevant_vehicles_q90 < 0
+            or self.relevant_vrus_q90 < 0
+        ):
             raise ValueError("relevant-agent quantiles must be non-negative")
-        for name in ("min_vehicle_distance_m", "min_vru_distance_to_route_m"):
+        if self.vehicle_conflict_count < 0 or self.vru_conflict_count < 0:
+            raise ValueError("conflict counts must be non-negative")
+        for name in (
+            "min_vehicle_distance_m",
+            "min_vru_distance_to_route_m",
+            "min_vehicle_conflict_dcpa_m",
+            "min_vehicle_conflict_tcpa_s",
+            "min_vru_conflict_dcpa_m",
+            "min_vru_conflict_tcpa_s",
+        ):
             value = getattr(self, name)
             if value is not None and value < 0:
                 raise ValueError(f"{name} must be non-negative")
@@ -153,4 +183,6 @@ class ScenarioFeatures:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ScenarioFeatures":
-        return cls(**payload)
+        data = dict(payload)
+        data["topology_evidence"] = tuple(data.get("topology_evidence") or ())
+        return cls(**data)

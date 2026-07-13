@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
+from thesis_rl.scenarios.arms import assign_primary_arm, derive_scenario_tags
 from thesis_rl.scenarios.features import extract_scenario_features
 from thesis_rl.scenarios.records import ScenarioRecord
 from thesis_rl.scenarios.splits import (
@@ -205,8 +206,8 @@ def load_converted_waymo_entries(
             pg_profile=None,
             pg_seed=None,
             map_id=None,
-            primary_arm="A0_simple_lane_follow",
-            tags=(),
+            primary_arm=assign_primary_arm(features),
+            tags=derive_scenario_tags(features),
             signal_reliability=features.signal_reliability,
             validation_status="valid",
             validation_warnings=(),

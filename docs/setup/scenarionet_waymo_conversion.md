@@ -150,18 +150,28 @@ WAYMO_SKIP_DOWNLOAD_IF_PRESENT=false
 
 e rilancia `make waymo-pipeline`. I file già presenti non vengono riscaricati.
 
-Downloading all shards is not required: the baseline requires 1,750 Waymo
-scenarios in total. Since the verified shard contains 61 scenarios and Waymo
-splits preserve whole groups, a practical run can use approximately 30--35
-shards:
+Downloading all shards is not required. The one-command dataset pipeline now
+counts only Waymo scenarios whose signal reliability is `complete` or
+`not_applicable`, then downloads and converts unseen shards in bounded batches
+until the configured target of 1,750 eligible scenarios is reached:
 
-```dotenv
-WAYMO_NUM_FILES=35
-WAYMO_GCS_OBJECT_PATTERN=training_20s.tfrecord-*
+```bash
+make scenarionet-pipeline
 ```
 
-The manifest records the effective counts. For the most conservative
-reproduction using the complete pool, leave `WAYMO_NUM_FILES` empty.
+The batch size, worker count and safety cap are versioned under `waymo` in
+`conf/scenarios/pipeline_v1.yaml`. Each batch is converted into a separate
+database below `waymo/database/batches`, so the existing pool is never
+overwritten. Successful batch TFRecords are removed by default; rejected
+`partial`/`missing` scenarios stay in the converted audit pool but cannot enter
+the final split or runtime database. Acquisition state is written under
+`data/scenarionet/waymo/acquisition`. The status is cached against a
+fingerprint of converted paths, sizes and modification times; changing the
+database, eligibility policy or policy version triggers a full rescan.
+
+`make waymo-pipeline` remains the manual fixed-shard conversion command and
+continues to honor `WAYMO_NUM_FILES`; it is useful for smoke tests, not for
+filling the final eligible target automatically.
 
 To inspect the number of available shards and their size without downloading
 them, run:
@@ -256,6 +266,17 @@ Dopo aver autenticato `gcloud`, il comando consigliato è:
 ```bash
 make scenarionet-pipeline
 ```
+
+Se Waymo e PG sono già preparati e occorre soltanto ricostruire catalogo,
+split, soglie e runtime (per esempio dopo una modifica alla classificazione),
+usare:
+
+```bash
+make scenarionet-recatalog
+```
+
+Questo target non scarica, non riconverte e non rigenera scenari; sovrascrive
+soltanto gli artifact derivati e riesegue i controlli finali.
 
 La pipeline usa il servizio Compose `dataset-pipeline`, costruito dal target
 CPU-only condiviso con l'immagine principale: non installa PyTorch né le

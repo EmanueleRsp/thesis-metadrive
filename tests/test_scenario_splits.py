@@ -31,7 +31,7 @@ def _pg_record(index: int, *, split: str = "train", seed: int | None = None) -> 
         pg_profile="P0_simple",
         pg_seed=actual_seed,
         map_id="S",
-        primary_arm="A0_simple_lane_follow",
+        primary_arm="A0_simple_low_traffic",
         tags=(),
         signal_reliability="not_applicable",
         validation_status="valid",

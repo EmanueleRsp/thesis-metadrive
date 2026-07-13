@@ -1,4 +1,4 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline scenarionet-pipeline up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu
 
 setup:
 	./setup.sh
@@ -22,7 +22,7 @@ build-gpu:
 	docker compose -f compose.yaml -f compose.gpu.yaml build
 
 build-waymo:
-	docker compose -f compose.yaml -f compose.waymo.yaml --profile waymo build waymo-converter
+	docker compose --progress quiet -f compose.yaml -f compose.waymo.yaml --profile waymo build waymo-converter
 
 install-gcloud:
 	bash scripts/install_gcloud.sh
@@ -46,8 +46,14 @@ waymo-convert:
 waymo-pipeline:
 	bash scripts/prepare_waymo.sh
 
+waymo-expand:
+	bash scripts/expand_waymo_pool.sh
+
 scenarionet-pipeline:
 	bash scripts/prepare_scenarionet_dataset.sh
+
+scenarionet-recatalog:
+	SCENARIONET_SKIP_WAYMO=true SCENARIONET_SKIP_PG=true SCENARIONET_OVERWRITE=true bash scripts/prepare_scenarionet_dataset.sh
 
 up:
 	docker compose up -d

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 from thesis_rl.scenarios.pipeline import (
     assign_catalog_runtime_indices,
     assign_source_splits,
     assign_source_splits_to_targets,
+    arm_selection_diagnostics,
 )
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
 
@@ -27,7 +32,7 @@ def _entry(source: str, index: int) -> ScenarioCatalogEntry:
         pg_profile=None if source == "waymo" else "P0_simple",
         pg_seed=None if source == "waymo" else index,
         map_id="S",
-        primary_arm="A0_simple_lane_follow",
+        primary_arm="A0_simple_low_traffic",
         tags=(),
         signal_reliability="not_applicable",
         validation_status="valid",
@@ -102,3 +107,96 @@ def test_pipeline_auto_split_preserves_whole_groups() -> None:
             entry.record.split
             for entry in source_entries
         } == {"train", "validation", "test"}
+
+
+def test_pipeline_auto_split_prioritizes_arm_minimums_and_reports_deficits() -> None:
+    entries = []
+    for source in ("waymo", "pg"):
+        for index in range(12):
+            entry = _entry(source, index)
+            arm = (
+                "A2_junction"
+                if index in {0, 1, 2}
+                else "A1_traffic"
+            )
+            entries.append(
+                ScenarioCatalogEntry(replace(entry.record, primary_arm=arm), entry.features)
+            )
+    minimums = {
+        source: {
+            split: {"A2_junction": 1}
+            for split in ("train", "validation", "test")
+        }
+        for source in ("waymo", "pg")
+    }
+    selected = assign_source_splits_to_targets(
+        tuple(entries),
+        targets={
+            source: {"train": 2, "validation": 2, "test": 2}
+            for source in ("waymo", "pg")
+        },
+        arm_minimums=minimums,
+        seed=5,
+    )
+    diagnostics = arm_selection_diagnostics(selected, minimums)
+
+    for source in ("waymo", "pg"):
+        for split in ("train", "validation", "test"):
+            assert diagnostics[source][split]["A2_junction"] == {
+                "minimum": 1,
+                "actual": 1,
+                "deficit": 0,
+            }
+
+
+def test_pipeline_rejects_arm_minimums_above_source_target() -> None:
+    entries = tuple(
+        _entry(source, index) for source in ("waymo", "pg") for index in range(3)
+    )
+    with pytest.raises(ValueError, match="arm minimums sum"):
+        assign_source_splits_to_targets(
+            entries,
+            targets={
+                source: {"train": 1, "validation": 1, "test": 1}
+                for source in ("waymo", "pg")
+            },
+            arm_minimums={
+                "waymo": {
+                    "train": {
+                        "A1_traffic": 1,
+                        "A2_junction": 1,
+                    }
+                }
+            },
+            seed=0,
+        )
+
+
+def test_pipeline_excludes_disallowed_signal_reliability() -> None:
+    entries = []
+    for source in ("waymo", "pg"):
+        for index in range(4):
+            entry = _entry(source, index)
+            reliability = "partial" if source == "waymo" and index == 0 else "complete"
+            entries.append(
+                ScenarioCatalogEntry(
+                    replace(entry.record, signal_reliability=reliability),
+                    replace(entry.features, signal_reliability=reliability),
+                )
+            )
+    selected = assign_source_splits_to_targets(
+        tuple(entries),
+        targets={
+            source: {"train": 1, "validation": 1, "test": 1}
+            for source in ("waymo", "pg")
+        },
+        allowed_signal_reliabilities={
+            "waymo": ("complete", "not_applicable"),
+            "pg": ("complete", "not_applicable"),
+        },
+        seed=0,
+    )
+
+    assert all(
+        entry.record.scenario_uid != "waymo:v1:0" for entry in selected
+    )

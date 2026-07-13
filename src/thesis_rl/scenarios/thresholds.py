@@ -31,7 +31,7 @@ class ArmThresholds:
 def compute_arm_thresholds(
     entries: Sequence[ScenarioCatalogEntry],
     *,
-    feature_version: str = "v1",
+    feature_version: str = "v2",
     relevant_radius_m: float = 50.0,
     vertical_tolerance_m: float = 3.0,
     temporal_quantile: float = 0.90,
