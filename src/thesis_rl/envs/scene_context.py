@@ -75,6 +75,7 @@ class SceneContextAdapter:
             ("crash_object", "crash_object"),
             ("crash_building", "crash_building"),
             ("crash_sidewalk", "crash_sidewalk"),
+            ("crash", "collision"),
             ("out_of_road", "out_of_road"),
             ("max_step", "time_limit"),
         )

@@ -161,6 +161,21 @@ def test_thesis_done_preserves_native_collision_termination(
     assert info["termination_reason"] == "crash_vehicle"
 
 
+def test_thesis_done_preserves_generic_collision_termination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=True,
+        done_info={"crash": True},
+    )
+
+    done, info = env.done_function("default_agent")
+
+    assert done is True
+    assert info["termination_reason"] == "collision"
+
+
 def test_thesis_done_adds_custom_timeout_without_termination(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

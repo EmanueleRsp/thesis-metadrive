@@ -119,6 +119,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             bool(done_info.get(key, False))
             for key in (
                 TerminationState.SUCCESS,
+                TerminationState.CRASH,
                 TerminationState.CRASH_HUMAN,
                 TerminationState.CRASH_VEHICLE,
                 TerminationState.CRASH_OBJECT,
