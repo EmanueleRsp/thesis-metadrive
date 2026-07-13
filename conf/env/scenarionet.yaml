@@ -3,7 +3,9 @@ env_id: ThesisScenarioEnv
 
 split: train
 catalog_path: null
-global_seed: 0
+# Root seed for ScenarioNet provider sampling. Keep it tied to the run seed so
+# MAB arm choices and catalog-record choices belong to one reproducible run.
+global_seed: ${seed}
 
 config:
   data_directory: null
