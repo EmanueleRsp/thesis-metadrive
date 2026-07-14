@@ -6,10 +6,9 @@ from types import SimpleNamespace
 
 from thesis_rl.curriculum import (
     CurriculumConfig,
-    GeneratorArmBandit,
+    ScenarioArmBandit,
     SCENARIO_ARM_NAMES,
     ScenarioAclMabConfig,
-    build_default_generator_arms,
     build_default_scenario_arms,
 )
 from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer
@@ -21,11 +20,12 @@ from thesis_rl.curriculum.scenario_acl.driver import (
     _select_waymo_eval_arm,
     _selection_source_override,
     _summarize_episode_acl_outcomes,
+    _normalize_learning_potential,
 )
 
 
 def test_generator_arm_bandit_probabilities_sum_to_one() -> None:
-    bandit = GeneratorArmBandit(
+    bandit = ScenarioArmBandit(
         ScenarioAclMabConfig(
             num_arms=3,
             eta=0.2,
@@ -41,7 +41,7 @@ def test_generator_arm_bandit_probabilities_sum_to_one() -> None:
 
 
 def test_generator_arm_bandit_initializes_exponentially_by_arm_index() -> None:
-    bandit = GeneratorArmBandit(
+    bandit = ScenarioArmBandit(
         ScenarioAclMabConfig(
             num_arms=4,
             eta=0.0,
@@ -54,7 +54,7 @@ def test_generator_arm_bandit_initializes_exponentially_by_arm_index() -> None:
 
 
 def test_generator_arm_bandit_target_sync_updates_live_weights_on_interval() -> None:
-    bandit = GeneratorArmBandit(
+    bandit = ScenarioArmBandit(
         ScenarioAclMabConfig(
             num_arms=2,
             alpha=0.5,
@@ -70,30 +70,11 @@ def test_generator_arm_bandit_target_sync_updates_live_weights_on_interval() -> 
     assert not np.allclose(bandit.weights, initial_weights)
 
 
-def test_default_generator_arms_preserve_single_scenario_sampling_and_agent_model_flag() -> None:
-    rng = np.random.default_rng(42)
-    arms = build_default_generator_arms()
-    sample = arms[0].sample_env_overrides(
-        rng=rng,
-        scenario_seed=123,
-        base_env_config={"random_agent_model": True, "log_level": 50},
-    )
-
-    assert len(arms) == 7
-    assert sample["num_scenarios"] == 1
-    assert sample["start_seed"] == 123
-    assert sample["random_agent_model"] is True
-
-
 def test_default_scenario_arms_match_canonical_scenarionet_taxonomy() -> None:
     arms = build_default_scenario_arms()
 
     assert tuple(arm.name for arm in arms) == SCENARIO_ARM_NAMES
-    assert arms[0].sample_env_overrides(
-        rng=np.random.default_rng(42),
-        scenario_seed=123,
-        base_env_config={},
-    ) == {
+    assert arms[0].sample_env_overrides() == {
         "provider": {
             "arm": "A0_simple_low_traffic",
             "source_probability": {"waymo": 0.0, "pg": 1.0},
@@ -107,7 +88,6 @@ def test_scenario_acl_driver_selects_catalog_arm_without_forcing_runtime_seed() 
             "enabled": True,
             "kind": "scenario_acl",
             "scenario_acl": {
-                "arm_space": "scenario",
                 "use_scenario_buffer": False,
                 "use_replay": False,
                 "mab": {"num_arms": 6},
@@ -115,9 +95,9 @@ def test_scenario_acl_driver_selects_catalog_arm_without_forcing_runtime_seed() 
         }
     )
     arms = list(build_default_scenario_arms())
-    from thesis_rl.curriculum import GeneratorArmBandit
+    from thesis_rl.curriculum import ScenarioArmBandit
 
-    bandit = GeneratorArmBandit(curriculum.scenario_acl.mab)
+    bandit = ScenarioArmBandit(curriculum.scenario_acl.mab)
     spec = _choose_iteration_spec(
         cfg=OmegaConf.create({"env": {"config": {"start_seed": 0}}}),
         curriculum_cfg=curriculum,
@@ -227,3 +207,9 @@ def test_semantic_acl_statistics_count_mixed_modes_per_completed_episode() -> No
         "arms": ["A1_traffic", "A3_complex_junction"],
         "mode": "mixed",
     }
+
+
+def test_learning_potential_normalization_assigns_average_rank_to_ties() -> None:
+    # With one stronger value and two tied values, both tied observations get
+    # rank 2.5 out of 3 rather than incorrectly receiving rank 2 (or rank 1).
+    assert _normalize_learning_potential(1.0, [2.0, 1.0]) == 0.25

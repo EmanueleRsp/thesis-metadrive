@@ -124,6 +124,32 @@ def test_staged_curriculum_preserves_scenarionet_arm_provider_override() -> None
     assert manager.get_env_config()["provider"] == {"arm": "A2_junction"}
 
 
+def test_auto_scenarionet_stages_use_catalog_splits_not_seed_windows() -> None:
+    config = CurriculumConfig.from_mapping(
+        {
+            "enabled": True,
+            "kind": "staged",
+            "staged": {
+                "mode": "auto",
+                "stages": [
+                    {
+                        "name": "A2_junction",
+                        "env": {"provider": {"arm": "A2_junction"}},
+                        "eval_env": {},
+                    }
+                ],
+            },
+        }
+    )
+
+    manager = CurriculumManager(config)
+
+    assert manager.get_env_config() == {"provider": {"arm": "A2_junction"}}
+    assert manager.get_env_config(evaluation=True) == {
+        "provider": {"arm": "A2_junction"}
+    }
+
+
 def test_provider_stage_override_merges_with_scenarionet_defaults() -> None:
     cfg_env = {
         "provider": {

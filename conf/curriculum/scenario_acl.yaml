@@ -2,21 +2,15 @@ name: scenario_acl
 enabled: true
 kind: scenario_acl
 scenario_acl:
-  mode: mab_plus_replay
-  arm_space: scenario
-
   buffer_capacity: 1000
   warmup_buffer_size: 100
 
   exploit_probability: 0.8
-  generate_probability: 0.2
 
   use_mab: true
   use_scenario_buffer: true
   use_replay: true
   use_staleness: true
-  use_rule_criticality: true
-
   recent_window_size: 100
 
   mab:
@@ -37,7 +31,6 @@ scenario_acl:
     omega: 0.7
     beta: 1.0
     staleness_offset: 1
-    rank_one_is_best: true
 
   scenario_env:
     horizon: 1000

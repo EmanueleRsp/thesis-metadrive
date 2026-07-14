@@ -69,6 +69,28 @@ def test_uniform_provider_can_pin_a_semantic_scenario_arm() -> None:
     assert {record.primary_arm for record in selected} == {"A1_traffic"}
 
 
+def test_uniform_provider_excludes_buffered_scenarios_from_fresh_sampling() -> None:
+    records = [_record(0, "pg"), _record(1, "pg")]
+    provider = UniformScenarioProvider(
+        records,
+        global_seed=0,
+        source_probabilities={"waymo": 0.0, "pg": 1.0},
+    )
+    excluded = {records[0].scenario_uid}
+
+    assert provider.has_candidate(
+        split="train", arm="A0_simple_low_traffic", excluded_scenario_uids=excluded
+    )
+    assert provider.sample(
+        split="train", worker_id=0, excluded_scenario_uids=excluded
+    ) == records[1]
+    assert not provider.has_candidate(
+        split="train",
+        arm="A0_simple_low_traffic",
+        excluded_scenario_uids={record.scenario_uid for record in records},
+    )
+
+
 def test_uniform_provider_rejects_unknown_semantic_arm() -> None:
     with pytest.raises(ValueError, match="unsupported scenario arm"):
         UniformScenarioProvider([_record(0, "pg")], global_seed=0, default_arm="stage1")

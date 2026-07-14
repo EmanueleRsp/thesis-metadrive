@@ -17,38 +17,22 @@ staged:
           source_probability:
             waymo: 0.0
             pg: 1.0
-        start_seed: 1000
-        num_scenarios: 1000
-      eval_env:
-        start_seed: 101000
-        num_scenarios: 250
+      eval_env: {}
     - name: A1_traffic
       env:
         provider:
           arm: A1_traffic
-        start_seed: 2000
-        num_scenarios: 1000
-      eval_env:
-        start_seed: 102000
-        num_scenarios: 250
+      eval_env: {}
     - name: A2_junction
       env:
         provider:
           arm: A2_junction
-        start_seed: 3000
-        num_scenarios: 1000
-      eval_env:
-        start_seed: 103000
-        num_scenarios: 250
+      eval_env: {}
     - name: A3_complex_junction
       env:
         provider:
           arm: A3_complex_junction
-        start_seed: 4000
-        num_scenarios: 1000
-      eval_env:
-        start_seed: 104000
-        num_scenarios: 250
+      eval_env: {}
     - name: A4_vru
       env:
         provider:
@@ -56,20 +40,12 @@ staged:
           source_probability:
             waymo: 1.0
             pg: 0.0
-        start_seed: 5000
-        num_scenarios: 1000
-      eval_env:
-        start_seed: 105000
-        num_scenarios: 250
+      eval_env: {}
     - name: A5_critical_mixed
       env:
         provider:
           arm: A5_critical_mixed
-        start_seed: 6000
-        num_scenarios: 1000
-      eval_env:
-        start_seed: 106000
-        num_scenarios: 250
+      eval_env: {}
   promotion:
     consecutive_evals: 2
     warmup_evals: 1

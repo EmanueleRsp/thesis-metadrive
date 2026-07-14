@@ -119,6 +119,16 @@ def _validate_scenarionet_catalog_runtime(catalog: Any, *, split: str, data_dire
         )
 
 
+def _scenarionet_dataset_root(cfg_env: Any) -> Path | None:
+    """Resolve the root owning the frozen catalog and runtime views."""
+
+    configured = getattr(cfg_env, "dataset_root", None)
+    value = configured or os.environ.get("SCENARIONET_DATA_ROOT")
+    if value in (None, "", "null"):
+        return None
+    return Path(str(value)).expanduser().resolve()
+
+
 def make_env(
     cfg_env: Any,
     *,
@@ -171,34 +181,37 @@ def make_env(
             env_cfg["extra_steps_after_scenario"] = int(
                 episode_control["extra_steps_after_scenario"]
             )
-        if not env_cfg.get("data_directory"):
-            data_root = os.environ.get("SCENARIONET_DATA_ROOT")
-            if data_root:
-                env_cfg["data_directory"] = str(
-                    (Path(data_root).expanduser() / "runtime" / split).resolve()
-                )
+        dataset_root = _scenarionet_dataset_root(cfg_env)
+        if not env_cfg.get("data_directory") and dataset_root is not None:
+            env_cfg["data_directory"] = str(dataset_root / "runtime" / split)
         provider_worker_id = int(
             env_cfg.pop("provider_worker_index", env_cfg.get("worker_index", 0))
         )
         provider_worker_count = int(env_cfg.pop("provider_worker_count", 1))
         worker_id = provider_worker_id
-        catalog_path = getattr(cfg_env, "catalog_path", None) or os.environ.get(
-            "SCENARIONET_CATALOG_PATH"
+        catalog_path = (
+            getattr(cfg_env, "catalog_path", None)
+            or os.environ.get("SCENARIONET_CATALOG_PATH")
+            or (dataset_root / "catalog" / "scenario_catalog.parquet" if dataset_root else None)
         )
-        if catalog_path and catalog is None:
-            catalog = read_scenario_catalog(str(catalog_path))
-        if catalog is not None:
-            data_directory = env_cfg.get("data_directory")
-            if not data_directory:
+        if catalog is None:
+            if catalog_path is None:
                 raise ValueError(
-                    "ScenarioNet requires env.config.data_directory or "
-                    "SCENARIONET_DATA_ROOT pointing to the matching runtime view."
+                    "ScenarioNet requires env.dataset_root or SCENARIONET_DATA_ROOT. "
+                    "It must contain catalog/scenario_catalog.parquet and runtime/<split>."
                 )
-            _validate_scenarionet_catalog_runtime(
-                catalog,
-                split=split,
-                data_directory=str(data_directory),
+            catalog = read_scenario_catalog(str(catalog_path))
+        data_directory = env_cfg.get("data_directory")
+        if not data_directory:
+            raise ValueError(
+                "ScenarioNet requires the runtime view matching its frozen catalog. "
+                "Set env.dataset_root or env.config.data_directory."
             )
+        _validate_scenarionet_catalog_runtime(
+            catalog,
+            split=split,
+            data_directory=str(data_directory),
+        )
         if catalog is not None and int(env_cfg.get("num_scenarios", -1)) <= 0:
             split_records = catalog.valid_records(split=split)
             if not split_records:

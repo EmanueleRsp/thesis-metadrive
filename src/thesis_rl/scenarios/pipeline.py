@@ -24,6 +24,23 @@ SPLITS = ("train", "validation", "test")
 SOURCES = ("waymo", "pg")
 
 
+def eligible_entries(
+    entries: Sequence[ScenarioCatalogEntry],
+) -> tuple[ScenarioCatalogEntry, ...]:
+    """Return records allowed to enter a frozen ScenarioNet dataset.
+
+    The raw catalog remains an audit artifact and may contain rejected
+    conversions. Splits, manifests, and runtime views instead share this one
+    eligible population, so their counts cannot diverge.
+    """
+
+    return tuple(
+        entry
+        for entry in entries
+        if entry.record.validation_status in {"valid", "warning"}
+    )
+
+
 def group_id_for_entry(entry: ScenarioCatalogEntry) -> str:
     """Return the strongest available no-leakage grouping key."""
 
@@ -49,6 +66,9 @@ def assign_source_splits(
 
     if set(counts) != set(SOURCES):
         raise ValueError(f"counts must define exactly {SOURCES}")
+    entries = eligible_entries(entries)
+    if not entries:
+        raise ValueError("cannot assign splits: catalog has no eligible records")
     all_group_ids = group_ids_for_entries(entries)
     assigned_by_uid: dict[str, ScenarioRecord] = {}
     for source in SOURCES:
@@ -109,6 +129,9 @@ def assign_source_splits_to_targets(
     normalized_signal_policy = _normalize_signal_policy(
         allowed_signal_reliabilities
     )
+    entries = eligible_entries(entries)
+    if not entries:
+        raise ValueError("cannot assign splits: catalog has no eligible records")
     all_group_ids = group_ids_for_entries(entries)
     assigned_by_uid: dict[str, ScenarioRecord] = {}
     for source_index, source in enumerate(SOURCES):
@@ -328,6 +351,7 @@ __all__ = [
     "assign_source_splits",
     "assign_source_splits_to_targets",
     "classify_entries",
+    "eligible_entries",
     "group_id_for_entry",
     "group_ids_for_entries",
 ]

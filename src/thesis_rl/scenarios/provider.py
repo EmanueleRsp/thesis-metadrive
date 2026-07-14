@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Sequence
+from typing import Collection, Sequence
 
 import numpy as np
 
@@ -19,6 +19,7 @@ class ScenarioProvider(ABC):
         worker_id: int,
         source: str | None = None,
         arm: str | None = None,
+        excluded_scenario_uids: Collection[str] = (),
     ) -> ScenarioRecord:
         raise NotImplementedError
 
@@ -77,27 +78,57 @@ class UniformScenarioProvider(ScenarioProvider):
         worker_id: int,
         source: str | None = None,
         arm: str | None = None,
+        excluded_scenario_uids: Collection[str] = (),
     ) -> ScenarioRecord:
         rng = self._rng(worker_id)
-        requested_source = source
         requested_arm = _validate_arm(arm) if arm is not None else self._default_arm
-        if requested_source is None:
-            requested_source = str(rng.choice(self._source_names, p=self._source_probabilities))
-        if requested_source not in self._source_names:
-            raise ValueError(f"unsupported source: {requested_source!r}")
+        excluded = {str(value) for value in excluded_scenario_uids}
         candidates = [
             record
             for record in self._records
             if record.split == split
-            and record.source == requested_source
+            and record.scenario_uid not in excluded
             and (requested_arm is None or record.primary_arm == requested_arm)
         ]
+        if source is not None:
+            if source not in self._source_names:
+                raise ValueError(f"unsupported source: {source!r}")
+            candidates = [record for record in candidates if record.source == source]
+        elif candidates:
+            available_sources = {record.source for record in candidates}
+            source_indices = [
+                index for index, name in enumerate(self._source_names)
+                if name in available_sources
+            ]
+            probabilities = self._source_probabilities[source_indices]
+            probabilities = probabilities / probabilities.sum()
+            selected_index = int(rng.choice(source_indices, p=probabilities))
+            selected_source = self._source_names[selected_index]
+            candidates = [record for record in candidates if record.source == selected_source]
         if not candidates:
-            filters = f"split={split!r}, source={requested_source!r}, arm={requested_arm!r}"
+            filters = f"split={split!r}, source={source!r}, arm={requested_arm!r}"
             raise LookupError(f"no valid scenarios for {filters}; fallback is disabled")
         selected = candidates[int(rng.integers(0, len(candidates)))]
         self.reset_counts[selected.source] += 1
         return selected
+
+    def has_candidate(
+        self,
+        *,
+        split: str,
+        source: str | None = None,
+        arm: str | None = None,
+        excluded_scenario_uids: Collection[str] = (),
+    ) -> bool:
+        requested_arm = _validate_arm(arm) if arm is not None else self._default_arm
+        excluded = {str(value) for value in excluded_scenario_uids}
+        return any(
+            record.split == split
+            and record.scenario_uid not in excluded
+            and (source is None or record.source == source)
+            and (requested_arm is None or record.primary_arm == requested_arm)
+            for record in self._records
+        )
 
 
 class FixedSequenceScenarioProvider(ScenarioProvider):
@@ -126,6 +157,7 @@ class FixedSequenceScenarioProvider(ScenarioProvider):
         worker_id: int,
         source: str | None = None,
         arm: str | None = None,
+        excluded_scenario_uids: Collection[str] = (),
     ) -> ScenarioRecord:
         if worker_id < 0:
             raise ValueError("worker_id must be non-negative")
@@ -134,6 +166,8 @@ class FixedSequenceScenarioProvider(ScenarioProvider):
                 raise LookupError("fixed scenario sequence is exhausted")
             self._position = 0
         record = self._records[self._position]
+        if record.scenario_uid in {str(value) for value in excluded_scenario_uids}:
+            raise LookupError("fixed sequence record is excluded from fresh sampling")
         if record.split != split:
             raise LookupError(
                 f"fixed sequence record {record.scenario_uid} belongs to {record.split}, not {split}"

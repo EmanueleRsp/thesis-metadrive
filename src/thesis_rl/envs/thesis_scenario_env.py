@@ -79,6 +79,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         self.split = str(split)
         self.worker_id = int(worker_id)
         self.scenario_arm = scenario_arm
+        self.scenario_excluded_uids: set[str] = set()
         self.scene_context = scene_context or SceneContextAdapter()
         self.current_scenario_record: Any | None = None
         self._last_done_info: dict[str, Any] = {}
@@ -107,6 +108,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             worker_id=self.worker_id,
             source=getattr(self, "scenario_source", None),
             arm=self.scenario_arm,
+            excluded_scenario_uids=self.scenario_excluded_uids,
         )
         if record.runtime_index is None:
             raise ValueError(f"scenario provider returned record without runtime_index: {record.scenario_uid}")

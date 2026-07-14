@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import time
@@ -16,25 +15,20 @@ from thesis_rl.agent.agent import Agent
 from thesis_rl.agent.planners.core.utils import count_envs
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.scenario_acl.arms import (
-    GeneratorArm,
     ScenarioArm,
     SCENARIO_ARM_NAMES,
-    build_default_generator_arms,
     build_default_scenario_arms,
 )
 from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer
-from thesis_rl.curriculum.scenario_acl.mab import GeneratorArmBandit
+from thesis_rl.curriculum.scenario_acl.mab import ScenarioArmBandit
 from thesis_rl.curriculum.scenario_acl.record import ScenarioRecord
-from thesis_rl.curriculum.scenario_acl.scenario_env import build_scenario_replay_env
 from thesis_rl.curriculum.scenario_acl.usefulness import (
     compute_learning_potential,
     compute_scenario_usefulness,
 )
 from thesis_rl.runtime.execution.seeding import (
     apply_eval_scenario_seed_split,
-    eval_base_seed_from_env_overrides,
     seed_env_spaces,
-    train_episode_seed_from_env_overrides,
 )
 from thesis_rl.runtime.io.console import print_evaluation_summary, print_run_setup
 from thesis_rl.runtime.io.csv_recorder import CSVRecorder
@@ -122,7 +116,7 @@ def _summarize_episode_acl_outcomes(
 
 
 def _is_replay_iteration(spec: IterationSpec) -> bool:
-    return spec.mode == "exploit_replay"
+    return spec.mode.startswith("exploit_replay")
 
 
 def _selection_source_override(spec: IterationSpec) -> str | None:
@@ -223,98 +217,12 @@ def _normalize_learning_potential(
     rank_set = [float(v) for v in recent_values] + [float(current_value)]
     if len(rank_set) <= 1:
         return 1.0
-    sorted_values = sorted(rank_set, reverse=True)
-    rank = sorted_values.index(float(current_value)) + 1
+    # Average tied ranks so identical learning signals receive identical,
+    # non-maximal feedback when stronger observations are present.
+    greater = sum(value > float(current_value) for value in rank_set)
+    equal = sum(value == float(current_value) for value in rank_set)
+    rank = greater + ((equal + 1) / 2.0)
     return 1.0 - ((rank - 1) / float(len(rank_set) - 1))
-
-
-def _sample_iteration_env(
-    *,
-    arm: GeneratorArm | ScenarioArm,
-    rng: np.random.Generator,
-    chunk_id: int,
-    cfg: DictConfig,
-) -> tuple[int, dict[str, object]]:
-    base_env_cfg = OmegaConf.to_container(cfg.env.config, resolve=True)
-    if not isinstance(base_env_cfg, dict):
-        raise TypeError("cfg.env.config must resolve to a mapping.")
-    base_start_seed = int(base_env_cfg.get("start_seed", 0))
-    scenario_seed = int(base_start_seed + chunk_id - 1)
-    overrides = arm.sample_env_overrides(
-        rng=rng,
-        scenario_seed=scenario_seed,
-        base_env_config=base_env_cfg,
-    )
-    return scenario_seed, overrides
-
-
-def _export_scenario_dataset(
-    *,
-    cfg: DictConfig,
-    env_overrides: dict[str, object],
-    agent: Agent,
-    chunk_id: int,
-    scenario_seed: int,
-    dataset_root: Path,
-) -> str | None:
-    try:
-        from metadrive.scenario.utils import save_dataset
-    except Exception:
-        return None
-
-    export_env = build_env(cfg, env_overrides)
-    seed_env_spaces(export_env, int(cfg.seed) + 700_000 + chunk_id)
-    dataset_dir = dataset_root / f"chunk_{chunk_id:04d}"
-    export_path: str | None = None
-    try:
-        export_target = getattr(export_env, "unwrapped", export_env)
-
-        def _policy_action(observation: Any):
-            obs_value = observation
-            if (
-                isinstance(observation, tuple)
-                and len(observation) == 2
-                and isinstance(observation[1], dict)
-            ):
-                obs_value = observation[0]
-            return agent.predict(obs_value, deterministic=True)[0]
-
-        scenarios = export_target.export_scenarios(
-            _policy_action,
-            scenario_index=int(scenario_seed),
-            max_episode_length=int(cfg.env.config.horizon),
-            return_done_info=False,
-            to_dict=True,
-        )
-        scenario = scenarios.get(int(scenario_seed))
-        if scenario is None:
-            return None
-        save_dataset(
-            [scenario],
-            dataset_name="metadrive",
-            dataset_version=f"scenario_acl_chunk_{chunk_id:04d}",
-            dataset_dir=str(dataset_dir),
-        )
-        scenario_files = sorted(
-            [
-                path
-                for path in dataset_dir.glob("*.pkl")
-                if path.name not in {"dataset_summary.pkl", "dataset_mapping.pkl"}
-            ]
-        )
-        if scenario_files:
-            export_path = str(scenario_files[0])
-    finally:
-        export_env.close()
-    return export_path
-
-
-def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _metrics_summary(metrics: dict[str, Any], *, generator_config_id: str) -> dict[str, Any]:
@@ -348,7 +256,7 @@ def _build_record_from_catalog_entry(
     *,
     catalog_record: Any,
     cfg: DictConfig,
-    chunk_id: int,
+    episode_id: int,
     learning_potential: float,
     normalized_usefulness: float,
     metrics: dict[str, Any],
@@ -384,61 +292,17 @@ def _build_record_from_catalog_entry(
         usefulness_norm=float(normalized_usefulness),
         rank=0,
         num_seen=1,
-        last_seen_step=int(chunk_id),
+        last_seen_step=int(episode_id),
         num_children=0,
         metrics_summary=_metrics_summary(metrics, generator_config_id=scenario_arm),
         scenario_arm=scenario_arm,
     )
 
 
-def _build_record_from_export(
-    *,
-    export_path: str,
-    env_overrides: dict[str, object],
-    chunk_id: int,
-    scenario_seed: int,
-    arm_name: str,
-    learning_potential: float,
-    normalized_usefulness: float,
-    metrics: dict[str, Any],
-    source: str = "generate",
-    parent_id: str | None = None,
-) -> ScenarioRecord:
-    export_file = Path(export_path)
-    usefulness = compute_scenario_usefulness(
-        metrics,
-        learning_potential=learning_potential,
-    )
-    return ScenarioRecord(
-        scenario_id=f"{source}_chunk_{chunk_id:04d}",
-        source=source,
-        parent_id=parent_id,
-        scenario_description_path=str(export_file),
-        scenario_description_hash=_hash_file(export_file),
-        dataset_directory=str(export_file.parent),
-        scenario_index=0,
-        env_config=dict(env_overrides),
-        reset_seed=int(scenario_seed),
-        generator_arm=arm_name,
-        mutation_type=None,
-        mutation_params=None,
-        validation_status="valid",
-        rule_criticality=float(usefulness.rule_criticality),
-        learning_potential=float(usefulness.learning_potential),
-        usefulness=float(usefulness.value),
-        usefulness_norm=float(normalized_usefulness),
-        rank=0,
-        num_seen=1,
-        last_seen_step=int(chunk_id),
-        num_children=0,
-        metrics_summary=_metrics_summary(metrics, generator_config_id=arm_name),
-    )
-
-
 def _update_replay_record(
     record: ScenarioRecord,
     *,
-    chunk_id: int,
+    episode_id: int,
     learning_potential: float,
     normalized_usefulness: float,
     metrics: dict[str, Any],
@@ -452,7 +316,7 @@ def _update_replay_record(
     record.usefulness = float(usefulness.value)
     record.usefulness_norm = float(normalized_usefulness)
     record.num_seen += 1
-    record.last_seen_step = int(chunk_id)
+    record.last_seen_step = int(episode_id)
     record.metrics_summary = _metrics_summary(
         metrics,
         generator_config_id=str(
@@ -479,10 +343,10 @@ def _load_scenario_acl_resume_state(
     artifact_paths: dict[str, Path],
     scenario_cfg: Any,
     rng: np.random.Generator,
-) -> tuple[ScenarioBuffer, GeneratorArmBandit, int, int, int, list[float]]:
+) -> tuple[ScenarioBuffer, ScenarioArmBandit, int, int, int, int, list[float]]:
     resume_cfg = cfg.checkpoint.get("resume", {})
     if not bool(resume_cfg.get("enabled", False)):
-        return ScenarioBuffer(capacity=int(scenario_cfg.buffer_capacity)), GeneratorArmBandit(scenario_cfg.mab), 0, 0, 0, []
+        return ScenarioBuffer(capacity=int(scenario_cfg.buffer_capacity)), ScenarioArmBandit(scenario_cfg.mab), 0, 0, 0, 0, []
 
     configured_run_dir = resume_cfg.get("run_dir")
     resume_run_dir = Path(str(configured_run_dir)) if configured_run_dir not in (None, "", "null") else artifact_paths["root"].parents[1]
@@ -500,7 +364,7 @@ def _load_scenario_acl_resume_state(
     bandit_payload = state.get("mab", {})
     if not isinstance(bandit_payload, dict):
         raise ValueError("Scenario ACL resume state has invalid MAB payload.")
-    bandit = GeneratorArmBandit.from_state_dict(scenario_cfg.mab, bandit_payload)
+    bandit = ScenarioArmBandit.from_state_dict(scenario_cfg.mab, bandit_payload)
     rng_state = state.get("rng_state")
     if bool(resume_cfg.get("restore_rng_state", True)):
         if not isinstance(rng_state, dict):
@@ -512,6 +376,7 @@ def _load_scenario_acl_resume_state(
         int(state.get("global_step", 0)),
         int(state.get("chunk_id", 0)),
         int(state.get("eval_id", 0)),
+        int(state.get("episode_id", 0)),
         [float(value) for value in state.get("recent_usefulness", [])],
     )
 
@@ -520,11 +385,11 @@ def _choose_iteration_spec(
     *,
     cfg: DictConfig,
     curriculum_cfg: CurriculumConfig,
-    arms: list[GeneratorArm | ScenarioArm],
-    bandit: GeneratorArmBandit,
+    arms: list[ScenarioArm],
+    bandit: ScenarioArmBandit,
     buffer: ScenarioBuffer,
     rng: np.random.Generator,
-    chunk_id: int,
+    episode_id: int,
 ) -> IterationSpec:
     scenario_cfg = curriculum_cfg.scenario_acl
     can_exploit = (
@@ -535,7 +400,7 @@ def _choose_iteration_spec(
     if can_exploit and rng.random() < float(scenario_cfg.exploit_probability):
         selection = buffer.sample_replay(
             rng=rng,
-            current_step=chunk_id,
+            current_step=episode_id,
             cfg=scenario_cfg.replay_sampling,
             use_staleness=bool(scenario_cfg.use_staleness),
         )
@@ -560,19 +425,13 @@ def _choose_iteration_spec(
         arm_index = int(rng.integers(0, len(arms)))
         arm_probs = np.full(len(arms), 1.0 / len(arms), dtype=np.float64)
     arm = arms[arm_index]
-    scenario_seed, train_env_overrides = _sample_iteration_env(
-        arm=arm,
-        rng=rng,
-        chunk_id=chunk_id,
-        cfg=cfg,
-    )
     return IterationSpec(
-        mode="sample" if scenario_cfg.arm_space == "scenario" else "generate",
+        mode="sample",
         arm_index=arm_index,
         arm_name=arm.name,
         arm_probabilities=[float(x) for x in arm_probs.tolist()],
-        scenario_seed=int(scenario_seed),
-        train_env_overrides=train_env_overrides,
+        scenario_seed=0,
+        train_env_overrides=arm.sample_env_overrides(),
         replay_record=None,
         replay_probabilities=None,
     )
@@ -604,16 +463,10 @@ def run_scenario_acl_training(
     artifact_paths = _scenario_acl_artifact_paths(paths.artifacts_dir)
     rng = np.random.default_rng(run_seed)
 
-    if scenario_cfg.arm_space == "scenario":
-        if str(cfg.env.get("name", "")).strip().lower() != "scenarionet":
-            raise ValueError(
-                "scenario_acl.arm_space='scenario' requires env=scenarionet."
-            )
-        arms: list[GeneratorArm | ScenarioArm] = list(build_default_scenario_arms())
-        semantic_env_overrides = _semantic_catalog_overrides(cfg)
-    else:
-        arms = list(build_default_generator_arms())
-        semantic_env_overrides: dict[str, object] = {}
+    if str(cfg.env.get("name", "")).strip().lower() != "scenarionet":
+        raise ValueError("scenario_acl requires env=scenarionet.")
+    arms: list[ScenarioArm] = list(build_default_scenario_arms())
+    semantic_env_overrides = _semantic_catalog_overrides(cfg)
     expected_arms = int(scenario_cfg.mab.num_arms)
     if len(arms) != expected_arms:
         raise ValueError(
@@ -627,6 +480,7 @@ def run_scenario_acl_training(
         current_global_step,
         current_chunk_id,
         current_eval_id,
+        current_episode_id,
         recent_usefulness,
     ) = _load_scenario_acl_resume_state(
         cfg=cfg,
@@ -637,44 +491,9 @@ def run_scenario_acl_training(
     generate_count = 0
     replay_count = 0
 
-    if scenario_cfg.arm_space == "scenario":
-        # Semantic ACL chooses the arm/source/replay record immediately before
-        # each episode reset.  Keep a neutral placeholder for the outer chunk
-        # loop so initialization does not consume a selection that is never run.
-        first_spec = IterationSpec(
-            mode="sample",
-            arm_index=-1,
-            arm_name="scenario_acl_episode_sampling",
-            arm_probabilities=[],
-            scenario_seed=0,
-            train_env_overrides={},
-            replay_record=None,
-            replay_probabilities=None,
-        )
-        # Arms are assigned immediately before every reset below.  Construct
-        # an unfiltered provider here so a previous episode cannot constrain
-        # the next arm or source.
-        env = build_env(cfg, semantic_env_overrides)
-    else:
-        first_spec = _choose_iteration_spec(
-            cfg=cfg,
-            curriculum_cfg=curriculum_cfg,
-            arms=arms,
-            bandit=bandit,
-            buffer=buffer,
-            rng=rng,
-            chunk_id=current_chunk_id + 1,
-        )
-        if not _is_replay_iteration(first_spec):
-            env = build_env(cfg, first_spec.train_env_overrides)
-        else:
-            if first_spec.replay_record is None:
-                raise RuntimeError("Replay iteration requires a replay record.")
-            env = build_scenario_replay_env(
-                cfg,
-                record=first_spec.replay_record,
-                scenario_env_cfg=scenario_cfg.scenario_env,
-            )
+    # Arms are assigned immediately before every reset. Construct an
+    # unfiltered provider once per evaluation chunk so no prior choice leaks.
+    env = build_env(cfg, semantic_env_overrides)
     seed_env_spaces(env, run_seed)
     train_env_count = count_envs(env)
 
@@ -713,32 +532,17 @@ def run_scenario_acl_training(
             ("Vectorized training envs", str(train_env_count)),
             ("Planner device", planner_device),
             ("Curriculum kind", "scenario_acl"),
-            ("Scenario ACL mode", scenario_cfg.mode),
+            ("Scenario ACL selection", "per episode"),
         ],
     )
 
     try:
         remaining = max(0, total_timesteps - current_global_step)
-        next_spec = first_spec
         while remaining > 0:
             current_chunk_id += 1
-            current_spec = next_spec
             if current_chunk_id > 1:
-                if scenario_cfg.arm_space == "scenario":
-                    env = build_env(cfg, semantic_env_overrides)
-                    seed_env_spaces(env, run_seed + 400_000 + current_chunk_id)
-                elif not _is_replay_iteration(current_spec):
-                    env = build_env(cfg, current_spec.train_env_overrides)
-                    seed_env_spaces(env, run_seed + 400_000 + current_chunk_id)
-                else:
-                    if current_spec.replay_record is None:
-                        raise RuntimeError("Replay iteration requires a replay record.")
-                    env = build_scenario_replay_env(
-                        cfg,
-                        record=current_spec.replay_record,
-                        scenario_env_cfg=scenario_cfg.scenario_env,
-                    )
-                    seed_env_spaces(env, run_seed + 450_000 + current_chunk_id)
+                env = build_env(cfg, semantic_env_overrides)
+                seed_env_spaces(env, run_seed + 400_000 + current_chunk_id)
                 set_planner_env_if_compatible(planner, env)
 
             chunk_steps = min(eval_interval, remaining)
@@ -747,23 +551,25 @@ def run_scenario_acl_training(
             curriculum_logger.info(
                 "Scenario ACL chunk started | chunk_id=%d | arm_selection=%s",
                 current_chunk_id,
-                "per_episode" if scenario_cfg.arm_space == "scenario" else "per_chunk",
+                "per_episode",
             )
             log_event(
                 paths.events_log_path,
                 "scenario_acl_chunk_started",
                 chunk_id=current_chunk_id,
-                arm_selection="per_episode" if scenario_cfg.arm_space == "scenario" else "per_chunk",
+                arm_selection="per_episode",
                 arm_probabilities=[float(value) for value in bandit.probabilities().tolist()],
                 mab=bandit.state_dict(),
             )
 
             episode_specs: list[IterationSpec] = []
             episode_outcomes: list[EpisodeAclOutcome] = []
+            buffer_action = "none"
+            scenario_record_id: str | None = None
+            buffer_actions: dict[str, int] = {}
 
             def choose_acl_episode(training_env: Any, episode_index: int) -> None:
-                if scenario_cfg.arm_space != "scenario":
-                    return
+                base_env = _base_env(training_env)
                 spec = _choose_iteration_spec(
                     cfg=cfg,
                     curriculum_cfg=curriculum_cfg,
@@ -771,20 +577,69 @@ def run_scenario_acl_training(
                     bandit=bandit,
                     buffer=buffer,
                     rng=rng,
-                    chunk_id=current_chunk_id,
+                    episode_id=current_episode_id + 1,
                 )
+                if not _is_replay_iteration(spec):
+                    excluded_uids = {
+                        str(record.scenario_id) for record in buffer.records()
+                    }
+                    provider = getattr(base_env, "scenario_provider", None)
+                    has_candidate = getattr(provider, "has_candidate", None)
+                    source = _selection_source_override(spec)
+                    if (
+                        callable(has_candidate)
+                        and not has_candidate(
+                            split=str(base_env.split),
+                            source=source,
+                            arm=spec.arm_name,
+                            excluded_scenario_uids=excluded_uids,
+                        )
+                    ):
+                        if not len(buffer):
+                            raise RuntimeError(
+                                "Selected ACL arm has no fresh scenarios and the replay buffer is empty."
+                            )
+                        replay = buffer.sample_replay(
+                            rng=rng,
+                            current_step=current_episode_id + 1,
+                            cfg=scenario_cfg.replay_sampling,
+                            use_staleness=bool(scenario_cfg.use_staleness),
+                        )
+                        spec = IterationSpec(
+                            mode="exploit_replay_fallback",
+                            arm_index=-1,
+                            arm_name=str(
+                                replay.record.scenario_arm
+                                or replay.record.generator_arm
+                                or replay.record.source
+                            ),
+                            arm_probabilities=[],
+                            scenario_seed=int(replay.record.reset_seed),
+                            train_env_overrides=None,
+                            replay_record=replay.record,
+                            replay_probabilities=replay.probabilities,
+                        )
                 episode_specs.append(spec)
-                base_env = _base_env(training_env)
                 if _is_replay_iteration(spec):
                     if spec.replay_record is None:
                         raise RuntimeError("Replay selection requires a scenario record.")
                     base_env.scenario_arm = spec.replay_record.scenario_arm
                     base_env.scenario_source = spec.replay_record.source
+                    base_env.scenario_excluded_uids = set()
                 else:
                     base_env.scenario_arm = spec.arm_name
                     base_env.scenario_source = _selection_source_override(spec)
+                    base_env.scenario_excluded_uids = {
+                        str(record.scenario_id) for record in buffer.records()
+                    }
                 base_env._acl_episode_selection = {
-                    "origin": "scenario_buffer" if _is_replay_iteration(spec) else "new",
+                    "origin": (
+                        "fallback_replay_exhausted_arm"
+                        if spec.mode == "exploit_replay_fallback"
+                        else "scenario_buffer"
+                        if _is_replay_iteration(spec)
+                        else "new"
+                    ),
                     "arm": spec.arm_name,
                     "arm_index": spec.arm_index,
                     "selection_probability": (
@@ -795,30 +650,13 @@ def run_scenario_acl_training(
                 }
 
             def train_reset_seed_for_episode(episode_index: int) -> int | None:
-                if scenario_cfg.arm_space == "scenario":
-                    spec = episode_specs[episode_index]
-                    if _is_replay_iteration(spec):
-                        if spec.replay_record is None:
-                            raise RuntimeError("Replay selection requires a scenario record.")
-                        return int(spec.replay_record.reset_seed)
-                    # Let the provider sample a fresh catalog record filtered
-                    # by the arm selected immediately before this reset.
-                    return None
-                if current_spec.mode == "sample":
-                    # The ScenarioNet provider must choose the record by arm;
-                    # reset(seed=...) would bypass it and select a raw index.
-                    return None
-                if current_spec.train_env_overrides is not None:
-                    return train_episode_seed_from_env_overrides(
-                        current_spec.train_env_overrides,
-                        cfg,
-                        run_seed=run_seed,
-                        chunk_id=current_chunk_id,
-                        episode_index=episode_index,
-                        stage_index=max(current_spec.arm_index, 0),
-                    )
-                # ScenarioEnv interprets reset(seed=...) as a scenario index selector.
-                # For replay we must not pass arbitrary seeds or we will go out of range.
+                spec = episode_specs[episode_index]
+                if _is_replay_iteration(spec):
+                    if spec.replay_record is None:
+                        raise RuntimeError("Replay selection requires a scenario record.")
+                    return int(spec.replay_record.reset_seed)
+                # Let the provider sample a fresh catalog record filtered by
+                # the arm selected immediately before this reset.
                 return None
 
             def collect_catalog_episode(
@@ -826,8 +664,7 @@ def run_scenario_acl_training(
                 episode_index: int,
                 episode_metrics: dict[str, Any],
             ) -> None:
-                if scenario_cfg.arm_space != "scenario":
-                    return
+                nonlocal current_episode_id, buffer_action, scenario_record_id
                 base_env = _base_env(training_env)
                 record = getattr(base_env, "current_scenario_record", None)
                 spec = episode_specs[episode_index - 1]
@@ -863,10 +700,51 @@ def run_scenario_acl_training(
                     selection["usefulness_norm"] = normalized_episode_usefulness
                     episode_metrics["usefulness"] = episode_usefulness
                     episode_metrics["usefulness_norm"] = normalized_episode_usefulness
+                current_episode_id += 1
+                if bool(scenario_cfg.use_scenario_buffer):
+                    learning_value = episode_usefulness or 0.0
+                    normalized_value = normalized_episode_usefulness or 0.0
+                    if _is_replay_iteration(spec):
+                        if spec.replay_record is None:
+                            raise RuntimeError("Replay selection requires a scenario record.")
+                        updated_record = _update_replay_record(
+                            spec.replay_record,
+                            episode_id=current_episode_id,
+                            learning_potential=learning_value,
+                            normalized_usefulness=normalized_value,
+                            metrics=_episode_record_metrics(episode_metrics),
+                        )
+                        buffer.update(updated_record)
+                        buffer_action = "updated"
+                        scenario_record_id = updated_record.scenario_id
+                    elif record is not None:
+                        buffer_record = _build_record_from_catalog_entry(
+                            catalog_record=record,
+                            cfg=cfg,
+                            episode_id=current_episode_id,
+                            learning_potential=learning_value,
+                            normalized_usefulness=normalized_value,
+                            metrics=_episode_record_metrics(episode_metrics),
+                        )
+                        inserted = buffer.insert(buffer_record)
+                        buffer_action = "inserted" if inserted else "rejected"
+                        scenario_record_id = buffer_record.scenario_id
+                    _append_jsonl(
+                        artifact_paths["buffer_events"],
+                        {
+                            "timestamp": datetime.now().isoformat(timespec="seconds"),
+                            "chunk_id": current_chunk_id,
+                            "episode_id": current_episode_id,
+                            "action": buffer_action,
+                            "scenario_id": scenario_record_id,
+                        },
+                    )
+                    buffer_actions[buffer_action] = buffer_actions.get(buffer_action, 0) + 1
                 log_event(
                     paths.events_log_path,
                     "scenario_acl_episode_ended",
                     chunk_id=current_chunk_id,
+                    episode_id=current_episode_id,
                     episode_index=episode_index,
                     origin=selection.get("origin"),
                     arm_name=_short_arm_name(
@@ -891,8 +769,6 @@ def run_scenario_acl_training(
             def episode_context(
                 training_env: Any, _info: dict[str, Any]
             ) -> dict[str, Any] | None:
-                if scenario_cfg.arm_space != "scenario":
-                    return None
                 base_env = _base_env(training_env)
                 record = getattr(base_env, "current_scenario_record", None)
                 selection = getattr(base_env, "_acl_episode_selection", {})
@@ -925,11 +801,7 @@ def run_scenario_acl_training(
                 chunk_timesteps=chunk_steps,
                 global_total_timesteps=total_timesteps,
                 global_steps_done=current_global_step,
-                stage_name="scenario_acl_episode_sampling" if scenario_cfg.arm_space == "scenario" else (
-                    current_spec.arm_name
-                    if not _is_replay_iteration(current_spec)
-                    else f"replay:{current_spec.arm_name}"
-                ),
+                stage_name="scenario_acl_episode_sampling",
                 deterministic=False,
                 log_interval=log_interval,
                 reset_seed_fn=train_reset_seed_for_episode,
@@ -941,40 +813,22 @@ def run_scenario_acl_training(
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
             current_global_step = min(total_timesteps, current_global_step + actual_chunk_steps)
             remaining = max(0, total_timesteps - current_global_step)
-            if scenario_cfg.arm_space == "scenario":
-                episode_stats = _summarize_episode_acl_outcomes(episode_outcomes)
-                chunk_generate_count = int(episode_stats["generate_count"])
-                chunk_replay_count = int(episode_stats["replay_count"])
-                episode_modes = list(episode_stats["modes"])
-                episode_arms = list(episode_stats["arms"])
-                chunk_mode = str(episode_stats["mode"])
-            else:
-                completed_episodes = int(chunk_summary.get("episodes", 0))
-                chunk_replay_count = (
-                    completed_episodes if _is_replay_iteration(current_spec) else 0
-                )
-                chunk_generate_count = completed_episodes - chunk_replay_count
-                episode_modes = [current_spec.mode]
-                episode_arms = [current_spec.arm_name]
-                chunk_mode = current_spec.mode
+            episode_stats = _summarize_episode_acl_outcomes(episode_outcomes)
+            chunk_generate_count = int(episode_stats["generate_count"])
+            chunk_replay_count = int(episode_stats["replay_count"])
+            episode_modes = list(episode_stats["modes"])
+            episode_arms = list(episode_stats["arms"])
+            chunk_mode = str(episode_stats["mode"])
             generate_count += chunk_generate_count
             replay_count += chunk_replay_count
-            chunk_stage = (
-                "scenario_acl_episode_sampling"
-                if scenario_cfg.arm_space == "scenario"
-                else current_spec.arm_name
-                if not _is_replay_iteration(current_spec)
-                else f"replay:{current_spec.arm_name}"
-            )
+            chunk_stage = "scenario_acl_episode_sampling"
             recorder.append_row(
                 "train_chunks.csv",
                 {
                     **base_csv_fields,
                     "chunk_id": current_chunk_id,
                     "stage": chunk_stage,
-                    "stage_index": (
-                        -1 if scenario_cfg.arm_space == "scenario" else current_spec.arm_index
-                    ),
+                    "stage_index": -1,
                     "acl_chunk_mode": chunk_mode,
                     "acl_episode_modes": ",".join(episode_modes),
                     "acl_episode_arms": ",".join(episode_arms),
@@ -1017,39 +871,17 @@ def run_scenario_acl_training(
 
             eval_metrics: dict[str, Any]
             eval_agent: Agent
-            if scenario_cfg.arm_space == "scenario":
-                eval_env_overrides = apply_eval_scenario_seed_split(
-                    base_run_seed=run_seed,
-                    eval_env_overrides=None,
-                    cfg=cfg,
-                    n_eval_episodes=int(cfg.experiment.eval_episodes),
-                    split="validation",
-                )
-                eval_env_overrides.update(semantic_env_overrides)
-                eval_base_seed = None
-                eval_env = build_env(cfg, eval_env_overrides)
-                seed_env_spaces(eval_env, run_seed + 500_000 + current_chunk_id)
-            elif not _is_replay_iteration(current_spec):
-                eval_env_overrides = apply_eval_scenario_seed_split(
-                    base_run_seed=run_seed,
-                    eval_env_overrides=current_spec.train_env_overrides,
-                    cfg=cfg,
-                    n_eval_episodes=int(cfg.experiment.eval_episodes),
-                    split="validation",
-                )
-                eval_base_seed = eval_base_seed_from_env_overrides(eval_env_overrides, cfg)
-                eval_env = build_env(cfg, eval_env_overrides)
-                seed_env_spaces(eval_env, run_seed + 500_000 + current_chunk_id)
-            else:
-                if current_spec.replay_record is None:
-                    raise RuntimeError("Replay iteration requires a replay record.")
-                eval_base_seed = None
-                eval_env = build_scenario_replay_env(
-                    cfg,
-                    record=current_spec.replay_record,
-                    scenario_env_cfg=scenario_cfg.scenario_env,
-                )
-                seed_env_spaces(eval_env, run_seed + 550_000 + current_chunk_id)
+            eval_env_overrides = apply_eval_scenario_seed_split(
+                base_run_seed=run_seed,
+                eval_env_overrides=None,
+                cfg=cfg,
+                n_eval_episodes=int(cfg.experiment.eval_episodes),
+                split="validation",
+            )
+            eval_env_overrides.update(semantic_env_overrides)
+            eval_base_seed = None
+            eval_env = build_env(cfg, eval_env_overrides)
+            seed_env_spaces(eval_env, run_seed + 500_000 + current_chunk_id)
 
             eval_snapshot_stem = paths.checkpoints_dir / "eval_snapshot"
             agent.save(eval_snapshot_stem)
@@ -1068,11 +900,7 @@ def run_scenario_acl_training(
                 return_episode_metrics=False,
                 error_priority_base=float(cfg.reward.get("a", 2.01)),
                 show_progress=True,
-                before_episode_reset_callback=(
-                    _configure_waymo_eval_episode
-                    if scenario_cfg.arm_space == "scenario"
-                    else None
-                ),
+                before_episode_reset_callback=_configure_waymo_eval_episode,
             )
             eval_env.close()
             Path(f"{eval_snapshot_stem}.zip").unlink(missing_ok=True)
@@ -1105,134 +933,8 @@ def run_scenario_acl_training(
                 learning_potential = 0.0
                 normalized_usefulness = 0.0
 
-            export_path: str | None = None
-            buffer_action = "none"
-            scenario_record_id: str | None = None
-            buffer_actions: dict[str, int] = {}
-
-            def record_buffer_event(
-                *, action: str, record: ScenarioRecord, usefulness: float
-            ) -> None:
-                nonlocal buffer_action, scenario_record_id
-                previous_actions = set(buffer_actions)
-                buffer_actions[action] = buffer_actions.get(action, 0) + 1
-                buffer_action = (
-                    action
-                    if not previous_actions or previous_actions == {action}
-                    else "mixed"
-                )
-                scenario_record_id = record.scenario_id
-                _append_jsonl(
-                    artifact_paths["buffer_events"],
-                    {
-                        "timestamp": datetime.now().isoformat(timespec="seconds"),
-                        "chunk_id": current_chunk_id,
-                        "action": action,
-                        "scenario_id": record.scenario_id,
-                        "scenario_hash": record.scenario_description_hash,
-                        "usefulness": float(usefulness),
-                        "num_seen": int(record.num_seen),
-                    },
-                )
-
-            if scenario_cfg.arm_space == "scenario":
-                if not episode_outcomes:
-                    raise RuntimeError(
-                        "Semantic Scenario ACL did not expose completed catalog records."
-                    )
-                if bool(scenario_cfg.use_scenario_buffer):
-                    for outcome in episode_outcomes:
-                        outcome_learning_potential = (
-                            outcome.learning_potential
-                            if outcome.learning_potential is not None
-                            else learning_potential
-                        )
-                        outcome_usefulness_norm = (
-                            outcome.usefulness_norm
-                            if outcome.usefulness_norm is not None
-                            else normalized_usefulness
-                        )
-                        if _is_replay_iteration(outcome.spec):
-                            if outcome.spec.replay_record is None:
-                                raise RuntimeError(
-                                    "Replay selection requires a scenario record."
-                                )
-                            updated_record = _update_replay_record(
-                                outcome.spec.replay_record,
-                                chunk_id=current_chunk_id,
-                                learning_potential=outcome_learning_potential,
-                                normalized_usefulness=outcome_usefulness_norm,
-                                metrics=_episode_record_metrics(outcome.metrics),
-                            )
-                            buffer.update(updated_record)
-                            record_buffer_event(
-                                action="updated",
-                                record=updated_record,
-                                usefulness=outcome_learning_potential,
-                            )
-                            continue
-                        if outcome.record is None:
-                            continue
-                        record = _build_record_from_catalog_entry(
-                            catalog_record=outcome.record,
-                            cfg=cfg,
-                            chunk_id=current_chunk_id,
-                            learning_potential=outcome_learning_potential,
-                            normalized_usefulness=outcome_usefulness_norm,
-                            metrics=_episode_record_metrics(outcome.metrics),
-                        )
-                        inserted = buffer.insert(record)
-                        record_buffer_event(
-                            action="inserted" if inserted else "rejected",
-                            record=record,
-                            usefulness=outcome_learning_potential,
-                        )
-            elif not _is_replay_iteration(current_spec):
-                if current_spec.train_env_overrides is None:
-                    raise RuntimeError("Generate iteration requires training env overrides.")
-                if bool(scenario_cfg.use_scenario_buffer):
-                    export_path = _export_scenario_dataset(
-                        cfg=cfg,
-                        env_overrides=current_spec.train_env_overrides,
-                        agent=agent,
-                        chunk_id=current_chunk_id,
-                        scenario_seed=current_spec.scenario_seed,
-                        dataset_root=artifact_paths["scenarios"],
-                    )
-                if export_path is not None:
-                    record = _build_record_from_export(
-                        export_path=export_path,
-                        env_overrides=current_spec.train_env_overrides,
-                        chunk_id=current_chunk_id,
-                        scenario_seed=current_spec.scenario_seed,
-                        arm_name=current_spec.arm_name,
-                        learning_potential=learning_potential,
-                        normalized_usefulness=normalized_usefulness,
-                        metrics=eval_metrics,
-                    )
-                    inserted = buffer.insert(record)
-                    record_buffer_event(
-                        action="inserted" if inserted else "rejected",
-                        record=record,
-                        usefulness=learning_potential,
-                    )
-            else:
-                if current_spec.replay_record is None:
-                    raise RuntimeError("Replay iteration requires a replay record.")
-                updated_record = _update_replay_record(
-                    current_spec.replay_record,
-                    chunk_id=current_chunk_id,
-                    learning_potential=learning_potential,
-                    normalized_usefulness=normalized_usefulness,
-                    metrics=eval_metrics,
-                )
-                buffer.update(updated_record)
-                record_buffer_event(
-                    action="updated",
-                    record=updated_record,
-                    usefulness=learning_potential,
-                )
-
+            # The buffer was updated synchronously in each episode callback;
+            # only its durable snapshot is batched by evaluation chunk.
             _persist_buffer_state(path=artifact_paths["buffer"], buffer=buffer)
 
             recorder.append_row(
@@ -1241,22 +943,12 @@ def run_scenario_acl_training(
                     **base_csv_fields,
                     "eval_id": current_eval_id,
                     "eval_type": "intermediate",
-                    "scenario_set": (
-                        f"validation_{_WAYMO_STRATIFIED_SET}"
-                        if scenario_cfg.arm_space == "scenario"
-                        else "scenario_acl_generate_eval"
-                        if current_spec.mode == "generate"
-                        else "scenario_acl_arm_eval"
-                        if current_spec.mode == "sample"
-                        else "scenario_acl_replay_eval"
-                    ),
+                    "scenario_set": f"validation_{_WAYMO_STRATIFIED_SET}",
                     "chunk_id": current_chunk_id,
                     "stage": (
                         chunk_stage
                     ),
-                    "stage_index": (
-                        -1 if scenario_cfg.arm_space == "scenario" else current_spec.arm_index
-                    ),
+                    "stage_index": -1,
                     "acl_chunk_mode": chunk_mode,
                     "acl_episode_modes": ",".join(episode_modes),
                     "acl_episode_arms": ",".join(episode_arms),
@@ -1298,33 +990,16 @@ def run_scenario_acl_training(
                 "chunk_id": current_chunk_id,
                 "global_step": current_global_step,
                 "mode": chunk_mode,
-                "arm_index": -1 if scenario_cfg.arm_space == "scenario" else current_spec.arm_index,
+                "arm_index": -1,
                 "arm_name": chunk_stage,
-                "scenario_seed": None if scenario_cfg.arm_space == "scenario" else current_spec.scenario_seed,
-                "selection_probability": None if scenario_cfg.arm_space == "scenario" else (
-                    float(current_spec.arm_probabilities[current_spec.arm_index])
-                    if not _is_replay_iteration(current_spec)
-                    else None
-                ),
-                "arm_probabilities": (
-                    [float(value) for value in bandit.probabilities().tolist()]
-                    if scenario_cfg.arm_space == "scenario"
-                    else current_spec.arm_probabilities
-                ),
-                "replay_probabilities": None if scenario_cfg.arm_space == "scenario" else current_spec.replay_probabilities,
-                "replay_scenario_id": None if scenario_cfg.arm_space == "scenario" else (
-                    current_spec.replay_record.scenario_id
-                    if current_spec.replay_record is not None
-                    else None
-                ),
+                "scenario_seed": None,
+                "selection_probability": None,
+                "arm_probabilities": [float(value) for value in bandit.probabilities().tolist()],
+                "replay_probabilities": None,
+                "replay_scenario_id": None,
                 "learning_potential": float(learning_potential),
                 "normalized_usefulness": float(normalized_usefulness),
-                "env_overrides": (
-                    None
-                    if scenario_cfg.arm_space == "scenario"
-                    else current_spec.train_env_overrides
-                ),
-                "export_path": export_path,
+                "env_overrides": None,
                 "scenario_record_id": scenario_record_id,
                 "buffer_action": buffer_action,
                 "buffer_actions": dict(buffer_actions),
@@ -1371,17 +1046,10 @@ def run_scenario_acl_training(
                         "recent_usefulness": [float(x) for x in recent_usefulness],
                         "last_mode": chunk_mode,
                         "last_arm_name": chunk_stage,
-                        "last_arm_index": (
-                            -1 if scenario_cfg.arm_space == "scenario" else int(current_spec.arm_index)
-                        ),
-                        "last_scenario_seed": (
-                            None if scenario_cfg.arm_space == "scenario" else int(current_spec.scenario_seed)
-                        ),
-                        "last_replay_scenario_id": None if scenario_cfg.arm_space == "scenario" else (
-                            current_spec.replay_record.scenario_id
-                            if current_spec.replay_record is not None
-                            else None
-                        ),
+                        "episode_id": int(current_episode_id),
+                        "last_arm_index": -1,
+                        "last_scenario_seed": None,
+                        "last_replay_scenario_id": None,
                         "buffer_size": len(buffer),
                         "generate_count": int(generate_count),
                         "replay_count": int(replay_count),
@@ -1426,20 +1094,6 @@ def run_scenario_acl_training(
                 len(buffer),
             )
 
-            if remaining > 0:
-                if scenario_cfg.arm_space == "scenario":
-                    next_spec = first_spec
-                else:
-                    next_spec = _choose_iteration_spec(
-                        cfg=cfg,
-                        curriculum_cfg=curriculum_cfg,
-                        arms=arms,
-                        bandit=bandit,
-                        buffer=buffer,
-                        rng=rng,
-                        chunk_id=current_chunk_id + 1,
-                    )
-
         if not bool(cfg.checkpoint.get("save_final", True)):
             raise ValueError("checkpoint.save_final must be true for scenario_acl training.")
         agent.save(paths.final_checkpoint_stem)
@@ -1453,12 +1107,8 @@ def run_scenario_acl_training(
             ),
             split="test",
         )
-        if scenario_cfg.arm_space == "scenario":
-            final_eval_env_overrides.update(semantic_env_overrides)
-        final_eval_base_seed = eval_base_seed_from_env_overrides(
-            final_eval_env_overrides,
-            cfg,
-        )
+        final_eval_env_overrides.update(semantic_env_overrides)
+        final_eval_base_seed = None
         final_eval_env = build_env(cfg, final_eval_env_overrides)
         seed_env_spaces(final_eval_env, run_seed + 600_000)
         final_eval_agent = Agent(
@@ -1510,11 +1160,7 @@ def run_scenario_acl_training(
             error_priority_base=float(cfg.reward.get("a", 2.01)),
             show_progress=True,
             artifact_recorder_factory=artifact_factory,
-            before_episode_reset_callback=(
-                _configure_waymo_eval_episode
-                if scenario_cfg.arm_space == "scenario"
-                else None
-            ),
+            before_episode_reset_callback=_configure_waymo_eval_episode,
         )
         final_eval_env.close()
         print_evaluation_summary(

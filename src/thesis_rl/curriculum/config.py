@@ -67,7 +67,7 @@ class StagedCurriculumConfig:
 
 @dataclass(frozen=True)
 class ScenarioAclMabConfig:
-    num_arms: int = 7
+    num_arms: int = 6
     eta: float = 0.2
     alpha: float = 0.005
     initial_weight: float = 1.0
@@ -86,7 +86,6 @@ class ScenarioAclReplaySamplingConfig:
     omega: float = 0.7
     beta: float = 1.0
     staleness_offset: int = 1
-    rank_one_is_best: bool = True
 
 
 @dataclass(frozen=True)
@@ -107,19 +106,13 @@ class ScenarioAclScenarioEnvConfig:
 
 @dataclass(frozen=True)
 class ScenarioAclConfig:
-    mode: str = "mab_generate_only"
-    # ``generator`` preserves the legacy procedural ACL; ``scenario`` makes
-    # the MAB select the canonical ScenarioNet A0-A5 semantic arms.
-    arm_space: str = "generator"
     buffer_capacity: int = 1000
     warmup_buffer_size: int = 100
     exploit_probability: float = 0.8
-    generate_probability: float = 0.2
     use_mab: bool = True
     use_scenario_buffer: bool = True
     use_replay: bool = False
     use_staleness: bool = True
-    use_rule_criticality: bool = True
     recent_window_size: int = 100
     mab: ScenarioAclMabConfig = field(default_factory=ScenarioAclMabConfig)
     replay_sampling: ScenarioAclReplaySamplingConfig = field(
@@ -272,30 +265,10 @@ def _parse_scenario_acl_config(
 ) -> ScenarioAclConfig:
     payload = _to_plain_mapping(data)
 
-    allowed_modes = {
-        "uniform_pg",
-        "mab_generate_only",
-        "mab_plus_replay",
-    }
-    mode = str(payload.get("mode", "mab_generate_only")).strip().lower()
-    if mode not in allowed_modes:
-        raise ValueError(
-            "Unsupported scenario ACL mode "
-            f"'{mode}'. Expected one of: {', '.join(sorted(allowed_modes))}."
-        )
-
-    arm_space = str(payload.get("arm_space", "generator")).strip().lower()
-    if arm_space not in {"generator", "scenario"}:
-        raise ValueError(
-            "Unsupported scenario_acl.arm_space "
-            f"'{arm_space}'. Expected 'generator' or 'scenario'."
-        )
-
     buffer_capacity = int(payload.get("buffer_capacity", 1000))
     warmup_buffer_size = int(payload.get("warmup_buffer_size", 100))
     recent_window_size = int(payload.get("recent_window_size", 100))
     exploit_probability = float(payload.get("exploit_probability", 0.8))
-    generate_probability = float(payload.get("generate_probability", 0.2))
 
     if buffer_capacity <= 0:
         raise ValueError("scenario_acl.buffer_capacity must be > 0.")
@@ -313,13 +286,6 @@ def _parse_scenario_acl_config(
         raise ValueError("scenario_acl.recent_window_size must be > 0.")
     if not 0.0 <= exploit_probability <= 1.0:
         raise ValueError("scenario_acl.exploit_probability must be in [0, 1].")
-    if not 0.0 <= generate_probability <= 1.0:
-        raise ValueError("scenario_acl.generate_probability must be in [0, 1].")
-    if abs((exploit_probability + generate_probability) - 1.0) > 1e-9:
-        raise ValueError(
-            "scenario_acl.exploit_probability + scenario_acl.generate_probability "
-            "must equal 1.0."
-        )
     if bool(payload.get("use_replay", False)) and not bool(payload.get("use_scenario_buffer", True)):
         raise ValueError("scenario_acl.use_replay=true requires use_scenario_buffer=true.")
 
@@ -334,13 +300,13 @@ def _parse_scenario_acl_config(
             f"'{feedback}'. Expected 'rank_normalized_usefulness'."
         )
 
-    num_arms = int(mab_payload.get("num_arms", 7))
+    num_arms = int(mab_payload.get("num_arms", 6))
     target_sync_interval = int(mab_payload.get("target_sync_interval", 5))
     weight_clip_min = float(mab_payload.get("weight_clip_min", -5.0))
     weight_clip_max = float(mab_payload.get("weight_clip_max", 5.0))
     initial_weight_decay = float(mab_payload.get("initial_weight_decay", 1.0))
-    if num_arms <= 0:
-        raise ValueError("scenario_acl.mab.num_arms must be > 0.")
+    if num_arms != 6:
+        raise ValueError("scenario_acl.mab.num_arms must be 6 for semantic arms A0-A5.")
     if target_sync_interval <= 0:
         raise ValueError("scenario_acl.mab.target_sync_interval must be > 0.")
     if weight_clip_min > weight_clip_max:
@@ -354,17 +320,13 @@ def _parse_scenario_acl_config(
         )
 
     return ScenarioAclConfig(
-        mode=mode,
-        arm_space=arm_space,
         buffer_capacity=buffer_capacity,
         warmup_buffer_size=warmup_buffer_size,
         exploit_probability=exploit_probability,
-        generate_probability=generate_probability,
         use_mab=bool(payload.get("use_mab", True)),
         use_scenario_buffer=bool(payload.get("use_scenario_buffer", True)),
         use_replay=bool(payload.get("use_replay", False)),
         use_staleness=bool(payload.get("use_staleness", True)),
-        use_rule_criticality=bool(payload.get("use_rule_criticality", True)),
         recent_window_size=recent_window_size,
         mab=ScenarioAclMabConfig(
             num_arms=num_arms,
@@ -382,7 +344,6 @@ def _parse_scenario_acl_config(
             omega=float(replay_payload.get("omega", 0.7)),
             beta=float(replay_payload.get("beta", 1.0)),
             staleness_offset=int(replay_payload.get("staleness_offset", 1)),
-            rank_one_is_best=bool(replay_payload.get("rank_one_is_best", True)),
         ),
         scenario_env=ScenarioAclScenarioEnvConfig(
             horizon=int(scenario_env_payload.get("horizon", 1000)),

@@ -200,3 +200,28 @@ def test_pipeline_excludes_disallowed_signal_reliability() -> None:
     assert all(
         entry.record.scenario_uid != "waymo:v1:0" for entry in selected
     )
+
+
+def test_pipeline_excludes_invalid_records_before_split_accounting() -> None:
+    entries = []
+    for source in ("waymo", "pg"):
+        for index in range(4):
+            entry = _entry(source, index)
+            status = "invalid" if index == 0 else "valid"
+            entries.append(
+                ScenarioCatalogEntry(
+                    replace(entry.record, validation_status=status), entry.features
+                )
+            )
+
+    selected = assign_source_splits_to_targets(
+        tuple(entries),
+        targets={
+            source: {"train": 1, "validation": 1, "test": 1}
+            for source in ("waymo", "pg")
+        },
+        seed=0,
+    )
+
+    assert len(selected) == 6
+    assert all(entry.record.validation_status == "valid" for entry in selected)

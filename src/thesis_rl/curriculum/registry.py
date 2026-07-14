@@ -4,7 +4,6 @@ from collections.abc import Callable
 
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.interfaces import CurriculumStrategy
-from thesis_rl.curriculum.scenario_acl import ScenarioAclCurriculum
 from thesis_rl.curriculum.strategies import StagedCurriculum
 
 
@@ -13,7 +12,6 @@ StrategyFactory = Callable[[CurriculumConfig], CurriculumStrategy]
 
 _STRATEGY_FACTORIES: dict[str, StrategyFactory] = {
     "staged": lambda config: StagedCurriculum(config.staged),
-    "scenario_acl": lambda config: ScenarioAclCurriculum(config.scenario_acl),
 }
 
 

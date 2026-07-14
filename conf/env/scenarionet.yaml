@@ -2,6 +2,9 @@ name: scenarionet
 env_id: ThesisScenarioEnv
 
 split: train
+# Normal runs need only this root. The factory derives the frozen catalog and
+# matching runtime/<split> view; catalog_path is an override for experiments.
+dataset_root: ${oc.env:SCENARIONET_DATA_ROOT,${oc.env:DATA_ROOT,/workspace/data}/scenarionet}
 catalog_path: null
 # Root seed for ScenarioNet provider sampling. Keep it tied to the run seed so
 # MAB arm choices and catalog-record choices belong to one reproducible run.

@@ -144,6 +144,15 @@ with a temporary fallback scorer.
 The exact formulas in the specification for PPO/TD3/SAC/distributional RL
 should not block the first implementation.
 
+### 6. Fresh sampling and replay are disjoint
+
+Once a catalog scenario has been accepted into the ACL buffer, fresh sampling
+must exclude it. It can subsequently be selected only through replay, whose
+usefulness/staleness distribution is the single source of replay decisions.
+If an arm has no fresh candidates after this exclusion, the driver falls back
+to buffer replay and records the origin as `fallback_replay_exhausted_arm`.
+Rejected records are not excluded and may be sampled again as fresh scenarios.
+
 We should start with a pluggable learning-potential API and provide:
 
 - `proxy` scorer in v1

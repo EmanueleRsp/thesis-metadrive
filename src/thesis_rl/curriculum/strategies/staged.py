@@ -24,6 +24,13 @@ class StagedCurriculum:
             return
 
         for stage in self.config.stages:
+            # ScenarioNet stages are provider queries over a frozen catalog.
+            # Their train/evaluation separation is the catalog split, not two
+            # numeric MetaDrive seed windows. Evaluation receives split=test
+            # from the ScenarioNet evaluation wiring.
+            if "provider" in stage.env:
+                continue
+
             if not stage.eval_env:
                 raise ValueError(
                     "Curriculum auto mode requires `eval_env` for every stage to avoid "

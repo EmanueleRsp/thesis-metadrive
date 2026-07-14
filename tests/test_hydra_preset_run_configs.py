@@ -45,10 +45,6 @@ def test_reward_variants_compose() -> None:
     cfg_monitor_only = _compose("reward=monitor_only", "curriculum=stages")
     cfg_scalar_reward = _compose("reward=scalar_reward", "curriculum=stages")
     cfg_scenario_acl = _compose("reward=monitor_only", "curriculum=scenario_acl")
-    cfg_scenario_acl_replay = _compose(
-        "reward=monitor_only",
-        "curriculum=scenario_acl_mab_plus_replay",
-    )
 
     assert cfg_native.reward.name == "native"
     assert str(cfg_native.reward.type) == "native"
@@ -72,9 +68,7 @@ def test_reward_variants_compose() -> None:
     assert float(cfg_scalar_reward.reward.lambda_rule) == 1.0
     assert cfg_scenario_acl.reward.name == "monitor_only"
     assert str(cfg_scenario_acl.curriculum.kind) == "scenario_acl"
-    assert str(cfg_scenario_acl.curriculum.scenario_acl.mode) == "mab_plus_replay"
-    assert str(cfg_scenario_acl_replay.curriculum.scenario_acl.mode) == "mab_plus_replay"
-    assert bool(cfg_scenario_acl_replay.curriculum.scenario_acl.use_replay) is True
+    assert bool(cfg_scenario_acl.curriculum.scenario_acl.use_replay) is True
 
 
 def test_scenarionet_staged_curriculum_composes_with_semantic_arms() -> None:
@@ -91,12 +85,13 @@ def test_scenarionet_staged_curriculum_composes_with_semantic_arms() -> None:
     ]
     assert str(cfg.curriculum.staged.stages[3].env.provider.arm) == "A3_complex_junction"
     assert float(cfg.curriculum.staged.stages[4].env.provider.source_probability.pg) == 0.0
+    assert all("start_seed" not in stage.env for stage in cfg.curriculum.staged.stages)
+    assert all("num_scenarios" not in stage.env for stage in cfg.curriculum.staged.stages)
 
 
 def test_scenarionet_acl_composes_with_six_semantic_arms() -> None:
     cfg = _compose("env=scenarionet", "curriculum=scenario_acl_scenarionet")
 
-    assert str(cfg.curriculum.scenario_acl.arm_space) == "scenario"
     assert int(cfg.curriculum.scenario_acl.mab.num_arms) == 6
     assert bool(cfg.curriculum.scenario_acl.use_scenario_buffer) is True
     assert bool(cfg.curriculum.scenario_acl.use_replay) is True

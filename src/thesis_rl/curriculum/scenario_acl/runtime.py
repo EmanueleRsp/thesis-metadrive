@@ -24,12 +24,9 @@ def validate_scenario_acl_runtime_support(
     if not curriculum_cfg.is_scenario_acl:
         return
 
-    if curriculum_cfg.scenario_acl.arm_space == "scenario":
-        env_name = str(cfg.env.get("name", "")).strip().lower()
-        if env_name != "scenarionet":
-            raise ValueError(
-                "scenario_acl.arm_space='scenario' requires env=scenarionet."
-            )
+    env_name = str(cfg.env.get("name", "")).strip().lower()
+    if env_name != "scenarionet":
+        raise ValueError("scenario_acl requires env=scenarionet.")
 
     vectorized_cfg = cfg.env.get("vectorized", {})
     if bool(vectorized_cfg.get("enabled", False)):

@@ -8,7 +8,7 @@ from thesis_rl.curriculum.config import ScenarioAclMabConfig
 
 
 @dataclass
-class GeneratorArmBandit:
+class ScenarioArmBandit:
     config: ScenarioAclMabConfig
     weights: np.ndarray = field(init=False, repr=False)
     target_weights: np.ndarray = field(init=False, repr=False)
@@ -78,7 +78,7 @@ class GeneratorArmBandit:
         cls,
         config: ScenarioAclMabConfig,
         state: dict[str, object],
-    ) -> "GeneratorArmBandit":
+    ) -> "ScenarioArmBandit":
         bandit = cls(config)
         weights = state.get("weights")
         target_weights = state.get("target_weights")

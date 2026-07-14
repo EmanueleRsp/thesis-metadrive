@@ -6,8 +6,6 @@ enabled: true
 kind: scenario_acl
 
 scenario_acl:
-  mode: mab_plus_replay
-  arm_space: scenario
   use_mab: true
   use_scenario_buffer: true
   use_replay: true
