@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact
 from thesis_rl.rulebook.v2.calibration import (
     BrakingTrial,
     calibrate_ego_braking,
@@ -59,3 +62,19 @@ def test_calibration_artifact_roundtrip_validates_config_hash(tmp_path):
     assert loaded == artifact
     with pytest.raises(ValueError, match="does not match"):
         load_calibration_artifact(path, expected_config_hash="other-hash")
+
+
+def test_calibration_artifact_rejects_protocol_metadata_and_cap_violations(tmp_path):
+    artifact = calibrate_ego_braking(trials=_trials(), config_hash="ego-hash")
+    path = write_calibration_artifact(artifact, tmp_path / "calibration.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["target_speeds_mps"] = [5.0, 10.0]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="protocol metadata"):
+        load_calibration_artifact(path, expected_config_hash="ego-hash")
+
+    with pytest.raises(ValueError, match="cap"):
+        write_calibration_artifact(
+            RSSCalibrationArtifact(config_hash="ego-hash", ego_min_brake_mps2=4.1),
+            tmp_path / "over_cap.json",
+        )

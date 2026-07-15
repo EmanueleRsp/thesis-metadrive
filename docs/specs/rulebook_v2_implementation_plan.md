@@ -808,16 +808,26 @@ planner non può quindi inserirla nel replay buffer.
 ### Attività
 
 - [x] Implementare il protocollo di calibrazione di `b_e`.
+- [x] Implementare runner automatico delle prove su pista rettilinea MetaDrive
+      senza traffico, parametrizzato dalla configurazione ego congelata.
 - [x] Produrre artifact in memoria con hash della configurazione ego.
 - [ ] Eseguire tutti i test obbligatori della sezione 15.
 - [x] Eseguire smoke deterministici su fixture PG e Waymo.
 - [ ] Eseguire pilot su campione stratificato per sorgente/topologia.
 - [ ] Misurare eleggibilità, cause di esclusione e costo runtime per step.
-- [ ] Verificare assenza di future-track access nel monitor online.
-- [ ] Verificare equivalenza geometrica e ID fra reset ripetuti.
-- [ ] Eseguire suite completa, Ruff e type checking mirato.
-- [ ] Aggiornare documentazione, comandi di validazione e metadata run.
+- [x] Verificare assenza di future-track access nel monitor online.
+- [x] Verificare equivalenza geometrica e ID fra reset ripetuti tramite test
+      di canonicalizzazione e candidate rebuild deterministico.
+- [ ] Eseguire suite completa con tutti i test verdi (ISS-011 resta aperto).
+- [x] Eseguire Ruff sui file del perimetro F10/v2.
+- [x] Eseguire type checking mirato del modulo calibrazione; audit package completo tracciato in ISS-012.
+- [x] Aggiornare documentazione, comandi `make` di validazione e metadata run.
 - [ ] Congelare versione config, adapter, calibration e eligibility artifact.
+
+Il file `data/scenarionet/rulebook_v2/ego_config.json` è stato predisposto con
+i default fisici effettivi del repository (`vehicle_model=default`). Deve
+essere sostituito prima della calibrazione se il run finale usa override fisici
+del veicolo; il dataset split non contiene questi parametri.
 
 ### Criteri di uscita
 
@@ -868,7 +878,7 @@ transizioni.
 
 | ID | Stato | Severità | Problema/rischio | Azione proposta |
 |---|---|---|---|---|
-| ISS-001 | `APERTO` | alta | Percentuale di scenari realmente eleggibili non ancora nota | Audit F3 su campione stratificato prima di completare tutte le regole |
+| ISS-001 | `APERTO` | alta | Percentuale di scenari realmente eleggibili non ancora conclusiva: pilot offline 2026-07-15 (10 PG + 10 Waymo) ha prodotto 8 conversioni con task-route eligibility differita per hash mancanti, 4 esclusioni signal `UNKNOWN` e 8 eccezioni adapter | Completare il pilot con hash ego/geometria e reset smoke; usare il report `data/scenarionet/rulebook_v2/pilot/offline_pilot_20260715.json` come base, non come eligibility artifact finale |
 | ISS-002 | `APERTO` | alta | Map-matching del task route può risultare ambiguo su junction/route parallele | Algoritmo deterministico + esclusione tipizzata; discutere solo se l'esclusione è eccessiva |
 | ISS-003 | `RISOLTO` | media | API Panda3D per callback di contatto e installazione hook verificati sul commit locale | Test differenziale reale ScenarioEnv/Waymo con seed/azioni identici: osservazioni, reward e terminazioni invariati |
 | ISS-004 | `APERTO` | media | Qualità di polygon, width e quota differisce fra PG e Waymo | Report validazione per campo e sorgente in F3 |
@@ -878,7 +888,8 @@ transizioni.
 | ISS-008 | `RISOLTO` | media | Shell di lavoro senza `pytest`, Ruff, Shapely e MetaDrive | Verifiche eseguite nel container `dev`: dipendenze disponibili, 23 test e Ruff verdi; versioni registrate in F0 |
 | ISS-009 | `RISOLTO` | media | `RoutePolyline` deve unificare punti consecutivi entro 1 mm in XY, ma la specifica non definisce la quota risultante se tali punti hanno `z` differenti | DEC-011: cluster XY medio, mediana z, validazione con `z_tol=3 m`; approvata dall'utente il 2026-07-15 |
 | ISS-010 | `RISOLTO` | media | La specifica assegna alle componenti disgiunte di conflict zone un indice `k` “dopo ordinamento canonico”, senza definire la chiave d'ordinamento | DEC-012: ordine lessicografico crescente del WKB DEC-007; approvata dall'utente il 2026-07-15 |
-| ISS-011 | `APERTO` | media | Suite completa repository: 8 test non v2 falliscono per fixture forced-rule v1, preset Hydra/Scenario ACL con API incoerenti e runtime ScenarioNet incompleto (file catalogo mancanti) | Non alterare il core v2; isolare e correggere nei rispettivi moduli prima del freeze F10 |
+| ISS-011 | `APERTO` | media | Suite completa repository (ultima verifica 2026-07-15): 424 passati, 8 falliti fuori dal perimetro v2. I fallimenti riguardano fixture/schema forced-rule v1 (`vehicle_collision_energy`), preset Hydra (`td3`/`td3_sb3`), validazione/config e API MAB Scenario ACL (`chunk_id`, `rng`) e runtime ScenarioNet (catalogo Waymo/PG non coerente o file mancanti) | Non alterare il core v2; isolare e correggere nei rispettivi moduli prima del freeze F10 |
+| ISS-012 | `APERTO` | bassa | `mypy` sull'intero package v2 segnala 80 errori, inclusi stubs Shapely/Panda3D mancanti e annotazioni legacy; il nuovo modulo calibrazione passa isolatamente | Installare stubs e sanare le annotazioni in una tranche dedicata; non blocca i test runtime, ma impedisce di dichiarare type-check completo F10 |
 
 Quando un problema richiede una scelta non coperta dalla specifica:
 
@@ -982,8 +993,25 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F8 | Verifica finale aggregazione/progresso/monitor transazionale e audit `current_sdc_route` | 31 test mirati passati; nessun accesso runtime a `current_sdc_route`; F8 completata |
 | 2026-07-15 | F9 | Wrapper/output v2: metadata macro ordinato, agent metrics, artifact/trajectory diagnostics, criticality v2 e isolamento per-env | 13 test F9 mirati passati; reward nativo invariato, Ruff e `git diff --check` verdi; F9 completata |
 | 2026-07-15 | F10 | Protocollo `b_e`: prove target 5/10/15/20, validità, quantile order-statistic `lower`, floor a 0.1 e cap 4.0; artifact hash-validato | 21 test calibrazione/RSS/contratti passati, Ruff e `git diff --check` verdi; pilot e freeze F10 restano aperti |
-| 2026-07-15 | F10 | Persistenza/ricarica JSON dell’artifact `b_e` con schema, metadati protocollo e controllo config hash; smoke PG/Waymo | 4 test artifact passati; 7 smoke/converter test passati; Ruff e diff check verdi; suite obbligatoria/pilot/freeze restano aperti |
+| 2026-07-15 | F10 | Persistenza/ricarica JSON dell’artifact `b_e` con schema, metadati protocollo e controllo config hash; smoke PG/Waymo | 5 test artifact passati; 7 smoke/converter test passati; Ruff e diff check verdi; suite obbligatoria/pilot/freeze restano aperti |
 | 2026-07-15 | F10 | Verifica cumulativa dopo calibrazione e output F9; audit runtime su `current_sdc_route` | 108 test Rulebook v2 passati; Ruff e `git diff --check` verdi; l'unica occorrenza è documentale nel contratto wrapper |
+| 2026-07-15 | F10 | Type-check mirato del nuovo modulo calibrazione | `mypy --ignore-missing-imports src/thesis_rl/rulebook/v2/calibration.py`: success; type-check package completo resta aperto come ISS-012 |
+| 2026-07-15 | F10 | Audit type-check package v2 | `mypy --ignore-missing-imports src/thesis_rl/rulebook/v2`: 58 errori in 12 file; il controllo completo senza ignore segnala 80 errori includendo stubs Shapely/Panda3D; ISS-012 resta aperto |
+| 2026-07-15 | Regressione/F10 | Verifica suite completa repository dopo calibrazione e smoke PG/Waymo | 420 test passati, 8 falliti fuori dal perimetro Rulebook v2 (ISS-011); nessun nuovo fallimento v2; il comando è stato eseguito nel container `dev` |
+| 2026-07-15 | F10 | Chiusura tranche di verifica dopo correzione import Ruff nel driver Scenario ACL | 112 test mirati Rulebook v2/Scenario ACL passati; Ruff mirato passato; `git diff --check` pulito; suite completa confermata a 420 passati e 8 falliti esterni (ISS-011) |
+| 2026-07-15 | F10 | Loader artifact: validazione completa dei target, cap normativo e valore positivo/finito; rifiuto artifact oltre cap | 109 test Rulebook v2 passati; Ruff e `git diff --check` verdi; artifact reale e pilot restano aperti (ISS-007) |
+| 2026-07-15 | F10 | CLI `rulebook_v2_calibrate` e `rulebook_v2_pilot`; pilot offline stratificato su 2 PG per profilo (5 profili) + 10 Waymo | Report generato in `data/scenarionet/rulebook_v2/pilot/offline_pilot_20260715.json`: 8 conversioni con task-route eligibility differita (hash non forniti), 4 esclusioni per signal `UNKNOWN`, 8 eccezioni adapter; mean conversion 0.529 s, p95 lower 2.192 s; non è ancora costo monitor per-step né eligibility finale |
+| 2026-07-15 | Regressione/F10 | Suite completa dopo le CLI F10 e il pilot offline | 423 test passati, 8 falliti fuori dal perimetro v2 (ISS-011); i test Rulebook v2/CLI restano verdi; Ruff e `git diff --check` verdi |
+| 2026-07-15 | F10 | Target Makefile e documentazione operativa per calibrazione, validazione artifact, pilot preliminare/finale e check v2 | `make rulebook-v2-init`, `rulebook-v2-calibrate`, `rulebook-v2-validate-calibration`, `rulebook-v2-pilot`, `rulebook-v2-pilot-final`, `rulebook-v2-f10`; i target rifiutano input mancanti e non generano fallback sintetici |
+| 2026-07-15 | F10 | Verifica reale del target Makefile `rulebook-v2-check` | 111 test Rulebook v2 passati; Ruff passato; `git diff --check` pulito |
+| 2026-07-15 | F10 | Runner automatico `rulebook_v2_braking_trials` su pista `SSSSSSSSSS` senza traffico | Smoke reale 1 prova per target (4 prove) completato nel container; il runner misura il tratto 90%→10%, verifica lane/collisioni e produce il JSON trials; le 40 prove finali richiedono il file ego congelato dell'utente |
+| 2026-07-15 | F10 | Verifica completa runner automatico su banco MetaDrive parametrico | 40/40 prove generate (10 per target) nel container con fixture di test; il risultato non viene usato come artifact finale perché la fixture vehicle config non è dichiarata identica al training ego |
+| 2026-07-15 | Regressione/F10 | Suite completa dopo runner automatico calibrazione | 424 test passati, 8 falliti fuori dal perimetro v2 (ISS-011); nessun nuovo fallimento Rulebook v2; Ruff e `git diff --check` verdi |
+| 2026-07-15 | F10 | Predisposizione configurazione ego per il target Make | Creato `data/scenarionet/rulebook_v2/ego_config.json` dai default MetaDrive correnti (`vehicle_model=default`); prove reali e sostituzione in caso di override fisici restano prerequisiti del freeze |
+| 2026-07-15 | F10 | Raccolta reale con configurazione ego predisposta | 40/40 prove MetaDrive completate; dopo il taper di avvicinamento al target risultano 10/10 valide per 5, 10, 15 e 20 m/s |
+| 2026-07-15 | F10 | Calibrazione e validazione artifact `b_e` | Artifact scritto e ricaricato con hash `ce25f5a02c7be3974048ac8d3f664a43a73715c7a26882f226982d28b444cf00`; `ego_min_brake_mps2=4.0`; target `make rulebook-v2-validate-calibration` passato |
+| 2026-07-15 | F10 | Pilot offline preliminare dopo calibrazione | `make rulebook-v2-pilot` passato; report con 8 `adapter_exception`, 4 `adapter_excluded` e 8 `task_route_deferred_missing_hash`; non è ancora eligibility finale |
+| 2026-07-15 | F10 | Regressione dopo correzione overshoot runner e calibrazione reale | `make rulebook-v2-check`: 112 test passati, Ruff passato, `git diff --check` pulito |
 
 ---
 

@@ -107,6 +107,8 @@ def write_calibration_artifact(
 
     if not isinstance(artifact, RSSCalibrationArtifact):
         raise TypeError("artifact must be an RSSCalibrationArtifact")
+    if artifact.ego_min_brake_mps2 > MAX_REFERENCE_BRAKE_MPS2:
+        raise ValueError("Calibration artifact brake value exceeds the normative cap")
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -143,6 +145,13 @@ def load_calibration_artifact(
     if payload.get("config_hash") != expected_config_hash:
         raise ValueError("Calibration artifact hash does not match ego config")
     try:
+        target_speeds = tuple(float(value) for value in payload["target_speeds_mps"])
+        cap_mps2 = float(payload["cap_mps2"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Calibration artifact protocol metadata is invalid") from error
+    if target_speeds != CALIBRATION_TARGET_SPEEDS_MPS or cap_mps2 != MAX_REFERENCE_BRAKE_MPS2:
+        raise ValueError("Calibration artifact protocol metadata is invalid")
+    try:
         artifact = RSSCalibrationArtifact(
             config_hash=str(payload["config_hash"]),
             ego_min_brake_mps2=float(payload["ego_min_brake_mps2"]),
@@ -151,4 +160,6 @@ def load_calibration_artifact(
         raise ValueError("Calibration artifact values are invalid") from error
     if payload.get("quantile") != "lower_0.05" or payload.get("rounding") != "floor_0.1":
         raise ValueError("Calibration artifact protocol metadata is invalid")
+    if artifact.ego_min_brake_mps2 > MAX_REFERENCE_BRAKE_MPS2:
+        raise ValueError("Calibration artifact brake value exceeds the normative cap")
     return artifact

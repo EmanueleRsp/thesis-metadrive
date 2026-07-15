@@ -45,6 +45,113 @@ Expected:
 Visual/manual checks:
 - Scan test output summary: no skipped-critical suites, no intermittent errors.
 
+## 0.2) Rulebook v2 F10: calibrazione e pilot
+
+I target `make` automatizzano soltanto la parte riproducibile. Le prove di
+frenata devono essere raccolte con la configurazione ego effettiva, su strada
+rettilinea e piana, senza traffico. Non inserire valori sintetici: servono 10
+prove valide per ciascuna velocità target `5, 10, 15, 20 m/s`.
+
+Il repository ora contiene già questo file sul host:
+
+```text
+data/scenarionet/rulebook_v2/ego_config.json
+```
+
+`ego_config.json` è il JSON canonico della configurazione fisica ego congelata
+derivata dai default MetaDrive/ScenarioNet correnti e descrive anche il banco
+di prova rettilineo:
+
+```json
+{
+  "map_config": {"type": "block_sequence", "config": "SSSSSSSSSS"},
+  "traffic_density": 0.0,
+  "random_agent_model": false,
+  "num_agents": 1,
+  "vehicle_config": {"vehicle_model": "default"}
+}
+```
+
+Il campo `vehicle_config` deve corrispondere al modello ego effettivo del run
+finale. Se il run finale introduce override fisici, sostituire il file con il
+JSON risolto del run prima della raccolta: lo split del dataset contiene gli
+scenari e le mappe, non i parametri dinamici dell'ego, quindi non può generare
+questo file in modo affidabile. Il target `make rulebook-v2-collect-trials` usa questa configurazione
+per eseguire automaticamente le prove e generare
+`data/scenarionet/rulebook_v2/braking_trials.json`. Ogni elemento prodotto
+contiene:
+
+```json
+{
+  "target_speed_mps": 5.0,
+  "reached_speed_mps": 5.02,
+  "collided": false,
+  "left_lane": false,
+  "mean_deceleration_mps2": 3.1
+}
+```
+
+La sequenza raccomandata è:
+
+```bash
+make rulebook-v2-init
+make rulebook-v2-collect-trials
+make rulebook-v2-calibrate
+make rulebook-v2-validate-calibration
+make rulebook-v2-pilot
+```
+
+`rulebook-v2-collect-trials` esegue 10 prove per target sulla pista `S` senza
+traffico, applica acceleratore/frenata massimi e misura la decelerazione tra il
+primo campione sotto il 90% e quello sotto il 10% della velocità iniziale.
+`rulebook-v2-calibrate` calcola automaticamente l'hash canonico di
+`ego_config.json`, applica il protocollo `Q_0.05^lower`, floor a `0.1` e cap a
+`4.0 m/s²`, quindi scrive:
+
+```text
+data/scenarionet/rulebook_v2/calibration_b_e.json
+```
+
+Il pilot preliminare non dichiara l'eleggibilità finale: misura conversione
+statica e task-route eligibility. Il report viene scritto in:
+
+```text
+data/scenarionet/rulebook_v2/pilot_offline.json
+```
+
+Per il pilot finale serve anche l'hash della configurazione geometrica
+congelata:
+
+```bash
+make rulebook-v2-pilot-final GEOMETRY_CONFIG_HASH='<sha256-geometria>'
+```
+
+Questo target richiede l'artifact `b_e` validato e passa lo stesso hash ego al
+contratto di calibrazione. Il report finale è:
+
+```text
+data/scenarionet/rulebook_v2/pilot_final.json
+```
+
+Per eseguire in un'unica tranche raccolta delle 40 prove, calibrazione,
+validazione, pilot finale e controlli v2:
+
+```bash
+make rulebook-v2-f10 GEOMETRY_CONFIG_HASH='<sha256-geometria>'
+```
+
+Se mancano `ego_config.json`, `braking_trials.json`, l'artifact oppure
+`GEOMETRY_CONFIG_HASH`, il target termina volontariamente con errore esplicito;
+non sono previsti fallback o artifact sintetici.
+
+Per i controlli ordinari restano disponibili:
+
+```bash
+make rulebook-v2-check
+```
+
+che esegue test Rulebook v2/CLI, Ruff e `git diff --check` nel container `dev`.
+
 ## 0.1) Fork-Backed Planner Checks
 
 What this step validates:

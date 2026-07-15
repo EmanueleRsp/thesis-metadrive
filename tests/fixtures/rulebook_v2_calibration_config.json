@@ -1,0 +1,15 @@
+{
+  "map_config": {
+    "type": "block_sequence",
+    "config": "SSSSSSSSSS"
+  },
+  "traffic_density": 0.0,
+  "random_agent_model": false,
+  "num_agents": 1,
+  "vehicle_config": {
+    "vehicle_model": "default"
+  },
+  "physics_world_step_size": 0.02,
+  "decision_repeat": 5,
+  "horizon": 2000
+}
