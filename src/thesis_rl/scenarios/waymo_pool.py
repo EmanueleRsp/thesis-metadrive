@@ -11,7 +11,7 @@ from typing import Sequence
 from thesis_rl.scenarios.arms import ARMS
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 
-WAYMO_POOL_POLICY_VERSION = "waymo_pool_v2"
+WAYMO_POOL_POLICY_VERSION = "waymo_pool_v4"
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,7 @@ class WaymoPoolStatus:
     total: int
     eligible: int
     required: int
+    required_by_arm: dict[str, int]
     by_signal_reliability: dict[str, int]
     eligible_by_arm: dict[str, int]
     source_shards: tuple[str, ...]
@@ -28,8 +29,27 @@ class WaymoPoolStatus:
         return max(0, self.required - self.eligible)
 
     @property
+    def arm_deficits(self) -> dict[str, int]:
+        return {
+            arm: max(0, required - self.eligible_by_arm.get(arm, 0))
+            for arm, required in self.required_by_arm.items()
+        }
+
+    @property
     def complete(self) -> bool:
-        return self.deficit == 0
+        return self.deficit == 0 and not any(self.arm_deficits.values())
+
+
+def is_waymo_pool_eligible(
+    entry: ScenarioCatalogEntry,
+    *,
+    allowed_signal_reliabilities: Sequence[str],
+) -> bool:
+    allowed = frozenset(str(value) for value in allowed_signal_reliabilities)
+    return (
+        entry.record.validation_status in {"valid", "warning"}
+        and entry.features.signal_reliability in allowed
+    )
 
 
 def summarize_waymo_pool(
@@ -37,6 +57,7 @@ def summarize_waymo_pool(
     *,
     allowed_signal_reliabilities: Sequence[str],
     required: int,
+    required_by_arm: dict[str, int] | None = None,
 ) -> WaymoPoolStatus:
     """Summarize candidates without assigning train/validation/test splits."""
 
@@ -45,6 +66,15 @@ def summarize_waymo_pool(
     allowed = frozenset(str(value) for value in allowed_signal_reliabilities)
     if not allowed:
         raise ValueError("allowed signal reliabilities must not be empty")
+    normalized_required_by_arm = {
+        str(arm): int(count)
+        for arm, count in (required_by_arm or {}).items()
+    }
+    unknown_arms = set(normalized_required_by_arm) - set(ARMS)
+    if unknown_arms:
+        raise ValueError(f"unknown required Waymo arms: {sorted(unknown_arms)}")
+    if any(count < 0 for count in normalized_required_by_arm.values()):
+        raise ValueError("required Waymo arm counts must be non-negative")
     uids = [entry.record.scenario_uid for entry in entries]
     if len(uids) != len(set(uids)):
         duplicates = sorted(uid for uid, count in Counter(uids).items() if count > 1)
@@ -53,8 +83,10 @@ def summarize_waymo_pool(
     eligible_entries = [
         entry
         for entry in entries
-        if entry.record.validation_status in {"valid", "warning"}
-        and entry.features.signal_reliability in allowed
+        if is_waymo_pool_eligible(
+            entry,
+            allowed_signal_reliabilities=allowed,
+        )
     ]
     signal_counts = Counter(entry.features.signal_reliability for entry in entries)
     arm_counts = Counter(entry.record.primary_arm for entry in eligible_entries)
@@ -70,6 +102,7 @@ def summarize_waymo_pool(
         total=len(entries),
         eligible=len(eligible_entries),
         required=int(required),
+        required_by_arm=normalized_required_by_arm,
         by_signal_reliability=dict(sorted(signal_counts.items())),
         eligible_by_arm={arm: int(arm_counts[arm]) for arm in ARMS},
         source_shards=tuple(source_shards),
@@ -98,5 +131,6 @@ __all__ = [
     "WAYMO_POOL_POLICY_VERSION",
     "WaymoPoolStatus",
     "fingerprint_waymo_database",
+    "is_waymo_pool_eligible",
     "summarize_waymo_pool",
 ]

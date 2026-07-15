@@ -10,6 +10,7 @@ from thesis_rl.scenarios.pipeline import (
     assign_source_splits,
     assign_source_splits_to_targets,
     arm_selection_diagnostics,
+    balance_arm_distribution,
 )
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
 
@@ -225,3 +226,46 @@ def test_pipeline_excludes_invalid_records_before_split_accounting() -> None:
 
     assert len(selected) == 6
     assert all(entry.record.validation_status == "valid" for entry in selected)
+
+
+def test_arm_balancing_trims_pg_before_waymo() -> None:
+    entries = [
+        ScenarioCatalogEntry(
+            replace(_entry("waymo", 0).record, primary_arm="A1_traffic"),
+            _entry("waymo", 0).features,
+        ),
+        ScenarioCatalogEntry(
+            replace(_entry("pg", 1).record, primary_arm="A1_traffic"),
+            _entry("pg", 1).features,
+        ),
+        ScenarioCatalogEntry(
+            replace(_entry("pg", 2).record, primary_arm="A1_traffic"),
+            _entry("pg", 2).features,
+        ),
+    ]
+    for index, arm in enumerate(
+        (
+            "A0_simple_low_traffic",
+            "A2_junction",
+            "A3_complex_junction",
+            "A4_vru",
+            "A5_critical_mixed",
+        ),
+        start=3,
+    ):
+        base = _entry("waymo", index)
+        entries.append(
+            ScenarioCatalogEntry(replace(base.record, primary_arm=arm), base.features)
+        )
+
+    balanced, report = balance_arm_distribution(
+        tuple(entries),
+        target_total=6,
+        seed=0,
+        prefer_source="waymo",
+    )
+
+    a1_entries = [entry for entry in balanced if entry.record.primary_arm == "A1_traffic"]
+    assert len(a1_entries) == 1
+    assert a1_entries[0].record.source == "waymo"
+    assert report["diagnostics"]["A1_traffic"]["removed_by_source"]["pg"] == 2

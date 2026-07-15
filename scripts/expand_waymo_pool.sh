@@ -57,6 +57,10 @@ trap cleanup EXIT
 
 refresh_status() {
   local output key value
+  local arm_args=()
+  if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
+    arm_args+=(--required-arm "A4_vru=${WAYMO_REQUIRED_ARM_A4_VRU}")
+  fi
   output="$(docker compose run --rm -T "$pipeline_service" uv run --no-sync python \
     -m thesis_rl.cli.scenarios.waymo_pool_status \
     --database "$container_database" \
@@ -67,6 +71,7 @@ refresh_status() {
     --report "${container_root}/waymo/acquisition/pool_status.json" \
     --shards-output "${container_root}/waymo/acquisition/converted_shards.txt" \
     --reuse-report-if-current \
+    "${arm_args[@]}" \
     --format env)"
   while IFS=$'\t' read -r key value; do
     [[ "$key" == SCENARIONET_WAYMO_* ]] || continue
@@ -77,6 +82,10 @@ refresh_status() {
 refresh_status
 echo "Waymo eligible pool: ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required} "\
 "(converted: ${SCENARIONET_WAYMO_POOL_TOTAL}, deficit: ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT})"
+if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
+  echo "Waymo A4_vru target: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU} "\
+"(deficit: ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0})"
+fi
 if is_true "$SCENARIONET_WAYMO_POOL_COMPLETE"; then
   echo "Waymo target already satisfied; no download or conversion is needed."
   exit 0
@@ -156,6 +165,10 @@ while ! is_true "$SCENARIONET_WAYMO_POOL_COMPLETE"; do
   refresh_status
   echo "Batch ${batch_number} complete: eligible ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required}; "\
 "remaining deficit ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
+  if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
+    echo "Batch ${batch_number} A4_vru: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU}; "\
+"remaining A4 deficit ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0}"
+  fi
 done
 
 echo "Waymo eligible target reached after ${new_shards} new shards."

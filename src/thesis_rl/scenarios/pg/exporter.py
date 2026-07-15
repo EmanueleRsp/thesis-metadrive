@@ -9,6 +9,7 @@ import yaml  # type: ignore[import-untyped]
 from thesis_rl.scenarios.arms import assign_primary_arm, derive_scenario_tags
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 from thesis_rl.scenarios.features import extract_scenario_features
+from thesis_rl.scenarios.quality import apply_catalog_quality_policy
 from thesis_rl.scenarios.pg.profiles import GenerationSpec
 from thesis_rl.scenarios.pg.validation import PGValidationResult, validate_exported_scenario
 from thesis_rl.scenarios.records import ScenarioRecord
@@ -140,6 +141,7 @@ def export_pg_scenario(
         validation=validation,
         entry_features=features,
     )
+    record = apply_catalog_quality_policy(record, features)
     entry = ScenarioCatalogEntry(record=record, features=features)
     generation_manifest = {
         "scenario_id": validation.scenario_id,

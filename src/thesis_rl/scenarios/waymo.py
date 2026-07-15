@@ -12,6 +12,7 @@ from typing import Any, Sequence
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 from thesis_rl.scenarios.arms import assign_primary_arm, derive_scenario_tags
 from thesis_rl.scenarios.features import extract_scenario_features
+from thesis_rl.scenarios.quality import apply_catalog_quality_policy
 from thesis_rl.scenarios.records import ScenarioRecord
 from thesis_rl.scenarios.splits import (
     assert_no_group_overlap,
@@ -23,9 +24,6 @@ from thesis_rl.scenarios.waymo_monitor import NullProgressSink, ProgressSink
 
 class WaymoConversionError(RuntimeError):
     pass
-
-
-MINIMUM_WAYMO_ROUTE_LENGTH_M = 10.0
 
 
 def waymo_dependency_status() -> dict[str, bool]:
@@ -191,15 +189,6 @@ def load_converted_waymo_entries(
         if not scenario_id:
             raise ValueError(f"scenario file has no id: {path}")
         features = extract_scenario_features(scenario, "waymo")
-        route_is_degenerate = features.route_length_m < MINIMUM_WAYMO_ROUTE_LENGTH_M
-        validation_warnings = (
-            (
-                f"degenerate SDC route: {features.route_length_m:.3f} m < "
-                f"{MINIMUM_WAYMO_ROUTE_LENGTH_M:.1f} m",
-            )
-            if route_is_degenerate
-            else ()
-        )
         group_id = waymo_group_id(scenario)
         relative_path = path.relative_to(base).as_posix()
         record = ScenarioRecord(
@@ -221,12 +210,10 @@ def load_converted_waymo_entries(
             primary_arm=assign_primary_arm(features),
             tags=derive_scenario_tags(features),
             signal_reliability=features.signal_reliability,
-            # ScenarioEnv has a short-route success shortcut. Keep routes
-            # shorter than the thesis 10 m minimum in the raw catalog for
-            # auditability, but exclude them from runtime views.
-            validation_status="invalid" if route_is_degenerate else "valid",
-            validation_warnings=validation_warnings,
+            validation_status="valid",
+            validation_warnings=(),
         )
+        record = apply_catalog_quality_policy(record, features)
         entries.append(ScenarioCatalogEntry(record=record, features=features))
         groups[record.scenario_uid] = group_id
     assert_waymo_training_20s([entry.record for entry in entries])

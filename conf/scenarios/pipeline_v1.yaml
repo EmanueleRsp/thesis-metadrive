@@ -3,7 +3,7 @@ pipeline_version: scenarionet_pipeline_v2
 # Scientific/data policy defaults. Host paths and credentials stay in .env.
 waymo:
   auto_expand: true
-  batch_shards: 8
+  batch_shards: 16
   max_new_shards: 128
   workers: 8
   keep_raw_batches: false
@@ -20,25 +20,26 @@ split:
     waymo: [complete, not_applicable]
     pg: [complete, not_applicable]
   # Curriculum-v2 minimum coverage. Groups remain indivisible and deficits are
-  # reported. Waymo A0 is intentionally non-zero to track additional mining.
+  # reported. Waymo A0 is too rare after quality filters to enforce as a
+  # minimum; keep PG A0 coverage as the simple-scenario anchor.
   arm_minimums:
     waymo:
       train:
-        A0_simple_low_traffic: 10
+        A0_simple_low_traffic: 0
         A1_traffic: 10
         A2_junction: 50
         A3_complex_junction: 160
         A4_vru: 80
         A5_critical_mixed: 100
       validation:
-        A0_simple_low_traffic: 3
+        A0_simple_low_traffic: 0
         A1_traffic: 3
         A2_junction: 15
         A3_complex_junction: 40
         A4_vru: 20
         A5_critical_mixed: 25
       test:
-        A0_simple_low_traffic: 5
+        A0_simple_low_traffic: 0
         A1_traffic: 5
         A2_junction: 25
         A3_complex_junction: 80
@@ -72,6 +73,13 @@ split:
       train: 1000
       validation: 250
       test: 500
+
+balance:
+  enabled: true
+  target_total: 3500
+  prefer_source: waymo
+  waymo_required_arms:
+    A4_vru: 584
 
 checks:
   simulation: true

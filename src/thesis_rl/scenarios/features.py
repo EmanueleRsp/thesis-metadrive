@@ -50,6 +50,13 @@ def _route_length(route: np.ndarray) -> float:
     return float(np.linalg.norm(np.diff(route[:, :2], axis=0), axis=1).sum())
 
 
+def _route_z_range(route: np.ndarray) -> float:
+    if len(route) == 0:
+        return 0.0
+    z = route[:, 2]
+    return float(z.max() - z.min())
+
+
 def _timestamps(metadata: Mapping[str, Any], length: int) -> np.ndarray:
     values = np.asarray(metadata.get("ts", np.arange(length) * 0.1), dtype=np.float64)
     if values.shape != (length,) or not np.isfinite(values).all():
@@ -210,6 +217,15 @@ def extract_scenario_features(
     ego_route = ego_positions[ego_valid]
     if len(ego_route) < 2 or not np.isfinite(ego_route).all():
         raise ValueError("SDC route is missing, non-finite, or degenerate")
+    map_features = scenario.get("map_features", {})
+    if not isinstance(map_features, Mapping):
+        raise ValueError("scenario map_features must be a mapping")
+    dynamic_object_count = sum(
+        1
+        for track_value in tracks.values()
+        if isinstance(track_value, Mapping)
+        and str(track_value.get("type", "")) in _DYNAMIC_TYPES
+    )
 
     relevant_agents = np.zeros(length, dtype=np.int64)
     relevant_vehicles = np.zeros(length, dtype=np.int64)
@@ -357,4 +373,9 @@ def extract_scenario_features(
         min_vehicle_conflict_tcpa_s=vehicle_tcpa,
         min_vru_conflict_dcpa_m=vru_dcpa,
         min_vru_conflict_tcpa_s=vru_tcpa,
+        sdc_valid_ratio=float(np.mean(ego_valid)),
+        sdc_initial_valid=bool(ego_valid[0]),
+        sdc_route_z_range_m=_route_z_range(ego_route),
+        map_feature_count=len(map_features),
+        dynamic_object_count=dynamic_object_count,
     )

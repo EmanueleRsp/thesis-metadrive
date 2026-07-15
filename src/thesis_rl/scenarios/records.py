@@ -135,6 +135,11 @@ class ScenarioFeatures:
     min_vehicle_conflict_tcpa_s: float | None = None
     min_vru_conflict_dcpa_m: float | None = None
     min_vru_conflict_tcpa_s: float | None = None
+    sdc_valid_ratio: float = 1.0
+    sdc_initial_valid: bool = True
+    sdc_route_z_range_m: float = 0.0
+    map_feature_count: int = 0
+    dynamic_object_count: int = 0
 
     def __post_init__(self) -> None:
         _require_non_empty("scenario_id", self.scenario_id)
@@ -162,6 +167,12 @@ class ScenarioFeatures:
             raise ValueError("relevant-agent quantiles must be non-negative")
         if self.vehicle_conflict_count < 0 or self.vru_conflict_count < 0:
             raise ValueError("conflict counts must be non-negative")
+        if not 0 <= self.sdc_valid_ratio <= 1:
+            raise ValueError("sdc_valid_ratio must be in [0, 1]")
+        if self.sdc_route_z_range_m < 0:
+            raise ValueError("sdc_route_z_range_m must be non-negative")
+        if self.map_feature_count < 0 or self.dynamic_object_count < 0:
+            raise ValueError("scenario feature counts must be non-negative")
         for name in (
             "min_vehicle_distance_m",
             "min_vru_distance_to_route_m",

@@ -7,6 +7,7 @@ import pytest
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
 from thesis_rl.scenarios.waymo_pool import (
+    WAYMO_POOL_POLICY_VERSION,
     fingerprint_waymo_database,
     summarize_waymo_pool,
 )
@@ -82,6 +83,45 @@ def test_waymo_pool_counts_only_allowed_signal_reliabilities() -> None:
     assert len(status.source_shards) == 3
 
 
+def test_waymo_pool_excludes_invalid_quality_records() -> None:
+    valid = _entry(0, reliability="complete", arm="A1_traffic")
+    invalid = ScenarioCatalogEntry(
+        replace(
+            valid.record,
+            scenario_uid="waymo:training_20s:invalid",
+            validation_status="invalid",
+        ),
+        valid.features,
+    )
+
+    status = summarize_waymo_pool(
+        (valid, invalid),
+        allowed_signal_reliabilities=("complete",),
+        required=2,
+    )
+
+    assert status.eligible == 1
+    assert status.deficit == 1
+
+
+def test_waymo_pool_requires_configured_arm_counts() -> None:
+    entries = (
+        _entry(0, reliability="complete", arm="A1_traffic"),
+        _entry(1, reliability="complete", arm="A4_vru"),
+    )
+
+    status = summarize_waymo_pool(
+        entries,
+        allowed_signal_reliabilities=("complete",),
+        required=2,
+        required_by_arm={"A4_vru": 2},
+    )
+
+    assert status.deficit == 0
+    assert status.arm_deficits == {"A4_vru": 1}
+    assert status.complete is False
+
+
 def test_waymo_pool_rejects_duplicate_scenarios() -> None:
     entry = _entry(0, reliability="complete", arm="A1_traffic")
     duplicate = ScenarioCatalogEntry(
@@ -107,3 +147,7 @@ def test_waymo_database_fingerprint_changes_with_candidate_files(tmp_path) -> No
 
     assert first != empty
     assert fingerprint_waymo_database(database) != first
+
+
+def test_waymo_pool_policy_version_invalidates_old_status_cache() -> None:
+    assert WAYMO_POOL_POLICY_VERSION == "waymo_pool_v4"

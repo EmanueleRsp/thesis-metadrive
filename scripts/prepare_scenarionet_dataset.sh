@@ -50,7 +50,7 @@ is_true() {
 pipeline_config="${SCENARIONET_PIPELINE_CONFIG:-/workspace/thesis-metadrive/conf/scenarios/pipeline_v1.yaml}"
 pipeline_service="${SCENARIONET_PIPELINE_SERVICE:-dataset-pipeline}"
 echo "Resolving pipeline configuration (single YAML source): $pipeline_config"
-stage "[0/7] Preparing the CPU-only dataset pipeline container"
+stage "[0/8] Preparing the CPU-only dataset pipeline container"
 docker compose --progress quiet build "$pipeline_service"
 while IFS=$'\t' read -r key value; do
   [[ -n "$key" ]] || continue
@@ -83,6 +83,10 @@ pg_validation_target="${SCENARIONET_PG_VALIDATION_TARGET:?pipeline YAML must def
 pg_test_target="${SCENARIONET_PG_TEST_TARGET:?pipeline YAML must define pg test target}"
 check_workers="${SCENARIONET_CHECK_WORKERS:?pipeline YAML must define checks.workers}"
 run_simulation_check="${SCENARIONET_RUN_SIMULATION_CHECK:?pipeline YAML must define checks.simulation}"
+balance_enabled="${SCENARIONET_BALANCE_ENABLED:?pipeline YAML must define balance.enabled}"
+balance_target_total="${SCENARIONET_BALANCE_TARGET_TOTAL:?pipeline YAML must define balance.target_total}"
+balance_prefer_source="${SCENARIONET_BALANCE_PREFER_SOURCE:?pipeline YAML must define balance.prefer_source}"
+waymo_required_a4_vru="${SCENARIONET_WAYMO_REQUIRED_A4_VRU:?pipeline YAML must define balance.waymo_required_arms.A4_vru}"
 waymo_auto_expand="${SCENARIONET_WAYMO_AUTO_EXPAND:?pipeline YAML must define waymo.auto_expand}"
 waymo_batch_shards="${SCENARIONET_WAYMO_BATCH_SHARDS:?pipeline YAML must define waymo.batch_shards}"
 waymo_max_new_shards="${SCENARIONET_WAYMO_MAX_NEW_SHARDS:?pipeline YAML must define waymo.max_new_shards}"
@@ -94,28 +98,31 @@ echo "  PG: ${pg_count} scenarios/profile, seed=${pg_seed_start}"
 echo "  PG workers: ${pg_workers}"
 echo "  Waymo targets: train=${waymo_train_target}, validation=${waymo_validation_target}, test=${waymo_test_target}"
 echo "  PG targets: train=${pg_train_target}, validation=${pg_validation_target}, test=${pg_test_target}"
+echo "  Arm balance: enabled=${balance_enabled}, target_total=${balance_target_total}, prefer=${balance_prefer_source}"
+echo "  Waymo required A4_vru: ${waymo_required_a4_vru}"
 echo "  Split mode: auto=${auto_split}, seed=${split_seed}"
 echo "  Official simulation check: ${run_simulation_check} (workers=${check_workers})"
 
 if ! is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
   if is_true "$waymo_auto_expand"; then
-    stage "[1/7] Expanding the eligible Waymo pool to its configured target"
+    stage "[1/8] Expanding the eligible Waymo pool to its configured target"
     WAYMO_REQUIRED_ELIGIBLE="$((waymo_train_target + waymo_validation_target + waymo_test_target))" \
+      WAYMO_REQUIRED_ARM_A4_VRU="$waymo_required_a4_vru" \
       WAYMO_BATCH_SHARDS="$waymo_batch_shards" \
       WAYMO_MAX_NEW_SHARDS="$waymo_max_new_shards" \
       WAYMO_NUM_WORKERS="$waymo_workers" \
       WAYMO_KEEP_RAW_BATCHES="$waymo_keep_raw_batches" \
       make waymo-expand
   else
-    stage "[1/7] Downloading/converting Waymo training_20s"
+    stage "[1/8] Downloading/converting Waymo training_20s"
     make waymo-pipeline
   fi
 else
-  stage "[1/7] Waymo skipped: SCENARIONET_SKIP_WAYMO=true"
+  stage "[1/8] Waymo skipped: SCENARIONET_SKIP_WAYMO=true"
 fi
 
 if ! is_true "${SCENARIONET_SKIP_PG:-false}"; then
-  stage "[2/7] Generating PG (${pg_count} scenarios per profile)"
+  stage "[2/8] Generating PG (${pg_count} scenarios per profile)"
   pg_overwrite=()
   if is_true "$overwrite"; then
     pg_overwrite+=(--overwrite)
@@ -129,7 +136,7 @@ if ! is_true "${SCENARIONET_SKIP_PG:-false}"; then
     --workers "$pg_workers" \
     "${pg_overwrite[@]}"
 else
-  stage "[2/7] PG generation skipped: SCENARIONET_SKIP_PG=true"
+  stage "[2/8] PG generation skipped: SCENARIONET_SKIP_PG=true"
 fi
 
 catalog_overwrite=()
@@ -137,7 +144,7 @@ if is_true "$overwrite"; then
   catalog_overwrite+=(--overwrite)
 fi
 
-stage "[3/7] Building catalog and groups"
+stage "[3/8] Building catalog and groups"
 docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.build_catalog \
   --data-root "$data_root" \
@@ -147,7 +154,7 @@ docker compose run --rm "$pipeline_service" uv run --no-sync python \
   --groups-output "$groups_path" \
   "${catalog_overwrite[@]}"
 
-stage "[4/7] Building leakage-free train/validation/test splits"
+stage "[4/8] Building leakage-free train/validation/test splits"
 split_args=(
   --catalog "$catalog_raw"
   --output "$catalog_split"
@@ -179,7 +186,7 @@ fi
 docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.build_splits "${split_args[@]}" "${catalog_overwrite[@]}"
 
-stage "[5/7] Computing train-only thresholds and assigning arms"
+stage "[5/8] Computing train-only thresholds and assigning arms"
 docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.compute_arm_thresholds \
   --catalog "$catalog_split" \
@@ -188,7 +195,23 @@ docker compose run --rm "$pipeline_service" uv run --no-sync python \
   --balance-seed "$split_seed" \
   "${catalog_overwrite[@]}"
 
-stage "[6/7] Building train/validation/test runtime views"
+if is_true "$balance_enabled"; then
+  stage "[6/8] Balancing the classified catalog across semantic arms"
+  docker compose run --rm "$pipeline_service" uv run --no-sync python \
+    -m thesis_rl.cli.scenarios.balance_arm_distribution \
+    --catalog "$catalog_final" \
+    --output-catalog "$catalog_final" \
+    --thresholds "$thresholds_path" \
+    --target-total "$balance_target_total" \
+    --seed "$split_seed" \
+    --prefer-source "$balance_prefer_source" \
+    --report "${data_root}/catalog/arm_report.json" \
+    "${catalog_overwrite[@]}"
+else
+  stage "[6/8] Arm balancing skipped: balance.enabled=false"
+fi
+
+stage "[7/8] Building train/validation/test runtime views"
 docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.build_runtime_databases \
   --catalog "$catalog_final" \
@@ -197,7 +220,7 @@ docker compose run --rm "$pipeline_service" uv run --no-sync python \
   --output-catalog "$catalog_final" \
   "${catalog_overwrite[@]}"
 
-stage "[7/7] Validating mappings and running official ScenarioNet checks"
+stage "[8/8] Validating mappings and running official ScenarioNet checks"
 for split in train validation test; do
   runtime_path="${data_root}/runtime/${split}"
   docker compose run --rm "$pipeline_service" uv run --no-sync python \

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
-from typing import Mapping, Sequence
+from math import ceil
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -314,6 +316,81 @@ def classify_entries(
     return tuple(classify_catalog_entry(entry, thresholds) for entry in entries)
 
 
+def balance_arm_distribution(
+    entries: Sequence[ScenarioCatalogEntry],
+    *,
+    target_total: int,
+    seed: int,
+    prefer_source: str = "waymo",
+) -> tuple[tuple[ScenarioCatalogEntry, ...], dict[str, Any]]:
+    """Trim over-represented arms while preserving real Waymo data first."""
+
+    if target_total < 1:
+        raise ValueError("target_total must be positive")
+    if prefer_source not in SOURCES:
+        raise ValueError(f"prefer_source must be one of {SOURCES}")
+    target_per_arm = int(ceil(target_total / len(ARMS)))
+    rng = np.random.default_rng(int(seed))
+    kept: list[ScenarioCatalogEntry] = []
+    removed: list[ScenarioCatalogEntry] = []
+    source_order = {
+        prefer_source: 0,
+        **{source: 1 for source in SOURCES if source != prefer_source},
+    }
+    before_by_arm = Counter(entry.record.primary_arm for entry in entries)
+    removed_by_arm_source: dict[str, dict[str, int]] = {
+        arm: {source: 0 for source in SOURCES} for arm in ARMS
+    }
+    for arm in ARMS:
+        arm_entries = [entry for entry in entries if entry.record.primary_arm == arm]
+        indices = np.arange(len(arm_entries))
+        rng.shuffle(indices)
+        shuffled = [arm_entries[int(index)] for index in indices]
+        ordered = sorted(
+            shuffled,
+            key=lambda entry: (
+                source_order[entry.record.source],
+                SPLITS.index(entry.record.split),
+            ),
+        )
+        arm_kept = ordered[:target_per_arm]
+        arm_removed = ordered[target_per_arm:]
+        kept.extend(arm_kept)
+        removed.extend(arm_removed)
+        for entry in arm_removed:
+            removed_by_arm_source[arm][entry.record.source] += 1
+
+    kept_by_uid = {entry.record.scenario_uid: entry for entry in kept}
+    balanced = tuple(
+        kept_by_uid[entry.record.scenario_uid]
+        for entry in entries
+        if entry.record.scenario_uid in kept_by_uid
+    )
+    after_by_arm = Counter(entry.record.primary_arm for entry in balanced)
+    diagnostics = {
+        arm: {
+            "target": target_per_arm,
+            "before": int(before_by_arm[arm]),
+            "after": int(after_by_arm[arm]),
+            "removed": int(before_by_arm[arm] - after_by_arm[arm]),
+            "deficit": max(0, target_per_arm - int(after_by_arm[arm])),
+            "removed_by_source": removed_by_arm_source[arm],
+        }
+        for arm in ARMS
+    }
+    report = {
+        "target_total": int(target_total),
+        "target_per_arm": target_per_arm,
+        "prefer_source": prefer_source,
+        "input_records": len(entries),
+        "selected_records": len(balanced),
+        "removed_records": len(removed),
+        "total_deficit": sum(values["deficit"] for values in diagnostics.values()),
+        "diagnostics": diagnostics,
+    }
+    return balanced, report
+
+
 def assign_catalog_runtime_indices(
     entries: Sequence[ScenarioCatalogEntry],
 ) -> tuple[ScenarioCatalogEntry, ...]:
@@ -350,6 +427,7 @@ __all__ = [
     "arm_selection_diagnostics",
     "assign_source_splits",
     "assign_source_splits_to_targets",
+    "balance_arm_distribution",
     "classify_entries",
     "eligible_entries",
     "group_id_for_entry",

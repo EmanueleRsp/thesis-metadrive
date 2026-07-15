@@ -53,7 +53,7 @@ scenarionet-pipeline:
 	bash scripts/prepare_scenarionet_dataset.sh
 
 scenarionet-recatalog:
-	SCENARIONET_SKIP_WAYMO=true SCENARIONET_SKIP_PG=true SCENARIONET_OVERWRITE=true bash scripts/prepare_scenarionet_dataset.sh
+	SCENARIONET_SKIP_PG=true SCENARIONET_OVERWRITE=true bash scripts/prepare_scenarionet_dataset.sh
 
 up:
 	docker compose up -d

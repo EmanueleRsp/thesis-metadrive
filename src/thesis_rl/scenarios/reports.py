@@ -52,6 +52,21 @@ def compute_feature_statistics(entries: Sequence[ScenarioCatalogEntry]) -> dict[
         "relevant_vrus_q90": numeric_summary(
             [entry.features.relevant_vrus_q90 for entry in entries]
         ),
+        "sdc_valid_ratio": numeric_summary(
+            [entry.features.sdc_valid_ratio for entry in entries]
+        ),
+        "sdc_route_z_range_m": numeric_summary(
+            [entry.features.sdc_route_z_range_m for entry in entries]
+        ),
+        "dynamic_object_count": numeric_summary(
+            [float(entry.features.dynamic_object_count) for entry in entries]
+        ),
+        "map_feature_count": numeric_summary(
+            [float(entry.features.map_feature_count) for entry in entries]
+        ),
+        "invalid_records": sum(
+            entry.record.validation_status == "invalid" for entry in entries
+        ),
         "vehicle_conflict_count": numeric_summary(
             [float(entry.features.vehicle_conflict_count) for entry in entries]
         ),

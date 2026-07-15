@@ -93,6 +93,35 @@ def test_feature_extraction_counts_relevant_agents_and_vru() -> None:
     assert features.vehicle_conflict_count == 0
     assert features.vru_conflict_count == 0
     assert features.topology_tag == "unknown"
+    assert features.sdc_valid_ratio == 1.0
+    assert features.sdc_initial_valid is True
+    assert features.sdc_route_z_range_m == 0.0
+    assert features.map_feature_count == 1
+    assert features.dynamic_object_count == 3
+
+
+def test_feature_extraction_records_sdc_quality_metrics() -> None:
+    scenario = _scenario()
+    valid = np.ones(scenario["length"], dtype=bool)
+    valid[0] = False
+    valid[8:] = False
+    ego = scenario["tracks"]["ego"]
+    ego["state"]["valid"] = valid
+    z = np.zeros(scenario["length"], dtype=np.float64)
+    z[1:8] = np.linspace(0.0, 5.0, 7)
+    ego["state"]["position"] = np.column_stack(
+        (
+            np.arange(scenario["length"], dtype=np.float64),
+            np.zeros(scenario["length"]),
+            z,
+        )
+    )
+
+    features = extract_scenario_features(scenario, "pg")
+
+    assert features.sdc_valid_ratio == 0.7
+    assert features.sdc_initial_valid is False
+    assert features.sdc_route_z_range_m == 5.0
 
 
 def test_realized_topology_can_be_mixed_but_profile_name_is_ignored() -> None:
