@@ -13,12 +13,13 @@ from thesis_rl.rulebook.v2 import (
     load_rulebook_v2_config,
 )
 from thesis_rl.rulebook.v2.config import ExecutionConfig, RULEBOOK_V2_VERSION
-from thesis_rl.rulebook.v2.context.task_route import build_task_route_record, validate_task_route, build_task_route_eligibility_index
+from thesis_rl.rulebook.v2.context.task_route import build_task_route_record, validate_task_route, build_task_route_eligibility_index, build_task_route_exclusion_report
 from thesis_rl.rulebook.v2.context.map_matching import (
     OfflineTrackSample,
     map_match_sdc_track_to_task_route,
 )
 from thesis_rl.rulebook.v2.context.static_adapter import normalize_static_records
+from thesis_rl.rulebook.v2.context.static_sources import StaticRecordAdapter, StaticRecordSources
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from shapely.geometry import LineString, Polygon
@@ -95,6 +96,10 @@ def test_task_route_eligibility_index_is_deterministic_and_excludes_invalid_reco
     assert index.eligible("a").scenario_uid == "a"
     with pytest.raises(ValueError, match="not Rulebook v2 eligible"):
         index.eligible("b")
+    report = build_task_route_exclusion_report(index)
+    assert report.total_records == 2 and report.excluded_records == 1
+    assert report.excluded_by_adapter == {"task-route-v1": 1}
+    assert report.excluded_by_cause == {"missing_lane_ids:lane": 1}
 
 
 def test_task_route_validation_rejects_missing_identity_hashes():
@@ -166,6 +171,19 @@ def test_static_adapter_rejects_duplicate_controls_and_invalid_elevation():
     )
     assert "invalid_map_feature_elevation:feature" in result.validation_errors
     assert "duplicate_control_group_id:stop" in result.validation_errors
+
+
+def test_static_record_sources_are_strict_and_normalize_source_neutrally():
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    task_route = build_task_route_record(scenario_uid="s", lane_ids=("lane",), provenance="pg", source_geometry_bytes=b"m")
+    lane = RouteLaneRecord("lane", Polygon(((0, -2), (10, -2), (10, 2), (0, 2))), route)
+    sources = StaticRecordSources(
+        lambda _record: task_route, lambda _record: (lane,), lambda _record: (), lambda _record: (),
+    )
+    result = StaticRecordAdapter(sources).normalize(object(), scenario_uid="s")
+    assert result.validation_errors == ()
+    with pytest.raises(ValueError, match="Missing"):
+        StaticRecordSources.from_mapping({})
 
 
 def test_v2_config_rejects_nonconformant_execution_or_order() -> None:

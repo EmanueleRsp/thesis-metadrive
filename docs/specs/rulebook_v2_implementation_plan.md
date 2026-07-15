@@ -580,6 +580,12 @@ planner non può quindi inserirla nel replay buffer.
       source-neutral di topologia lane.
 - [ ] Costruire adapter PG/Waymo verso lane, map feature, logical boundary,
       traffic control, crosswalk, priority e roundabout records.
+- [x] Implementare conversione offline Waymo sulle fixture ScenarioNet
+      vendorizzate: lane centerline/width, task route SDC topology-only,
+      map features, crosswalk/road-line e signal control line; lane invalide
+      sono escluse tipicamente.
+- [x] Definire contratto source-neutral `StaticRecordSources`/`StaticRecordAdapter`
+      per iniettare gli estrattori PG/Waymo senza branch runtime per sorgente.
 - [ ] Riutilizzare dove corretto l'estrazione topologica offline esistente,
       senza usarne le soglie euristiche come primitive runtime.
 - [ ] Implementare validazione route, quote, lane polygon/width, controlli,
@@ -593,6 +599,8 @@ planner non può quindi inserirla nel replay buffer.
 - [ ] Aggiornare provider/runtime affinché il pool rulebook v2 includa soltanto
       record eleggibili.
 - [ ] Produrre report di esclusione per sorgente e causa.
+- [x] Produrre report tipizzato di esclusione per adapter e causa a partire
+      dall'indice offline.
 
 ### Criteri di uscita
 
@@ -935,6 +943,9 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F3 | `TaskRouteEligibilityIndex` deterministico per UID con rifiuto degli scenari ineleggibili | 35 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | F3 | Validazione metadata route/versione/hash e conferma matcher Waymo offline + builder PG topology-only | 34 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | F3 | Validazione statica di quote, unicità lane/control group, control line e completezza record | 35 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F3 | Contratto `StaticRecordSources`/`StaticRecordAdapter` per provider PG/Waymo espliciti e normalizzazione comune | 36 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F3 | Report tipizzato di eleggibilità/esclusione per adapter e causa | 36 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F3 | Converter offline Waymo per fixture vendorizzata verso lane/task-route/map/control canonici | 87 test Rulebook v2 passati nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | Regressione | Verifica suite completa repository dopo wiring registry | 385 passati, 8 falliti fuori dal perimetro v2; ISS-011 aperto e dettagliato sopra |
 | 2026-07-15 | F8/F9 | Invarianti di aggregazione, merge transazionale, wrapper monitor-only, contratto `RulebookV2Adapter` e wiring runtime v2 esplicito | 79 test mirati Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
 

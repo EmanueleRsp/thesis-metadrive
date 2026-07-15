@@ -55,6 +55,36 @@ class TaskRouteEligibilityIndex:
         return record
 
 
+@dataclass(frozen=True, slots=True)
+class TaskRouteExclusionReport:
+    total_records: int
+    eligible_records: int
+    excluded_records: int
+    excluded_by_adapter: Mapping[str, int]
+    excluded_by_cause: Mapping[str, int]
+
+
+def build_task_route_exclusion_report(index: TaskRouteEligibilityIndex) -> TaskRouteExclusionReport:
+    """Summarize offline exclusions deterministically for audit artifacts."""
+    by_adapter: dict[str, int] = {}
+    by_cause: dict[str, int] = {}
+    excluded = 0
+    for record in index.records:
+        if record.rulebook_eligible:
+            continue
+        excluded += 1
+        by_adapter[record.adapter_version] = by_adapter.get(record.adapter_version, 0) + 1
+        for cause in record.validation_errors:
+            by_cause[cause] = by_cause.get(cause, 0) + 1
+    return TaskRouteExclusionReport(
+        total_records=len(index.records),
+        eligible_records=len(index.records) - excluded,
+        excluded_records=excluded,
+        excluded_by_adapter=dict(sorted(by_adapter.items())),
+        excluded_by_cause=dict(sorted(by_cause.items())),
+    )
+
+
 def build_task_route_eligibility_index(
     records: Iterable[TaskRouteEligibility],
 ) -> TaskRouteEligibilityIndex:
