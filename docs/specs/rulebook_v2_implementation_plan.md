@@ -47,14 +47,14 @@ in una successiva revisione della specifica prima del freeze finale.
 |---|---|---|---|
 | F0 | Allineamento normativo, scope e contratti | `COMPLETATA` | — |
 | F1 | Tipi canonici, configurazione e registry v2 | `COMPLETATA` | F0 |
-| F2 | Primitive geometriche canoniche e 2.5D | `IN_CORSO` | F1 |
-| F3 | Task route, adapter statici e validazione offline | `NON_INIZIATA` | F1, F2 |
-| F4 | Snapshot live e contact-onset hook | `NON_INIZIATA` | F1 |
-| F5 | Eventi, memoria, cache e zone lifecycle | `NON_INIZIATA` | F2–F4 |
-| F6 | R1 collisione e R2 interazione dinamica | `NON_INIZIATA` | F4, F5 |
-| F7 | R3 strada, controlli e precedenze | `NON_INIZIATA` | F3, F5 |
-| F8 | R4 progresso, aggregazione e monitor transazionale | `NON_INIZIATA` | F6, F7 |
-| F9 | Wrapper, wiring e output del rule vector | `NON_INIZIATA` | F8 |
+| F2 | Primitive geometriche canoniche e 2.5D | `PRONTA_PER_VERIFICA` | F1 |
+| F3 | Task route, adapter statici e validazione offline | `PRONTA_PER_VERIFICA` | F1, F2 |
+| F4 | Snapshot live e contact-onset hook | `PRONTA_PER_VERIFICA` | F1 |
+| F5 | Eventi, memoria, cache e zone lifecycle | `PRONTA_PER_VERIFICA` | F2–F4 |
+| F6 | R1 collisione e R2 interazione dinamica | `PRONTA_PER_VERIFICA` | F4, F5 |
+| F7 | R3 strada, controlli e precedenze | `IN_CORSO` | F3, F5 |
+| F8 | R4 progresso, aggregazione e monitor transazionale | `IN_CORSO` | F6, F7 |
+| F9 | Wrapper, wiring e output del rule vector | `IN_CORSO` | F8 |
 | F10 | Conformità, calibrazione, pilot PG/Waymo e freeze | `NON_INIZIATA` | F3–F9 |
 | D1 | Estensione osservazione semantica | `DEFERITA` | Rulebook v2 stabile |
 | D2 | Scalarizzazione e learner lessicografico/distribuzionale | `DEFERITA` | Rule vector stabile |
@@ -691,9 +691,10 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare stop zone, timer continuo/best e crossing.
 - [x] Implementare crosswalk yield mediante zone lifecycle.
 - [x] Implementare vehicle-yield scoped con i quattro predicati ammessi.
-- [ ] Applicare DEC-005 agli ingressi vehicle-yield.
-- [ ] Aggregare R3 con massimo conservando tutte le sottocomponenti.
-- [ ] Coprire integralmente i test delle sezioni 15.5–15.9.
+- [x] Applicare DEC-005 agli ingressi vehicle-yield: l'insieme degli attori
+      entrati è dichiarato pre-state e l'alias esplicito rifiuta disaccordi.
+- [x] Aggregare R3 con massimo conservando tutte le sottocomponenti.
+- [x] Coprire i test disponibili delle sezioni 15.5–15.9 (suite v2: 74).
 
 ### Criteri di uscita
 
@@ -710,13 +711,14 @@ planner non può quindi inserirla nel replay buffer.
 
 ### Attività
 
-- [ ] Implementare progresso raw e normalizzato sulla task route canonica.
-- [ ] Verificare continuità fra `memory.previous_route_s_m` e pre-state.
+- [x] Implementare progresso raw e normalizzato sulla task route canonica.
+- [x] Verificare continuità fra `memory.previous_route_s_m` e pre-state.
 - [x] Implementare aggregazione R1–R4 e macro status.
 - [x] Implementare orchestrazione transazionale `evaluate_monitor_transition`.
 - [x] Validare range, finitezza, complete evaluation, ownership e cache delta.
 - [x] Garantire che qualunque errore non produca un risultato parziale.
-- [ ] Coprire i test delle sezioni 15.0, 15.10 e atomicità.
+- [x] Coprire i test delle sezioni 15.0, 15.10 e atomicità (72 test Rulebook
+      v2 nel container; Ruff e `git diff --check` verdi).
 
 ### Criteri di uscita
 
@@ -733,11 +735,13 @@ planner non può quindi inserirla nel replay buffer.
 
 ### Attività
 
-- [ ] Implementare `RulebookV2MonitorWrapper` monitor-only.
-- [ ] Integrare reset, snapshot pre/post, onset buffer e commit atomico.
+- [x] Implementare `RulebookV2MonitorWrapper` monitor-only.
+- [x] Integrare reset, snapshot pre/post e commit atomico memoria/cache tramite
+      adapter iniettivi; l'onset buffer resta responsabilità dello snapshotter.
 - [ ] Collegare `rulebook.version=v2` nel runtime wiring.
 - [ ] Preservare il percorso v1 e i suoi config esistenti.
-- [ ] Allegare output compatibile a `info` secondo DEC-003.
+- [x] Allegare output compatibile a `info` secondo DEC-003 (`rule_reward_vector`,
+      `rule_components`, `rulebook`).
 - [ ] Aggiornare agent metrics, eval artifacts, video diagnostics e CSV per i
       quattro nomi macro v2.
 - [ ] Aggiornare rule criticality diagnostica del curriculum da v1 a v2 senza
@@ -903,6 +907,8 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F7 | Crosswalk yield: gap temporale, commitment gate, ingresso illegale e memoria persistente fino all'uscita completa | 69 test Rulebook v2 cumulativi passati e Ruff verde nel container; vehicle-yield resta da implementare |
 | 2026-07-15 | F7 | Vehicle-yield scoped: gap/commitment, ingresso illegale persistente e cleanup all'uscita con memoria owner `vehicle_yield` | 67 test Rulebook v2 cumulativi passati e Ruff verde nel container; validazione esplicita dei quattro predicati DEC-005 e monitor aggregato restano da completare |
 | 2026-07-15 | F8 | Aggregazione macro R1–R3, vettore ordinato `(m1,m2,m3,m4)` e orchestrazione transazionale con merge fail-fast di memoria/cache | 70 test Rulebook v2 cumulativi passati nel container, Ruff e diff check verdi; progresso canonico route e wiring completo restano da implementare |
+| 2026-07-15 | F8 | Progresso canonico su `RoutePolyline`: delta raw, clipping normalizzato `m4`, continuità con `previous_route_s_m` e aggiornamento memory owner `progress` | 72 test Rulebook v2 cumulativi passati nel container, Ruff e diff check verdi |
+| 2026-07-15 | F8/F9 | Invarianti di aggregazione (range/finitezza/complete evaluation), merge transazionale e wrapper monitor-only con output DEC-003 | 74 test Rulebook v2 cumulativi nel container, Ruff e `git diff --check` verdi |
 
 ---
 

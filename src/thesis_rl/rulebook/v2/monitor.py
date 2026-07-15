@@ -3,19 +3,36 @@
 from __future__ import annotations
 
 from thesis_rl.rulebook.v2.aggregation import aggregate_rulebook_result
+from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
 from thesis_rl.rulebook.v2.memory import merge_cache_deltas, merge_memory_deltas
 from thesis_rl.rulebook.v2.types import CacheDelta, MemoryDelta, RulebookMemory, RuleComponentResult
 
 
 def evaluate_monitor_transition(*, memory: RulebookMemory, component_outputs: tuple[tuple[RuleComponentResult, MemoryDelta, CacheDelta], ...],
-                                raw_progress_m: float, progress_margin: float, pending_cache_delta: CacheDelta = CacheDelta()):
+                                raw_progress_m: float, progress_margin: float, pending_cache_delta: CacheDelta = CacheDelta(),
+                                progress_output: tuple[RuleComponentResult, MemoryDelta, CacheDelta] | None = None):
     """Commit all evaluator deltas only after complete result validation."""
+    if not isinstance(memory, RulebookMemory):
+        raise TypeError("memory must be a RulebookMemory")
     results = tuple(output[0] for output in component_outputs)
-    memory_deltas = tuple(output[1] for output in component_outputs if output[1].writes)
-    cache_deltas = (pending_cache_delta,) + tuple(output[2] for output in component_outputs)
-    result = aggregate_rulebook_result(components=results, raw_progress_m=raw_progress_m, progress_margin=progress_margin)
-    if not result.complete_evaluation:
-        raise ValueError("Monitor cannot return incomplete evaluation")
-    next_memory = merge_memory_deltas(memory, memory_deltas)
-    cache_delta = merge_cache_deltas(cache_deltas)
+    progress_deltas = () if progress_output is None else (progress_output,)
+    if progress_output is not None:
+        results += (progress_output[0],)
+        raw_progress_m = progress_output[0].raw["route_delta_m"]
+        progress_margin = progress_output[0].cost
+    memory_deltas = tuple(output[1] for output in component_outputs + progress_deltas if output[1].writes)
+    cache_deltas = (pending_cache_delta,) + tuple(output[2] for output in component_outputs + progress_deltas)
+    try:
+        result = aggregate_rulebook_result(components=results, raw_progress_m=raw_progress_m, progress_margin=progress_margin)
+        if not result.complete_evaluation:
+            raise ValueError("Monitor cannot return incomplete evaluation")
+        # Validate both append-only cache and memory ownership before exposing
+        # either result.  Both operations are immutable, so a failure cannot
+        # leave a partially committed transition behind.
+        cache_delta = merge_cache_deltas(cache_deltas)
+        next_memory = merge_memory_deltas(memory, memory_deltas)
+    except (ValueError, TypeError) as exc:
+        raise RulebookEvaluationError(
+            EvaluationFailure("unknown", -1, "monitor", str(exc))
+        ) from exc
     return result, next_memory, cache_delta

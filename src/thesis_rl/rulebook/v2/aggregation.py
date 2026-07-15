@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import isfinite
+
 from thesis_rl.rulebook.v2.types import ComponentStatus, RuleComponentResult
 from thesis_rl.rulebook.v2.types import RulebookResult
 
@@ -13,6 +15,11 @@ def aggregate_max_component(
 ) -> RuleComponentResult:
     """Aggregate applicable components by max while retaining all diagnostics."""
 
+    for component in components:
+        if not isfinite(component.cost):
+            raise ValueError(f"Component {component.name!r} cost must be finite")
+        if component.cost < -1e-8 or component.cost > 1.0 + 1e-8:
+            raise ValueError(f"Component {component.name!r} cost must be in [0, 1]")
     applicable = [component for component in components if component.applicable]
     if any(not component.evaluable for component in applicable):
         raise ValueError(f"Applicable {name} component is NOT_EVALUABLE")
@@ -44,15 +51,22 @@ def aggregate_max_component(
 def aggregate_rulebook_result(*, components: tuple[RuleComponentResult, ...], raw_progress_m: float,
                               progress_margin: float) -> RulebookResult:
     """Build the ordered four-margin monitor output without scalarization."""
+    if not isfinite(raw_progress_m):
+        raise ValueError("Raw route progress must be finite")
+    if not isfinite(progress_margin) or not -1.0 <= progress_margin <= 1.0:
+        raise ValueError("Progress margin must be finite and in [-1, 1]")
+    names = [component.name for component in components]
+    if len(names) != len(set(names)):
+        raise ValueError("Duplicate Rulebook component result")
+    if any(component.applicable and not component.evaluable for component in components):
+        raise ValueError("Applicable component is NOT_EVALUABLE")
     groups = {
         "collision_impact": tuple(c for c in components if c.name in {"collision", "collision_impact"}),
         "dynamic_interaction_safety": tuple(c for c in components if c.name in {"rss", "ttc", "clearance"}),
-        "road_traffic_compliance": tuple(c for c in components if c.name in {"offroad", "wrongway", "solid_line", "dashed_line", "signal", "stop", "crosswalk", "vehicle_yield"}),
+        "road_traffic_compliance": tuple(c for c in components if c.name in {"offroad", "wrongway", "wrong_way", "solid_line", "dashed_line", "signal", "stop", "crosswalk", "vehicle_yield"}),
     }
     macro = tuple(aggregate_max_component(name=name, components=group) for name, group in groups.items())
     costs = tuple(max(0.0, min(1.0, result.cost)) for result in macro)
-    if not -1.0 <= progress_margin <= 1.0:
-        raise ValueError("Progress margin must be in [-1, 1]")
     all_components = {component.name: component for component in components}
     all_components.update({result.name: result for result in macro})
     return RulebookResult(

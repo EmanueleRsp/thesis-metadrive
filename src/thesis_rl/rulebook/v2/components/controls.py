@@ -160,11 +160,25 @@ def evaluate_crosswalk_yield(*, zone_id: str, ego_interval, vru_intervals: tuple
 def evaluate_vehicle_yield(*, zone_id: str, ego_interval, prioritized_intervals: tuple[tuple[str, object], ...],
                            distance_to_entry_m: float, approach_speed_mps: float, delta_t_s: float,
                            ego_occupied: bool, entered_actor_ids: frozenset[str], previous_illegal_entries: frozenset[tuple[str, str]],
-                           preexisting: bool = False) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
+                           preexisting: bool = False,
+                           pre_state_entered_actor_ids: frozenset[str] | None = None) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
+    """Evaluate the scoped vehicle-yield predicates.
+
+    ``entered_actor_ids`` is the set computed from the pre-state occupancy
+    view (DEC-005).  The explicit alias is accepted for adapters that expose
+    the temporal origin in their field name; supplying both must agree.
+    Approach intervals may be computed from the post-state, but an actor that
+    leaves during the same control step must still be present in the pre-state
+    entry set to create an illegal-entry flag.
+    """
     if ego_interval is None:
         raise ValueError("Vehicle-yield requires an evaluable ego interval")
     if delta_t_s <= 0.0 or approach_speed_mps < 0.0:
         raise ValueError("Vehicle-yield kinematic inputs out of range")
+    if pre_state_entered_actor_ids is not None:
+        if entered_actor_ids and entered_actor_ids != pre_state_entered_actor_ids:
+            raise ValueError("DEC-005 entered actor sets disagree")
+        entered_actor_ids = pre_state_entered_actor_ids
     worst = 0.0
     for _, interval in prioritized_intervals:
         if ego_interval.end_s is not None and interval.start_s >= ego_interval.end_s:
