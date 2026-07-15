@@ -6,7 +6,7 @@ from thesis_rl.rulebook.v2.config import (
     load_rulebook_v2_config,
 )
 from thesis_rl.rulebook.v2.monitor import evaluate_monitor_transition
-from thesis_rl.rulebook.v2.wrapper import RulebookV2MonitorWrapper
+from thesis_rl.rulebook.v2.wrapper import RulebookV2Adapter, RulebookV2MonitorWrapper
 from thesis_rl.rulebook.v2.aggregation import aggregate_rulebook_result
 from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
 from thesis_rl.rulebook.v2.events import ContactOnsetBuffer, ZoneTransitionEvents, detect_zone_transition
@@ -31,5 +31,5 @@ __all__ = [
     "EvaluationFailure", "MACRO_RULE_ORDER", "MacroRule", "RULEBOOK_V2_VERSION",
     "RulebookEvaluationError", "RulebookMemory", "RulebookResult", "RulebookV2Config",
     "RulebookV2Registry", "TaskRouteRecord", "load_rulebook_v2_config",
-    "aggregate_rulebook_result", "evaluate_monitor_transition", "RulebookV2MonitorWrapper",
+    "aggregate_rulebook_result", "evaluate_monitor_transition", "RulebookV2Adapter", "RulebookV2MonitorWrapper",
 ]

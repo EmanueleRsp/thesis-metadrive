@@ -521,6 +521,8 @@ planner non può quindi inserirla nel replay buffer.
       già introdotti (execution, geometria e prediction); i parametri delle
       formule saranno aggiunti con i rispettivi evaluator nelle F6--F8.
 - [x] Implementare `ComponentDefinition` e registry v2.
+- [x] Collegare nel registry gli evaluator normativi reali e fornire dispatch
+      tipizzato senza fallback; `zone_lifecycle` resta infrastrutturale.
 - [x] Validare al bootstrap ordine macro, componenti richieste e ownership dei
       campi di memoria.
 - [x] Testare immutabilità, finitezza, serializzazione diagnostica ed errori di
@@ -640,7 +642,8 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare merge dei `MemoryDelta` con ownership DEC-008.
 - [x] Implementare overlay `cache + pending_delta`.
 - [x] Implementare merge/apply dei `CacheDelta` con confronto canonico.
-- [ ] Implementare freeze/unfreeze delle `MovementKey` degli attori.
+- [x] Implementare freeze/unfreeze delle `MovementKey` degli attori nel
+      `MemoryDelta` owner `vehicle_yield`, con rimozione soltanto all'uscita.
 - [ ] Testare doppio writer, geometrie discordanti, lazy zone inside ego,
       eccezioni dopo proposta delta e commit unico.
 
@@ -738,7 +741,11 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare `RulebookV2MonitorWrapper` monitor-only.
 - [x] Integrare reset, snapshot pre/post e commit atomico memoria/cache tramite
       adapter iniettivi; l'onset buffer resta responsabilità dello snapshotter.
-- [ ] Collegare `rulebook.version=v2` nel runtime wiring.
+- [x] Collegare `rulebook.version=v2` nel runtime wiring tramite adapter esplicito
+      (`env.rulebook_v2_adapter`), con fail-fast se mancante e nessun fallback v1.
+- [x] Tipizzare il contratto adapter (`RulebookV2Adapter`) con snapshotter,
+      evaluator transazionale e stato iniziale episodico; l'implementazione
+      concreta MetaDrive/ScenarioNet resta dipendente dalle API live disponibili.
 - [ ] Preservare il percorso v1 e i suoi config esistenti.
 - [x] Allegare output compatibile a `info` secondo DEC-003 (`rule_reward_vector`,
       `rule_components`, `rulebook`).
@@ -836,6 +843,7 @@ transizioni.
 | ISS-008 | `RISOLTO` | media | Shell di lavoro senza `pytest`, Ruff, Shapely e MetaDrive | Verifiche eseguite nel container `dev`: dipendenze disponibili, 23 test e Ruff verdi; versioni registrate in F0 |
 | ISS-009 | `RISOLTO` | media | `RoutePolyline` deve unificare punti consecutivi entro 1 mm in XY, ma la specifica non definisce la quota risultante se tali punti hanno `z` differenti | DEC-011: cluster XY medio, mediana z, validazione con `z_tol=3 m`; approvata dall'utente il 2026-07-15 |
 | ISS-010 | `RISOLTO` | media | La specifica assegna alle componenti disgiunte di conflict zone un indice `k` “dopo ordinamento canonico”, senza definire la chiave d'ordinamento | DEC-012: ordine lessicografico crescente del WKB DEC-007; approvata dall'utente il 2026-07-15 |
+| ISS-011 | `APERTO` | media | Suite completa repository: 8 test non v2 falliscono per fixture forced-rule v1, preset Hydra/Scenario ACL con API incoerenti e runtime ScenarioNet incompleto (file catalogo mancanti) | Non alterare il core v2; isolare e correggere nei rispettivi moduli prima del freeze F10 |
 
 Quando un problema richiede una scelta non coperta dalla specifica:
 
@@ -908,7 +916,10 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F7 | Vehicle-yield scoped: gap/commitment, ingresso illegale persistente e cleanup all'uscita con memoria owner `vehicle_yield` | 67 test Rulebook v2 cumulativi passati e Ruff verde nel container; validazione esplicita dei quattro predicati DEC-005 e monitor aggregato restano da completare |
 | 2026-07-15 | F8 | Aggregazione macro R1–R3, vettore ordinato `(m1,m2,m3,m4)` e orchestrazione transazionale con merge fail-fast di memoria/cache | 70 test Rulebook v2 cumulativi passati nel container, Ruff e diff check verdi; progresso canonico route e wiring completo restano da implementare |
 | 2026-07-15 | F8 | Progresso canonico su `RoutePolyline`: delta raw, clipping normalizzato `m4`, continuità con `previous_route_s_m` e aggiornamento memory owner `progress` | 72 test Rulebook v2 cumulativi passati nel container, Ruff e diff check verdi |
-| 2026-07-15 | F8/F9 | Invarianti di aggregazione (range/finitezza/complete evaluation), merge transazionale e wrapper monitor-only con output DEC-003 | 74 test Rulebook v2 cumulativi nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F5/F7 | Freeze/unfreeze `MovementKey` per vehicle-yield, persistente fino all'uscita completa | 76 test Rulebook v2 nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F1/F8 | Registry collegato agli evaluator normativi reali e dispatch puro per componente | 82 test Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | Regressione | Verifica suite completa repository dopo wiring registry | 385 passati, 8 falliti fuori dal perimetro v2; ISS-011 aperto e dettagliato sopra |
+| 2026-07-15 | F8/F9 | Invarianti di aggregazione, merge transazionale, wrapper monitor-only, contratto `RulebookV2Adapter` e wiring runtime v2 esplicito | 79 test mirati Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
 
 ---
 

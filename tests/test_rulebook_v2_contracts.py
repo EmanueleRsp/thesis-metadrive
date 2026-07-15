@@ -138,6 +138,16 @@ def test_registry_rejects_memory_double_writer() -> None:
         RulebookV2Registry(duplicate)
 
 
+def test_registry_binds_all_normative_evaluators():
+    normative = [component for component in DEFAULT_RULEBOOK_V2_REGISTRY.components if component.normative_output]
+    assert all(component.evaluator is not None for component in normative)
+    assert DEFAULT_RULEBOOK_V2_REGISTRY.components[10].evaluator is None
+    with pytest.raises(ValueError, match="infrastructure"):
+        DEFAULT_RULEBOOK_V2_REGISTRY.evaluate("zone_lifecycle")
+    with pytest.raises(ValueError, match="Unknown"):
+        DEFAULT_RULEBOOK_V2_REGISTRY.definition("missing")
+
+
 def test_evaluation_error_keeps_typed_context() -> None:
     failure = EvaluationFailure("scenario-7", 12, "signal", "invalid state")
     error = RulebookEvaluationError(failure)

@@ -161,7 +161,10 @@ def evaluate_vehicle_yield(*, zone_id: str, ego_interval, prioritized_intervals:
                            distance_to_entry_m: float, approach_speed_mps: float, delta_t_s: float,
                            ego_occupied: bool, entered_actor_ids: frozenset[str], previous_illegal_entries: frozenset[tuple[str, str]],
                            preexisting: bool = False,
-                           pre_state_entered_actor_ids: frozenset[str] | None = None) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
+                           pre_state_entered_actor_ids: frozenset[str] | None = None,
+                           actor_movement_keys: tuple[tuple[str, object], ...] = (),
+                           previous_frozen_movement_keys: tuple[tuple[str, object], ...] = (),
+                           exited_actor_ids: frozenset[str] = frozenset()) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
     """Evaluate the scoped vehicle-yield predicates.
 
     ``entered_actor_ids`` is the set computed from the pre-state occupancy
@@ -198,7 +201,18 @@ def evaluate_vehicle_yield(*, zone_id: str, ego_interval, prioritized_intervals:
             illegal_keys.add((actor_id, zone_id))
     if not ego_occupied:
         illegal_keys = {key for key in illegal_keys if key[1] != zone_id}
+    # MovementKey is frozen at entry and released only after complete exit.
+    # Preserve insertion-independent ordering for deterministic memory deltas.
+    frozen = dict(previous_frozen_movement_keys)
+    for actor_id, movement_key in actor_movement_keys:
+        if actor_id in entered_actor_ids and actor_id not in frozen:
+            frozen[actor_id] = movement_key
+    for actor_id in exited_actor_ids:
+        frozen.pop(actor_id, None)
     cost = 1.0 if ego_occupied and any(key[1] == zone_id for key in illegal_keys) else approach
     result = RuleComponentResult("vehicle_yield", cost, {"zone_id": zone_id, "prioritized_actor_count": len(prioritized_intervals), "commit": commit}, bool(prioritized_intervals), True, ComponentStatus.VIOLATED if cost > 0.0 else (ComponentStatus.SATISFIED if prioritized_intervals else ComponentStatus.NOT_APPLICABLE), {"before_gate": before})
-    delta = MemoryDelta(writer="vehicle_yield", writes=(("vehicle_yield_illegal_entries", frozenset(illegal_keys)),))
+    delta = MemoryDelta(writer="vehicle_yield", writes=(
+        ("vehicle_yield_illegal_entries", frozenset(illegal_keys)),
+        ("frozen_actor_movement_keys", tuple(sorted(frozen.items(), key=lambda item: item[0]))),
+    ))
     return result, delta, CacheDelta()

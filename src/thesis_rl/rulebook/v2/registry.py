@@ -6,6 +6,23 @@ from dataclasses import dataclass
 from typing import Callable
 
 from thesis_rl.rulebook.v2.types import CacheDelta, MacroRule, MemoryDelta, RuleComponentResult
+from thesis_rl.rulebook.v2.components.collision import evaluate_collision_impact
+from thesis_rl.rulebook.v2.components.clearance import evaluate_clearance
+from thesis_rl.rulebook.v2.components.progress import evaluate_progress
+from thesis_rl.rulebook.v2.components.rss import evaluate_rss
+from thesis_rl.rulebook.v2.components.road import (
+    evaluate_dashed_line,
+    evaluate_offroad,
+    evaluate_solid_line,
+    evaluate_wrongway,
+)
+from thesis_rl.rulebook.v2.components.controls import (
+    evaluate_crosswalk_yield,
+    evaluate_signal_transition,
+    evaluate_stop,
+    evaluate_vehicle_yield,
+)
+from thesis_rl.rulebook.v2.components.ttc import evaluate_ttc
 
 
 ComponentEvaluator = Callable[..., tuple[RuleComponentResult, MemoryDelta, CacheDelta]]
@@ -22,24 +39,25 @@ class ComponentDefinition:
 
 _COMPONENTS: tuple[ComponentDefinition, ...] = (
     ComponentDefinition(
-        "collision", MacroRule.COLLISION_IMPACT, None, frozenset({"previous_contact_ids"})
+        "collision", MacroRule.COLLISION_IMPACT, evaluate_collision_impact,
+        frozenset({"previous_contact_ids"})
     ),
-    ComponentDefinition("rss", MacroRule.DYNAMIC_INTERACTION_SAFETY, None),
-    ComponentDefinition("ttc", MacroRule.DYNAMIC_INTERACTION_SAFETY, None),
-    ComponentDefinition("clearance", MacroRule.DYNAMIC_INTERACTION_SAFETY, None),
-    ComponentDefinition("offroad", MacroRule.ROAD_TRAFFIC_COMPLIANCE, None),
-    ComponentDefinition("wrong_way", MacroRule.ROAD_TRAFFIC_COMPLIANCE, None),
-    ComponentDefinition("solid_line", MacroRule.ROAD_TRAFFIC_COMPLIANCE, None),
+    ComponentDefinition("rss", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_rss),
+    ComponentDefinition("ttc", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_ttc),
+    ComponentDefinition("clearance", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_clearance),
+    ComponentDefinition("offroad", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_offroad),
+    ComponentDefinition("wrong_way", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_wrongway),
+    ComponentDefinition("solid_line", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_solid_line),
     ComponentDefinition(
         "dashed_line",
         MacroRule.ROAD_TRAFFIC_COMPLIANCE,
-        None,
+        evaluate_dashed_line,
         frozenset({"active_dashed_boundary_id", "dashed_line_timer_s"}),
     ),
     ComponentDefinition(
         "signal",
         MacroRule.ROAD_TRAFFIC_COMPLIANCE,
-        None,
+        evaluate_signal_transition,
         frozenset({
             "active_signal_group_id", "previous_signal_state", "yellow_must_stop",
             "previous_signal_delta_m", "resolved_signal_group_ids",
@@ -48,7 +66,7 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
     ComponentDefinition(
         "stop",
         MacroRule.ROAD_TRAFFIC_COMPLIANCE,
-        None,
+        evaluate_stop,
         frozenset({
             "active_stop_group_id", "stop_continuous_timer_s", "stop_best_timer_s",
             "previous_stop_delta_m", "resolved_stop_group_ids",
@@ -64,17 +82,18 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
     ComponentDefinition(
         "crosswalk",
         MacroRule.ROAD_TRAFFIC_COMPLIANCE,
-        None,
+        evaluate_crosswalk_yield,
         frozenset({"crosswalk_illegal_entries"}),
     ),
     ComponentDefinition(
         "vehicle_yield",
         MacroRule.ROAD_TRAFFIC_COMPLIANCE,
-        None,
+        evaluate_vehicle_yield,
         frozenset({"vehicle_yield_illegal_entries", "frozen_actor_movement_keys"}),
     ),
     ComponentDefinition(
-        "progress", MacroRule.ROUTE_PROGRESS, None, frozenset({"previous_route_s_m"})
+        "progress", MacroRule.ROUTE_PROGRESS, evaluate_progress,
+        frozenset({"previous_route_s_m"})
     ),
 )
 
@@ -89,6 +108,20 @@ class RulebookV2Registry:
     @property
     def components(self) -> tuple[ComponentDefinition, ...]:
         return self._components
+
+    def definition(self, name: str) -> ComponentDefinition:
+        """Return one fixed definition by canonical component name."""
+        for component in self._components:
+            if component.name == name:
+                return component
+        raise ValueError(f"Unknown Rulebook v2 component: {name!r}")
+
+    def evaluate(self, name: str, **kwargs):
+        """Invoke a pure normative evaluator through the fixed registry."""
+        definition = self.definition(name)
+        if not definition.normative_output or definition.evaluator is None:
+            raise ValueError(f"Component {name!r} is infrastructure-only or unbound")
+        return definition.evaluator(**kwargs)
 
     def validate(self) -> None:
         names = [component.name for component in self._components]

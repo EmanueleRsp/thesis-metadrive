@@ -8,6 +8,7 @@ normative core and makes the transactional boundary testable in isolation.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import gymnasium as gym
@@ -18,6 +19,20 @@ from thesis_rl.rulebook.v2.types import EpisodeCache, EnvSnapshot, RulebookMemor
 
 Snapshotter = Callable[[Any], EnvSnapshot]
 TransitionEvaluator = Callable[..., tuple[RulebookResult, RulebookMemory, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class RulebookV2Adapter:
+    """Environment-owned live hooks required by the v2 wrapper.
+
+    Adapters must construct canonical snapshots from the live simulator and
+    must not consult future tracks or ``current_sdc_route`` at runtime.
+    """
+
+    snapshotter: Snapshotter
+    transition_evaluator: TransitionEvaluator
+    initial_memory: RulebookMemory
+    initial_cache: EpisodeCache
 
 
 class RulebookV2MonitorWrapper(gym.Wrapper):
@@ -79,4 +94,3 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         }
         info_dict["rulebook"] = result.to_dict()
         return observation, reward, terminated, truncated, info_dict
-

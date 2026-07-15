@@ -16,6 +16,7 @@ from thesis_rl.agent.adapters.identity import IdentityAdapter
 from thesis_rl.agent.planners.core.utils import count_envs
 from thesis_rl.envs.factory import make_env
 from thesis_rl.envs.wrappers import RuleRewardWrapper
+from thesis_rl.rulebook.v2.wrapper import RulebookV2MonitorWrapper
 from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
 from thesis_rl.agent.preprocessors.identity import IdentityPreprocessor
 from thesis_rl.reward.managers.hybrid_rulebook_manager import HybridRulebookRewardManager
@@ -254,6 +255,27 @@ def load_planner(cfg: DictConfig, checkpoint_path: str, env: Any) -> "BasePlanne
 
 
 def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
+    # v1 remains the default and keeps its historical reward manager path.
+    # v2 adapters are deliberately explicit: the live environment must supply
+    # canonical snapshot/cache factories, otherwise silently falling back to
+    # v1 would violate the fail-fast contract.
+    rulebook_version = str(cfg.get("rulebook", {}).get("version", "v1")).lower()
+    if rulebook_version in {"v2", "4.6-final-implementation-complete"}:
+        adapter = getattr(env, "rulebook_v2_adapter", None)
+        if adapter is None:
+            adapter = getattr(getattr(env, "unwrapped", None), "rulebook_v2_adapter", None)
+        if adapter is None:
+            raise ValueError(
+                "Rulebook v2 requires env.rulebook_v2_adapter with snapshotter, "
+                "transition_evaluator, initial_memory and initial_cache"
+            )
+        return RulebookV2MonitorWrapper(
+            env,
+            snapshotter=adapter.snapshotter,
+            transition_evaluator=adapter.transition_evaluator,
+            initial_memory=adapter.initial_memory,
+            initial_cache=adapter.initial_cache,
+        )
     mode = str(cfg.reward.behavior).lower()
     if mode == "off":
         return env
