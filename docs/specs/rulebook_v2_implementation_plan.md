@@ -537,7 +537,7 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare `RoutePolyline` e proiezione con continuità `previous_s`.
 - [ ] Implementare front/rear route coordinates e swept front bumper.
 - [x] Implementare lane association e gap bumper-to-bumper.
-- [ ] Implementare superficie carrabile per livello verticale.
+- [x] Implementare superficie carrabile per livello verticale.
 - [ ] Implementare control line canonica.
 - [ ] Implementare decomposizione convessa deterministica e continuous SAT.
 - [ ] Implementare `MovementKey`, corridoi e conflict-zone construction.
@@ -863,6 +863,7 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F2 | Aggiunti OBB canonico e `PolylineElevation` con interpolazione lineare e tie-break deterministico | 25 test mirati passati e Ruff verde nel container |
 | 2026-07-15 | F2 | DEC-011 e `RoutePolyline`: consolidamento rumoroso, quota mediana, proiezione 3D con tie-break reset/`previous_s` | 28 test mirati passati e Ruff verde nel container |
 | 2026-07-15 | F2 | Lane association route-only con tie-break/ambiguità e coordinate footprint/gap bumper-to-bumper | 11 test geometrici mirati passati e Ruff verde nel container |
+| 2026-07-15 | F2 | Superficie carrabile per-step limitata al livello verticale ego; fallback polygon centerline/width | 12 test geometrici mirati passati e Ruff verde nel container |
 
 ---
 

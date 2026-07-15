@@ -9,6 +9,7 @@ from thesis_rl.rulebook.v2.geometry.canonical import (
     stable_geometry_id,
 )
 from thesis_rl.rulebook.v2.geometry.elevation import PolylineElevation
+from thesis_rl.rulebook.v2.geometry.drivable import DrivableLaneRecord, drivable_surface_for_ego
 from thesis_rl.rulebook.v2.geometry.footprint import oriented_bounding_box
 from thesis_rl.rulebook.v2.geometry.lanes import (
     RouteLaneRecord,
@@ -129,3 +130,24 @@ def test_bumper_gap_handles_separated_tangent_and_overlapping_footprints() -> No
         oriented_bounding_box(center_xy=(9.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0), route, position_z=0.0
     )
     assert bumper_to_bumper_gap(ego, tangent) == pytest.approx((0.0, True))
+
+
+def test_drivable_surface_uses_current_vertical_layer_and_width_fallback() -> None:
+    lower = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    upper = RoutePolyline(((0.0, 0.0, 10.0), (10.0, 0.0, 10.0)))
+    ego = oriented_bounding_box(
+        center_xy=(5.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0
+    )
+    lanes = (
+        DrivableLaneRecord("lower", lower, None, 4.0),
+        DrivableLaneRecord("upper", upper, None, 4.0),
+    )
+    surface = drivable_surface_for_ego(
+        ego_footprint=ego,
+        ego_position_xy=(5.0, 0.0),
+        ego_position_z=0.0,
+        lanes=lanes,
+    )
+    assert surface.bounds == pytest.approx((0.0, -2.0, 10.0, 2.0))
+    with pytest.raises(ValueError, match="lane_width"):
+        DrivableLaneRecord("broken", lower, None, None)
