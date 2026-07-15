@@ -5,7 +5,6 @@ import json
 from math import inf
 
 import pytest
-from shapely.geometry import Polygon
 
 from thesis_rl.rulebook.v2 import (
     RulebookEvaluationError,
@@ -14,6 +13,15 @@ from thesis_rl.rulebook.v2 import (
     load_rulebook_v2_config,
 )
 from thesis_rl.rulebook.v2.config import ExecutionConfig, RULEBOOK_V2_VERSION
+from thesis_rl.rulebook.v2.context.task_route import build_task_route_record, validate_task_route
+from thesis_rl.rulebook.v2.context.map_matching import (
+    OfflineTrackSample,
+    map_match_sdc_track_to_task_route,
+)
+from thesis_rl.rulebook.v2.context.static_adapter import normalize_static_records
+from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+from shapely.geometry import Polygon
 from thesis_rl.rulebook.v2.errors import EvaluationFailure
 from thesis_rl.rulebook.v2.registry import (
     DEFAULT_RULEBOOK_V2_REGISTRY,
@@ -36,6 +44,77 @@ def test_task_route_is_immutable_and_has_no_future_trajectory_fields() -> None:
         route.lane_ids = ()  # type: ignore[misc]
     assert "timestamp" not in route.__dataclass_fields__
     assert "future" not in " ".join(route.__dataclass_fields__)
+
+
+def test_task_route_builder_and_eligibility_artifact_use_only_static_topology() -> None:
+    route = build_task_route_record(
+        scenario_uid="scenario-1",
+        lane_ids=("lane-a", "lane-b"),
+        provenance="waymo_offline_map_match",
+        source_geometry_bytes=b"canonical-map",
+    )
+    eligible = validate_task_route(
+        route,
+        available_lane_ids={"lane-a": object(), "lane-b": object()},
+        rulebook_version=RULEBOOK_V2_VERSION,
+        geometry_config_hash="geometry-hash",
+        calibration_hash="calibration-hash",
+    )
+    assert eligible.rulebook_eligible
+    assert eligible.validation_errors == ()
+    assert "timestamp" not in eligible.__dataclass_fields__
+    ineligible = validate_task_route(
+        route,
+        available_lane_ids={"lane-a": object()},
+        rulebook_version=RULEBOOK_V2_VERSION,
+        geometry_config_hash="geometry-hash",
+        calibration_hash="calibration-hash",
+    )
+    assert not ineligible.rulebook_eligible
+    assert ineligible.validation_errors == ("missing_lane_ids:lane-b",)
+
+
+def test_offline_sdc_map_match_retains_lane_sequence_but_not_track_samples() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    lane = RouteLaneRecord(
+        "lane-a", Polygon(((0.0, -2.0), (10.0, -2.0), (10.0, 2.0), (0.0, 2.0))), route
+    )
+    record = map_match_sdc_track_to_task_route(
+        scenario_uid="scenario-1",
+        track=(
+            OfflineTrackSample((1.0, 0.0), 0.0, 0.0),
+            OfflineTrackSample((2.0, 0.0), 0.0, 0.0),
+        ),
+        route_lanes={"lane-a": lane},
+        source_geometry_bytes=b"map",
+        adapter_version="waymo-v1",
+    )
+    assert record.lane_ids == ("lane-a",)
+    assert not hasattr(record, "track")
+
+
+def test_static_adapter_normalizes_geometry_and_reports_missing_route_lanes() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    task_route = build_task_route_record(
+        scenario_uid="scenario-1",
+        lane_ids=("lane-a", "lane-missing"),
+        provenance="pg_route",
+        source_geometry_bytes=b"map",
+    )
+    result = normalize_static_records(
+        scenario_uid="scenario-1",
+        task_route=task_route,
+        route_lanes=(
+            RouteLaneRecord(
+                "lane-a",
+                Polygon(((0.0, -2.0), (10.0, -2.0), (10.0, 2.0), (0.0, 2.0))),
+                route,
+            ),
+        ),
+        map_features=(),
+        traffic_controls=(),
+    )
+    assert result.validation_errors == ("task_route_lane_missing:lane-missing",)
 
 
 def test_v2_config_rejects_nonconformant_execution_or_order() -> None:

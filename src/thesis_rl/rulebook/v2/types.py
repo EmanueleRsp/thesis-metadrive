@@ -102,6 +102,14 @@ class TaskRouteRecord:
     adapter_version: str
     source_geometry_hash: str
 
+    def __post_init__(self) -> None:
+        if not self.scenario_uid or not self.lane_ids:
+            raise ValueError("TaskRouteRecord requires a scenario UID and non-empty lane sequence")
+        if any(not lane_id for lane_id in self.lane_ids):
+            raise ValueError("TaskRouteRecord lane IDs must be non-empty")
+        if not self.provenance or not self.adapter_version or not self.source_geometry_hash:
+            raise ValueError("TaskRouteRecord identity metadata must be non-empty")
+
 
 @dataclass(frozen=True, slots=True)
 class ActorSnapshot:
@@ -222,6 +230,7 @@ class RulebookMemory:
 
 @dataclass(frozen=True, slots=True)
 class MemoryDelta:
+    writer: str | None = None
     writes: tuple[tuple[str, object], ...] = ()
 
 

@@ -6,6 +6,8 @@ from thesis_rl.rulebook.v2.config import (
     load_rulebook_v2_config,
 )
 from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
+from thesis_rl.rulebook.v2.events import ContactOnsetBuffer
+from thesis_rl.rulebook.v2.lifecycle import ZoneLifecycleEvaluator, ZoneLifecycleView
 from thesis_rl.rulebook.v2.registry import ComponentDefinition, RulebookV2Registry
 from thesis_rl.rulebook.v2.types import (
     MACRO_RULE_ORDER,
@@ -21,6 +23,8 @@ from thesis_rl.rulebook.v2.types import (
 
 __all__ = [
     "ActorClass", "CacheDelta", "ComponentDefinition", "ComponentStatus", "EnvSnapshot",
+    "ContactOnsetBuffer",
+    "ZoneLifecycleEvaluator", "ZoneLifecycleView",
     "EvaluationFailure", "MACRO_RULE_ORDER", "MacroRule", "RULEBOOK_V2_VERSION",
     "RulebookEvaluationError", "RulebookMemory", "RulebookResult", "RulebookV2Config",
     "RulebookV2Registry", "TaskRouteRecord", "load_rulebook_v2_config",

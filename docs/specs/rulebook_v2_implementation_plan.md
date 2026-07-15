@@ -344,6 +344,16 @@ La regola mitiga rumore di campionamento senza scegliere arbitrariamente una
 quota da un livello stradale vicino. Riusa una tolleranza verticale già
 congelata e non introduce un nuovo parametro.
 
+### DEC-012 — Ordinamento delle componenti disgiunte di conflict zone
+
+**Stato:** `ACCETTATA`
+
+Le componenti polygonali disgiunte di una stessa conflict zone vengono
+canonicalizzate secondo DEC-007 e ordinate in senso lessicografico crescente
+sul loro WKB 2D big-endian. L'indice `k` dello schema di `zone_id` è l'indice
+zero-based in questo ordine. L'ordinamento è unicamente identitario: non
+esprime precedenza né prossimità lungo route.
+
 ---
 
 ## Architettura target
@@ -535,12 +545,14 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare footprint OBB e validazione dimensioni.
 - [x] Implementare elevation functions e compatibilità verticale 2.5D.
 - [x] Implementare `RoutePolyline` e proiezione con continuità `previous_s`.
-- [ ] Implementare front/rear route coordinates e swept front bumper.
+- [x] Implementare front/rear route coordinates e swept front bumper.
 - [x] Implementare lane association e gap bumper-to-bumper.
 - [x] Implementare superficie carrabile per livello verticale.
-- [ ] Implementare control line canonica.
-- [ ] Implementare decomposizione convessa deterministica e continuous SAT.
-- [ ] Implementare `MovementKey`, corridoi e conflict-zone construction.
+- [x] Implementare control line canonica.
+- [x] Implementare decomposizione convessa deterministica e continuous SAT.
+- [x] Implementare `MovementKey`, corridoi e conflict-zone construction base
+      (vehicle/crosswalk, componenti, intervalli route e selezione); merge e
+      rotatorie restano dipendenti dai record statici F3.
 - [ ] Aggiungere test sintetici per geometrie concave, hole, autointersezioni
       della route, cavalcavia, merge e rotatorie.
 
@@ -555,11 +567,11 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F3 — Task route, adapter statici e validazione offline
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
-- [ ] Definire e versionare `TaskRouteRecord`.
+- [x] Definire e versionare `TaskRouteRecord`.
 - [ ] Implementare map-matching offline Waymo SDC -> lane ID sequence, senza
       conservare timing o future pose nel record.
 - [ ] Implementare estrazione diretta del task route PG.
@@ -569,7 +581,7 @@ planner non può quindi inserirla nel replay buffer.
       senza usarne le soglie euristiche come primitive runtime.
 - [ ] Implementare validazione route, quote, lane polygon/width, controlli,
       signal sequences, spawn overlap e configured speed caps.
-- [ ] Implementare artifact di eleggibilità separato dal generico
+- [x] Implementare artifact di eleggibilità separato dal generico
       `validation_status` del catalogo.
 - [ ] Indicizzare l'artifact per scenario UID, versione rulebook, versione
       adapter, hash config geometrica e hash calibrazione.
@@ -592,10 +604,10 @@ planner non può quindi inserirla nel replay buffer.
 
 ### Attività
 
-- [ ] Implementare snapshotter live comune a PG e Waymo.
+- [x] Implementare snapshotter live comune a PG e Waymo.
 - [ ] Risolvere ID persistenti e classi canoniche degli oggetti MetaDrive.
 - [ ] Catturare pose 3D, velocità, heading, footprint, lane ID e speed cap.
-- [ ] Implementare un buffer episodico thread-safe/control-step-safe per i
+- [x] Implementare un buffer episodico thread-safe/control-step-safe per i
       contact onset.
 - [ ] Estendere localmente il callback collisioni vendorizzato preservando il
       callback MetaDrive originale.
@@ -620,13 +632,13 @@ planner non può quindi inserirla nel replay buffer.
 ### Attività
 
 - [ ] Implementare detector puri di crossing e occupancy pre/post.
-- [ ] Implementare `ZoneLifecycleEvaluator` e `ZoneLifecycleView` secondo
+- [x] Implementare `ZoneLifecycleEvaluator` e `ZoneLifecycleView` secondo
       DEC-002.
 - [ ] Implementare init memoria al reset, inclusi prepassed controls e
       occupazioni preesistenti.
-- [ ] Implementare merge dei `MemoryDelta` con ownership DEC-008.
+- [x] Implementare merge dei `MemoryDelta` con ownership DEC-008.
 - [ ] Implementare overlay `cache + pending_delta`.
-- [ ] Implementare merge/apply dei `CacheDelta` con confronto canonico.
+- [x] Implementare merge/apply dei `CacheDelta` con confronto canonico.
 - [ ] Implementare freeze/unfreeze delle `MovementKey` degli attori.
 - [ ] Testare doppio writer, geometrie discordanti, lazy zone inside ego,
       eccezioni dopo proposta delta e commit unico.
@@ -817,6 +829,7 @@ transizioni.
 | ISS-007 | `APERTO` | alta | Artifact di calibrazione `b_e` non ancora disponibile | Implementare protocollo e bloccare solo pilot/freeze finale, non unit test sintetici |
 | ISS-008 | `RISOLTO` | media | Shell di lavoro senza `pytest`, Ruff, Shapely e MetaDrive | Verifiche eseguite nel container `dev`: dipendenze disponibili, 23 test e Ruff verdi; versioni registrate in F0 |
 | ISS-009 | `RISOLTO` | media | `RoutePolyline` deve unificare punti consecutivi entro 1 mm in XY, ma la specifica non definisce la quota risultante se tali punti hanno `z` differenti | DEC-011: cluster XY medio, mediana z, validazione con `z_tol=3 m`; approvata dall'utente il 2026-07-15 |
+| ISS-010 | `RISOLTO` | media | La specifica assegna alle componenti disgiunte di conflict zone un indice `k` “dopo ordinamento canonico”, senza definire la chiave d'ordinamento | DEC-012: ordine lessicografico crescente del WKB DEC-007; approvata dall'utente il 2026-07-15 |
 
 Quando un problema richiede una scelta non coperta dalla specifica:
 
@@ -864,6 +877,14 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F2 | DEC-011 e `RoutePolyline`: consolidamento rumoroso, quota mediana, proiezione 3D con tie-break reset/`previous_s` | 28 test mirati passati e Ruff verde nel container |
 | 2026-07-15 | F2 | Lane association route-only con tie-break/ambiguità e coordinate footprint/gap bumper-to-bumper | 11 test geometrici mirati passati e Ruff verde nel container |
 | 2026-07-15 | F2 | Superficie carrabile per-step limitata al livello verticale ego; fallback polygon centerline/width | 12 test geometrici mirati passati e Ruff verde nel container |
+| 2026-07-15 | F2 | Derivazione control line ortogonale, filtro verticale e signed distance con lato upstream positivo | 13 test geometrici mirati passati e Ruff verde nel container |
+| 2026-07-15 | F2 | DEC-012: `MovementCorridor` e candidate conflict zone vehicle--vehicle pure, con componenti ordinate per WKB, filtro 2.5D e ID SHA-256 | 14 test geometrici mirati passati e Ruff verde nel container; selezione route/crosswalk/merge resta da completare |
+| 2026-07-15 | F2 | Intervalli route entry/exit e selezione occupied-first/first-ahead; candidate crosswalk con namespace distinto | 16 test geometrici mirati passati e Ruff verde nel container |
+| 2026-07-15 | F2 | Decomposizione convessa deterministica (inclusi concavità e hole) e continuous SAT CV con `NO_INTERVAL`, finito e `OPEN_END` simbolico | 18 test geometrici mirati passati e Ruff verde nel container |
+| 2026-07-15 | F2 | Aggiunto swept front bumper canonico per i crossing events; regressione cumulativa v1/v2 | 38 test passati, Ruff verde e diff check pulito nel container |
+| 2026-07-15 | F3 | `TaskRouteRecord` versionato, artifact `TaskRouteEligibility` e matcher SDC offline source-neutral; track samples non entrano nel record | 40 test cumulativi passati e Ruff verde nel container |
+| 2026-07-15 | F3/F4 | Normalizzazione statica source-neutral di lane/map/control record; snapshot immutable e buffer contact-onset control-step-safe | 43 test cumulativi passati e Ruff verde nel container |
+| 2026-07-15 | F5 | Merge fail-fast `MemoryDelta`/`CacheDelta`, apply immutabile della cache e `ZoneLifecycleEvaluator` unico writer DEC-002 | 47 test cumulativi passati e Ruff verde nel container |
 
 ---
 

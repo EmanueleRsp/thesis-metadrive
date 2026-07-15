@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from math import cos, isfinite, sin
 
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Polygon
 
 
 def oriented_bounding_box(
@@ -42,3 +42,45 @@ def oriented_bounding_box(
     if not footprint.is_valid or footprint.is_empty:
         raise ValueError("Canonical OBB construction produced an invalid footprint")
     return footprint
+
+
+def front_bumper_segment(footprint: Polygon, *, heading_rad: float) -> LineString:
+    """Return the OBB edge with maximum body-frame longitudinal coordinate."""
+
+    if footprint.is_empty or not footprint.is_valid:
+        raise ValueError("Footprint must be non-empty and valid")
+    if not isfinite(heading_rad):
+        raise ValueError("Footprint heading must be finite")
+    center = footprint.centroid
+    forward = (cos(heading_rad), sin(heading_rad))
+    vertices = list(footprint.exterior.coords[:-1])
+    longitudinal = [
+        (x - center.x) * forward[0] + (y - center.y) * forward[1]
+        for x, y, *_ in vertices
+    ]
+    maximum = max(longitudinal)
+    front_vertices = [
+        vertex
+        for vertex, coordinate in zip(vertices, longitudinal)
+        if abs(coordinate - maximum) <= 1.0e-9
+    ]
+    if len(front_vertices) != 2:
+        raise ValueError("Footprint does not expose exactly two front-bumper vertices")
+    return LineString(front_vertices)
+
+
+def swept_front_bumper(
+    pre_footprint: Polygon,
+    post_footprint: Polygon,
+    *,
+    pre_heading_rad: float,
+    post_heading_rad: float,
+) -> Polygon:
+    """Return the convex swept front-bumper region used by crossing events."""
+
+    pre_bumper = front_bumper_segment(pre_footprint, heading_rad=pre_heading_rad)
+    post_bumper = front_bumper_segment(post_footprint, heading_rad=post_heading_rad)
+    swept = pre_bumper.union(post_bumper).convex_hull
+    if swept.is_empty or not swept.is_valid:
+        raise ValueError("Swept front bumper is empty or invalid")
+    return swept

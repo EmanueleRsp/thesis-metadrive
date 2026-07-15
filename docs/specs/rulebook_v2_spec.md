@@ -610,6 +610,10 @@ $$
 dove $\operatorname{crosswalk\_id}(W)$ è l'ID persistente della feature
 crosswalk e $k$ è l'indice della componente dopo ordinamento canonico.
 
+L'ordinamento canonico delle componenti è l'ordine lessicografico crescente del
+WKB 2D big-endian canonicalizzato secondo DEC-007; l'indice è zero-based e ha
+soltanto funzione identitaria.
+
 I due schemi di ID appartengono a namespace distinti. Un ID viene costruito
 esclusivamente con lo schema corrispondente al tipo della zona; per una zona
 crosswalk non esiste né viene usata una `other_movement_key`.
