@@ -655,16 +655,17 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F6 — R1 collisione e R2 interazione dinamica
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
-- [ ] Implementare collision onset e severità bounded da velocità pre-state.
-- [ ] Implementare floor numerico e normalizzazione per actor class.
+- [x] Implementare collision onset e severità bounded da velocità pre-state.
+- [x] Implementare floor numerico e normalizzazione per actor class.
 - [ ] Implementare RSS longitudinale sulla lane association canonica.
-- [ ] Implementare TTC generalized mediante continuous SAT.
-- [ ] Implementare clearance per tutti gli attori live collidibili.
-- [ ] Aggregare R2 con massimo e conservare worst actor/diagnostics.
+- [x] Implementare TTC generalizzato mediante continuous SAT.
+- [x] Implementare clearance R2 su tutti gli attori live compatibili e conservare
+      worst actor/diagnostics.
+- [x] Aggregare R2 con massimo e conservare worst actor/diagnostics.
 - [ ] Implementare status applicabile/evaluabile per ogni componente.
 - [ ] Coprire integralmente i test delle sezioni 15.1–15.4.
 
@@ -888,6 +889,10 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F5 | Merge fail-fast `MemoryDelta`/`CacheDelta`, apply immutabile della cache e `ZoneLifecycleEvaluator` unico writer DEC-002 | 47 test cumulativi passati e Ruff verde nel container |
 | 2026-07-15 | F5 | Detector puro crossing/occupancy pre/post e `EpisodeCacheOverlay` per pending zones same-step | 49 test cumulativi passati e Ruff verde nel container |
 | 2026-07-15 | F5 | Inizializzazione reset di `RulebookMemory` con contatti, route `s` e zone preesistenti | 50 test cumulativi passati e Ruff verde nel container |
+| 2026-07-15 | F6 | Evaluator puro R1 collision onset/severità: pre-state closing speed, floor, cap per classe, worst actor e fail-fast | 53 test cumulativi passati e Ruff verde nel container |
+| 2026-07-15 | F6 | Evaluator puro R2 clearance: soglie per classe, iterazione exhaustive live actor, filtro verticale e worst diagnostics | 55 test cumulativi passati e Ruff verde nel container |
+| 2026-07-15 | F6 | Evaluator puro R2 TTC con moto relativo pre-state, soglie vehicle/VRU/static e continuous SAT | 57 test cumulativi passati e Ruff verde nel container |
+| 2026-07-15 | F6 | Aggregatore R2 worst-case con massimo e diagnostica completa delle sottocomponenti | 59 test cumulativi passati e Ruff verde nel container |
 
 ---
 
