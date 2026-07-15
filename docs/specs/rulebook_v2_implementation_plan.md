@@ -25,7 +25,7 @@ in una successiva revisione della specifica prima del freeze finale.
 ## Stato complessivo
 
 **Stato:** implementazione in corso  
-**Fase corrente:** F0 — allineamento normativo e contratti (F1 pronta per verifica)  
+**Fase corrente:** F2 — primitive geometriche canoniche e 2.5D
 **Ultimo aggiornamento:** 2026-07-15  
 **Specifica di riferimento:** Rulebook v2, versione
 `4.6-final-implementation-complete`
@@ -45,9 +45,9 @@ in una successiva revisione della specifica prima del freeze finale.
 
 | Fase | Obiettivo | Stato | Dipende da |
 |---|---|---|---|
-| F0 | Allineamento normativo, scope e contratti | `IN_CORSO` | — |
-| F1 | Tipi canonici, configurazione e registry v2 | `PRONTA_PER_VERIFICA` | F0 |
-| F2 | Primitive geometriche canoniche e 2.5D | `NON_INIZIATA` | F1 |
+| F0 | Allineamento normativo, scope e contratti | `COMPLETATA` | — |
+| F1 | Tipi canonici, configurazione e registry v2 | `COMPLETATA` | F0 |
+| F2 | Primitive geometriche canoniche e 2.5D | `IN_CORSO` | F1 |
 | F3 | Task route, adapter statici e validazione offline | `NON_INIZIATA` | F1, F2 |
 | F4 | Snapshot live e contact-onset hook | `NON_INIZIATA` | F1 |
 | F5 | Eventi, memoria, cache e zone lifecycle | `NON_INIZIATA` | F2–F4 |
@@ -443,7 +443,7 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F0 — Allineamento normativo, scope e contratti
 
-**Stato:** `IN_CORSO`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -459,7 +459,9 @@ planner non può quindi inserirla nel replay buffer.
       `info["rule_components"]`, `info["rulebook"]`.
 - [x] Aggiungere un config selector esplicito `rulebook.version: v1 | v2` senza
       cambiare il comportamento v1.
-- [ ] Registrare fixture e versioni Shapely/GEOS/MetaDrive usate dai test.
+- [x] Registrare fixture e versioni Shapely/GEOS/MetaDrive usate dai test:
+      container `dev`, Shapely `2.1.2`, GEOS `3.13.1`, MetaDrive senza
+      attributo `__version__` esposto.
 
 ### Criteri di uscita
 
@@ -478,7 +480,7 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F1 — Tipi canonici, configurazione e registry v2
 
-**Stato:** `PRONTA_PER_VERIFICA`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -494,9 +496,8 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare `ComponentDefinition` e registry v2.
 - [x] Validare al bootstrap ordine macro, componenti richieste e ownership dei
       campi di memoria.
-- [ ] Testare immutabilità, finitezza, serializzazione diagnostica ed errori di
-      configurazione (test aggiunti, esecuzione bloccata da environment privo
-      delle dipendenze di progetto).
+- [x] Testare immutabilità, finitezza, serializzazione diagnostica ed errori di
+      configurazione.
 
 ### Criteri di uscita
 
@@ -509,13 +510,13 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F2 — Primitive geometriche canoniche e 2.5D
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
-- [ ] Implementare precision grid, canonical WKB e SHA-256 secondo DEC-007.
-- [ ] Implementare footprint OBB e validazione dimensioni.
-- [ ] Implementare elevation functions e compatibilità verticale 2.5D.
+- [x] Implementare precision grid, canonical WKB e SHA-256 secondo DEC-007.
+- [x] Implementare footprint OBB e validazione dimensioni.
+- [x] Implementare elevation functions e compatibilità verticale 2.5D.
 - [ ] Implementare `RoutePolyline` e proiezione con continuità `previous_s`.
 - [ ] Implementare front/rear route coordinates e swept front bumper.
 - [ ] Implementare lane association e gap bumper-to-bumper.
@@ -797,7 +798,7 @@ transizioni.
 | ISS-005 | `APERTO` | media | `MovementKey` può essere ambigua prima della conflict zone | Restare `NOT_APPLICABLE`; misurare frequenza nel pilot |
 | ISS-006 | `APERTO` | media | Costo del continuous SAT su tutti gli attori live non ancora misurato | Benchmark F10 prima di valutare DEF-PERF-001 |
 | ISS-007 | `APERTO` | alta | Artifact di calibrazione `b_e` non ancora disponibile | Implementare protocollo e bloccare solo pilot/freeze finale, non unit test sintetici |
-| ISS-008 | `APERTO` | media | Shell di lavoro senza `pytest`, Ruff, Shapely e MetaDrive; i test F1 non sono eseguibili localmente | Eseguire la tranche nell'environment di progetto con le dipendenze lockate e registrare versioni Shapely/GEOS/MetaDrive; nessun fallback o installazione implicita |
+| ISS-008 | `RISOLTO` | media | Shell di lavoro senza `pytest`, Ruff, Shapely e MetaDrive | Verifiche eseguite nel container `dev`: dipendenze disponibili, 23 test e Ruff verdi; versioni registrate in F0 |
 
 Quando un problema richiede una scelta non coperta dalla specifica:
 
@@ -839,6 +840,9 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F0 | Analisi spec/architettura e decisioni DEC-001–DEC-010 | Piano pronto; implementazione non iniziata |
 | 2026-07-15 | F0 | Contratti congelati riportati nella specifica; package/config/output pubblici definiti; `rulebook.version: v1` aggiunto al default | F0 resta in corso: fixture e versioni dipendenze richiedono l'environment di progetto (ISS-008) |
 | 2026-07-15 | F1 | Aggiunti `thesis_rl.rulebook.v2` (types, errors, config, registry), `conf/rulebook/v2.yaml` e test contrattuali | Compilazione Python riuscita; test/Ruff non eseguibili nella shell corrente per ISS-008 |
+| 2026-07-15 | F0/F1 | Container `dev`: `tests/test_rulebook_v2_contracts.py` + regressione `tests/test_rulebook_evaluator.py`, Ruff mirato | 19 test passati; F0/F1 completate; ISS-008 risolto |
+| 2026-07-15 | F2 | DEC-007: canonicalizzazione Shapely (snap 1 mm, normalize, WKB 2D big-endian/no SRID, JSON canonico/SHA-256) e predicato verticale 2.5D | 23 test mirati passati e Ruff verde nel container; F2 resta in corso per le primitive restanti |
+| 2026-07-15 | F2 | Aggiunti OBB canonico e `PolylineElevation` con interpolazione lineare e tie-break deterministico | 25 test mirati passati e Ruff verde nel container |
 
 ---
 
