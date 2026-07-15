@@ -1,6 +1,6 @@
 import pytest
 from thesis_rl.rulebook.v2.aggregation import aggregate_rulebook_result
-from thesis_rl.rulebook.v2.monitor import evaluate_monitor_transition
+from thesis_rl.rulebook.v2.monitor import evaluate_monitor_transition, evaluate_registered_transition
 from thesis_rl.rulebook.v2.types import CacheDelta, ComponentStatus, MemoryDelta, RuleComponentResult, RulebookMemory
 
 def _component(name, cost, applicable=True):
@@ -20,3 +20,11 @@ def test_aggregation_rejects_incomplete_component():
     component = RuleComponentResult("offroad", 0.0, {}, True, False, ComponentStatus.NOT_EVALUABLE, {})
     with pytest.raises(ValueError):
         aggregate_rulebook_result(components=(component,), raw_progress_m=0.0, progress_margin=0.0)
+
+
+def test_registered_transition_rejects_partial_component_inputs():
+    with pytest.raises(ValueError, match="Missing evaluator inputs"):
+        evaluate_registered_transition(
+            memory=RulebookMemory(), component_inputs={}, raw_progress_m=0.0,
+            progress_margin=0.0,
+        )

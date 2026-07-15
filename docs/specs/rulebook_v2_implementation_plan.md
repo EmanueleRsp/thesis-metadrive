@@ -607,6 +607,9 @@ planner non può quindi inserirla nel replay buffer.
 ### Attività
 
 - [x] Implementare snapshotter live comune a PG e Waymo.
+- [x] Introdurre `LiveSnapshotSources`/`LiveSnapshotAdapter`: l’estrazione
+      source-specific passa soltanto da hook espliciti e manca di fallback su
+      osservazione o traiettorie future.
 - [ ] Risolvere ID persistenti e classi canoniche degli oggetti MetaDrive.
 - [ ] Catturare pose 3D, velocità, heading, footprint, lane ID e speed cap.
 - [x] Implementare un buffer episodico thread-safe/control-step-safe per i
@@ -718,6 +721,9 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Verificare continuità fra `memory.previous_route_s_m` e pre-state.
 - [x] Implementare aggregazione R1–R4 e macro status.
 - [x] Implementare orchestrazione transazionale `evaluate_monitor_transition`.
+- [x] Aggiungere dispatch `evaluate_registered_transition`: ogni componente
+      normativo e `progress` devono fornire input canonici espliciti al registry;
+      input mancanti o sconosciuti sono fail-fast.
 - [x] Validare range, finitezza, complete evaluation, ownership e cache delta.
 - [x] Garantire che qualunque errore non produca un risultato parziale.
 - [x] Coprire i test delle sezioni 15.0, 15.10 e atomicità (72 test Rulebook
@@ -918,6 +924,7 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F8 | Progresso canonico su `RoutePolyline`: delta raw, clipping normalizzato `m4`, continuità con `previous_route_s_m` e aggiornamento memory owner `progress` | 72 test Rulebook v2 cumulativi passati nel container, Ruff e diff check verdi |
 | 2026-07-15 | F5/F7 | Freeze/unfreeze `MovementKey` per vehicle-yield, persistente fino all'uscita completa | 76 test Rulebook v2 nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | F1/F8 | Registry collegato agli evaluator normativi reali e dispatch puro per componente | 82 test Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F8 | Dispatch registry-driven della transizione completa, incluso evaluator progress, con rifiuto di input parziali | 84 test mirati Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | Regressione | Verifica suite completa repository dopo wiring registry | 385 passati, 8 falliti fuori dal perimetro v2; ISS-011 aperto e dettagliato sopra |
 | 2026-07-15 | F8/F9 | Invarianti di aggregazione, merge transazionale, wrapper monitor-only, contratto `RulebookV2Adapter` e wiring runtime v2 esplicito | 79 test mirati Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
 

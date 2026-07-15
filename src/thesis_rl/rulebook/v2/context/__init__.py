@@ -12,6 +12,7 @@ from thesis_rl.rulebook.v2.context.map_matching import (
 )
 from thesis_rl.rulebook.v2.context.static_adapter import StaticAdapterResult, normalize_static_records
 from thesis_rl.rulebook.v2.context.snapshotter import capture_env_snapshot
+from thesis_rl.rulebook.v2.context.live_adapter import LiveSnapshotAdapter, LiveSnapshotSources
 
 __all__ = [
     "RULEBOOK_V2_ADAPTER_CONTRACT_VERSION",
@@ -23,4 +24,6 @@ __all__ = [
     "StaticAdapterResult",
     "normalize_static_records",
     "capture_env_snapshot",
+    "LiveSnapshotAdapter",
+    "LiveSnapshotSources",
 ]

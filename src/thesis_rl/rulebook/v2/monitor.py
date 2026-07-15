@@ -5,6 +5,9 @@ from __future__ import annotations
 from thesis_rl.rulebook.v2.aggregation import aggregate_rulebook_result
 from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
 from thesis_rl.rulebook.v2.memory import merge_cache_deltas, merge_memory_deltas
+from collections.abc import Mapping
+
+from thesis_rl.rulebook.v2.registry import DEFAULT_RULEBOOK_V2_REGISTRY, RulebookV2Registry
 from thesis_rl.rulebook.v2.types import CacheDelta, MemoryDelta, RulebookMemory, RuleComponentResult
 
 
@@ -36,3 +39,49 @@ def evaluate_monitor_transition(*, memory: RulebookMemory, component_outputs: tu
             EvaluationFailure("unknown", -1, "monitor", str(exc))
         ) from exc
     return result, next_memory, cache_delta
+
+
+def evaluate_registered_transition(
+    *,
+    memory: RulebookMemory,
+    component_inputs: Mapping[str, Mapping[str, object]],
+    raw_progress_m: float,
+    progress_margin: float,
+    pending_cache_delta: CacheDelta = CacheDelta(),
+    registry: RulebookV2Registry = DEFAULT_RULEBOOK_V2_REGISTRY,
+):
+    """Invoke every normative evaluator through the fixed registry.
+
+    The adapter supplies canonical keyword arguments for each component.  A
+    missing input is a contract error: callers must invoke the evaluator even
+    when its domain is absent so it can return an explicit
+    ``NOT_APPLICABLE`` result.
+    """
+    normative_names = tuple(
+        component.name
+        for component in registry.components
+        if component.normative_output and component.name != "progress"
+    )
+    supplied = set(component_inputs)
+    missing = tuple(name for name in normative_names if name not in supplied)
+    if "progress" not in supplied:
+        missing += ("progress",)
+    unknown = tuple(sorted(supplied.difference(normative_names).difference({"progress"})))
+    if missing:
+        raise ValueError(f"Missing evaluator inputs: {missing}")
+    if unknown:
+        raise ValueError(f"Unknown evaluator inputs: {unknown}")
+    outputs = tuple(
+        registry.evaluate(name, **dict(component_inputs[name]))
+        for name in normative_names
+    )
+    progress_input = component_inputs["progress"]
+    progress_output = registry.evaluate("progress", **dict(progress_input))
+    return evaluate_monitor_transition(
+        memory=memory,
+        component_outputs=outputs,
+        raw_progress_m=raw_progress_m,
+        progress_margin=progress_margin,
+        pending_cache_delta=pending_cache_delta,
+        progress_output=progress_output,
+    )

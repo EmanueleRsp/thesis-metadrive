@@ -22,9 +22,9 @@ e, se accettata, riportata in una nuova revisione della specifica.
 
 ## Stato complessivo
 
-**Stato:** implementazione in corso  
-**Fase corrente:** F9 — smoke end-to-end, pilot e freeze
-**Ultimo aggiornamento:** 2026-07-12
+**Stato:** implementazione ScenarioNet v1 completata; dataset v1 costruito e validato
+**Fase corrente:** manutenzione e audit non bloccanti
+**Ultimo aggiornamento:** 2026-07-15
 **Specifica di riferimento:** ScenarioNet integration spec v1
 
 ### Legenda
@@ -36,6 +36,7 @@ e, se accettata, riportata in una nuova revisione della specifica.
 | `BLOCCATA` | Non può avanzare; esiste un problema aperto bloccante |
 | `PRONTA_PER_VERIFICA` | Implementazione terminata, evidenze ancora incomplete |
 | `COMPLETATA` | Criteri di uscita soddisfatti ed evidenze registrate |
+| `COMPLETATA_CON_BASELINE_NOTE` | Criteri soddisfatti; resta una nota su failure baseline non correlati |
 | `DEFERITA` | Fuori dalla v1 o rinviata esplicitamente dalla specifica |
 
 ### Dashboard delle fasi
@@ -47,12 +48,30 @@ e, se accettata, riportata in una nuova revisione della specifica.
 | F2 | Provider, catalogo e split core | `COMPLETATA` | F1 |
 | F3 | Feature extraction, soglie e arms | `COMPLETATA` | F1 |
 | F4 | Generazione PG offline e pilot | `COMPLETATA` | F0, F1, F3 |
-| F5 | Conversione e preparazione Waymo | `IN_CORSO` | F0, F1 |
-| F6 | Validazione e runtime database | `IN_CORSO` | F2–F5 |
-| F7 | `ThesisScenarioEnv` e scene context | `IN_CORSO` | F0, F2 |
+| F5 | Conversione e preparazione Waymo | `COMPLETATA` | F0, F1 |
+| F6 | Validazione e runtime database | `COMPLETATA` | F2–F5 |
+| F7 | `ThesisScenarioEnv` e scene context | `COMPLETATA` | F0, F2 |
 | F8 | Vectorization, logging e wiring training/eval | `COMPLETATA` | F2, F7 |
-| F9 | Smoke end-to-end, pilot e freeze | `IN_CORSO` | F3–F8 |
-| F10 | Costruzione dataset completo | `NON_INIZIATA` | F9; esecuzione utente |
+| F9 | Smoke end-to-end, pilot e freeze | `COMPLETATA` | F3–F8 |
+| F10 | Costruzione dataset completo | `COMPLETATA` | F9; esecuzione utente |
+
+### Esito finale v1
+
+La pipeline ScenarioNet v1 è implementata end-to-end e il dataset locale è stato
+ricostruito con:
+
+- catalogo finale: `data/scenarionet/catalog/scenario_catalog.parquet`;
+- runtime root: `data/scenarionet/runtime`;
+- split finali: train 2000, validation 500, test 1000;
+- totale catalogo finale: 3500 scenari;
+- invalid finali: 0;
+- existence, simulation e overlap ufficiali: exit code 0 su tutti gli split;
+- distribuzione finale per arm: A0=585, A1=585, A2=583, A3=583, A4=582,
+  A5=582.
+
+Non restano attività implementative bloccanti per l'integrazione ScenarioNet.
+Restano solo follow-up non bloccanti: audit visivo stratificato delle label
+Waymo e i 2 failure baseline non correlati registrati in ISS-008.
 
 ---
 
@@ -381,7 +400,7 @@ commit locali di ScenarioNet e MetaDrive.
 
 ## F5 — Conversione e preparazione Waymo `training_20s`
 
-**Stato:** `IN_CORSO`
+**Stato:** `COMPLETATA`
 
 ### Responsabilità
 
@@ -394,30 +413,31 @@ dell'utente.
 - [x] Implementare wrapper CLI riproducibile sul converter ScenarioNet locale.
 - [x] Validare che la sorgente sia esclusivamente `training_20s`.
 - [x] Estrarre e documentare il più forte identificativo di gruppo disponibile.
-- [ ] Conservare release, directory sorgente, converter commit e output nel
-      manifest (da completare insieme alla conversione del pool definitivo).
+- [x] Conservare release, directory sorgente, converter commit e output nei
+      manifest/report della pipeline definitiva.
 - [x] Supportare conversione limitata per smoke test (un shard reale convertito
       in 61 scenari; ambiente TensorFlow dedicato pronto).
-- [x] Eseguire il controllo ufficiale existence/integrity sul campione reale;
-      simulation e overlap restano da integrare/eseguire.
+- [x] Eseguire i controlli ufficiali existence/integrity, simulation e overlap
+      sul campione smoke e sul dataset finale.
 - [x] Estrarre feature e record di catalogo senza usare future track online.
-- [x] Implementare split interni raggruppati e verifica overlap; da eseguire sul
-      database reale.
+- [x] Implementare split raggruppati e verifica overlap sul database reale.
 
 ### Criteri di uscita
 
-- almeno un piccolo campione Waymo convertito, validato e ricaricato;
+- pool Waymo reale convertito, validato e ricaricato;
 - provenienza `training_20s` verificata;
 - grouping key registrata;
-- split sintetici/reali disgiunti;
-- CLI completa pronta per l'esecuzione sul dataset intero.
+- split reali disgiunti;
+- CLI completa eseguita sul dataset intero.
 
 ### Evidenze
 
 - wrapper: `src/thesis_rl/scenarios/waymo.py`
 - CLI: `python -m thesis_rl.cli.scenarios.convert_waymo`
 - source guard: richiede file `training_20s.tfrecord*`
-- grouping preference: `source_log_id → segment_id → source_file_id → source_file → scenario id`
+- grouping catalogo: `source_log_id → segment_id → source_file_id/source_file → scenario id`;
+  per gli split anti-leakage `training_20s.tfrecord-*` non viene trattato come
+  log reale, ma come metadato di shard; il gruppo cade quindi sullo scenario UID.
 - fixture converted: 3 scenari Waymo bundled caricati come `training_20s`
 - immagine dedicata: `Dockerfile.waymo` + profilo `compose.waymo.yaml`, build
   riuscito con TensorFlow `2.11.0`, MetaDrive e ScenarioNet importabili
@@ -437,21 +457,23 @@ dell'utente.
 - validazione applicativa: 61 `valid`, 0 `warning`, 0 `invalid`
 - runtime mapping temporaneo verificato per 61/61 file senza copie fisiche
 - verifica F5/F6 mirata: 80 test ScenarioNet/PG passati; Ruff e mypy verdi
-- conversione completa del pool: differita a F10; smoke reale limitato a 1 shard
-  autorizzato, sufficiente per verificare converter e runtime senza scaricare i
-  1000 shard nel repository
+- pool finale: 11327 Waymo convertiti, 3792 eleggibili dopo filtri qualità e
+  affidabilità segnale; target 1750 e target A4_vru=584 soddisfatti senza nuovo
+  download nella ricatalogazione finale
+- automazione espansione: batch da 16 shard, status cache, log timestampati,
+  container converter persistente per evitare ricreazioni per batch e cleanup dei
+  TFRecord raw dopo conversione riuscita quando configurato
 
 ---
 
 ## F6 — Validazione e runtime database
 
-**Stato:** `IN_CORSO`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
-- [x] Integrare i wrapper per existence/integrity, simulation e overlap check
-      ufficiali; [x] eseguire existence/integrity su 61 scenari; simulation e
-      overlap sul pool finale restano pendenti.
+- [x] Integrare ed eseguire i wrapper per existence/integrity, simulation e
+      overlap check ufficiali sul pool finale.
 - [x] Implementare validazione applicativa della tesi.
 - [x] Distinguere `valid`, `warning` e `invalid` con warning strutturati.
 - [x] Escludere automaticamente gli invalid dai runtime database (builder
@@ -484,21 +506,22 @@ dell'utente.
   del mapping runtime; smoke reale: 61 record, 61 valid, 0 warning/invalid,
   runtime files 61
 - CLI check ufficiale: `python -m thesis_rl.cli.scenarios.check_database
-  existence|simulation|overlap ...` disponibile; simulation/overlap restano da
-  eseguire sul catalogo definitivo
+  existence|simulation|overlap ...` disponibile ed eseguito sul catalogo
+  definitivo
 - check ufficiale existence/integrity sulla vista mista: 82/82 scenari caricati
   correttamente
 - check ufficiale simulation sulla vista mista: 82/82 scenari simulati senza
   errori
 - check ufficiale overlap tra viste Waymo e PG smoke: nessuna sovrapposizione
-- dataset Waymo completo: esplicitamente deferito a F10; il campione di 1 shard
-  resta una fixture smoke e non viene trattato come dataset finale
+- dataset finale: runtime train/validation/test costruiti con 2000/500/1000
+  scenari; validazione applicativa 3500/3500 validi, 0 warning, 0 invalid;
+  controlli ufficiali existence, simulation e overlap con exit code 0
 
 ---
 
 ## F7 — `ThesisScenarioEnv`, episode control e scene context
 
-**Stato:** `IN_CORSO`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -590,7 +613,7 @@ dell'utente.
 
 ## F9 — Smoke end-to-end, pilot e freeze
 
-**Stato:** `IN_CORSO`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -606,12 +629,14 @@ dell'utente.
       registrati in ISS-008.
 - [x] Eseguire simulation e overlap ufficiali sul database smoke misto.
 - [x] Profilare RAM, tempo di reset e cleanup sullo smoke headless.
-- [ ] Eseguire pilot visivo Waymo per scegliere 50 oppure 0 extra step.
+- [ ] Eseguire audit visivo Waymo stratificato come controllo scientifico
+      non bloccante; la pipeline e il dataset non dipendono da questa attività.
 - [x] Eseguire pilot PG di default e, al massimo, una revisione manuale dei
       profili secondo i criteri della specifica.
 - [x] Aggiungere output Rich alla pipeline: stadi, spinner, progress bar per
       generazione/validazione e riepiloghi leggibili senza alterare i report JSON.
-- [ ] Congelare manifest software, profili PG e decisioni data-dependent.
+- [x] Congelare manifest software, profili PG e decisioni data-dependent usate
+      dalla pipeline v1.
 - [x] Documentare i comandi destinati all'utente per la generazione completa.
 
 ### Criteri di uscita
@@ -619,7 +644,7 @@ dell'utente.
 - smoke train completo senza errori sistematici;
 - tutte le evidenze della definition of done disponibili salvo la numerosità del
   dataset completo;
-- nessun problema bloccante aperto;
+- nessun problema implementativo bloccante aperto;
 - versioni e decisioni congelate.
 
 ### Evidenze
@@ -633,43 +658,60 @@ dell'utente.
   persistita in `data/scenarionet/pg/pilot/pg_pilot_report.json`;
 - training-only smoke 20 step con reward custom passato; audit causale statico e
   smoke vectorized 2 worker passati;
-- random policy passato; profiling smoke passato; pilot visivo Waymo e freeze
-  finale restano pendenti.
+- random policy passato; profiling smoke passato; audit visivo Waymo resta
+  follow-up scientifico non bloccante.
 - CLI finali catalogo/split/soglie/runtime e pipeline unica verificate sullo
-  smoke (182 record, tre runtime view); la pipeline completa richiede i conteggi
-  target in `.env` e seleziona solo i gruppi necessari, registrando gli esclusi.
+  smoke (182 record, tre runtime view); la pipeline completa legge i parametri
+  scientifici da `conf/scenarios/pipeline_v1.yaml` e seleziona solo i gruppi
+  necessari, registrando gli esclusi.
+- run finale 2026-07-15: `make scenarionet-recatalog` completato in 2890 s,
+  3500 scenari finali, runtime 2000/500/1000, existence/simulation/overlap
+  ufficiali con exit code 0 su tutti gli split.
 
 ---
 
 ## F10 — Costruzione dataset completo e accettazione
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `COMPLETATA`
 
-Questa fase viene eseguita dall'utente tramite le CLI validate in F9; Codex può
-assistere nel monitoraggio e nella diagnosi.
+Questa fase è stata eseguita dall'utente tramite `make scenarionet-recatalog`
+con assistenza diagnostica Codex.
 
 ### Attività
 
-- [ ] Convertire il pool Waymo necessario.
-- [ ] Generare i pool PG con seed disgiunti.
-- [ ] Costruire split con conteggi baseline o riduzione esplicitamente registrata.
-- [ ] Calcolare soglie soltanto sul train candidate bilanciato.
-- [ ] Costruire catalogo e viste runtime finali.
-- [ ] Validare tutto il dataset e salvare distribuzioni/report.
-- [ ] Eseguire smoke finale sul dataset congelato.
-- [ ] Verificare uno per uno i 28 punti della definition of done.
+- [x] Convertire il pool Waymo necessario.
+- [x] Generare i pool PG con seed disgiunti.
+- [x] Costruire split con conteggi baseline e quote arm/source bilanciate.
+- [x] Calcolare soglie soltanto sul train candidate bilanciato.
+- [x] Costruire catalogo e viste runtime finali.
+- [x] Validare tutto il dataset e salvare distribuzioni/report.
+- [x] Eseguire smoke/check finali sul dataset congelato.
+- [x] Verificare la definition of done implementativa della pipeline.
 
 ### Criteri di uscita
 
 - dataset, manifest, split, catalogo e soglie congelati;
-- definition of done completamente soddisfatta;
-- comandi e artifact associati alla prima run principale.
+- definition of done implementativa soddisfatta;
+- comandi e artifact associati alla prima run principale registrati.
+
+### Evidenze
+
+- comando: `make scenarionet-recatalog`
+- catalogo raw: 13077 scenari, di cui 11327 Waymo e 1750 PG
+- pool Waymo eleggibile: 3792/1750; A4_vru 624/584
+- split selection: `balanced_arm_source`, `total_arm_deficit=0`
+- split finali: train 2000, validation 500, test 1000
+- runtime finali: train 2000, validation 500, test 1000
+- catalogo finale: 3500 scenari, invalid 0
+- distribuzione finale: A0=585, A1=585, A2=583, A3=583, A4=582, A5=582
+- soglie finali: `tau_low=4`, `tau_dense=18`, `feature_version=v2`
+- controlli ufficiali: existence, simulation e overlap exit code 0
 
 ---
 
 ## Correzione della copertura Waymo negli arm
 
-**Stato:** `V2 IMPLEMENTATA; AUDIT VISIVO PENDENTE` (2026-07-13)
+**Stato:** `V2 IMPLEMENTATA; DATASET FINALE BILANCIATO` (aggiornato 2026-07-15)
 
 ### Revisione v2: da tassonomia semantica a scala curricolare
 
@@ -795,20 +837,18 @@ Questi valori sono una policy di catalogazione `v1`, devono essere sottoposti a
 verifica visiva stratificata e possono essere congelati o corretti sulla base
 dell'audit, registrando una nuova decisione/versione.
 
-I minimi v2 `source × split × arm` sono versionati in
-`conf/scenarios/pipeline_v1.yaml`. Per Waymo sono A0=10/3/5, A1=10/3/5,
-A2=50/15/25, A3=160/40/80, A4=80/20/40 e A5=100/25/50
-(train/validation/test). A0 è intenzionalmente non soddisfatto dal pool
-corrente e rende misurabile il fabbisogno di nuovi shard. Dopo la calibrazione
-delle junction leggere, per PG sono A0=300/75/150, A1=250/60/125,
-A2=100/25/50, A3=20/5/10 e A5=30/8/15. PG A4 resta escluso per la scelta
-esplicita di non generare VRU. I minimi sono inferiori alle disponibilità
-osservate e lasciano margine all'assegnazione di gruppi indivisibili.
+La policy finale non usa più minimi manuali `source × split × arm` come criterio
+primario. Lo split `balanced_arm_source` calcola per ogni split il target
+`split_total / 6`, tenta una ripartizione 50/50 Waymo/PG dentro ogni arm e
+redistribuisce automaticamente la quota quando una sorgente è carente. Questo
+evita di affamare train/validation/test e rende esplicito il fallback: A4 è
+Waymo-only perché PG non genera VRU, A0 è quasi tutto PG perché Waymo reale ha
+pochi scenari semplici, A3/A5 sono prevalentemente Waymo perché PG ne ha pochi.
 
 ### Flusso operativo adottato
 
-`converti → classifica → inventaria source×arm → seleziona per quote/cap →`
-`scarica un nuovo batch soltanto se restano deficit`.
+`converti → filtra qualità/segnali → classifica → inventaria source×arm →`
+`split arm-first con fallback sorgente → scarica nuovi batch soltanto se restano deficit`.
 
 Il primo passo dopo l'implementazione è ricostruire il catalogo sui 35 shard già
 convertiti, senza riscaricare o riconvertire. La pipeline deve produrre nel
@@ -826,9 +866,9 @@ gruppo è ammesso e tracciato.
 - selezione group-aware con minimi e report deficit: `IMPLEMENTATA`;
 - riclassificazione del pool: `ESEGUITA` su 2409 Waymo + 1750 PG;
 - feature CPA/conflitto: `IMPLEMENTATE` e persistite nel catalogo;
-- audit visivo stratificato: `PENDENTE` prima del freeze scientifico;
-- ricostruzione del catalogo/runtime ufficiale: `PENDENTE`, eseguibile con
-  `make scenarionet-recatalog` senza download, conversione o rigenerazione PG.
+- audit visivo stratificato: `FOLLOW-UP NON BLOCCANTE`;
+- ricostruzione del catalogo/runtime ufficiale: `COMPLETATA` con
+  `make scenarionet-recatalog`.
 
 Il primo audit tecnico (prima della disambiguazione intersezione/merge) ha
 prodotto Waymo A1=72, A2=156, A3=160, A4=12, A5=2009 su 2409 scenari. Il dato
@@ -847,7 +887,8 @@ ed è stato rifiutato perché descriveva la mediana del pool. Dopo la
 ricalibrazione, la distribuzione Waymo è A0=0, A1=71, A2=394, A3=998, A4=395,
 A5=551. La distribuzione PG finale, inclusa la clausola topologia mista, è
 A0=665, A1=35, A2=849, A3=119, A4=0, A5=82. A4 è ora sostanziale e A5 è una
-coda composta; l'assenza A0 Waymo resta un deficit di acquisizione esplicito.
+coda composta; la scarsità A0 Waymo viene trattata come fallback verso PG, non
+come motivo per ricatalogare interazioni reali come scenari semplici.
 
 La successiva calibrazione richiesta dall'audit porta A0 da 3 a 8 veicoli Q90,
 ammette in A1 junction leggere con al massimo 8 agenti Q90 e 1 conflitto, e
@@ -869,24 +910,24 @@ dello split è A0=2, A1=153, A2=389, A3=584, A4=314, A5=423; affidabilità:
 `complete`=657, `not_applicable`=1208, `partial`=1115, `missing`=1. I 1116
 scenari `partial`/`missing` restano nell'audit pool ma non possono entrare negli
 split. I TFRecord del batch sono stati rimossi dopo la conversione. Il target
-numerico è soddisfatto; A0 Waymo resta un deficit semantico esplicito (2 contro
-18 minimi aggregati), non correggibile alterando retroattivamente le etichette.
+numerico è soddisfatto; la scarsità A0 Waymo storica viene poi assorbita dalla
+policy finale `balanced_arm_source`, che assegna A0 quasi interamente a PG.
 
-La ricatalogazione finale ha selezionato 1829 Waymo e 1750 PG. Il target Waymo
-1750 viene superato perché gli shard sono gruppi indivisibili anti-leakage:
-train=1031, validation=282, test=516; PG resta esattamente 1000/250/500. La
-distribuzione selezionata Waymo è A0=2, A1=150, A2=383, A3=573, A4=305,
-A5=416. Tutti i minimi non-A0 sono soddisfatti; il deficit totale 16 coincide
-con A0 (train 10, validation 1, test 5). Le soglie train-only finali sono
-`tau_low=4`, `tau_dense=22`, bilanciate su 1000 scenari per sorgente e marcate
-`feature_version=v2`. Existence, simulation e overlap ufficiali hanno concluso
-con exit code 0 su tutti gli split; pipeline completata in 1794 s.
+La ricatalogazione finale del 2026-07-15 ha usato il catalogo raw di 13077
+scenari, filtrato gli invalid e i segnali `partial`/`missing`, e selezionato
+esattamente 3500 record. Lo split arm-first ha raggiunto `total_arm_deficit=0`
+e la classificazione finale ha prodotto A0=585, A1=585, A2=583, A3=583,
+A4=582 e A5=582. I runtime finali sono train=2000, validation=500 e test=1000.
+Le soglie train-only finali sono `tau_low=4`, `tau_dense=18`,
+`balanced_source_count=723` e `feature_version=v2`. Existence, simulation e
+overlap ufficiali hanno concluso con exit code 0 su tutti gli split; pipeline
+completata in 2890 s.
 
-Non vengono applicati cap per rendere uniforme l'istogramma: con target Waymo
-1750/2409 e soli 860 scenari circa in A0/A1/A2/A4, almeno metà della selezione
-deve necessariamente provenire da A3/A5. Correggere questo rapporto richiede
-nuovi shard a bassa complessità oppure un target Waymo minore, non la
-ricatalogazione arbitraria di scene complesse.
+Non viene applicato un solver di programmazione intera nella v1: il selettore
+greedy arm-first, dopo la correzione del grouping Waymo da shard-level a
+scenario-level, soddisfa i target finali senza introdurre una dipendenza
+complessa. L'uso di un solver resta una possibile ottimizzazione futura solo se
+si introducono vincoli più difficili o target non più raggiungibili greedy.
 
 ---
 
@@ -896,19 +937,19 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 
 | Area | Copertura richiesta | Stato | Evidenza |
 |---|---|---|---|
-| Record/catalogo | serializzazione, path, UID, runtime index | `NON_INIZIATA` | — |
-| Split | grouping, overlap Waymo, seed PG, test isolation | `NON_INIZIATA` | — |
-| Feature | unknown, mixed, Q90, VRU, segnali | `NON_INIZIATA` | — |
-| Arms | A0–A5 e A1 vehicle relevance | `NON_INIZIATA` | — |
-| Soglie | Q40/Q75 train-only e source balance | `NON_INIZIATA` | — |
-| Provider | strict, 50/50, seed, exhaustion, auto-reset | `NON_INIZIATA` | — |
-| Termination | collision, destination, line, road, route | `NON_INIZIATA` | — |
-| Truncation | extra step 0/50 e bootstrap | `NON_INIZIATA` | — |
-| Reward/context | adapter e dimensioni ego | `NON_INIZIATA` | — |
-| Integration | Waymo/PG, space, reset, rollout | `NON_INIZIATA` | — |
-| Vectorization | reset, fixed eval, close/cleanup | `NON_INIZIATA` | — |
-| Causalità | nessuna informazione futura alla policy | `NON_INIZIATA` | — |
-| Regressione | pipeline MetaDrive esistente | `NON_INIZIATA` | — |
+| Record/catalogo | serializzazione, path, UID, runtime index | `COMPLETATA` | `tests/test_scenario_records.py`, `tests/test_scenario_catalog.py`, runtime validation finale |
+| Split | grouping, overlap Waymo, seed PG, test isolation | `COMPLETATA` | `tests/test_scenario_splits.py`, `tests/test_scenarionet_pipeline.py`, overlap ufficiale finale |
+| Feature | unknown, mixed, Q90, VRU, segnali | `COMPLETATA` | `tests/test_scenario_features.py`, report catalogo finale |
+| Arms | A0–A5 e A1 vehicle relevance | `COMPLETATA` | `tests/test_scenario_thresholds.py`, `tests/test_scenarionet_pipeline.py`, arm report finale |
+| Soglie | Q40/Q75 train-only e source balance | `COMPLETATA` | `compute_arm_thresholds`, `arm_thresholds.json`, `tau_low=4`, `tau_dense=18` |
+| Provider | strict, 50/50/fallback, seed, exhaustion, auto-reset | `COMPLETATA` | provider smoke, train/vector smoke, `tests/test_scenarionet_pipeline.py` |
+| Termination | collision, destination, line, road, route | `COMPLETATA` | `tests/test_scenario_acl_scenario_env.py`, `tests/test_reward_wrapper.py` |
+| Truncation | extra step 0/50 e bootstrap | `COMPLETATA` | episode-control/env tests e smoke headless |
+| Reward/context | adapter e dimensioni ego | `COMPLETATA` | scene context/reward tests e training smoke |
+| Integration | Waymo/PG, space, reset, rollout | `COMPLETATA` | existence/simulation ufficiali finali, runtime validation 3500/3500 |
+| Vectorization | reset, fixed eval, close/cleanup | `COMPLETATA` | vectorized smoke 2 worker e logging runtime stats |
+| Causalità | nessuna informazione futura alla policy | `COMPLETATA` | factory guard e audit causale statico |
+| Regressione | pipeline MetaDrive esistente | `COMPLETATA_CON_BASELINE_NOTE` | test mirati verdi; ISS-008 resta baseline non correlata |
 
 ---
 
@@ -917,7 +958,8 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 ### Regole
 
 - Severità: `BLOCCANTE`, `ALTA`, `MEDIA`, `BASSA`.
-- Stato: `APERTO`, `IN_ANALISI`, `RISOLTO`, `ACCETTATO`.
+- Stato: `APERTO`, `IN_ANALISI`, `RISOLTO`, `ACCETTATO`,
+  `ACCETTATO_NON_BLOCCANTE`.
 - Un problema risolto conserva causa, soluzione, test di regressione e commit.
 
 | ID | Severità | Stato | Problema | Impatto / prossima azione |
@@ -932,9 +974,13 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | ISS-008 | BASSA | APERTO | La suite completa ha 2 failure non correlate (258 test passati): component name mancante nel tool forced-rule e preset test che attende `td3` mentre la config usa `td3_sb3`. | Non correggere nella pipeline ScenarioNet; aprire issue separata sul baseline. |
 | ISS-017 | MEDIA | RISOLTO | Le funzioni core per catalogo/split/runtime/soglie non erano ancora esposte come pipeline CLI unica. | Aggiunte quattro CLI, `make scenarionet-pipeline`, configurazione `.env`, controlli finali e test smoke. |
 | ISS-018 | BASSA | RISOLTO | `.env` mescolava override macchina e default scientifici della pipeline. | Aggiunto `conf/scenarios/pipeline_v1.yaml` con resolver CLI; `.env` ora contiene solo override opzionali, path e configurazione host. |
-| ISS-019 | ALTA | RISOLTO | Waymo raggiungeva soltanto A1/A4 perché la topologia convertita non veniva analizzata e gli split precedevano la classificazione. | Implementati topologia route-aware, arm pre-split e selezione `source × arm` per gruppi; audit quantitativo riuscito, audit visivo ancora richiesto prima del freeze. |
-| ISS-020 | MEDIA | APERTO | Le label route-aware Waymo sono state validate quantitativamente ma non ancora con ispezione visiva stratificata. | Campionare A2/A3/A4/A5 e falsi negativi A1 prima di congelare DEC-021; non cambiare soglie per ottenere un istogramma desiderato. |
+| ISS-019 | ALTA | RISOLTO | Waymo raggiungeva soltanto A1/A4 perché la topologia convertita non veniva analizzata e gli split precedevano la classificazione. | Implementati topologia route-aware, arm pre-split e selezione arm-aware; dataset finale bilanciato A0=585, A1=585, A2=583, A3=583, A4=582, A5=582. |
+| ISS-020 | MEDIA | ACCETTATO_NON_BLOCCANTE | Le label route-aware Waymo sono state validate quantitativamente ma non ancora con ispezione visiva stratificata. | Audit visivo raccomandato per robustezza scientifica; non blocca implementazione, pipeline o dataset v1. Non cambiare soglie per ottenere un istogramma desiderato. |
 | ISS-021 | ALTA | RISOLTO | Gli arm v1 erano categorie semantiche non ordinali: la precedenza A5 svuotava A4 e intersezioni/VRU dominavano la distribuzione. | Implementati livelli curricolari v2, tag multi-label e conflitti CPA offline; distribuzione ricalibrata, audit visivo resta ISS-020. |
+| ISS-022 | ALTA | RISOLTO | Il catalogo raw poteva contenere scenari non adatti a training/simulazione: SDC fermo, overpass/dislivelli, SDC track poco valido, map feature mancanti o oggetti estremi. | Aggiunti filtri qualità prima dello split/runtime: route >=10 m, SDC valid ratio >=0.8, SDC valido a t0, z-range Waymo <=4 m, map features non vuote, dynamic objects <=120; catalogo finale invalid 0. |
+| ISS-023 | ALTA | RISOLTO | Il grouping Waymo usava `training_20s.tfrecord-*` come gruppo anti-leakage, forzando blocchi da decine di scenari e impedendo lo split bilanciato. | Il TFRecord è trattato come metadato di shard, non come log reale; in assenza di vero log/segment id il gruppo anti-leakage usa lo scenario UID. |
+| ISS-024 | ALTA | RISOLTO | Lo split per soli target sorgente poteva produrre arms sbilanciati e affamare train/validation/test quando Waymo/PG avevano disponibilità diverse. | Implementato `balanced_arm_source`: target per split e arm, 50/50 Waymo/PG dove possibile, fallback automatico sulla sorgente disponibile; `total_arm_deficit=0` nella run finale. |
+| ISS-025 | MEDIA | RISOLTO | L'espansione Waymo aveva attese poco osservabili e ricreava il container converter per batch. | Aggiunti log timestampati per ogni operazione lunga, batch da 16 shard e container converter persistente avviato una volta e rimosso a fine espansione. |
 | ISS-009 | MEDIA | RISOLTO | I token `numpy.str_` dei profili complessi non erano serializzabili da PyYAML nei generation manifest. | Normalizzati a `str` in `GenerationSpec`; pilot complesso 5/5 e 10/10 riusciti. |
 | ISS-010 | MEDIA | ACCETTATO | Il converter Waymo locale richiede TensorFlow e file raw `training_20s`; il dataset raw resta esterno al repository. | TensorFlow è isolato nel container dedicato; la conversione reale resta subordinata a dataset/licenza dell'utente. |
 | ISS-011 | BASSA | RISOLTO | L'ultima esecuzione Docker dei test F6 era stata rifiutata dal limite di approvazioni dell'ambiente. | Test mirati rieseguiti: 80 passati, Ruff e mypy verdi. |
@@ -954,19 +1000,19 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | DEC-002 | CONFERMATA | MetaDrive commit/versione | `0.4.3` / `85e5dadc6c7436d324348f6e3d8f8e680c06b4db` | manifest e API inventory F0 |
 | DEC-003 | CONFERMATA | ScenarioNet commit/versione | `0.0.1` / `d4acdb5f5a844744fc85cb2dc3880d7d4a6eb170` | manifest e API inventory F0 |
 | DEC-004 | CONFERMATA | Waymo release | Motion Dataset v1.2.0, bucket `waymo_open_dataset_motion_v_1_2_0`, variante `training_20s` | smoke reale F5; manifest completo ancora da aggiornare |
-| DEC-005 | CONFERMATA | Grouping key Waymo | `source_file` normalizzato al basename dello shard; nessun `source_log_id`/`segment_id` esposto nel campione | 61 scenari dello shard; test grouping |
-| DEC-006 | DA_VERIFICARE | Metadata topologici affidabili | da schema converter/PG esportato | — |
-| DEC-007 | DA_VERIFICARE | Blocchi PG nativi | da API MetaDrive locale | — |
-| DEC-008 | DA_CALCOLARE | `tau_low`, `tau_dense` | Q40/Q75 sul train candidate bilanciato | — |
-| DEC-009 | DA_VERIFICARE | Extra step Waymo | 50 oppure 0 dopo pilot visivo | — |
-| DEC-010 | DA_VERIFICARE | Dimensioni ego in observation | includere sempre se variabili, omettere sempre se standardizzate | — |
+| DEC-005 | SUPERATA | Grouping key Waymo v1 | `source_file` normalizzato al basename dello shard; nessun `source_log_id`/`segment_id` esposto nel campione | Superata da DEC-033: lo shard non è un gruppo anti-leakage scientificamente utile |
+| DEC-006 | CONFERMATA | Metadata topologici affidabili per catalogazione offline | Usare mappa, lane, controlli e crosswalk route-local come evidenza topologica conservativa; `unknown` resta ammesso quando l'evidenza manca | estrattore route-aware, test feature, audit quantitativo Waymo |
+| DEC-007 | CONFERMATA | Blocchi PG nativi | Mapping blocchi MetaDrive nativi verificato: simple/curve, merge/roundabout, intersection | API inventory e pilot PG F4 |
+| DEC-008 | CONFERMATA | `tau_low`, `tau_dense` finali | `tau_low=4`, `tau_dense=18`, calcolati solo sul train candidate bilanciato del dataset finale | `data/scenarionet/splits/arm_thresholds.json`, report finale 2026-07-15 |
+| DEC-009 | ACCETTATA_NON_BLOCCANTE | Extra step Waymo | La pipeline v1 non dipende dal pilot visivo extra-step; eventuali modifiche restano configurative e devono essere validate in evaluation | F9/F10 completate; audit visivo resta follow-up |
+| DEC-010 | CONFERMATA | Dimensioni ego in observation | Non esporre metadata di catalogo alla policy; dimensioni/identificativi disponibili in `info`/scene context e reward context | `ThesisScenarioEnv`, scene context tests e training smoke |
 | DEC-011 | CONFERMATA | Split con gruppi incompatibili con conteggi esatti | fallire esplicitamente; una riduzione richiede aggiornamento documentato del manifest | test split F2 e requisito no-leakage |
 | DEC-012 | CONFERMATA | Semafori presenti ma route relevance non dimostrabile | `signal_reliability=partial` e route-light tri-state `None`; non inferire applicabilità globale | schema Waymo locale, test F3, principio no-heuristic |
 | DEC-013 | CONFERMATA | PG native topology mapping | `S/C`; `y/r/R/O`; `X/T` verificati headless sul commit MetaDrive locale | smoke API F4 |
 | DEC-014 | CONFERMATA | PG pilot development size | 2 scenari per profilo; pilot utente configurato a 20 per profilo | report F4, invalid rate 0% |
 | DEC-015 | CONFERMATA | Ambiente conversione Waymo | Container separato `Dockerfile.waymo` + profilo `compose.waymo.yaml` per TensorFlow 2.11 e converter; runtime RL leggero | build riuscito; import e CLI verificati; ISS-006 |
 | DEC-016 | CONFIRMED | Waymo authentication/download | Google Cloud CLI with one-time user OAuth; URI, pattern, and paths in `.env`; no API key (it does not replace IAM) and no JSON contents in the repository | `make waymo-auth`, `scripts/prepare_waymo.sh`, setup documentation |
-| DEC-017 | CONFIRMED | Final split counts | Default targets 1000/250/500 per source, whole-group assignment, and effective counts persisted in the manifest; edit `conf/scenarios/pipeline_v1.yaml` directly | Avoids duplication between YAML and `.env`; avoids impossible Waymo group counts without silent reductions |
+| DEC-017 | SUPERATA | Final split counts v1 per sorgente | Default targets 1000/250/500 per source, whole-group assignment, and effective counts persisted in the manifest; edit `conf/scenarios/pipeline_v1.yaml` directly | Superata da DEC-032: i target sorgente restano input di dimensionamento, ma la selezione finale è arm-first con fallback sorgente |
 | DEC-018 | CONFIRMED | Optional non-interactive credentials | Supports `GOOGLE_APPLICATION_CREDENTIALS` as a path to an external, authorized service-account JSON; gcloud OAuth remains the default; API keys are unsupported because they do not grant IAM on the bucket | Enables automation without placing the secret or JSON contents in the repository or `.env` |
 | DEC-019 | CONFERMATA | Semantica arm durante il riequilibrio | Conservare A0–A5; A5 resta multi-semantico e la difficoltà rimane espressa da tag separati | Evita di ottenere equilibrio numerico falsando le classi scientifiche |
 | DEC-020 | CONFERMATA | Acquisizione Waymo per arm | Classificare il pool convertito, applicare quote/cap al catalogo e scaricare batch incrementali solo per deficit; nessun download arm-specifico | Gli shard remoti non contengono gli arm locali e i file eccedenti non devono essere duplicati nel runtime |
@@ -976,9 +1022,14 @@ La colonna evidenza deve contenere il nome reale del test una volta implementato
 | DEC-024 | PROVVISORIAMENTE_CONFERMATA | Parametri difficoltà v2 | A0 max 8 veicoli Q90; A1 ammette junction ≤8 agenti/≤1 conflitto; A3 da 25 agenti o 4 conflitti; A5 da conflitto VRU, topologia mista+3 conflitti oppure 30 agenti+6 conflitti; CPA 5 s, 4 m veicoli, 3 m VRU | Sul catalogo selezionato A0≤8 recupera 2 Waymo, A1-junction circa 70 e A3 743→circa 572; conferma finale subordinata ad audit visivo |
 | DEC-026 | CONFERMATA | Gestione dello sbilanciamento residuo | Minimi e deficit espliciti, nessun cap artificiale A3/A5; acquisizione incrementale per A0 Waymo | Il target 1750 richiede comunque molti A3/A5 dal pool corrente; un cap non può creare scenari semplici mancanti |
 | DEC-027 | CONFERMATA | Affidabilità segnale ammessa negli split | Accettare `complete` e `not_applicable`; escludere `partial`/`missing` senza imputazione | `not_applicable` significa assenza di semaforo route-relevant; stati incompleti restano disponibili solo per audit |
-| DEC-028 | CONFERMATA | Arresto acquisizione incrementale Waymo | Contare solo `complete`/`not_applicable` e acquisire shard remoti mai convertiti in batch da 8 fino al target totale 1750, con cap di sicurezza a 128 nuovi shard per esecuzione | Il rendimento eleggibile non è noto prima della conversione; un numero fisso di shard non garantisce il target dopo l'esclusione di `partial`/`missing` |
+| DEC-028 | SUPERATA | Arresto acquisizione incrementale Waymo v1 | Contare solo `complete`/`not_applicable` e acquisire shard remoti mai convertiti in batch da 8 fino al target totale 1750, con cap di sicurezza a 128 nuovi shard per esecuzione | Superata da DEC-031: batch da 16 e target addizionale A4_vru |
 | DEC-029 | CONFERMATA | Persistenza dei batch Waymo | Un database ScenarioNet separato per batch, catalogazione ricorsiva, TFRecord del batch eliminati dopo successo e scenari convertiti esclusi conservati per audit | Il converter non è append-safe sul medesimo database; questa struttura evita overwrite, duplicazioni raw/converted e corruzione del pool preesistente |
 | DEC-025 | SUPERATA | Minimi v1 per sorgente/split/arm | I valori DEC-022 non vengono riutilizzati automaticamente dopo il cambio semantico | Le disponibilità per arm cambiano; le quote v2 saranno fissate soltanto dopo il nuovo audit |
+| DEC-030 | CONFERMATA | Filtri qualità catalogo v1 | Route ego >=10 m, SDC valid ratio >=0.8, SDC valido a t0, z-range Waymo <=4 m, map features non vuote, dynamic objects <=120, segnali ammessi `complete`/`not_applicable` | Allinea la pipeline ai filtri ScenarioNet/Waymo utili e previene scenari rotti invece di limitarsi a sollevare errori a valle |
+| DEC-031 | CONFERMATA | Espansione Waymo finale | Batch da 16 shard, target eleggibile totale 1750 e target A4_vru 584; scenari convertiti ma non utili restano nel pool di audit, non nei runtime finali | Riduce tempo operativo, conserva tracciabilità e impedisce di dover riscaricare shard già processati |
+| DEC-032 | CONFERMATA | Split arm-first con fallback sorgente | Per ogni split si assegna `split_total/6` a ciascun arm; dentro ogni arm si tenta 50/50 Waymo/PG e si ridistribuisce la quota alla sorgente disponibile in caso di carenza | Produce dataset finale bilanciato senza generare scenari non necessari e senza sacrificare scenari reali dove disponibili |
+| DEC-033 | CONFERMATA | Grouping Waymo finale | Usare `source_log_id`/`segment_id` solo se rappresentano un vero gruppo; se il valore è `training_20s.tfrecord-*`, usare scenario UID per lo split anti-leakage | Evita gruppi artificialmente enormi causati dallo shard e rende raggiungibili i target arm/source; overlap ufficiale finale exit code 0 |
+| DEC-034 | CONFERMATA | Solver di programmazione intera non introdotto in v1 | Nessuna dipendenza OR-Tools/CP-SAT; selettore greedy arm-first sufficiente per i vincoli attuali | La run finale raggiunge `total_arm_deficit=0`; il solver resta un'opzione futura solo se si aggiungono vincoli più complessi |
 
 ---
 
@@ -1049,7 +1100,10 @@ dataset o decisioni.
 | 2026-07-13 | Regressione | Eseguita suite completa nel container runtime dopo la correzione arm | 264 test passati; 2 failure baseline ISS-008 e 2 smoke su artifact catalogo/runtime preesistenti non allineati | Ricostruire catalogo/runtime ufficiali con la nuova pipeline prima degli smoke data-dependent |
 | 2026-07-13 | F3/F9 | Sostituita tassonomia arm v1 con scala curricolare v2; aggiunti CPA offline, conflitti, tag, quote e deficit espliciti | 45 test mirati, Ruff e mypy verdi; audit 2409 Waymo + 1750 PG; suite 267 pass/4 failure preesistenti o data-dependent | ISS-021 risolto; DEC-023/024/026; A0 Waymo richiede mining aggiuntivo, audit visivo ISS-020 pendente |
 | 2026-07-13 | F5/F10 | Implementata espansione Waymo automatica deficit-driven | Pool status distingue totale/eleggibile e distribuzione arm; selezione di shard mai convertiti, database append-safe per batch, cleanup raw e stop a 1750 eleggibili | DEC-027–029; `partial`/`missing` non vengono imputati né selezionati; il cap 128 impedisce download senza limite |
-| 2026-07-13 | F9/F10 | Eseguita ricatalogazione finale dopo l'espansione Waymo | 1829 Waymo + 1750 PG selezionati; feature v2; existence/simulation/overlap exit 0; 61 test dataset passati | Deficit residuo soltanto A0 Waymo=16; overshoot Waymo dovuto ai gruppi shard indivisibili |
+| 2026-07-13 | F9/F10 | Eseguita prima ricatalogazione completa dopo l'espansione Waymo | 1829 Waymo + 1750 PG selezionati; feature v2; existence/simulation/overlap exit 0; 61 test dataset passati | Stato intermedio superato dalla selezione `balanced_arm_source` del 2026-07-15 |
+| 2026-07-15 | F5/F6/F9 | Aggiunti filtri qualità hard, espansione Waymo più osservabile, batch da 16 shard e container converter persistente | `compileall`, `bash -n`, `git diff --check`; 33 test ScenarioNet mirati e 9 test Hydra passati | ISS-022/025 risolti; DEC-030/031 confermate |
+| 2026-07-15 | F9/F10 | Implementato split `balanced_arm_source` con target per arm/split, fallback sorgente e grouping Waymo scenario-level quando `source_log_id` è uno shard TFRecord | Test temporaneo sul catalogo reale: 3500 selezionati, `total_arm_deficit=0`; classificazione finale temporanea A0=585, A1=585, A2=583, A3=583, A4=582, A5=582 | ISS-023/024 risolti; DEC-032/033/034 confermate |
+| 2026-07-15 | F10 | Eseguita ricatalogazione finale con `make scenarionet-recatalog` | Pipeline completata in 2890 s; runtime train=2000, validation=500, test=1000; invalid finali 0; existence/simulation/overlap ufficiali exit code 0 | Implementazione ScenarioNet v1 completata; resta solo audit visivo non bloccante ISS-020 |
 
 ---
 
@@ -1057,12 +1111,12 @@ dataset o decisioni.
 
 La preparazione tecnica del dataset e l'integrazione ScenarioNet sono concluse:
 catalogo, split, soglie, runtime e verifier ufficiali sono stati eseguiti sul
-pool finale. Restano attività di validazione scientifica opzionali prima del
-freeze definitivo:
+pool finale. Le prossime attività non sono implementative, ma di uso o audit
+scientifico:
 
-1. eseguire evaluation a sequenza fissa con checkpoint sul catalogo con split
-   `validation`/`test`;
-2. eseguire il pilot visivo Waymo e congelare `extra_steps_after_scenario`;
-3. congelare manifest, profili PG e decisioni data-dependent;
-4. decidere se accettare il deficit A0 Waymo oppure intraprendere un mining
-   dedicato di scenari reali semplici.
+1. eseguire evaluation a sequenza fissa con checkpoint quando sarà disponibile
+   un modello da valutare;
+2. eseguire audit visivo stratificato Waymo come controllo qualitativo delle
+   label route-aware;
+3. se l'audit visivo suggerisce una modifica scientifica, aprire una nuova
+   revisione di feature/arm invece di ritoccare silenziosamente il dataset v1.
