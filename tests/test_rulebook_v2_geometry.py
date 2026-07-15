@@ -10,6 +10,13 @@ from thesis_rl.rulebook.v2.geometry.canonical import (
 )
 from thesis_rl.rulebook.v2.geometry.elevation import PolylineElevation
 from thesis_rl.rulebook.v2.geometry.footprint import oriented_bounding_box
+from thesis_rl.rulebook.v2.geometry.lanes import (
+    RouteLaneRecord,
+    associate_route_lane,
+    bumper_to_bumper_gap,
+    footprint_route_coordinates,
+)
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.geometry.vertical import vertically_compatible_at_xy
 
 
@@ -71,3 +78,54 @@ def test_elevation_profile_interpolates_and_breaks_nearest_segment_ties_by_index
     assert elevation(10.0, 0.0) == pytest.approx(10.0)
     with pytest.raises(ValueError, match="duplicate XY"):
         PolylineElevation(((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)))
+
+
+def test_route_projection_uses_reset_and_previous_s_tie_breaks_at_self_intersection() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (2.0, 2.0, 0.0), (0.0, 2.0, 0.0), (2.0, 0.0, 0.0)))
+    at_reset = route.project((1.0, 1.0))
+    near_final_crossing = route.project((1.0, 1.0), previous_s_m=route.length_m - 1.0)
+    assert at_reset.segment_index == 0
+    assert near_final_crossing.segment_index == 2
+
+
+def test_route_consolidates_noisy_xy_points_with_median_elevation_and_rejects_large_spread() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (0.0005, 0.0005, 2.0), (10.0, 0.0, 4.0)))
+    assert route.points_xyz[0] == pytest.approx((0.00025, 0.00025, 1.0))
+    with pytest.raises(ValueError, match="incompatible"):
+        RoutePolyline(((0.0, 0.0, 0.0), (0.0005, 0.0, 3.1), (10.0, 0.0, 4.0)))
+
+
+def test_route_projection_rejects_incompatible_vertical_level() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    with pytest.raises(ValueError, match="vertically compatible"):
+        route.project((5.0, 0.0), position_z=3.1)
+
+
+def test_lane_association_rejects_vertical_and_geometric_ties() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    lane = RouteLaneRecord("lane-a", Polygon(((0.0, -2.0), (10.0, -2.0), (10.0, 2.0), (0.0, 2.0))), route)
+    assert associate_route_lane(
+        position_xy=(5.0, 0.0), position_z=0.0, heading_rad=0.0, route_lanes=(lane,)
+    ).lane_id == "lane-a"
+    assert associate_route_lane(
+        position_xy=(5.0, 0.0), position_z=3.1, heading_rad=0.0, route_lanes=(lane,)
+    ) is None
+    tied = RouteLaneRecord("lane-b", lane.polygon_xy, route)
+    assert associate_route_lane(
+        position_xy=(5.0, 0.0), position_z=0.0, heading_rad=0.0, route_lanes=(lane, tied)
+    ) is None
+
+
+def test_bumper_gap_handles_separated_tangent_and_overlapping_footprints() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (30.0, 0.0, 0.0)))
+    ego = footprint_route_coordinates(
+        oriented_bounding_box(center_xy=(5.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0), route, position_z=0.0
+    )
+    other = footprint_route_coordinates(
+        oriented_bounding_box(center_xy=(12.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0), route, position_z=0.0
+    )
+    assert bumper_to_bumper_gap(ego, other) == pytest.approx((3.0, True))
+    tangent = footprint_route_coordinates(
+        oriented_bounding_box(center_xy=(9.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0), route, position_z=0.0
+    )
+    assert bumper_to_bumper_gap(ego, tangent) == pytest.approx((0.0, True))

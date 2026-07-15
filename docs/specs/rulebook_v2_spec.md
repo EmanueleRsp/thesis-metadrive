@@ -702,6 +702,12 @@ Una conflict zone conserva l'elevazione del corridoio ego tramite `elevation_at_
 
 Al reset si costruisce una `RoutePolyline` wrapper-owned concatenando le centerline 3D delle lane della route nell'ordine topologico. Le operazioni curvilinee usano la proiezione XY, mentre la quota interpolata resta disponibile come `z_at_s`. I punti consecutivi a distanza planare $\le10^{-3}\,m$ vengono unificati. Ogni segmento conserva il proprio intervallo di ascissa cumulativa.
 
+Quando un cluster consecutivo di punti così unificati contiene quote diverse,
+la coordinata XY risultante è la media aritmetica del cluster e la quota è la
+mediana delle quote. Predecessore e successore sono usati solo per validarne la
+continuità; se l'escursione verticale interna al cluster supera
+$z_{\mathrm{tol}}$, il task route non è eleggibile.
+
 Per proiettare un punto $\mathbf p$:
 
 1. calcolare la distanza planare da ogni segmento candidato mediante spatial index;

@@ -327,6 +327,23 @@ Con `dt=0.1 s`, l'attuale history di 5 step copre circa `0.5 s` e non ricostruis
 il timer dashed fino a `2 s`. Questo punto è registrato come `DEF-OBS-001` e non
 deve essere dimenticato quando verrà revisionata l'osservazione.
 
+### DEC-011 — Consolidamento rumoroso dei vertici 3D della route
+
+**Stato:** `ACCETTATA`
+
+Per punti consecutivi della centerline distanti al più `1e-3 m` in XY:
+
+1. formare un unico cluster consecutivo;
+2. usare la media aritmetica delle coordinate XY e la mediana delle quote;
+3. usare predecessore e successore solo per validare la continuità, mai per
+   modificare la quota del cluster;
+4. se l'escursione delle quote nel cluster supera `z_tol = 3.0 m`, rifiutare
+   il task route come non eleggibile.
+
+La regola mitiga rumore di campionamento senza scegliere arbitrariamente una
+quota da un livello stradale vicino. Riusa una tolleranza verticale già
+congelata e non introduce un nuovo parametro.
+
 ---
 
 ## Architettura target
@@ -517,9 +534,9 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare precision grid, canonical WKB e SHA-256 secondo DEC-007.
 - [x] Implementare footprint OBB e validazione dimensioni.
 - [x] Implementare elevation functions e compatibilità verticale 2.5D.
-- [ ] Implementare `RoutePolyline` e proiezione con continuità `previous_s`.
+- [x] Implementare `RoutePolyline` e proiezione con continuità `previous_s`.
 - [ ] Implementare front/rear route coordinates e swept front bumper.
-- [ ] Implementare lane association e gap bumper-to-bumper.
+- [x] Implementare lane association e gap bumper-to-bumper.
 - [ ] Implementare superficie carrabile per livello verticale.
 - [ ] Implementare control line canonica.
 - [ ] Implementare decomposizione convessa deterministica e continuous SAT.
@@ -799,6 +816,7 @@ transizioni.
 | ISS-006 | `APERTO` | media | Costo del continuous SAT su tutti gli attori live non ancora misurato | Benchmark F10 prima di valutare DEF-PERF-001 |
 | ISS-007 | `APERTO` | alta | Artifact di calibrazione `b_e` non ancora disponibile | Implementare protocollo e bloccare solo pilot/freeze finale, non unit test sintetici |
 | ISS-008 | `RISOLTO` | media | Shell di lavoro senza `pytest`, Ruff, Shapely e MetaDrive | Verifiche eseguite nel container `dev`: dipendenze disponibili, 23 test e Ruff verdi; versioni registrate in F0 |
+| ISS-009 | `RISOLTO` | media | `RoutePolyline` deve unificare punti consecutivi entro 1 mm in XY, ma la specifica non definisce la quota risultante se tali punti hanno `z` differenti | DEC-011: cluster XY medio, mediana z, validazione con `z_tol=3 m`; approvata dall'utente il 2026-07-15 |
 
 Quando un problema richiede una scelta non coperta dalla specifica:
 
@@ -843,6 +861,8 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F0/F1 | Container `dev`: `tests/test_rulebook_v2_contracts.py` + regressione `tests/test_rulebook_evaluator.py`, Ruff mirato | 19 test passati; F0/F1 completate; ISS-008 risolto |
 | 2026-07-15 | F2 | DEC-007: canonicalizzazione Shapely (snap 1 mm, normalize, WKB 2D big-endian/no SRID, JSON canonico/SHA-256) e predicato verticale 2.5D | 23 test mirati passati e Ruff verde nel container; F2 resta in corso per le primitive restanti |
 | 2026-07-15 | F2 | Aggiunti OBB canonico e `PolylineElevation` con interpolazione lineare e tie-break deterministico | 25 test mirati passati e Ruff verde nel container |
+| 2026-07-15 | F2 | DEC-011 e `RoutePolyline`: consolidamento rumoroso, quota mediana, proiezione 3D con tie-break reset/`previous_s` | 28 test mirati passati e Ruff verde nel container |
+| 2026-07-15 | F2 | Lane association route-only con tie-break/ambiguità e coordinate footprint/gap bumper-to-bumper | 11 test geometrici mirati passati e Ruff verde nel container |
 
 ---
 
