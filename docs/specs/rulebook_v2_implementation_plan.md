@@ -600,7 +600,7 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F4 — Snapshot live e contact-onset hook
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
@@ -627,17 +627,18 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F5 — Eventi, memoria, cache e zone lifecycle
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
-- [ ] Implementare detector puri di crossing e occupancy pre/post.
+- [x] Implementare detector puri di crossing e occupancy pre/post.
 - [x] Implementare `ZoneLifecycleEvaluator` e `ZoneLifecycleView` secondo
       DEC-002.
-- [ ] Implementare init memoria al reset, inclusi prepassed controls e
-      occupazioni preesistenti.
+- [x] Implementare init memoria al reset, inclusi contatti attivi, proiezione
+      route e occupazioni preesistenti; prepassed controls saranno aggiunti con
+      il catalogo statico F3.
 - [x] Implementare merge dei `MemoryDelta` con ownership DEC-008.
-- [ ] Implementare overlay `cache + pending_delta`.
+- [x] Implementare overlay `cache + pending_delta`.
 - [x] Implementare merge/apply dei `CacheDelta` con confronto canonico.
 - [ ] Implementare freeze/unfreeze delle `MovementKey` degli attori.
 - [ ] Testare doppio writer, geometrie discordanti, lazy zone inside ego,
@@ -885,6 +886,8 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F3 | `TaskRouteRecord` versionato, artifact `TaskRouteEligibility` e matcher SDC offline source-neutral; track samples non entrano nel record | 40 test cumulativi passati e Ruff verde nel container |
 | 2026-07-15 | F3/F4 | Normalizzazione statica source-neutral di lane/map/control record; snapshot immutable e buffer contact-onset control-step-safe | 43 test cumulativi passati e Ruff verde nel container |
 | 2026-07-15 | F5 | Merge fail-fast `MemoryDelta`/`CacheDelta`, apply immutabile della cache e `ZoneLifecycleEvaluator` unico writer DEC-002 | 47 test cumulativi passati e Ruff verde nel container |
+| 2026-07-15 | F5 | Detector puro crossing/occupancy pre/post e `EpisodeCacheOverlay` per pending zones same-step | 49 test cumulativi passati e Ruff verde nel container |
+| 2026-07-15 | F5 | Inizializzazione reset di `RulebookMemory` con contatti, route `s` e zone preesistenti | 50 test cumulativi passati e Ruff verde nel container |
 
 ---
 

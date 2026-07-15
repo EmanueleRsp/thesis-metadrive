@@ -7,6 +7,56 @@ from dataclasses import fields, replace
 from thesis_rl.rulebook.v2.geometry.canonical import canonical_geometry_wkb
 from thesis_rl.rulebook.v2.registry import DEFAULT_RULEBOOK_V2_REGISTRY
 from thesis_rl.rulebook.v2.types import CacheDelta, EpisodeCache, MemoryDelta, RulebookMemory
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+from thesis_rl.rulebook.v2.types import EnvSnapshot
+
+
+class EpisodeCacheOverlay:
+    """Read-only view of committed cache plus same-step pending zones."""
+
+    def __init__(self, cache: EpisodeCache, pending: CacheDelta) -> None:
+        self._cache = cache
+        self._pending = merge_cache_deltas((pending,))
+
+    @property
+    def pending_zone_ids(self) -> frozenset[str]:
+        return frozenset(zone.zone_id for zone in self._pending.new_conflict_zones)
+
+    @property
+    def zone_ids(self) -> frozenset[str]:
+        return frozenset(self._cache.conflict_zones) | self.pending_zone_ids
+
+    def get_zone(self, zone_id: str):
+        for zone in self._pending.new_conflict_zones:
+            if zone.zone_id == zone_id:
+                return zone
+        return self._cache.conflict_zones.get(zone_id)
+
+
+def initialize_rulebook_memory(
+    *,
+    reset_snapshot: EnvSnapshot,
+    route: RoutePolyline,
+    zone_polygons: dict[str, object],
+) -> RulebookMemory:
+    """Initialize reset-owned causal state without attributing reset events to policy."""
+
+    projection = route.project(
+        reset_snapshot.ego.position_xy,
+        position_z=reset_snapshot.ego.position_z,
+    )
+    preexisting = frozenset(
+        zone_id
+        for zone_id, polygon in zone_polygons.items()
+        if getattr(polygon, "is_valid", False)
+        and not getattr(polygon, "is_empty", True)
+        and reset_snapshot.ego.footprint.intersection(polygon).area > 0.0
+    )
+    return RulebookMemory(
+        previous_contact_ids=reset_snapshot.active_contact_ids,
+        preexisting_ego_occupancy_zone_ids=preexisting,
+        previous_route_s_m=projection.s_m,
+    )
 
 
 def _memory_owners() -> dict[str, str]:
