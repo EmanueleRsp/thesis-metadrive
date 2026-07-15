@@ -107,6 +107,16 @@ def test_contact_payload_requires_unit_ego_to_other_normal():
                 "normal_ego_to_other_xy": (2.0, 0.0),
             }
         )
+    inverted = contact_onset_from_payload(
+        {
+            "actor_id": "ped-1",
+            "actor_class": "pedestrian",
+            "contact_point_xy": (2.0, 3.0),
+            "normal_xy": (-1.0, 0.0),
+            "normal_orientation": "other_to_ego",
+        }
+    )
+    assert inverted.normal_ego_to_other_xy == (1.0, 0.0)
 
 
 def test_collision_wrapper_preserves_vendor_return_and_order():

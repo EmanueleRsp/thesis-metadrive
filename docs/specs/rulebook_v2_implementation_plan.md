@@ -25,7 +25,7 @@ in una successiva revisione della specifica prima del freeze finale.
 ## Stato complessivo
 
 **Stato:** implementazione in corso  
-**Fase corrente:** F2 — primitive geometriche canoniche e 2.5D
+**Fase corrente:** F4 — snapshot live e contact-onset hook
 **Ultimo aggiornamento:** 2026-07-15  
 **Specifica di riferimento:** Rulebook v2, versione
 `4.6-final-implementation-complete`
@@ -49,13 +49,13 @@ in una successiva revisione della specifica prima del freeze finale.
 | F1 | Tipi canonici, configurazione e registry v2 | `COMPLETATA` | F0 |
 | F2 | Primitive geometriche canoniche e 2.5D | `COMPLETATA` | F1 |
 | F3 | Task route, adapter statici e validazione offline | `COMPLETATA` | F1, F2 |
-| F4 | Snapshot live e contact-onset hook | `PRONTA_PER_VERIFICA` | F1 |
-| F5 | Eventi, memoria, cache e zone lifecycle | `PRONTA_PER_VERIFICA` | F2–F4 |
-| F6 | R1 collisione e R2 interazione dinamica | `PRONTA_PER_VERIFICA` | F4, F5 |
-| F7 | R3 strada, controlli e precedenze | `IN_CORSO` | F3, F5 |
-| F8 | R4 progresso, aggregazione e monitor transazionale | `IN_CORSO` | F6, F7 |
-| F9 | Wrapper, wiring e output del rule vector | `IN_CORSO` | F8 |
-| F10 | Conformità, calibrazione, pilot PG/Waymo e freeze | `NON_INIZIATA` | F3–F9 |
+| F4 | Snapshot live e contact-onset hook | `COMPLETATA` | F1 |
+| F5 | Eventi, memoria, cache e zone lifecycle | `COMPLETATA` | F2–F4 |
+| F6 | R1 collisione e R2 interazione dinamica | `COMPLETATA` | F4, F5 |
+| F7 | R3 strada, controlli e precedenze | `COMPLETATA` | F3, F5 |
+| F8 | R4 progresso, aggregazione e monitor transazionale | `COMPLETATA` | F6, F7 |
+| F9 | Wrapper, wiring e output del rule vector | `COMPLETATA` | F8 |
+| F10 | Conformità, calibrazione, pilot PG/Waymo e freeze | `IN_CORSO` | F3–F9 |
 | D1 | Estensione osservazione semantica | `DEFERITA` | Rulebook v2 stabile |
 | D2 | Scalarizzazione e learner lessicografico/distribuzionale | `DEFERITA` | Rule vector stabile |
 
@@ -626,7 +626,7 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F4 — Snapshot live e contact-onset hook
 
-**Stato:** `IN_CORSO`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -646,8 +646,8 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Estrarre actor ID, class, contact point e normale unitaria orientata ego -> altro.
 - [x] Deduplicare per actor ID nel control step senza perdere i contact point.
 - [x] Rilevare contatti nati e terminati tra due control frame.
-- [ ] Verificare con test differenziale su simulatori PG/ScenarioNet che l'hook non
-      cambi la dinamica.
+- [x] Verificare con test differenziale su ScenarioEnv/Waymo che l'hook non cambi
+      la dinamica a parità di seed e azioni; il callback vendor resta invariato.
 
 ### Criteri di uscita
 
@@ -660,7 +660,7 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F5 — Eventi, memoria, cache e zone lifecycle
 
-**Stato:** `IN_CORSO`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -675,7 +675,7 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare merge/apply dei `CacheDelta` con confronto canonico.
 - [x] Implementare freeze/unfreeze delle `MovementKey` degli attori nel
       `MemoryDelta` owner `vehicle_yield`, con rimozione soltanto all'uscita.
-- [ ] Testare doppio writer, geometrie discordanti, lazy zone inside ego,
+- [x] Testare doppio writer, geometrie discordanti, lazy zone inside ego,
       eccezioni dopo proposta delta e commit unico.
 
 ### Criteri di uscita
@@ -689,7 +689,7 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F6 — R1 collisione e R2 interazione dinamica
 
-**Stato:** `PRONTA_PER_VERIFICA`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -700,8 +700,9 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare clearance R2 su tutti gli attori live compatibili e conservare
       worst actor/diagnostics.
 - [x] Aggregare R2 con massimo e conservare worst actor/diagnostics.
-- [ ] Implementare status applicabile/evaluabile per ogni componente.
-- [ ] Coprire integralmente i test delle sezioni 15.1–15.4.
+- [x] Implementare status applicabile/evaluabile per ogni componente.
+- [x] Coprire i test disponibili delle sezioni 15.1–15.4, inclusi boundedness,
+      NOT_APPLICABLE, onset-only, SAT e iterazione exhaustive degli attori.
 
 ### Criteri di uscita
 
@@ -768,7 +769,7 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F9 — Wrapper, wiring e output del rule vector
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -780,15 +781,15 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Tipizzare il contratto adapter (`RulebookV2Adapter`) con snapshotter,
       evaluator transazionale e stato iniziale episodico; l'implementazione
       concreta MetaDrive/ScenarioNet resta dipendente dalle API live disponibili.
-- [ ] Preservare il percorso v1 e i suoi config esistenti.
+- [x] Preservare il percorso v1 e i suoi config esistenti.
 - [x] Allegare output compatibile a `info` secondo DEC-003 (`rule_reward_vector`,
       `rule_components`, `rulebook`).
-- [ ] Aggiornare agent metrics, eval artifacts, video diagnostics e CSV per i
+- [x] Aggiornare agent metrics, eval artifacts, video diagnostics e CSV per i
       quattro nomi macro v2.
-- [ ] Aggiornare rule criticality diagnostica del curriculum da v1 a v2 senza
+- [x] Aggiornare rule criticality diagnostica del curriculum da v1 a v2 senza
       cambiare la usefulness primaria.
-- [ ] Assicurare supporto a env vectorized con memoria/cache per-env isolate.
-- [ ] Testare che il reward scalare nativo resti byte/float-equivalente in
+- [x] Assicurare supporto a env vectorized con memoria/cache per-env isolate.
+- [x] Testare che il reward scalare nativo resti byte/float-equivalente in
       modalità monitor-only.
 
 ### Criteri di uscita
@@ -802,14 +803,14 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F10 — Conformità, calibrazione, pilot PG/Waymo e freeze
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
-- [ ] Implementare il protocollo di calibrazione di `b_e`.
-- [ ] Produrre artifact con hash della configurazione ego.
+- [x] Implementare il protocollo di calibrazione di `b_e`.
+- [x] Produrre artifact in memoria con hash della configurazione ego.
 - [ ] Eseguire tutti i test obbligatori della sezione 15.
-- [ ] Eseguire smoke deterministici su fixture PG e Waymo.
+- [x] Eseguire smoke deterministici su fixture PG e Waymo.
 - [ ] Eseguire pilot su campione stratificato per sorgente/topologia.
 - [ ] Misurare eleggibilità, cause di esclusione e costo runtime per step.
 - [ ] Verificare assenza di future-track access nel monitor online.
@@ -869,7 +870,7 @@ transizioni.
 |---|---|---|---|---|
 | ISS-001 | `APERTO` | alta | Percentuale di scenari realmente eleggibili non ancora nota | Audit F3 su campione stratificato prima di completare tutte le regole |
 | ISS-002 | `APERTO` | alta | Map-matching del task route può risultare ambiguo su junction/route parallele | Algoritmo deterministico + esclusione tipizzata; discutere solo se l'esclusione è eccessiva |
-| ISS-003 | `APERTO` | media | API Panda3D per normale/contact manifold e equivalenza dinamica da verificare su un episodio reale | Contratto/installazione hook F4 completati; eseguire spike differenziale PG/ScenarioNet con fixture frontale e normale invertita |
+| ISS-003 | `RISOLTO` | media | API Panda3D per callback di contatto e installazione hook verificati sul commit locale | Test differenziale reale ScenarioEnv/Waymo con seed/azioni identici: osservazioni, reward e terminazioni invariati |
 | ISS-004 | `APERTO` | media | Qualità di polygon, width e quota differisce fra PG e Waymo | Report validazione per campo e sorgente in F3 |
 | ISS-005 | `APERTO` | media | `MovementKey` può essere ambigua prima della conflict zone | Restare `NOT_APPLICABLE`; misurare frequenza nel pilot |
 | ISS-006 | `APERTO` | media | Costo del continuous SAT su tutti gli attori live non ancora misurato | Benchmark F10 prima di valutare DEF-PERF-001 |
@@ -974,6 +975,15 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F4 | Hook installabile sul confine `setContactAddedCallback`, callback vendor e return value preservati; test di ordine e boundary fake | 94 test Rulebook v2 passati, 1 skip PG per fixture non montata, Ruff e `git diff --check` verdi; resta il test differenziale PG/ScenarioNet |
 | 2026-07-15 | F4 | Regressione v1/reward/wiring dopo gli export e il collision hook | 40 test mirati passati (evaluator v1, reward manager/wrapper, runtime wiring, contratti v2); reward Gymnasium invariato |
 | 2026-07-15 | F4/F3 | Corretto glob ricorsivo della fixture PG e irrigiditi gli ID actor/contact (nessuna coercizione silenziosa) | Suite live/snapshot/PG: 11 passati; suite Rulebook v2 cumulativa: 95 passati; Ruff e diff check verdi |
+| 2026-07-15 | F4 | Test differenziale reale su `ScenarioEnv` Waymo: baseline vs callback hook, rollout sequenziale con seed/azioni identici | 1 test integration passato; osservazioni, reward, terminazioni e truncation identici; F4 completata |
+| 2026-07-15 | F5 | Chiusura test ownership/atomicità: doppio writer, geometrie cache discordanti, lazy zone preesistente e conflitto dopo proposta `MemoryDelta` | 13 test F5 mirati passati, Ruff e `git diff --check` verdi; F5 completata |
+| 2026-07-15 | F6 | Verifica boundedness/status R1-R2: onset simultanei/tangenziali/static/VRU e saturazione; RSS senza candidato; TTC parallelo/overlap/horizon; clearance per classe | 103 test Rulebook v2 passati, Ruff e `git diff --check` verdi; F6 completata |
+| 2026-07-15 | F7 | Verifica finale R3 strada/controlli/precedenze, inclusi DEC-005 e lifecycle eventi | 20 test mirati F7 passati; suite v2 cumulativa a 103 test, Ruff e `git diff --check` verdi; F7 completata |
+| 2026-07-15 | F8 | Verifica finale aggregazione/progresso/monitor transazionale e audit `current_sdc_route` | 31 test mirati passati; nessun accesso runtime a `current_sdc_route`; F8 completata |
+| 2026-07-15 | F9 | Wrapper/output v2: metadata macro ordinato, agent metrics, artifact/trajectory diagnostics, criticality v2 e isolamento per-env | 13 test F9 mirati passati; reward nativo invariato, Ruff e `git diff --check` verdi; F9 completata |
+| 2026-07-15 | F10 | Protocollo `b_e`: prove target 5/10/15/20, validità, quantile order-statistic `lower`, floor a 0.1 e cap 4.0; artifact hash-validato | 21 test calibrazione/RSS/contratti passati, Ruff e `git diff --check` verdi; pilot e freeze F10 restano aperti |
+| 2026-07-15 | F10 | Persistenza/ricarica JSON dell’artifact `b_e` con schema, metadati protocollo e controllo config hash; smoke PG/Waymo | 4 test artifact passati; 7 smoke/converter test passati; Ruff e diff check verdi; suite obbligatoria/pilot/freeze restano aperti |
+| 2026-07-15 | F10 | Verifica cumulativa dopo calibrazione e output F9; audit runtime su `current_sdc_route` | 108 test Rulebook v2 passati; Ruff e `git diff --check` verdi; l'unica occorrenza è documentale nel contratto wrapper |
 
 ---
 

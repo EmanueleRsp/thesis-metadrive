@@ -24,6 +24,21 @@ def test_rule_criticality_uses_rulebook_v1_priority_groups() -> None:
     assert usefulness.dominant_rule == "collision_severity"
 
 
+def test_rule_criticality_accepts_rulebook_v2_macro_names_without_changing_value_signal() -> None:
+    usefulness = compute_scenario_usefulness(
+        {
+            "per_rule": [
+                {"rule_name": "route_progress", "min_margin": -0.2},
+                {"rule_name": "dynamic_interaction_safety", "min_margin": -0.1},
+            ]
+        },
+        learning_potential=7.0,
+    )
+    assert usefulness.rule_criticality == 2
+    assert usefulness.dominant_rule == "dynamic_interaction_safety"
+    assert usefulness.value == 7.0
+
+
 def test_learning_potential_alone_determines_buffer_usefulness() -> None:
     critical = compute_scenario_usefulness(
         {"per_rule": [{"rule_name": "lane_marking_compliance", "min_margin": -0.01}]},

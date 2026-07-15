@@ -14,7 +14,13 @@ from typing import Any
 import gymnasium as gym
 
 from thesis_rl.rulebook.v2.memory import apply_cache_delta
-from thesis_rl.rulebook.v2.types import EpisodeCache, EnvSnapshot, RulebookMemory, RulebookResult
+from thesis_rl.rulebook.v2.types import (
+    MACRO_RULE_ORDER,
+    EpisodeCache,
+    EnvSnapshot,
+    RulebookMemory,
+    RulebookResult,
+)
 
 
 Snapshotter = Callable[[Any], EnvSnapshot]
@@ -89,6 +95,15 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         self._pre_snapshot = post_snapshot
         info_dict = dict(info) if isinstance(info, Mapping) else {}
         info_dict["rule_reward_vector"] = result.margins
+        macro_names = [rule.value for rule in MACRO_RULE_ORDER]
+        info_dict["rule_metadata"] = {
+            "version": "v2",
+            "rule_names": macro_names,
+            "priorities": list(range(len(macro_names))),
+            "saturation_ratio_by_rule": {
+                name: cost for name, cost in zip(macro_names, result.costs)
+            },
+        }
         info_dict["rule_components"] = {
             name: component.to_dict() for name, component in result.components.items()
         }

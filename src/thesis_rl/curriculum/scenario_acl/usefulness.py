@@ -19,10 +19,16 @@ class ScenarioUsefulness:
 
 
 _CRITICALITY_BY_RULE = {
+    # Rulebook v1 names remain supported for existing ACL records.
     "collision_severity": 3,
     "allowed_driving_area": 3,
     "lane_marking_compliance": 2,
     "local_route_progress": 1,
+    # Rulebook v2 macro names follow the canonical lexicographic priority.
+    "collision_impact": 3,
+    "dynamic_interaction_safety": 2,
+    "road_traffic_compliance": 2,
+    "route_progress": 1,
 }
 
 

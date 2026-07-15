@@ -37,9 +37,12 @@ class _RenderEnv:
             "route_completion": 1.0 if done else 0.5,
             "rule_reward_vector": [0.2, 0.1],
             "rule_metadata": {
+                "version": "v2",
+                "rule_names": ["collision_impact", "dynamic_interaction_safety"],
+                "priorities": [0, 1],
                 "saturation_ratio_by_rule": {
-                    "speed_limit": 0.2,
-                    "goal_progress": 0.1,
+                    "collision_impact": 0.2,
+                    "dynamic_interaction_safety": 0.1,
                 }
             },
         }
@@ -115,7 +118,13 @@ def test_live_eval_recorder_writes_manifest_and_video(tmp_path: Path, monkeypatc
         reward=0.5,
         done=False,
         truncated=False,
-        step_info={"route_completion": 0.5},
+        step_info={
+            "route_completion": 0.5,
+            "rule_reward_vector": (0.1, 0.0, -0.2, 0.3),
+            "rule_metadata": {"version": "v2", "rule_names": ["collision_impact"]},
+            "rule_components": {"collision_impact": {"cost": 0.0}},
+            "rulebook": {"complete_evaluation": True},
+        },
     )
     payload = recorder.finalize_episode(
         episode_metrics={
@@ -152,6 +161,9 @@ def test_live_eval_recorder_writes_manifest_and_video(tmp_path: Path, monkeypatc
     assert rows[0]["t"] == 0
     assert rows[0]["reward"] == 0.5
     assert rows[0]["action"] == [0.0, 0.0]
+    assert rows[0]["rule_metadata"]["version"] == "v2"
+    assert rows[0]["rule_components"]["collision_impact"]["cost"] == 0.0
+    assert rows[0]["rulebook"]["complete_evaluation"] is True
 
 
 def test_agent_evaluate_returns_live_artifact_paths(tmp_path: Path, monkeypatch) -> None:
@@ -200,6 +212,10 @@ def test_agent_evaluate_returns_live_artifact_paths(tmp_path: Path, monkeypatch)
     assert per_episode["video_authoritative_path"] == ["videos/final_eval/eval_0001/episode_0001.gif"]
     assert per_episode["video_manifest_path"] == ["videos/final_eval/eval_0001/episode_0001.manifest.json"]
     assert per_episode["trajectory_log_path"] == ["videos/final_eval/eval_0001/episode_0001.trajectory.jsonl"]
+    assert {row["rule_name"] for row in metrics["per_rule"]} == {
+        "collision_impact",
+        "dynamic_interaction_safety",
+    }
 
 
 def test_csv_recorder_schema_keeps_live_video_fields(tmp_path: Path) -> None:

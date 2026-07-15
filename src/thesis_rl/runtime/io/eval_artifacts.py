@@ -69,7 +69,14 @@ def _compact_step_info(step_info: Any) -> dict[str, Any] | None:
     for key in scalar_keys:
         if key in step_info:
             subset[key] = _json_safe(step_info.get(key))
-    for key in ("ego_state", "neighbors", "rule_reward_vector", "rule_metadata"):
+    for key in (
+        "ego_state",
+        "neighbors",
+        "rule_reward_vector",
+        "rule_metadata",
+        "rule_components",
+        "rulebook",
+    ):
         if key in step_info:
             subset[key] = _json_safe(step_info.get(key))
     return subset
@@ -98,7 +105,18 @@ def _trajectory_row(
         "info": compact_info,
     }
     if isinstance(compact_info, dict):
-        for key in ("env_reward", "scalar_rule_reward", "hybrid_reward", "route_completion", "ego_state", "neighbors", "rule_reward_vector", "rule_metadata"):
+        for key in (
+            "env_reward",
+            "scalar_rule_reward",
+            "hybrid_reward",
+            "route_completion",
+            "ego_state",
+            "neighbors",
+            "rule_reward_vector",
+            "rule_metadata",
+            "rule_components",
+            "rulebook",
+        ):
             if key in compact_info:
                 row[key] = compact_info[key]
         row["events"] = {

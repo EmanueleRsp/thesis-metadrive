@@ -21,6 +21,12 @@ from thesis_rl.rulebook.v2.context.waymo_static_adapter import build_waymo_stati
 from thesis_rl.rulebook.v2.context.pg_static_adapter import build_pg_static_adapter_result
 from thesis_rl.rulebook.v2.context.static_adapter import validate_reset_contract
 from thesis_rl.rulebook.v2.aggregation import aggregate_rulebook_result
+from thesis_rl.rulebook.v2.calibration import (
+    BrakingTrial,
+    calibrate_ego_braking,
+    load_calibration_artifact,
+    write_calibration_artifact,
+)
 from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
 from thesis_rl.rulebook.v2.events import (
     ContactOnsetBuffer,
@@ -50,5 +56,5 @@ __all__ = [
     "EvaluationFailure", "MACRO_RULE_ORDER", "MacroRule", "RULEBOOK_V2_VERSION",
     "RulebookEvaluationError", "RulebookMemory", "RulebookResult", "RulebookV2Config",
     "RulebookV2Registry", "TaskRouteRecord", "TaskRouteEligibility", "TaskRouteEligibilityIndex", "TaskRouteExclusionReport", "build_task_route_eligibility_index", "build_task_route_exclusion_report", "StaticRecordAdapter", "StaticRecordSources", "build_waymo_static_adapter_result", "build_pg_static_adapter_result", "validate_reset_contract", "actor_snapshot_from_payload", "load_rulebook_v2_config",
-    "aggregate_rulebook_result", "evaluate_monitor_transition", "evaluate_registered_transition", "RulebookV2Adapter", "RulebookV2MonitorWrapper", "LiveSnapshotAdapter", "LiveSnapshotSources", "contact_onset_from_payload", "install_collision_callback_hook", "wrap_collision_callback",
+    "aggregate_rulebook_result", "BrakingTrial", "calibrate_ego_braking", "load_calibration_artifact", "write_calibration_artifact", "evaluate_monitor_transition", "evaluate_registered_transition", "RulebookV2Adapter", "RulebookV2MonitorWrapper", "LiveSnapshotAdapter", "LiveSnapshotSources", "contact_onset_from_payload", "install_collision_callback_hook", "wrap_collision_callback",
 ]
