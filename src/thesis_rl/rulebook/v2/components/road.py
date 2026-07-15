@@ -10,6 +10,8 @@ from thesis_rl.rulebook.v2.types import ActorSnapshot, CacheDelta, ComponentStat
 
 OFFROAD_AREA_EPSILON_M2 = 1.0e-4
 GEOMETRY_EPSILON_M = 1.0e-2
+DASHED_T0_S = 1.0
+DASHED_TCAP_S = 2.0
 
 
 def evaluate_offroad(*, ego_footprint, drivable_surface) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
@@ -95,3 +97,43 @@ def evaluate_solid_line(*, ego_footprint, solid_boundaries: tuple, swept_front_b
         diagnostics={"active_boundary_ids": ids, "geometry_epsilon_m": GEOMETRY_EPSILON_M},
     )
     return result, MemoryDelta(), CacheDelta()
+
+
+def evaluate_dashed_line(*, ego_footprint, dashed_boundaries: tuple, previous_boundary_id: str | None,
+                         previous_timer_s: float, delta_t_s: float) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
+    """Evaluate continuous dashed boundaries and return the timer state delta."""
+    if ego_footprint.is_empty or not ego_footprint.is_valid:
+        raise ValueError("Dashed-line evaluation requires a valid ego footprint")
+    if not isfinite(previous_timer_s) or previous_timer_s < 0.0 or not isfinite(delta_t_s) or delta_t_s <= 0.0:
+        raise ValueError("Dashed-line timer inputs must be finite and non-negative")
+    candidates: list[tuple[str, object, float]] = []
+    center = ego_footprint.centroid
+    for index, boundary in enumerate(dashed_boundaries):
+        geometry = getattr(boundary, "geometry", boundary)
+        boundary_id = str(getattr(boundary, "logical_boundary_id", None) or getattr(boundary, "feature_id", None) or index)
+        if geometry.is_empty or not geometry.is_valid:
+            raise ValueError("Dashed boundary geometry must be valid")
+        if ego_footprint.intersects(geometry.buffer(GEOMETRY_EPSILON_M)):
+            candidates.append((boundary_id, geometry, center.distance(geometry)))
+    selected: tuple[str, object, float] | None = None
+    if previous_boundary_id is not None:
+        selected = next((item for item in candidates if item[0] == previous_boundary_id), None)
+    if selected is None and candidates:
+        selected = min(candidates, key=lambda item: (item[2], item[0]))
+    active_id = selected[0] if selected is not None else None
+    timer = previous_timer_s + delta_t_s if active_id is not None and active_id == previous_boundary_id else (delta_t_s if active_id is not None else 0.0)
+    if timer <= DASHED_T0_S:
+        cost = 0.0
+    elif timer >= DASHED_TCAP_S:
+        cost = 1.0
+    else:
+        cost = ((timer - DASHED_T0_S) / (DASHED_TCAP_S - DASHED_T0_S)) ** 2
+    result = RuleComponentResult(
+        name="dashed_line", cost=cost,
+        raw={"active_boundary_id": active_id, "timer_s": timer},
+        applicable=bool(dashed_boundaries), evaluable=True,
+        status=ComponentStatus.VIOLATED if cost > 0.0 else (ComponentStatus.SATISFIED if active_id else ComponentStatus.NOT_APPLICABLE),
+        diagnostics={"candidate_count": len(candidates), "threshold_s": DASHED_T0_S, "cap_s": DASHED_TCAP_S},
+    )
+    delta = MemoryDelta(writer="dashed_line", writes=(("active_dashed_boundary_id", active_id), ("dashed_line_timer_s", timer)))
+    return result, delta, CacheDelta()

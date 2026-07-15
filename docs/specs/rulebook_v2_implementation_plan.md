@@ -686,7 +686,7 @@ planner non può quindi inserirla nel replay buffer.
 
 - [x] Implementare off-road e wrong-way.
 - [x] Implementare solid-line crossing/occupancy.
-- [ ] Implementare dashed-line timer con logical boundary ID.
+- [x] Implementare dashed-line timer con logical boundary ID.
 - [ ] Implementare catalogo e macchina a stati dei signal group.
 - [ ] Implementare stop zone, timer continuo/best e crossing.
 - [ ] Implementare crosswalk yield mediante zone lifecycle.
@@ -896,6 +896,7 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F6 | RSS longitudinale con artifact `b_e` hash-validato, safe distance e deficit continuo | 61 test cumulativi passati e Ruff verde nel container; integrazione monitor/evaluator finale resta da verificare |
 | 2026-07-15 | F7 | Evaluator puri off-road (area fraction con epsilon geometrica) e wrong-way (velocità longitudinale firmata su RoutePolyline, diagnostiche heading/segmento) | 24 test mirati cumulativi passati nel container; solid/dashed, signal/stop e precedenze restano da implementare |
 | 2026-07-15 | F7 | Solid-line occupancy/crossing su boundary canoniche con buffer geometrico fisso e diagnostica degli ID attivi | 53 test Rulebook v2 passati cumulativamente e Ruff verde nel container; dashed, signal/stop e precedenze restano da implementare |
+| 2026-07-15 | F7 | Timer dashed-line persistente con selezione boundary deterministica, reset su cambio ID e shaping quadratico 1–2 s | 54 test Rulebook v2 passati cumulativamente e Ruff verde nel container; signal/stop e precedenze restano da implementare |
 
 ---
 
