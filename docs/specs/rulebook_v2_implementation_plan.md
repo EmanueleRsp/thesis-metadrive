@@ -537,7 +537,7 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F2 — Primitive geometriche canoniche e 2.5D
 
-**Stato:** `IN_CORSO`
+**Stato:** `PRONTA_PER_VERIFICA`
 
 ### Attività
 
@@ -655,13 +655,13 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F6 — R1 collisione e R2 interazione dinamica
 
-**Stato:** `IN_CORSO`
+**Stato:** `PRONTA_PER_VERIFICA`
 
 ### Attività
 
 - [x] Implementare collision onset e severità bounded da velocità pre-state.
 - [x] Implementare floor numerico e normalizzazione per actor class.
-- [ ] Implementare RSS longitudinale sulla lane association canonica.
+- [x] Implementare RSS longitudinale sulla lane association canonica.
 - [x] Implementare TTC generalizzato mediante continuous SAT.
 - [x] Implementare clearance R2 su tutti gli attori live compatibili e conservare
       worst actor/diagnostics.
@@ -680,12 +680,12 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F7 — R3 strada, controlli e precedenze
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
-- [ ] Implementare off-road e wrong-way.
-- [ ] Implementare solid-line crossing/occupancy.
+- [x] Implementare off-road e wrong-way.
+- [x] Implementare solid-line crossing/occupancy.
 - [ ] Implementare dashed-line timer con logical boundary ID.
 - [ ] Implementare catalogo e macchina a stati dei signal group.
 - [ ] Implementare stop zone, timer continuo/best e crossing.
@@ -893,6 +893,9 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F6 | Evaluator puro R2 clearance: soglie per classe, iterazione exhaustive live actor, filtro verticale e worst diagnostics | 55 test cumulativi passati e Ruff verde nel container |
 | 2026-07-15 | F6 | Evaluator puro R2 TTC con moto relativo pre-state, soglie vehicle/VRU/static e continuous SAT | 57 test cumulativi passati e Ruff verde nel container |
 | 2026-07-15 | F6 | Aggregatore R2 worst-case con massimo e diagnostica completa delle sottocomponenti | 59 test cumulativi passati e Ruff verde nel container |
+| 2026-07-15 | F6 | RSS longitudinale con artifact `b_e` hash-validato, safe distance e deficit continuo | 61 test cumulativi passati e Ruff verde nel container; integrazione monitor/evaluator finale resta da verificare |
+| 2026-07-15 | F7 | Evaluator puri off-road (area fraction con epsilon geometrica) e wrong-way (velocità longitudinale firmata su RoutePolyline, diagnostiche heading/segmento) | 24 test mirati cumulativi passati nel container; solid/dashed, signal/stop e precedenze restano da implementare |
+| 2026-07-15 | F7 | Solid-line occupancy/crossing su boundary canoniche con buffer geometrico fisso e diagnostica degli ID attivi | 53 test Rulebook v2 passati cumulativamente e Ruff verde nel container; dashed, signal/stop e precedenze restano da implementare |
 
 ---
 
