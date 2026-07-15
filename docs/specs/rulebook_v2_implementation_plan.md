@@ -687,10 +687,10 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare off-road e wrong-way.
 - [x] Implementare solid-line crossing/occupancy.
 - [x] Implementare dashed-line timer con logical boundary ID.
-- [ ] Implementare catalogo e macchina a stati dei signal group.
-- [ ] Implementare stop zone, timer continuo/best e crossing.
-- [ ] Implementare crosswalk yield mediante zone lifecycle.
-- [ ] Implementare vehicle-yield scoped con i quattro predicati ammessi.
+- [x] Implementare catalogo e macchina a stati dei signal group.
+- [x] Implementare stop zone, timer continuo/best e crossing.
+- [x] Implementare crosswalk yield mediante zone lifecycle.
+- [x] Implementare vehicle-yield scoped con i quattro predicati ammessi.
 - [ ] Applicare DEC-005 agli ingressi vehicle-yield.
 - [ ] Aggregare R3 con massimo conservando tutte le sottocomponenti.
 - [ ] Coprire integralmente i test delle sezioni 15.5–15.9.
@@ -706,16 +706,16 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F8 — R4 progresso, aggregazione e monitor transazionale
 
-**Stato:** `NON_INIZIATA`
+**Stato:** `IN_CORSO`
 
 ### Attività
 
 - [ ] Implementare progresso raw e normalizzato sulla task route canonica.
 - [ ] Verificare continuità fra `memory.previous_route_s_m` e pre-state.
-- [ ] Implementare aggregazione R1–R4 e macro status.
-- [ ] Implementare `RulebookMonitor.evaluate_transition`.
-- [ ] Validare range, finitezza, complete evaluation, ownership e cache delta.
-- [ ] Garantire che qualunque errore non produca un risultato parziale.
+- [x] Implementare aggregazione R1–R4 e macro status.
+- [x] Implementare orchestrazione transazionale `evaluate_monitor_transition`.
+- [x] Validare range, finitezza, complete evaluation, ownership e cache delta.
+- [x] Garantire che qualunque errore non produca un risultato parziale.
 - [ ] Coprire i test delle sezioni 15.0, 15.10 e atomicità.
 
 ### Criteri di uscita
@@ -897,6 +897,12 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F7 | Evaluator puri off-road (area fraction con epsilon geometrica) e wrong-way (velocità longitudinale firmata su RoutePolyline, diagnostiche heading/segmento) | 24 test mirati cumulativi passati nel container; solid/dashed, signal/stop e precedenze restano da implementare |
 | 2026-07-15 | F7 | Solid-line occupancy/crossing su boundary canoniche con buffer geometrico fisso e diagnostica degli ID attivi | 53 test Rulebook v2 passati cumulativamente e Ruff verde nel container; dashed, signal/stop e precedenze restano da implementare |
 | 2026-07-15 | F7 | Timer dashed-line persistente con selezione boundary deterministica, reset su cambio ID e shaping quadratico 1–2 s | 54 test Rulebook v2 passati cumulativamente e Ruff verde nel container; signal/stop e precedenze restano da implementare |
+| 2026-07-15 | F7 | Catalogo signal group: selezione per coordinata route, esclusione dei gruppi risolti e validazione fail-fast dello stato fisico concorde | 57 test Rulebook v2 passati cumulativamente e Ruff verde nel container; macchina completa di crossing/approach e stop/precedenze restano da implementare |
+| 2026-07-15 | F7 | Stop zone: selezione route-ordered, timer continuo/best, crossing e risoluzione persistente con `MemoryDelta` owner `stop` | 63 test mirati cumulativi passati nel container e Ruff verde; signal approach/crossing e precedenze restano da implementare |
+| 2026-07-15 | F7 | Signal transition: crossing giudicato sul colore pre-azione, approccio post-azione continuo, onset giallo congelato e risoluzione persistente | 66 test Rulebook v2 cumulativi passati e Ruff verde nel container; precedenze crosswalk/vehicle-yield restano da implementare |
+| 2026-07-15 | F7 | Crosswalk yield: gap temporale, commitment gate, ingresso illegale e memoria persistente fino all'uscita completa | 69 test Rulebook v2 cumulativi passati e Ruff verde nel container; vehicle-yield resta da implementare |
+| 2026-07-15 | F7 | Vehicle-yield scoped: gap/commitment, ingresso illegale persistente e cleanup all'uscita con memoria owner `vehicle_yield` | 67 test Rulebook v2 cumulativi passati e Ruff verde nel container; validazione esplicita dei quattro predicati DEC-005 e monitor aggregato restano da completare |
+| 2026-07-15 | F8 | Aggregazione macro R1–R3, vettore ordinato `(m1,m2,m3,m4)` e orchestrazione transazionale con merge fail-fast di memoria/cache | 70 test Rulebook v2 cumulativi passati nel container, Ruff e diff check verdi; progresso canonico route e wiring completo restano da implementare |
 
 ---
 
