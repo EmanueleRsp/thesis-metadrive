@@ -13,7 +13,7 @@ from thesis_rl.rulebook.v2 import (
     load_rulebook_v2_config,
 )
 from thesis_rl.rulebook.v2.config import ExecutionConfig, RULEBOOK_V2_VERSION
-from thesis_rl.rulebook.v2.context.task_route import build_task_route_record, validate_task_route
+from thesis_rl.rulebook.v2.context.task_route import build_task_route_record, validate_task_route, build_task_route_eligibility_index
 from thesis_rl.rulebook.v2.context.map_matching import (
     OfflineTrackSample,
     map_match_sdc_track_to_task_route,
@@ -21,7 +21,7 @@ from thesis_rl.rulebook.v2.context.map_matching import (
 from thesis_rl.rulebook.v2.context.static_adapter import normalize_static_records
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Polygon
 from thesis_rl.rulebook.v2.errors import EvaluationFailure
 from thesis_rl.rulebook.v2.registry import (
     DEFAULT_RULEBOOK_V2_REGISTRY,
@@ -35,6 +35,11 @@ from thesis_rl.rulebook.v2.types import (
     MacroRule,
     RuleComponentResult,
     RulebookResult,
+    MapFeatureRecord,
+    MapFeatureClass,
+    TrafficControlRecord,
+    ApproachControl,
+    MovementKey,
 )
 
 
@@ -72,6 +77,36 @@ def test_task_route_builder_and_eligibility_artifact_use_only_static_topology() 
     )
     assert not ineligible.rulebook_eligible
     assert ineligible.validation_errors == ("missing_lane_ids:lane-b",)
+
+
+def test_task_route_eligibility_index_is_deterministic_and_excludes_invalid_records():
+    eligible_a = validate_task_route(
+        build_task_route_record(scenario_uid="a", lane_ids=("lane",), provenance="pg", source_geometry_bytes=b"a"),
+        available_lane_ids={"lane": object()}, rulebook_version=RULEBOOK_V2_VERSION,
+        geometry_config_hash="g", calibration_hash="c",
+    )
+    eligible_b = validate_task_route(
+        build_task_route_record(scenario_uid="b", lane_ids=("lane",), provenance="pg", source_geometry_bytes=b"b"),
+        available_lane_ids={}, rulebook_version=RULEBOOK_V2_VERSION,
+        geometry_config_hash="g", calibration_hash="c",
+    )
+    index = build_task_route_eligibility_index((eligible_b, eligible_a))
+    assert tuple(index.by_scenario_uid) == ("a", "b")
+    assert index.eligible("a").scenario_uid == "a"
+    with pytest.raises(ValueError, match="not Rulebook v2 eligible"):
+        index.eligible("b")
+
+
+def test_task_route_validation_rejects_missing_identity_hashes():
+    record = TaskRouteRecord("scenario", ("lane",), "pg", "adapter", "hash")
+    result = validate_task_route(
+        record, available_lane_ids={"lane": object()}, rulebook_version="",
+        geometry_config_hash="", calibration_hash="",
+    )
+    assert not result.rulebook_eligible
+    assert result.validation_errors == (
+        "rulebook_version_missing", "geometry_config_hash_missing", "calibration_hash_missing",
+    )
 
 
 def test_offline_sdc_map_match_retains_lane_sequence_but_not_track_samples() -> None:
@@ -115,6 +150,22 @@ def test_static_adapter_normalizes_geometry_and_reports_missing_route_lanes() ->
         traffic_controls=(),
     )
     assert result.validation_errors == ("task_route_lane_missing:lane-missing",)
+
+
+def test_static_adapter_rejects_duplicate_controls_and_invalid_elevation():
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    task_route = build_task_route_record(
+        scenario_uid="scenario-1", lane_ids=("lane-a",), provenance="pg", source_geometry_bytes=b"map",
+    )
+    lane = RouteLaneRecord("lane-a", Polygon(((0, -2), (10, -2), (10, 2), (0, 2))), route)
+    feature = MapFeatureRecord("feature", MapFeatureClass.ROAD_BOUNDARY, Polygon(((0, 0), (1, 0), (1, 1), (0, 1))), float("nan"))
+    control = TrafficControlRecord("stop", ApproachControl.STOP, ("lane-a",), MovementKey("a", "n", "e"), LineString(((2, -2), (2, 2))), 2.0, 0.0, ())
+    result = normalize_static_records(
+        scenario_uid="scenario-1", task_route=task_route, route_lanes=(lane,),
+        map_features=(feature,), traffic_controls=(control, control),
+    )
+    assert "invalid_map_feature_elevation:feature" in result.validation_errors
+    assert "duplicate_control_group_id:stop" in result.validation_errors
 
 
 def test_v2_config_rejects_nonconformant_execution_or_order() -> None:

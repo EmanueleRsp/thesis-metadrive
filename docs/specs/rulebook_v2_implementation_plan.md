@@ -47,7 +47,7 @@ in una successiva revisione della specifica prima del freeze finale.
 |---|---|---|---|
 | F0 | Allineamento normativo, scope e contratti | `COMPLETATA` | — |
 | F1 | Tipi canonici, configurazione e registry v2 | `COMPLETATA` | F0 |
-| F2 | Primitive geometriche canoniche e 2.5D | `PRONTA_PER_VERIFICA` | F1 |
+| F2 | Primitive geometriche canoniche e 2.5D | `COMPLETATA` | F1 |
 | F3 | Task route, adapter statici e validazione offline | `PRONTA_PER_VERIFICA` | F1, F2 |
 | F4 | Snapshot live e contact-onset hook | `PRONTA_PER_VERIFICA` | F1 |
 | F5 | Eventi, memoria, cache e zone lifecycle | `PRONTA_PER_VERIFICA` | F2–F4 |
@@ -539,7 +539,7 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F2 — Primitive geometriche canoniche e 2.5D
 
-**Stato:** `PRONTA_PER_VERIFICA`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -553,9 +553,9 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Implementare control line canonica.
 - [x] Implementare decomposizione convessa deterministica e continuous SAT.
 - [x] Implementare `MovementKey`, corridoi e conflict-zone construction base
-      (vehicle/crosswalk, componenti, intervalli route e selezione); merge e
-      rotatorie restano dipendenti dai record statici F3.
-- [ ] Aggiungere test sintetici per geometrie concave, hole, autointersezioni
+      (vehicle/crosswalk, componenti, intervalli route e selezione), con test
+      sintetici anche per merge e rotatorie; i record statici restano F3.
+- [x] Aggiungere test sintetici per geometrie concave, hole, autointersezioni
       della route, cavalcavia, merge e rotatorie.
 
 ### Criteri di uscita
@@ -574,18 +574,21 @@ planner non può quindi inserirla nel replay buffer.
 ### Attività
 
 - [x] Definire e versionare `TaskRouteRecord`.
-- [ ] Implementare map-matching offline Waymo SDC -> lane ID sequence, senza
+- [x] Implementare map-matching offline Waymo SDC -> lane ID sequence, senza
       conservare timing o future pose nel record.
-- [ ] Implementare estrazione diretta del task route PG.
+- [x] Implementare estrazione diretta del task route PG tramite builder
+      source-neutral di topologia lane.
 - [ ] Costruire adapter PG/Waymo verso lane, map feature, logical boundary,
       traffic control, crosswalk, priority e roundabout records.
 - [ ] Riutilizzare dove corretto l'estrazione topologica offline esistente,
       senza usarne le soglie euristiche come primitive runtime.
 - [ ] Implementare validazione route, quote, lane polygon/width, controlli,
       signal sequences, spawn overlap e configured speed caps.
+- [x] Implementare validazione source-neutral di unicità lane/control group,
+      quote finite, control line e record control completi.
 - [x] Implementare artifact di eleggibilità separato dal generico
       `validation_status` del catalogo.
-- [ ] Indicizzare l'artifact per scenario UID, versione rulebook, versione
+- [x] Indicizzare l'artifact per scenario UID, versione rulebook, versione
       adapter, hash config geometrica e hash calibrazione.
 - [ ] Aggiornare provider/runtime affinché il pool rulebook v2 includa soltanto
       record eleggibili.
@@ -610,6 +613,8 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Introdurre `LiveSnapshotSources`/`LiveSnapshotAdapter`: l’estrazione
       source-specific passa soltanto da hook espliciti e manca di fallback su
       osservazione o traiettorie future.
+- [x] Validare al bootstrap completezza e callable-ness dei provider live;
+      mapping parziali o con chiavi sconosciute falliscono prima del reset.
 - [ ] Risolvere ID persistenti e classi canoniche degli oggetti MetaDrive.
 - [ ] Catturare pose 3D, velocità, heading, footprint, lane ID e speed cap.
 - [x] Implementare un buffer episodico thread-safe/control-step-safe per i
@@ -925,6 +930,11 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F5/F7 | Freeze/unfreeze `MovementKey` per vehicle-yield, persistente fino all'uscita completa | 76 test Rulebook v2 nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | F1/F8 | Registry collegato agli evaluator normativi reali e dispatch puro per componente | 82 test Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | F8 | Dispatch registry-driven della transizione completa, incluso evaluator progress, con rifiuto di input parziali | 84 test mirati Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F4/F9 | Validazione strict dei provider `LiveSnapshotSources` e adapter snapshot source-neutral | 86 test mirati Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F2 | Verifica finale primitive geometriche: concavità/hole, self-intersection route, cavalcavia, merge e rotatoria | 21 test geometrici passati nel container, Ruff e `git diff --check` verdi; F2 completata |
+| 2026-07-15 | F3 | `TaskRouteEligibilityIndex` deterministico per UID con rifiuto degli scenari ineleggibili | 35 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F3 | Validazione metadata route/versione/hash e conferma matcher Waymo offline + builder PG topology-only | 34 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F3 | Validazione statica di quote, unicità lane/control group, control line e completezza record | 35 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | Regressione | Verifica suite completa repository dopo wiring registry | 385 passati, 8 falliti fuori dal perimetro v2; ISS-011 aperto e dettagliato sopra |
 | 2026-07-15 | F8/F9 | Invarianti di aggregazione, merge transazionale, wrapper monitor-only, contratto `RulebookV2Adapter` e wiring runtime v2 esplicito | 79 test mirati Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
 

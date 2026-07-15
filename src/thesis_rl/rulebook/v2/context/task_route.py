@@ -28,6 +28,41 @@ class TaskRouteEligibility:
     validation_errors: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class TaskRouteEligibilityIndex:
+    """Deterministic offline index keyed by scenario UID."""
+
+    records: tuple[TaskRouteEligibility, ...]
+
+    def __post_init__(self) -> None:
+        ids = tuple(record.scenario_uid for record in self.records)
+        if any(not scenario_uid for scenario_uid in ids):
+            raise ValueError("Eligibility index requires non-empty scenario UIDs")
+        if len(ids) != len(set(ids)):
+            raise ValueError("Eligibility index contains duplicate scenario UIDs")
+
+    @property
+    def by_scenario_uid(self) -> Mapping[str, TaskRouteEligibility]:
+        return {record.scenario_uid: record for record in self.records}
+
+    def eligible(self, scenario_uid: str) -> TaskRouteEligibility:
+        try:
+            record = self.by_scenario_uid[scenario_uid]
+        except KeyError as error:
+            raise KeyError(f"Scenario UID is absent from eligibility index: {scenario_uid!r}") from error
+        if not record.rulebook_eligible:
+            raise ValueError(f"Scenario UID is not Rulebook v2 eligible: {scenario_uid!r}")
+        return record
+
+
+def build_task_route_eligibility_index(
+    records: Iterable[TaskRouteEligibility],
+) -> TaskRouteEligibilityIndex:
+    """Build an immutable index while preserving deterministic UID order."""
+    ordered = tuple(sorted(records, key=lambda record: record.scenario_uid))
+    return TaskRouteEligibilityIndex(ordered)
+
+
 def build_task_route_record(
     *,
     scenario_uid: str,
@@ -67,6 +102,12 @@ def validate_task_route(
     errors: list[str] = []
     if not record.scenario_uid or not record.lane_ids:
         errors.append("route_identity_or_lane_sequence_missing")
+    if not record.provenance or not record.adapter_version:
+        errors.append("route_adapter_metadata_missing")
+    if not record.source_geometry_hash:
+        errors.append("source_geometry_hash_missing")
+    if not rulebook_version:
+        errors.append("rulebook_version_missing")
     missing = [lane_id for lane_id in record.lane_ids if lane_id not in available_lane_ids]
     if missing:
         errors.append("missing_lane_ids:" + ",".join(missing))

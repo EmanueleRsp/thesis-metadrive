@@ -3,6 +3,8 @@
 from thesis_rl.rulebook.v2.context.task_route import (
     RULEBOOK_V2_ADAPTER_CONTRACT_VERSION,
     TaskRouteEligibility,
+    TaskRouteEligibilityIndex,
+    build_task_route_eligibility_index,
     build_task_route_record,
     validate_task_route,
 )
@@ -17,6 +19,8 @@ from thesis_rl.rulebook.v2.context.live_adapter import LiveSnapshotAdapter, Live
 __all__ = [
     "RULEBOOK_V2_ADAPTER_CONTRACT_VERSION",
     "TaskRouteEligibility",
+    "TaskRouteEligibilityIndex",
+    "build_task_route_eligibility_index",
     "build_task_route_record",
     "validate_task_route",
     "OfflineTrackSample",

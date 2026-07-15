@@ -322,3 +322,38 @@ def test_deterministic_decomposition_handles_concavity_and_hole() -> None:
         triangles = deterministic_convex_decomposition(polygon)
         assert all(polygon.covers(triangle) and triangle.area > 0.0 for triangle in triangles)
         assert shapely.union_all(triangles).area == pytest.approx(polygon.area)
+
+
+def test_merge_corridors_produce_a_single_stable_conflict_component() -> None:
+    ego = MovementCorridor(
+        MovementKey("merge-ego", "merge-node", "main-out"),
+        Polygon(((0, -1), (6, -1), (6, 1), (0, 1))), lambda _x, _y: 0.0,
+    )
+    merging = MovementCorridor(
+        MovementKey("merge-other", "merge-node", "main-out"),
+        Polygon(((3, -3), (5, -3), (5, 3), (3, 3))), lambda _x, _y: 0.0,
+    )
+    candidates = build_vehicle_conflict_zone_candidates(
+        scenario_id="merge", ego_corridor=ego, other_corridor=merging,
+    )
+    assert len(candidates) == 1
+    assert candidates[0].component_index == 0
+
+
+def test_roundabout_corridor_intersection_remains_2_5d_filtered() -> None:
+    circulating = MovementCorridor(
+        MovementKey("roundabout", "rotary", "exit"),
+        Polygon(((-4, -1), (4, -1), (4, 1), (-4, 1))), lambda _x, _y: 0.0,
+    )
+    entering = MovementCorridor(
+        MovementKey("entry", "rotary", "roundabout"),
+        Polygon(((1, -4), (3, -4), (3, 4), (1, 4))), lambda _x, _y: 0.0,
+    )
+    candidates = build_vehicle_conflict_zone_candidates(
+        scenario_id="rotary", ego_corridor=circulating, other_corridor=entering,
+    )
+    assert len(candidates) == 1
+    elevated_entry = MovementCorridor(entering.movement_key, entering.polygon, lambda _x, _y: 3.1)
+    assert build_vehicle_conflict_zone_candidates(
+        scenario_id="rotary", ego_corridor=circulating, other_corridor=elevated_entry,
+    ) == ()

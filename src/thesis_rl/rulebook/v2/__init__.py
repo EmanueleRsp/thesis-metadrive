@@ -8,6 +8,7 @@ from thesis_rl.rulebook.v2.config import (
 from thesis_rl.rulebook.v2.monitor import evaluate_monitor_transition, evaluate_registered_transition
 from thesis_rl.rulebook.v2.wrapper import RulebookV2Adapter, RulebookV2MonitorWrapper
 from thesis_rl.rulebook.v2.context.live_adapter import LiveSnapshotAdapter, LiveSnapshotSources
+from thesis_rl.rulebook.v2.context.task_route import TaskRouteEligibility, TaskRouteEligibilityIndex, build_task_route_eligibility_index
 from thesis_rl.rulebook.v2.aggregation import aggregate_rulebook_result
 from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
 from thesis_rl.rulebook.v2.events import ContactOnsetBuffer, ZoneTransitionEvents, detect_zone_transition
@@ -31,6 +32,6 @@ __all__ = [
     "ZoneLifecycleEvaluator", "ZoneLifecycleView",
     "EvaluationFailure", "MACRO_RULE_ORDER", "MacroRule", "RULEBOOK_V2_VERSION",
     "RulebookEvaluationError", "RulebookMemory", "RulebookResult", "RulebookV2Config",
-    "RulebookV2Registry", "TaskRouteRecord", "load_rulebook_v2_config",
+    "RulebookV2Registry", "TaskRouteRecord", "TaskRouteEligibility", "TaskRouteEligibilityIndex", "build_task_route_eligibility_index", "load_rulebook_v2_config",
     "aggregate_rulebook_result", "evaluate_monitor_transition", "evaluate_registered_transition", "RulebookV2Adapter", "RulebookV2MonitorWrapper", "LiveSnapshotAdapter", "LiveSnapshotSources",
 ]

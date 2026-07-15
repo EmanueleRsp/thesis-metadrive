@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from types import MappingProxyType
 
 from thesis_rl.rulebook.v2.geometry.canonical import canonicalize_geometry, stable_geometry_id
@@ -37,11 +38,16 @@ def normalize_static_records(
         raise ValueError("Static adapter scenario UID does not match task route")
     errors: list[str] = []
     route_lane_ids = {lane.lane_id for lane in route_lanes}
+    if len(route_lane_ids) != len(route_lanes):
+        errors.append("duplicate_route_lane_id")
     missing = [lane_id for lane_id in task_route.lane_ids if lane_id not in route_lane_ids]
     if missing:
         errors.append("task_route_lane_missing:" + ",".join(missing))
     normalized_features: dict[str, MapFeatureRecord] = {}
     for feature in map_features:
+        if feature.elevation_m is not None and not isfinite(feature.elevation_m):
+            errors.append(f"invalid_map_feature_elevation:{feature.feature_id}")
+            continue
         try:
             geometry = canonicalize_geometry(feature.geometry)
         except ValueError as error:
@@ -63,6 +69,17 @@ def normalize_static_records(
             elevation_m=feature.elevation_m,
             logical_boundary_id=feature.logical_boundary_id,
         )
+    control_ids: set[str] = set()
+    for control in traffic_controls:
+        if not control.control_group_id or control.control_group_id in control_ids:
+            errors.append(f"duplicate_control_group_id:{control.control_group_id}")
+        control_ids.add(control.control_group_id)
+        if control.control_line.is_empty or not control.control_line.is_valid:
+            errors.append(f"invalid_control_line:{control.control_group_id}")
+        if not isfinite(control.route_s_m) or not isfinite(control.elevation_m):
+            errors.append(f"invalid_control_coordinate:{control.control_group_id}")
+        if not control.controlled_lane_ids or not control.physical_control_ids and control.control_type.value == "signal":
+            errors.append(f"incomplete_control_record:{control.control_group_id}")
     return StaticAdapterResult(
         scenario_uid=scenario_uid,
         task_route=task_route,
