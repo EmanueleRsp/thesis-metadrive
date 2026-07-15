@@ -16,6 +16,7 @@ pg:
 split:
   seed: 0
   auto: true
+  selection: balanced_arm_source
   allowed_signal_reliabilities:
     waymo: [complete, not_applicable]
     pg: [complete, not_applicable]
@@ -75,7 +76,7 @@ split:
       test: 500
 
 balance:
-  enabled: true
+  enabled: false
   target_total: 3500
   prefer_source: waymo
   waymo_required_arms:

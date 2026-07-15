@@ -51,6 +51,28 @@ Le decisioni centrali sono:
 - tutte le operazioni spaziali sono 2.5D: le geometrie planari vengono considerate soltanto quando risultano compatibili in quota entro una tolleranza verticale congelata;
 - lane association, gap longitudinale, superficie carrabile, traffic controls, control line, occupancy interval e route projection sono primitive canoniche con un solo algoritmo ammesso.
 
+## Contratti implementativi congelati
+
+Le seguenti precisazioni implementative fanno parte della versione
+`4.6-final-implementation-complete`:
+
+- il task route è un input statico: ScenarioNet può derivarlo offline dalla
+  track SDC soltanto come sequenza topologica di lane; il runtime non legge
+  `current_sdc_route`, timing, velocità o pose future;
+- `ZoneLifecycleEvaluator` è l'unico writer di
+  `preexisting_ego_occupancy_zone_ids`;
+- il monitor restituisce soltanto il vettore ordinato e diagnostiche:
+  scalarizzazione e learner lessicografico/distribuzionale restano esterni;
+- il registry può essere modulare, ma ordine macro, componenti normative e
+  ownership della memoria sono fissi;
+- gli eventi di ingresso e l'occupazione preesistente dell'altro attore usano
+  il pre-state; i costi continui di approccio usano il post-state;
+- la prima implementazione valuta tutti gli attori live, senza broad phase;
+- geometrie e ID sintetici usano snap a `1e-3 m`, WKB 2D big-endian senza
+  SRID, envelope JSON canonico e SHA-256;
+- l'osservazione semantic-state resta differita: il monitor non modifica
+  l'osservazione della policy in questa versione iniziale.
+
 # 1. Ambito e assunzioni
 
 ## 1.1 Ambiente di esecuzione

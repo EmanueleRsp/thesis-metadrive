@@ -48,7 +48,10 @@ def group_id_for_entry(entry: ScenarioCatalogEntry) -> str:
 
     record = entry.record
     if record.source == "waymo":
-        return str(record.source_log_id or f"scenario:{record.scenario_uid}")
+        source_log_id = str(record.source_log_id or "").strip()
+        if source_log_id and not source_log_id.startswith("training_20s.tfrecord-"):
+            return source_log_id
+        return f"scenario:{record.scenario_uid}"
     if record.pg_seed is None:
         raise ValueError(f"PG record has no seed: {record.scenario_uid}")
     return f"pg-seed:{record.pg_seed}"
@@ -232,6 +235,269 @@ def assign_source_splits_to_targets(
     return result
 
 
+def assign_arm_balanced_splits_to_targets(
+    entries: Sequence[ScenarioCatalogEntry],
+    *,
+    targets: Mapping[str, Mapping[str, int]],
+    seed: int,
+    allowed_signal_reliabilities: Mapping[str, Sequence[str]] | None = None,
+) -> tuple[ScenarioCatalogEntry, ...]:
+    """Select split x arm quotas with 50/50 source preference and fallback."""
+
+    if set(targets) != set(SOURCES):
+        raise ValueError(f"targets must define exactly {SOURCES}")
+    normalized_signal_policy = _normalize_signal_policy(
+        allowed_signal_reliabilities
+    )
+    entries = eligible_entries(entries)
+    if not entries:
+        raise ValueError("cannot assign splits: catalog has no eligible records")
+    entries = tuple(
+        entry
+        for entry in entries
+        if entry.features.signal_reliability
+        in normalized_signal_policy[entry.record.source]
+    )
+    split_totals = _split_totals(targets)
+    split_arm_targets = _split_arm_targets(split_totals)
+    available_source_arm = _available_source_arm_counts(entries)
+    split_source_arm_targets = _split_source_arm_targets(
+        split_arm_targets,
+        available_source_arm=available_source_arm,
+    )
+    all_group_ids = group_ids_for_entries(entries)
+    grouped: dict[str, list[ScenarioCatalogEntry]] = {}
+    for entry in entries:
+        grouped.setdefault(all_group_ids[entry.record.scenario_uid], []).append(entry)
+    group_counts = {
+        group: _group_source_arm_counts(group_entries)
+        for group, group_entries in grouped.items()
+    }
+
+    rng = np.random.default_rng(int(seed))
+    remaining = list(grouped)
+    rng.shuffle(remaining)
+    assignments: dict[str, str] = {}
+    current_split = {split: 0 for split in SPLITS}
+    current_arm = {split: {arm: 0 for arm in ARMS} for split in SPLITS}
+    current_source_arm = {
+        split: {source: {arm: 0 for arm in ARMS} for source in SOURCES}
+        for split in SPLITS
+    }
+
+    for split in sorted(SPLITS, key=lambda name: split_totals[name]):
+        while remaining and current_split[split] < split_totals[split]:
+            capacity = split_totals[split] - current_split[split]
+            fitting = [group for group in remaining if len(grouped[group]) <= capacity]
+            if not fitting:
+                break
+            selected = max(
+                fitting,
+                key=lambda group: _arm_balanced_candidate_key(
+                    group_counts[group],
+                    split=split,
+                    current_arm=current_arm,
+                    current_source_arm=current_source_arm,
+                    split_arm_targets=split_arm_targets,
+                    split_source_arm_targets=split_source_arm_targets,
+                    size=len(grouped[group]),
+                ),
+            )
+            remaining.remove(selected)
+            assignments[selected] = split
+            current_split[split] += len(grouped[selected])
+            for source in SOURCES:
+                for arm in ARMS:
+                    count = group_counts[selected][source][arm]
+                    current_arm[split][arm] += count
+                    current_source_arm[split][source][arm] += count
+
+    assigned_by_uid: dict[str, ScenarioRecord] = {}
+    for group, group_entries in grouped.items():
+        assigned_split = assignments.get(group)
+        if assigned_split is None:
+            continue
+        for entry in group_entries:
+            assigned_by_uid[entry.record.scenario_uid] = replace(
+                entry.record,
+                split=assigned_split,  # type: ignore[arg-type]
+                runtime_index=None,
+            )
+
+    result = tuple(
+        ScenarioCatalogEntry(
+            record=assigned_by_uid[entry.record.scenario_uid],
+            features=entry.features,
+        )
+        for entry in entries
+        if entry.record.scenario_uid in assigned_by_uid
+    )
+    records = [entry.record for entry in result]
+    assert_waymo_training_20s(records)
+    assert_pg_seed_disjoint(records)
+    assert_no_group_overlap(records, group_id_by_uid=all_group_ids)
+    return result
+
+
+def _split_totals(
+    targets: Mapping[str, Mapping[str, int]],
+) -> dict[str, int]:
+    result = {
+        split: sum(int(targets[source][split]) for source in SOURCES)
+        for split in SPLITS
+    }
+    if any(value < 0 for value in result.values()):
+        raise ValueError("split targets must be non-negative")
+    return result
+
+
+def _split_arm_targets(split_totals: Mapping[str, int]) -> dict[str, dict[str, int]]:
+    result: dict[str, dict[str, int]] = {}
+    for split in SPLITS:
+        total = int(split_totals[split])
+        base, remainder = divmod(total, len(ARMS))
+        result[split] = {
+            arm: base + (1 if index < remainder else 0)
+            for index, arm in enumerate(ARMS)
+        }
+    return result
+
+
+def _split_source_arm_targets(
+    split_arm_targets: Mapping[str, Mapping[str, int]],
+    *,
+    available_source_arm: Mapping[str, Mapping[str, int]] | None = None,
+) -> dict[str, dict[str, dict[str, int]]]:
+    result = {
+        split: {source: {arm: 0 for arm in ARMS} for source in SOURCES}
+        for split in SPLITS
+    }
+    for arm in ARMS:
+        total_target = sum(int(split_arm_targets[split][arm]) for split in SPLITS)
+        ideal_pg = total_target // 2
+        ideal_waymo = total_target - ideal_pg
+        if available_source_arm is None:
+            source_totals = {"pg": ideal_pg, "waymo": ideal_waymo}
+        else:
+            pg_available = int(available_source_arm["pg"][arm])
+            waymo_available = int(available_source_arm["waymo"][arm])
+            pg_total = min(ideal_pg, pg_available)
+            waymo_total = min(ideal_waymo, waymo_available)
+            pg_shortfall = ideal_pg - pg_total
+            waymo_shortfall = ideal_waymo - waymo_total
+            waymo_total += min(pg_shortfall, max(0, waymo_available - waymo_total))
+            pg_total += min(waymo_shortfall, max(0, pg_available - pg_total))
+            source_totals = {"pg": pg_total, "waymo": waymo_total}
+        weights = {split: int(split_arm_targets[split][arm]) for split in SPLITS}
+        for source in SOURCES:
+            allocations = _distribute_quota(source_totals[source], weights)
+            for split, value in allocations.items():
+                result[split][source][arm] = value
+    return result
+
+
+def _available_source_arm_counts(
+    entries: Sequence[ScenarioCatalogEntry],
+) -> dict[str, dict[str, int]]:
+    counts = {source: {arm: 0 for arm in ARMS} for source in SOURCES}
+    for entry in entries:
+        counts[entry.record.source][entry.record.primary_arm] += 1
+    return counts
+
+
+def _distribute_quota(total: int, weights: Mapping[str, int]) -> dict[str, int]:
+    if total <= 0:
+        return {split: 0 for split in SPLITS}
+    weight_total = sum(max(0, int(weights[split])) for split in SPLITS)
+    if weight_total <= 0:
+        return {split: 0 for split in SPLITS}
+    raw = {
+        split: total * max(0, int(weights[split])) / weight_total
+        for split in SPLITS
+    }
+    result = {split: int(raw[split]) for split in SPLITS}
+    remainder = total - sum(result.values())
+    for split in sorted(SPLITS, key=lambda name: raw[name] - result[name], reverse=True):
+        if remainder <= 0:
+            break
+        result[split] += 1
+        remainder -= 1
+    return result
+
+
+def _group_source_arm_counts(
+    entries: Sequence[ScenarioCatalogEntry],
+) -> dict[str, dict[str, int]]:
+    counts = {source: {arm: 0 for arm in ARMS} for source in SOURCES}
+    for entry in entries:
+        counts[entry.record.source][entry.record.primary_arm] += 1
+    return counts
+
+
+def _arm_balanced_candidate_key(
+    counts: Mapping[str, Mapping[str, int]],
+    *,
+    split: str,
+    current_arm: Mapping[str, Mapping[str, int]],
+    current_source_arm: Mapping[str, Mapping[str, Mapping[str, int]]],
+    split_arm_targets: Mapping[str, Mapping[str, int]],
+    split_source_arm_targets: Mapping[str, Mapping[str, Mapping[str, int]]],
+    size: int,
+) -> tuple[int, int, int, int, int]:
+    weighted_benefit = 0.0
+    arm_reduction = 0
+    exact_source_reduction = 0
+    arm_overfill = 0
+    source_overfill = 0
+    for source in SOURCES:
+        for arm in ARMS:
+            count = int(counts[source][arm])
+            if count == 0:
+                continue
+            arm_deficit = max(
+                0,
+                int(split_arm_targets[split][arm])
+                - int(current_arm[split][arm]),
+            )
+            source_deficit = max(
+                0,
+                int(split_source_arm_targets[split][source][arm])
+                - int(current_source_arm[split][source][arm]),
+            )
+            target = max(1, int(split_arm_targets[split][arm]))
+            arm_weight = arm_deficit / target
+            exact = min(count, source_deficit)
+            exact_source_reduction += exact
+            fallback = min(max(0, count - exact), max(0, arm_deficit - exact))
+            arm_reduction += exact + fallback
+            weighted_benefit += (exact * 1.2 + fallback) * arm_weight
+            arm_overfill += max(
+                0,
+                int(current_arm[split][arm]) + count
+                - int(split_arm_targets[split][arm]),
+            )
+            source_overfill += max(
+                0,
+                int(current_source_arm[split][source][arm]) + count
+                - int(split_source_arm_targets[split][source][arm]),
+            )
+    scaled_benefit = int(round(weighted_benefit * 1000))
+    score_per_record = int(round(scaled_benefit / max(1, size)))
+    score = (
+        score_per_record * 100
+        + scaled_benefit
+        - arm_overfill * 25
+        - source_overfill * 5
+    )
+    return (
+        score,
+        score_per_record,
+        arm_reduction,
+        exact_source_reduction,
+        -arm_overfill,
+    )
+
+
 def _normalize_signal_policy(
     allowed: Mapping[str, Sequence[str]] | None,
 ) -> dict[str, frozenset[str]]:
@@ -307,6 +573,58 @@ def arm_selection_diagnostics(
                     "actual": actual,
                     "deficit": max(0, minimum - actual),
                 }
+    return diagnostics
+
+
+def arm_source_balance_diagnostics(
+    entries: Sequence[ScenarioCatalogEntry],
+    targets: Mapping[str, Mapping[str, int]],
+    *,
+    available_entries: Sequence[ScenarioCatalogEntry] | None = None,
+) -> dict[str, dict[str, Any]]:
+    split_totals = _split_totals(targets)
+    split_arm_targets = _split_arm_targets(split_totals)
+    available_source_arm = (
+        _available_source_arm_counts(available_entries)
+        if available_entries is not None
+        else _available_source_arm_counts(entries)
+    )
+    split_source_arm_targets = _split_source_arm_targets(
+        split_arm_targets,
+        available_source_arm=available_source_arm,
+    )
+    diagnostics: dict[str, dict[str, Any]] = {}
+    for split in SPLITS:
+        split_payload: dict[str, Any] = {
+            "target_total": split_totals[split],
+            "actual_total": sum(entry.record.split == split for entry in entries),
+            "arms": {},
+        }
+        for arm in ARMS:
+            source_payload: dict[str, Any] = {}
+            actual_total = 0
+            for source in SOURCES:
+                actual = sum(
+                    entry.record.split == split
+                    and entry.record.primary_arm == arm
+                    and entry.record.source == source
+                    for entry in entries
+                )
+                target = split_source_arm_targets[split][source][arm]
+                actual_total += actual
+                source_payload[source] = {
+                    "target": target,
+                    "actual": actual,
+                    "deficit": max(0, target - actual),
+                }
+            arm_target = split_arm_targets[split][arm]
+            split_payload["arms"][arm] = {
+                "target": arm_target,
+                "actual": actual_total,
+                "deficit": max(0, arm_target - actual_total),
+                "sources": source_payload,
+            }
+        diagnostics[split] = split_payload
     return diagnostics
 
 
@@ -427,6 +745,8 @@ __all__ = [
     "arm_selection_diagnostics",
     "assign_source_splits",
     "assign_source_splits_to_targets",
+    "assign_arm_balanced_splits_to_targets",
+    "arm_source_balance_diagnostics",
     "balance_arm_distribution",
     "classify_entries",
     "eligible_entries",

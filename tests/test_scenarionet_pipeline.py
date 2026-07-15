@@ -7,10 +7,13 @@ import pytest
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 from thesis_rl.scenarios.pipeline import (
     assign_catalog_runtime_indices,
+    assign_arm_balanced_splits_to_targets,
     assign_source_splits,
     assign_source_splits_to_targets,
+    arm_source_balance_diagnostics,
     arm_selection_diagnostics,
     balance_arm_distribution,
+    group_id_for_entry,
 )
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
 
@@ -85,6 +88,22 @@ def test_pipeline_assigns_source_splits_and_runtime_indices() -> None:
             if entry.record.split == split_name
         )
         assert indices == [0, 1]
+
+
+def test_waymo_training_shard_is_not_used_as_leakage_group() -> None:
+    entry = _entry("waymo", 0)
+    shard_record = replace(
+        entry.record,
+        source_log_id="training_20s.tfrecord-00011-of-01000",
+    )
+    true_log_record = replace(entry.record, source_log_id="waymo-log-1")
+
+    assert group_id_for_entry(
+        ScenarioCatalogEntry(shard_record, entry.features)
+    ) == "scenario:waymo:v1:0"
+    assert group_id_for_entry(
+        ScenarioCatalogEntry(true_log_record, entry.features)
+    ) == "waymo-log-1"
 
 
 def test_pipeline_auto_split_preserves_whole_groups() -> None:
@@ -226,6 +245,102 @@ def test_pipeline_excludes_invalid_records_before_split_accounting() -> None:
 
     assert len(selected) == 6
     assert all(entry.record.validation_status == "valid" for entry in selected)
+
+
+def test_arm_balanced_split_targets_split_arm_and_source_halves() -> None:
+    entries = []
+    index = 0
+    for arm in (
+        "A0_simple_low_traffic",
+        "A1_traffic",
+        "A2_junction",
+        "A3_complex_junction",
+        "A4_vru",
+        "A5_critical_mixed",
+    ):
+        for source in ("waymo", "pg"):
+            base = _entry(source, index)
+            entries.append(
+                ScenarioCatalogEntry(replace(base.record, primary_arm=arm), base.features)
+            )
+            index += 1
+
+    selected = assign_arm_balanced_splits_to_targets(
+        tuple(entries),
+        targets={
+            "waymo": {"train": 6, "validation": 0, "test": 0},
+            "pg": {"train": 6, "validation": 0, "test": 0},
+        },
+        seed=0,
+    )
+    diagnostics = arm_source_balance_diagnostics(
+        selected,
+        {
+            "waymo": {"train": 6, "validation": 0, "test": 0},
+            "pg": {"train": 6, "validation": 0, "test": 0},
+        },
+    )
+
+    assert len(selected) == 12
+    for arm in (
+        "A0_simple_low_traffic",
+        "A1_traffic",
+        "A2_junction",
+        "A3_complex_junction",
+        "A4_vru",
+        "A5_critical_mixed",
+    ):
+        payload = diagnostics["train"]["arms"][arm]
+        assert payload["actual"] == 2
+        assert payload["sources"]["waymo"]["actual"] == 1
+        assert payload["sources"]["pg"]["actual"] == 1
+
+
+def test_arm_balanced_split_falls_back_to_available_source() -> None:
+    entries = []
+    index = 0
+    for arm in (
+        "A0_simple_low_traffic",
+        "A1_traffic",
+        "A2_junction",
+        "A3_complex_junction",
+        "A5_critical_mixed",
+    ):
+        for source in ("waymo", "pg"):
+            base = _entry(source, index)
+            entries.append(
+                ScenarioCatalogEntry(replace(base.record, primary_arm=arm), base.features)
+            )
+            index += 1
+    for _ in range(2):
+        base = _entry("waymo", index)
+        entries.append(
+            ScenarioCatalogEntry(
+                replace(base.record, primary_arm="A4_vru"), base.features
+            )
+        )
+        index += 1
+
+    selected = assign_arm_balanced_splits_to_targets(
+        tuple(entries),
+        targets={
+            "waymo": {"train": 6, "validation": 0, "test": 0},
+            "pg": {"train": 6, "validation": 0, "test": 0},
+        },
+        seed=0,
+    )
+    diagnostics = arm_source_balance_diagnostics(
+        selected,
+        {
+            "waymo": {"train": 6, "validation": 0, "test": 0},
+            "pg": {"train": 6, "validation": 0, "test": 0},
+        },
+    )
+
+    a4 = diagnostics["train"]["arms"]["A4_vru"]
+    assert a4["actual"] == 2
+    assert a4["sources"]["waymo"]["actual"] == 2
+    assert a4["sources"]["pg"]["actual"] == 0
 
 
 def test_arm_balancing_trims_pg_before_waymo() -> None:

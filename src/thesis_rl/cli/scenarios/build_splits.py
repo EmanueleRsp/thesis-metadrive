@@ -14,9 +14,12 @@ from thesis_rl.scenarios.manifests import validate_split_manifest
 from thesis_rl.scenarios.pipeline import (
     SPLITS,
     SOURCES,
+    assign_arm_balanced_splits_to_targets,
     assign_source_splits,
     assign_source_splits_to_targets,
+    arm_source_balance_diagnostics,
     arm_selection_diagnostics,
+    eligible_entries,
 )
 from thesis_rl.scenarios.reports import write_json_report
 from thesis_rl.scenarios.records import SIGNAL_RELIABILITIES
@@ -43,9 +46,9 @@ def _counts_from_args(args: argparse.Namespace) -> dict[str, dict[str, int]]:
     return counts
 
 
-def _read_split_policy(path: str | None) -> tuple[dict, dict]:
+def _read_split_policy(path: str | None) -> tuple[dict, dict, str]:
     if path is None:
-        return {}, {}
+        return {}, {}, "source_target"
     payload = yaml.safe_load(Path(path).expanduser().read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("arm minimums config must be a mapping")
@@ -58,7 +61,10 @@ def _read_split_policy(path: str | None) -> tuple[dict, dict]:
     signal_policy = split.get("allowed_signal_reliabilities", {})
     if not isinstance(signal_policy, dict):
         raise ValueError("split.allowed_signal_reliabilities must be a mapping")
-    return minimums, signal_policy
+    selection = str(split.get("selection", "source_target"))
+    if selection not in {"source_target", "balanced_arm_source"}:
+        raise ValueError(f"unsupported split.selection: {selection!r}")
+    return minimums, signal_policy, selection
 
 
 def main() -> int:
@@ -96,7 +102,9 @@ def main() -> int:
     ).expanduser().resolve()
     with console.status("Reading catalog and assigning leakage-free splits", spinner="dots"):
         catalog = read_scenario_catalog(catalog_path)
-        arm_minimums, signal_policy = _read_split_policy(args.arm_minimums_config)
+        arm_minimums, signal_policy, split_selection = _read_split_policy(
+            args.arm_minimums_config
+        )
         if args.auto_targets:
             targets = {
                 source: {
@@ -111,14 +119,23 @@ def main() -> int:
             }
             if not any(value > 0 for source in targets.values() for value in source.values()):
                 raise ValueError("auto-targets requires at least one positive split target")
-            entries = assign_source_splits_to_targets(
-                catalog.entries,
-                targets=targets,
-                seed=int(args.split_seed),
-                arm_minimums=arm_minimums,
-                allowed_signal_reliabilities=signal_policy,
-            )
-            selection_mode = "grouped_target"
+            if split_selection == "balanced_arm_source":
+                entries = assign_arm_balanced_splits_to_targets(
+                    catalog.entries,
+                    targets=targets,
+                    seed=int(args.split_seed),
+                    allowed_signal_reliabilities=signal_policy,
+                )
+                selection_mode = "balanced_arm_source"
+            else:
+                entries = assign_source_splits_to_targets(
+                    catalog.entries,
+                    targets=targets,
+                    seed=int(args.split_seed),
+                    arm_minimums=arm_minimums,
+                    allowed_signal_reliabilities=signal_policy,
+                )
+                selection_mode = "grouped_target"
         else:
             counts = _counts_from_args(args)
             entries = assign_source_splits(
@@ -140,16 +157,44 @@ def main() -> int:
         for split in SPLITS
     }
     arm_diagnostics = arm_selection_diagnostics(entries, arm_minimums)
+    balance_diagnostics = (
+        arm_source_balance_diagnostics(
+            entries,
+            targets,
+            available_entries=tuple(
+                entry
+                for entry in eligible_entries(catalog.entries)
+                if entry.features.signal_reliability
+                in set(signal_policy.get(entry.record.source, SIGNAL_RELIABILITIES))
+            ),
+        )
+        if args.auto_targets
+        else {}
+    )
     signal_excluded_records = sum(
         entry.features.signal_reliability
         not in set(signal_policy.get(entry.record.source, SIGNAL_RELIABILITIES))
         for entry in catalog.entries
     )
-    total_arm_deficit = sum(
+    legacy_total_arm_deficit = sum(
         values["deficit"]
         for source in arm_diagnostics.values()
         for split in source.values()
         for values in split.values()
+    )
+    balance_total_arm_deficit = (
+        sum(
+            int(arm_payload["deficit"])
+            for split_payload in balance_diagnostics.values()
+            for arm_payload in split_payload.get("arms", {}).values()
+        )
+        if balance_diagnostics
+        else 0
+    )
+    total_arm_deficit = (
+        balance_total_arm_deficit
+        if selection_mode == "balanced_arm_source"
+        else legacy_total_arm_deficit
     )
     manifest = validate_split_manifest(
         {
@@ -169,6 +214,9 @@ def main() -> int:
                 "excluded_records": len(catalog.entries) - len(entries),
                 "arm_minimums": arm_minimums,
                 "arm_diagnostics": arm_diagnostics,
+                "arm_source_balance_diagnostics": balance_diagnostics,
+                "legacy_total_arm_deficit": legacy_total_arm_deficit,
+                "balance_total_arm_deficit": balance_total_arm_deficit,
                 "total_arm_deficit": total_arm_deficit,
                 "allowed_signal_reliabilities": signal_policy,
                 "signal_excluded_records": signal_excluded_records,
@@ -191,6 +239,9 @@ def main() -> int:
         "selected_records": len(entries),
         "excluded_records": len(catalog.entries) - len(entries),
         "arm_diagnostics": arm_diagnostics,
+        "arm_source_balance_diagnostics": balance_diagnostics,
+        "legacy_total_arm_deficit": legacy_total_arm_deficit,
+        "balance_total_arm_deficit": balance_total_arm_deficit,
         "total_arm_deficit": total_arm_deficit,
         "allowed_signal_reliabilities": signal_policy,
         "signal_excluded_records": signal_excluded_records,

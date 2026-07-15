@@ -36,6 +36,10 @@ This file is only a lightweight map of the `docs/` folder.
 
 - [specs/algorithm_comparison_protocol.md](specs/algorithm_comparison_protocol.md)
 - [specs/csv_evaluation_objectives.md](specs/csv_evaluation_objectives.md)
+- [specs/rulebook_v2_spec.md](specs/rulebook_v2_spec.md): normative Rulebook
+  v2 specification
+- [specs/rulebook_v2_implementation_plan.md](specs/rulebook_v2_implementation_plan.md):
+  implementation tracker, locked decisions, risks, and deviations
 - [specs/rulebook_v1_specification.md](specs/rulebook_v1_specification.md)
 - [workflows/rulebook_v1_calibration.md](workflows/rulebook_v1_calibration.md)
 - [specs/live_eval_video_protocol.md](specs/live_eval_video_protocol.md)

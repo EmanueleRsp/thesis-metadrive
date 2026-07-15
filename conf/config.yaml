@@ -25,6 +25,10 @@ defaults:
 seed: 42
 device: auto
 
+# Explicit selector.  v1 remains the default and retains the existing runtime path.
+rulebook:
+  version: v1  # v1 | v2
+
 logging:
   # Global minimum level for thesis_rl loggers (DEBUG | INFO | WARNING | ERROR | CRITICAL)
   level: INFO

@@ -36,6 +36,7 @@ waymo-inventory:
 
 waymo-convert:
 	@test -n "$(WAYMO_RAW_DATA_PATH)" || (echo "WAYMO_RAW_DATA_PATH is required" >&2; exit 2)
+	@echo "Starting Waymo converter container: raw=$(WAYMO_RAW_DATA_PATH) workers=$(NUM_WORKERS) files=$(NUM_FILES) database=$(DATABASE_PATH)"
 	WAYMO_RAW_DATA_PATH="$(WAYMO_RAW_DATA_PATH)" docker compose -f compose.yaml -f compose.waymo.yaml --profile waymo run --rm waymo-converter \
 		--raw-data-path /workspace/waymo_raw \
 		$(if $(DATABASE_PATH),--database-path "$(DATABASE_PATH)",) \

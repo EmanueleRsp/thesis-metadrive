@@ -28,6 +28,11 @@ state_dir="${host_root}/waymo/acquisition"
 raw_root="${WAYMO_RAW_DATA_PATH:-${host_data_dir%/}/waymo_raw}"
 pipeline_service="${SCENARIONET_PIPELINE_SERVICE:-dataset-pipeline}"
 temporary_files=()
+converter_container=""
+
+log() {
+  printf '[%(%Y-%m-%d %H:%M:%S)T] waymo-expand: %s\n' -1 "$*"
+}
 
 is_true() {
   case "${1,,}" in
@@ -48,6 +53,9 @@ mkdir -p "$host_database" "$state_dir" "$raw_root/batches"
 
 cleanup() {
   local status=$?
+  if [[ -n "$converter_container" ]]; then
+    docker rm -f "$converter_container" >/dev/null 2>&1 || true
+  fi
   if ((${#temporary_files[@]} > 0)); then
     rm -f "${temporary_files[@]}"
   fi
@@ -61,6 +69,7 @@ refresh_status() {
   if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
     arm_args+=(--required-arm "A4_vru=${WAYMO_REQUIRED_ARM_A4_VRU}")
   fi
+  log "refreshing converted-pool status from $container_database"
   output="$(docker compose run --rm -T "$pipeline_service" uv run --no-sync python \
     -m thesis_rl.cli.scenarios.waymo_pool_status \
     --database "$container_database" \
@@ -77,6 +86,7 @@ refresh_status() {
     [[ "$key" == SCENARIONET_WAYMO_* ]] || continue
     printf -v "$key" '%s' "$value"
   done <<< "$output"
+  log "status refreshed: eligible=${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required}, deficit=${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
 }
 
 refresh_status
@@ -101,6 +111,7 @@ candidate_list="$(mktemp)"
 batch_list="$(mktemp)"
 temporary_files=("$remote_list" "$candidate_list" "$batch_list")
 gcloud storage ls "${gcs_uri%/}/${object_pattern}" | awk '/^gs:\/\// {print}' | sort > "$remote_list"
+log "loaded remote shard inventory from ${gcs_uri%/}/${object_pattern}"
 awk '
   NR == FNR { used[$1] = 1; next }
   {
@@ -114,7 +125,18 @@ available_new="$(awk 'NF {count++} END {print count+0}' "$candidate_list")"
 (( available_new > 0 )) || die "all remote shards are already converted, but the eligible target is unmet"
 echo "Automatic expansion: batch=${batch_size} shards, safety cap=${max_new_shards} new shards"
 echo "Google Cloud account: $active_account"
+log "building/verifying the Waymo conversion image"
 make build-waymo
+log "Waymo conversion image is ready"
+converter_container="thesis_waymo_expand_$$"
+log "starting persistent Waymo converter container: $converter_container"
+WAYMO_RAW_DATA_PATH="$raw_root" \
+  docker compose -f compose.yaml -f compose.waymo.yaml --profile waymo run -d \
+    --name "$converter_container" \
+    --entrypoint sh \
+    waymo-converter \
+    -c 'trap "exit 0" TERM INT; while :; do sleep 3600; done' >/dev/null
+log "persistent Waymo converter container is ready"
 
 new_shards=0
 batch_number=0
@@ -145,29 +167,32 @@ while ! is_true "$SCENARIONET_WAYMO_POOL_COMPLETE"; do
   mkdir -p "$raw_batch"
 
   batch_number=$((batch_number + 1))
-  echo "Batch ${batch_number}: downloading ${selected} unseen shards (${first_index}-${last_index})"
+  log "batch ${batch_number}: downloading ${selected} unseen shards (${first_index}-${last_index}) to $raw_batch"
   gcloud storage cp --read-paths-from-stdin "$raw_batch/" < "$batch_list"
-  echo "Batch ${batch_number}: converting with ${num_workers} workers"
-  WAYMO_RAW_DATA_PATH="$raw_batch" make waymo-convert \
-    DATABASE_PATH="$container_staging" NUM_WORKERS="$num_workers" NUM_FILES="$selected" \
-    OVERWRITE=1
-  docker compose -f compose.yaml -f compose.waymo.yaml --profile waymo run --rm \
-    --entrypoint sh waymo-converter -c \
+  log "batch ${batch_number}: download complete; converting inside persistent container with ${num_workers} workers"
+  docker exec "$converter_container" python -m thesis_rl.cli.scenarios.convert_waymo \
+    --raw-data-path "/workspace/waymo_raw/batches/$batch_id" \
+    --database-path "$container_staging" \
+    --num-workers "$num_workers" \
+    --num-files "$selected" \
+    --overwrite
+  log "batch ${batch_number}: conversion finished; moving staging database into final batch directory"
+  docker exec "$converter_container" sh -c \
     'mkdir -p "$1" && mv "$2" "$3"' sh \
     "${container_database%/}/batches" "$container_staging" \
     "${container_database%/}/batches/$batch_id"
+  log "batch ${batch_number}: final database registered at ${container_database%/}/batches/$batch_id"
   if ! is_true "$keep_raw"; then
+    log "batch ${batch_number}: removing raw TFRecords from $raw_batch"
     find "$raw_batch" -maxdepth 1 -type f -name 'training_20s.tfrecord*' -delete
     rmdir "$raw_batch" 2>/dev/null || true
   fi
 
   new_shards=$((new_shards + selected))
   refresh_status
-  echo "Batch ${batch_number} complete: eligible ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required}; "\
-"remaining deficit ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
+  log "batch ${batch_number} complete: eligible ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required}; remaining deficit ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
   if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
-    echo "Batch ${batch_number} A4_vru: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU}; "\
-"remaining A4 deficit ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0}"
+    log "batch ${batch_number} A4_vru: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU}; remaining A4 deficit ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0}"
   fi
 done
 
