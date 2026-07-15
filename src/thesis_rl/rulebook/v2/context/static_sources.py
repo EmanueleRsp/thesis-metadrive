@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from thesis_rl.rulebook.v2.context.static_adapter import StaticAdapterResult, normalize_static_records
 from thesis_rl.rulebook.v2.types import MapFeatureRecord, TaskRouteRecord, TrafficControlRecord
@@ -35,7 +35,7 @@ class StaticRecordSources:
             raise ValueError(f"Missing static record providers: {missing}")
         if unknown:
             raise ValueError(f"Unknown static record providers: {unknown}")
-        return cls(**{name: providers[name] for name in required})
+        return cls(**cast(Any, {name: providers[name] for name in required}))
 
 
 class StaticRecordAdapter:

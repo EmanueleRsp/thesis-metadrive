@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
+from typing import NoReturn
 
 from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
 from thesis_rl.rulebook.v2.types import CacheDelta, ComponentStatus, MemoryDelta, RuleComponentResult
@@ -32,7 +33,7 @@ MAX_RESPONSE_ACCEL_MPS2 = 3.5
 FRONT_MAX_BRAKE_MPS2 = 8.0
 
 
-def _fail(scenario_id: str, step_index: int, cause: str) -> None:
+def _fail(scenario_id: str, step_index: int, cause: str) -> NoReturn:
     raise RulebookEvaluationError(EvaluationFailure(scenario_id, step_index, "rss", cause))
 
 
@@ -60,10 +61,6 @@ def evaluate_rss(
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
     """Evaluate front vehicles; ambiguous/no-front context is NOT_APPLICABLE."""
 
-    if candidates and calibration is None:
-        _fail(scenario_id, step_index, "RSS calibration artifact is missing")
-    if candidates and calibration.config_hash != expected_config_hash:
-        _fail(scenario_id, step_index, "RSS calibration artifact hash does not match ego config")
     if not candidates:
         return (
             RuleComponentResult(
@@ -72,6 +69,10 @@ def evaluate_rss(
             ),
             MemoryDelta(), CacheDelta(),
         )
+    if calibration is None:
+        _fail(scenario_id, step_index, "RSS calibration artifact is missing")
+    if calibration.config_hash != expected_config_hash:
+        _fail(scenario_id, step_index, "RSS calibration artifact hash does not match ego config")
     values: list[tuple[str, float, float, float]] = []
     for candidate in candidates:
         if not isfinite(candidate.gap_m) or candidate.gap_m < 0.0:

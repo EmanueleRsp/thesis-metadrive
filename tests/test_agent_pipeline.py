@@ -182,7 +182,7 @@ def test_agent_train_uses_lifecycle_only() -> None:
     agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
     env = _DummyEnv()
 
-    summary = agent.train(
+    agent.train(
         env=env,
         chunk_timesteps=3,
         global_total_timesteps=10,

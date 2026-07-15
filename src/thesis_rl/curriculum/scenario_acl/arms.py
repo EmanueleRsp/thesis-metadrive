@@ -25,7 +25,14 @@ class ScenarioArm:
                 f"expected one of {SCENARIO_ARM_NAMES}"
             )
 
-    def sample_env_overrides(self) -> dict[str, object]:
+    def sample_env_overrides(
+        self,
+        *,
+        rng: object | None = None,
+        scenario_seed: int | None = None,
+        base_env_config: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del rng, scenario_seed, base_env_config
         provider: dict[str, object] = {"arm": self.name}
         # The frozen ScenarioNet catalog has no selected Waymo A0 records and
         # no PG A4 records. Avoid asking the strict provider for an impossible

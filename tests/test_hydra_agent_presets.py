@@ -224,4 +224,4 @@ def test_smoke_train_preset_composes() -> None:
     assert str(cfg.experiment.name) == "smoke"
     assert str(cfg.reward.name) == "monitor_only"
     assert str(cfg.curriculum.name) == "disabled"
-    assert str(cfg.agent.planner.algorithm.name) == "td3"
+    assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"

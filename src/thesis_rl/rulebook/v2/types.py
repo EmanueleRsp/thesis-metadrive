@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
 from types import MappingProxyType
-from typing import Mapping, TypeAlias
+from typing import Mapping, TypeAlias, cast
 
 from shapely.geometry.base import BaseGeometry
 
@@ -243,8 +243,12 @@ class CacheDelta:
 class EpisodeCache:
     scenario_id: str
     task_route: TaskRouteRecord
-    conflict_zones: Mapping[str, ConflictZoneRecord] = field(default_factory=freeze_mapping)
-    map_feature_catalog: Mapping[str, MapFeatureRecord] = field(default_factory=freeze_mapping)
+    conflict_zones: Mapping[str, ConflictZoneRecord] = field(
+        default_factory=lambda: cast(Mapping[str, ConflictZoneRecord], freeze_mapping())
+    )
+    map_feature_catalog: Mapping[str, MapFeatureRecord] = field(
+        default_factory=lambda: cast(Mapping[str, MapFeatureRecord], freeze_mapping())
+    )
     traffic_control_catalog: tuple[TrafficControlRecord, ...] = ()
     movement_priority_records: tuple[MovementPriorityRecord, ...] = ()
 

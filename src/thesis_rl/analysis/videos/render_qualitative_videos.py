@@ -4,7 +4,6 @@ import argparse
 import csv
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from omegaconf import OmegaConf

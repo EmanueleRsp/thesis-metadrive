@@ -257,7 +257,8 @@ def _build_record_from_catalog_entry(
     *,
     catalog_record: Any,
     cfg: DictConfig,
-    episode_id: int,
+    episode_id: int | None = None,
+    chunk_id: int | None = None,
     learning_potential: float,
     normalized_usefulness: float,
     metrics: dict[str, Any],
@@ -273,6 +274,7 @@ def _build_record_from_catalog_entry(
         metrics,
         learning_potential=learning_potential,
     )
+    effective_episode_id = int(episode_id if episode_id is not None else (chunk_id or 0))
     return ScenarioRecord(
         scenario_id=scenario_uid,
         source=str(catalog_record.source),
@@ -293,7 +295,7 @@ def _build_record_from_catalog_entry(
         usefulness_norm=float(normalized_usefulness),
         rank=0,
         num_seen=1,
-        last_seen_step=int(episode_id),
+        last_seen_step=effective_episode_id,
         num_children=0,
         metrics_summary=_metrics_summary(metrics, generator_config_id=scenario_arm),
         scenario_arm=scenario_arm,
@@ -390,8 +392,10 @@ def _choose_iteration_spec(
     bandit: ScenarioArmBandit,
     buffer: ScenarioBuffer,
     rng: np.random.Generator,
-    episode_id: int,
+    episode_id: int | None = None,
+    chunk_id: int | None = None,
 ) -> IterationSpec:
+    effective_episode_id = int(episode_id if episode_id is not None else (chunk_id or 0))
     scenario_cfg = curriculum_cfg.scenario_acl
     can_exploit = (
         scenario_cfg.use_replay
@@ -401,7 +405,7 @@ def _choose_iteration_spec(
     if can_exploit and rng.random() < float(scenario_cfg.exploit_probability):
         selection = buffer.sample_replay(
             rng=rng,
-            current_step=episode_id,
+            current_step=effective_episode_id,
             cfg=scenario_cfg.replay_sampling,
             use_staleness=bool(scenario_cfg.use_staleness),
         )

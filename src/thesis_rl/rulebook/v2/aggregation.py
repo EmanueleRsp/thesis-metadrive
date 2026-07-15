@@ -66,7 +66,11 @@ def aggregate_rulebook_result(*, components: tuple[RuleComponentResult, ...], ra
         "road_traffic_compliance": tuple(c for c in components if c.name in {"offroad", "wrongway", "wrong_way", "solid_line", "dashed_line", "signal", "stop", "crosswalk", "vehicle_yield"}),
     }
     macro = tuple(aggregate_max_component(name=name, components=group) for name, group in groups.items())
-    costs = tuple(max(0.0, min(1.0, result.cost)) for result in macro)
+    costs = (
+        max(0.0, min(1.0, macro[0].cost)),
+        max(0.0, min(1.0, macro[1].cost)),
+        max(0.0, min(1.0, macro[2].cost)),
+    )
     all_components = {component.name: component for component in components}
     all_components.update({result.name: result for result in macro})
     return RulebookResult(

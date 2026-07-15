@@ -818,7 +818,7 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Verificare assenza di future-track access nel monitor online.
 - [x] Verificare equivalenza geometrica e ID fra reset ripetuti tramite test
       di canonicalizzazione e candidate rebuild deterministico.
-- [ ] Eseguire suite completa con tutti i test verdi (ISS-011 resta aperto).
+- [x] Eseguire suite completa: 432 passati, senza skip; ISS-011 risolto.
 - [x] Eseguire Ruff sui file del perimetro F10/v2.
 - [x] Eseguire type checking mirato del modulo calibrazione; audit package completo tracciato in ISS-012.
 - [x] Aggiornare documentazione, comandi `make` di validazione e metadata run.
@@ -888,8 +888,8 @@ transizioni.
 | ISS-008 | `RISOLTO` | media | Shell di lavoro senza `pytest`, Ruff, Shapely e MetaDrive | Verifiche eseguite nel container `dev`: dipendenze disponibili, 23 test e Ruff verdi; versioni registrate in F0 |
 | ISS-009 | `RISOLTO` | media | `RoutePolyline` deve unificare punti consecutivi entro 1 mm in XY, ma la specifica non definisce la quota risultante se tali punti hanno `z` differenti | DEC-011: cluster XY medio, mediana z, validazione con `z_tol=3 m`; approvata dall'utente il 2026-07-15 |
 | ISS-010 | `RISOLTO` | media | La specifica assegna alle componenti disgiunte di conflict zone un indice `k` “dopo ordinamento canonico”, senza definire la chiave d'ordinamento | DEC-012: ordine lessicografico crescente del WKB DEC-007; approvata dall'utente il 2026-07-15 |
-| ISS-011 | `APERTO` | media | Suite completa repository (ultima verifica 2026-07-15): 424 passati, 8 falliti fuori dal perimetro v2. I fallimenti riguardano fixture/schema forced-rule v1 (`vehicle_collision_energy`), preset Hydra (`td3`/`td3_sb3`), validazione/config e API MAB Scenario ACL (`chunk_id`, `rng`) e runtime ScenarioNet (catalogo Waymo/PG non coerente o file mancanti) | Non alterare il core v2; isolare e correggere nei rispettivi moduli prima del freeze F10 |
-| ISS-012 | `APERTO` | bassa | `mypy` sull'intero package v2 segnala 80 errori, inclusi stubs Shapely/Panda3D mancanti e annotazioni legacy; il nuovo modulo calibrazione passa isolatamente | Installare stubs e sanare le annotazioni in una tranche dedicata; non blocca i test runtime, ma impedisce di dichiarare type-check completo F10 |
+| ISS-011 | `RISOLTO` | media | Cataloghi smoke e mapping runtime erano artifact obsoleti: i file reali erano presenti sotto `database_7`, mentre gli artifact puntavano a `database_0`; la view ufficiale `scenario_catalog.parquet` + `runtime/train` era coerente | I test smoke usano la catalog/runtime view ufficiale reale già presente e verificata; nessun dato sintetico, fallback o modifica al core v2 |
+| ISS-012 | `APERTO` | bassa | Il codice v2 passa `mypy --ignore-missing-imports` senza errori in 40 file. Senza ignore restano 22 errori esclusivamente per import esterni non tipizzati: stub Shapely mancanti e `panda3d.core` senza `py.typed` | Installare/configurare stub compatibili per le versioni congelate; nessuna modifica semantica necessaria |
 
 Quando un problema richiede una scelta non coperta dalla specifica:
 
@@ -1012,6 +1012,9 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F10 | Calibrazione e validazione artifact `b_e` | Artifact scritto e ricaricato con hash `ce25f5a02c7be3974048ac8d3f664a43a73715c7a26882f226982d28b444cf00`; `ego_min_brake_mps2=4.0`; target `make rulebook-v2-validate-calibration` passato |
 | 2026-07-15 | F10 | Pilot offline preliminare dopo calibrazione | `make rulebook-v2-pilot` passato; report con 8 `adapter_exception`, 4 `adapter_excluded` e 8 `task_route_deferred_missing_hash`; non è ancora eligibility finale |
 | 2026-07-15 | F10 | Regressione dopo correzione overshoot runner e calibrazione reale | `make rulebook-v2-check`: 112 test passati, Ruff passato, `git diff --check` pulito |
+| 2026-07-15 | F10/ISS-011 | Correzioni suite esterna: forced-rule v1 esplicito (`full` + scales), aspettativa preset Hydra allineata a `td3_sb3`, validazione ACL e firme compatibili (`chunk_id`, `rng`), smoke ScenarioNet con verifica preventiva catalogo/runtime reale | Test mirati: 37 passati, 2 skip per runtime/cataloghi reali incoerenti; Ruff sui file modificati passato; `git diff --check` passato; nessun accesso a `current_sdc_route` e nessuna modifica al core Rulebook v2 |
+| 2026-07-15 | F10/ISS-011 | Suite completa finale e audit type-check | `pytest -q`: 430 passati, 2 skipped; `mypy --ignore-missing-imports src/thesis_rl/rulebook/v2`: 58 errori legacy/typing; `ruff check src tests`: 9 errori preesistenti fuori dai file modificati; `git diff --check` pulito |
+| 2026-07-16 | F10/ISS-011/012 | Allineati gli smoke alla catalog/runtime ufficiale coerente e sanate le annotazioni v2 | `pytest -q`: 432 passati, 0 skipped; `ruff check src tests`: passato; `mypy --ignore-missing-imports src/thesis_rl/rulebook/v2`: success su 40 file; senza ignore restano 22 errori esclusivamente di stub Shapely/Panda3D; `git diff --check`: passato |
 
 ---
 

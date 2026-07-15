@@ -49,6 +49,7 @@ def evaluate_collision_impact(
         or ego_configured_speed_cap_mps <= 0.0
     ):
         _fail(scenario_id, step_index, "ego configured speed normalization cap is invalid")
+    assert ego_configured_speed_cap_mps is not None
     onset_by_actor: dict[str, list[ContactOnsetRecord]] = defaultdict(list)
     for record in onset_records:
         if record.actor_id not in previous_contact_ids:
@@ -74,6 +75,7 @@ def evaluate_collision_impact(
         actor = pre_actors_by_id.get(actor_id)
         if actor is None:
             _fail(scenario_id, step_index, f"dynamic actor {actor_id!r} has no pre-state")
+        assert actor is not None
         if actor.actor_class == ActorClass.STATIC_COLLIDABLE:
             other_velocity = (0.0, 0.0)
             cap = ego_configured_speed_cap_mps
@@ -82,11 +84,13 @@ def evaluate_collision_impact(
             if actor.actor_class == ActorClass.VEHICLE:
                 if actor.configured_speed_cap_mps is None or actor.configured_speed_cap_mps <= 0.0:
                     _fail(scenario_id, step_index, f"vehicle {actor_id!r} speed cap is invalid")
+                assert actor.configured_speed_cap_mps is not None
                 cap = ego_configured_speed_cap_mps + actor.configured_speed_cap_mps
             else:
                 cap = ego_configured_speed_cap_mps
         else:
             _fail(scenario_id, step_index, f"actor class {actor.actor_class.value!r} is not collidable")
+        assert cap is not None
         normal_closing_speeds: list[float] = []
         for record in records:
             normal_norm = sqrt(

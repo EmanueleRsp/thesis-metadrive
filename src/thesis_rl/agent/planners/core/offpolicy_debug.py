@@ -115,7 +115,6 @@ class OffPolicyDebugLogger:
         action_var = np.maximum(acc["action_sq_sum"] / max(n, 1) - np.square(action_mean), 0.0)
         action_std = np.sqrt(action_var)
         action_abs_mean = acc["action_abs_sum"] / max(n, 1)
-        denom = float(max(n * self.action_dim, 1))
         near_zero_frac = float(np.sum(action_abs_mean <= self.near_zero_eps) / max(self.action_dim, 1))
         reward_mean = acc["reward_sum"] / max(n, 1)
         reward_var = max(acc["reward_sq_sum"] / max(n, 1) - reward_mean**2, 0.0)

@@ -8,14 +8,27 @@ import pytest
 from omegaconf import OmegaConf
 
 from thesis_rl.runtime.wiring.builders import build_train_env
+from thesis_rl.envs.factory import _validate_scenarionet_catalog_runtime
+from thesis_rl.scenarios.catalog import read_scenario_catalog
+
+
+def _require_matching_runtime(catalog_path: Path, runtime_path: Path) -> None:
+    try:
+        catalog = read_scenario_catalog(catalog_path)
+        _validate_scenarionet_catalog_runtime(
+            catalog, split="train", data_directory=str(runtime_path)
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        pytest.skip(f"requires matching real ScenarioNet fixture: {exc}")
 
 
 def test_scenarionet_vectorized_spawn_smoke() -> None:
     data_root = Path(os.environ.get("SCENARIONET_DATA_ROOT", "data/scenarionet"))
-    catalog_path = data_root / "catalog" / "waymo_smoke.parquet"
+    catalog_path = data_root / "catalog" / "scenario_catalog.parquet"
     runtime_path = data_root / "runtime" / "train"
     if not catalog_path.is_file() or not (runtime_path / "dataset_summary.pkl").is_file():
-        pytest.skip("requires a prepared ScenarioNet catalog and runtime/train view")
+        pytest.skip("requires the prepared ScenarioNet catalog and runtime/train view")
+    _require_matching_runtime(catalog_path, runtime_path)
 
     cfg = OmegaConf.create(
         {
@@ -82,10 +95,11 @@ def test_scenarionet_vectorized_spawn_smoke() -> None:
 
 def test_scenarionet_mixed_uniform_provider_smoke() -> None:
     data_root = Path(os.environ.get("SCENARIONET_DATA_ROOT", "data/scenarionet"))
-    catalog_path = data_root / "catalog" / "mixed_smoke.parquet"
-    runtime_path = data_root / "runtime" / "mixed_train"
+    catalog_path = data_root / "catalog" / "scenario_catalog.parquet"
+    runtime_path = data_root / "runtime" / "train"
     if not catalog_path.is_file() or not (runtime_path / "dataset_summary.pkl").is_file():
-        pytest.skip("requires the mixed Waymo+PG smoke catalog and runtime view")
+        pytest.skip("requires the prepared mixed ScenarioNet catalog and runtime/train view")
+    _require_matching_runtime(catalog_path, runtime_path)
 
     cfg = OmegaConf.create(
         {

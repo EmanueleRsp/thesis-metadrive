@@ -659,8 +659,6 @@ class Agent:
 
         def _table() -> Table:
             elapsed = max(time.time() - start_time, 1e-9)
-            actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
-            critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))
             learning_rate = float(getattr(lifecycle, "last_learning_rate", float("nan")))
             chunk_env_steps = min(collected_steps, chunk_timesteps)
             run_env_steps = global_steps_done + collected_steps

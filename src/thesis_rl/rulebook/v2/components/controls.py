@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from thesis_rl.rulebook.v2.geometry.continuous_sat import OccupancyInterval
 from thesis_rl.rulebook.v2.types import ComponentStatus, MemoryDelta, CacheDelta, RuleComponentResult, TrafficControlRecord, ApproachControl
 
 VALID_SIGNAL_STATES = frozenset({"GREEN", "YELLOW", "RED", "FLASHING_YELLOW", "UNKNOWN"})
@@ -25,18 +28,21 @@ def select_active_signal_group(*, controls: tuple[TrafficControlRecord, ...], eg
     return min(candidates, key=lambda control: (control.route_s_m, control.control_group_id), default=None)
 
 
-def signal_group_state(*, control: TrafficControlRecord, signal_states_by_physical_id: dict[str, str] | object) -> str:
+def signal_group_state(*, control: TrafficControlRecord, signal_states_by_physical_id: Mapping[str, str]) -> str:
     """Return a concordant physical signal state; disagreement is fail-fast."""
     states = [signal_states_by_physical_id.get(identifier) for identifier in control.physical_control_ids]
     if not states or any(state not in VALID_SIGNAL_STATES for state in states):
         raise ValueError(f"Missing or invalid state for signal group {control.control_group_id!r}")
     if len(set(states)) != 1:
         raise ValueError(f"Discordant physical states for signal group {control.control_group_id!r}")
-    return states[0]
+    state = states[0]
+    if state is None:
+        raise ValueError(f"Missing state for signal group {control.control_group_id!r}")
+    return state
 
 
 def evaluate_signal_state(*, control: TrafficControlRecord | None, ego_front_s_m: float,
-                          signal_states_by_physical_id: dict[str, str] | object,
+                          signal_states_by_physical_id: Mapping[str, str],
                           resolved_group_ids: frozenset[str]) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
     if control is None:
         result = RuleComponentResult("signal", 0.0, {"state": None}, False, True, ComponentStatus.NOT_APPLICABLE, {})
@@ -116,7 +122,7 @@ def evaluate_signal_transition(*, control: TrafficControlRecord | None, pre_stat
     return result, delta, CacheDelta()
 
 
-def evaluate_crosswalk_yield(*, zone_id: str, ego_interval, vru_intervals: tuple[tuple[str, object], ...],
+def evaluate_crosswalk_yield(*, zone_id: str, ego_interval: OccupancyInterval, vru_intervals: tuple[tuple[str, OccupancyInterval], ...],
                              distance_to_entry_m: float, approach_speed_mps: float, delta_t_s: float,
                              ego_occupied: bool, ego_entered: bool, preexisting_zone_ids: frozenset[str],
                              previous_illegal_entries: frozenset[tuple[str, str]], vertical_applicable: bool = True) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
@@ -157,7 +163,7 @@ def evaluate_crosswalk_yield(*, zone_id: str, ego_interval, vru_intervals: tuple
     return result, delta, CacheDelta()
 
 
-def evaluate_vehicle_yield(*, zone_id: str, ego_interval, prioritized_intervals: tuple[tuple[str, object], ...],
+def evaluate_vehicle_yield(*, zone_id: str, ego_interval: OccupancyInterval, prioritized_intervals: tuple[tuple[str, OccupancyInterval], ...],
                            distance_to_entry_m: float, approach_speed_mps: float, delta_t_s: float,
                            ego_occupied: bool, entered_actor_ids: frozenset[str], previous_illegal_entries: frozenset[tuple[str, str]],
                            preexisting: bool = False,

@@ -4,7 +4,6 @@ Dump MetaDrive environment structure and attributes to JSON for inspection.
 Run: uv run --no-sync python src/thesis_rl/tools/debug/dump_env_structure.py
 """
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +12,7 @@ from thesis_rl.common.paths import default_output_path_str
 def safe_serialize(obj: Any, depth: int = 0, max_depth: int = 5) -> Any:
     """Safely serialize an object to JSON-compatible format, with depth limit."""
     if depth > max_depth:
-        return f"<MAX_DEPTH_EXCEEDED>"
+        return "<MAX_DEPTH_EXCEEDED>"
     
     if obj is None or isinstance(obj, (bool, int, float, str)):
         return obj
@@ -39,7 +38,7 @@ def safe_serialize(obj: Any, depth: int = 0, max_depth: int = 5) -> Any:
                 val = getattr(obj, attr_name)
                 if not callable(val):
                     attrs[attr_name] = safe_serialize(val, depth + 1, max_depth)
-            except:
+            except Exception:
                 pass
         if attrs:
             return {"<type>": type(obj).__name__, "<attrs>": attrs}

@@ -154,11 +154,25 @@ def main() -> None:
             config_name="config",
             overrides=[
                 "reward=scalar_reward",
+                "reward.rulebook_config=full",
                 "curriculum=stages",
                 f"seed={int(args.seed)}",
                 f"reward.rule_margin_log_path={default_output_path_str('debug_rule_margins_forced_scenarios.jsonl')}",
             ],
         )
+    # This debug fixture intentionally exercises the historical v1 ``full``
+    # schema, whose rule names differ from the default selection scales.
+    cfg.reward.scales = {
+        "vru_collision_energy": 1.0,
+        "vehicle_collision_energy": 1.0,
+        "drivable_area": 1.0,
+        "wrong_way": 1.0,
+        "speed_limit": 1.0,
+        "lane_centering": 1.0,
+        "goal_progress": 1.0,
+        "longitudinal_accel": 1.0,
+        "lateral_accel": 1.0,
+    }
 
     env = build_env(
         cfg,

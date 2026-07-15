@@ -24,16 +24,16 @@ def validate_scenario_acl_runtime_support(
     if not curriculum_cfg.is_scenario_acl:
         return
 
-    env_name = str(cfg.env.get("name", "")).strip().lower()
-    if env_name != "scenarionet":
-        raise ValueError("scenario_acl requires env=scenarionet.")
-
     vectorized_cfg = cfg.env.get("vectorized", {})
     if bool(vectorized_cfg.get("enabled", False)):
         raise ValueError(
             "Curriculum kind 'scenario_acl' currently requires "
             "env.vectorized.enabled=false."
         )
+
+    env_name = str(cfg.env.get("name", "")).strip().lower()
+    if env_name != "scenarionet":
+        raise ValueError("scenario_acl requires env=scenarionet.")
 
     reward_behavior = str(cfg.reward.get("behavior", "")).strip().lower()
     if reward_behavior not in _SUPPORTED_REWARD_BEHAVIORS:

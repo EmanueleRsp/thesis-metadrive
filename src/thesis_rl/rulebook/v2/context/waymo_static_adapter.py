@@ -40,7 +40,9 @@ def _points(value: Any) -> np.ndarray:
 
 def _lane_record(lane_id: str, lane: Mapping[str, Any]) -> RouteLaneRecord:
     points = _points(lane.get("polyline"))
-    centerline = RoutePolyline(tuple(tuple(float(x) for x in point) for point in points))
+    centerline = RoutePolyline(
+        tuple((float(point[0]), float(point[1]), float(point[2])) for point in points)
+    )
     width = lane.get("width")
     width_m = float(np.nanmedian(np.asarray(width, dtype=float))) if width is not None else 3.5
     if not np.isfinite(width_m) or width_m <= 0.0:

@@ -38,6 +38,7 @@ class DrivableLaneRecord:
         if self.polygon_xy is not None:
             return self.polygon_xy
         centerline_xy = LineString(tuple((x, y) for x, y, _ in self.centerline.points_xyz))
+        assert self.lane_width_m is not None
         polygon = centerline_xy.buffer(
             self.lane_width_m / 2.0,
             cap_style="flat",

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, cast
 
 from thesis_rl.rulebook.v2.context.snapshotter import capture_env_snapshot
 from thesis_rl.rulebook.v2.types import ActorClass, ActorSnapshot, ContactOnsetRecord, EnvSnapshot
@@ -20,7 +20,7 @@ def _finite_pair(payload: object, *, field_name: str) -> tuple[float, float]:
     """Normalize one adapter-owned 2D value without source-specific fallbacks."""
 
     try:
-        values = tuple(float(value) for value in payload)  # type: ignore[union-attr]
+        values = tuple(float(value) for value in cast(Any, payload))
     except (TypeError, ValueError) as error:
         raise ValueError(f"Live actor {field_name} must be a finite 2D sequence") from error
     if len(values) != 2 or not all(isfinite(value) for value in values):
@@ -60,7 +60,7 @@ class LiveSnapshotSources:
             raise ValueError(f"Missing live snapshot providers: {missing}")
         if unknown:
             raise ValueError(f"Unknown live snapshot providers: {unknown}")
-        return cls(**{name: providers[name] for name in required})
+        return cls(**cast(Any, {name: providers[name] for name in required}))
 
 
 def actor_snapshot_from_payload(payload: Mapping[str, object]) -> ActorSnapshot:
@@ -80,10 +80,10 @@ def actor_snapshot_from_payload(payload: Mapping[str, object]) -> ActorSnapshot:
     position_xy = _finite_pair(payload["position_xy"], field_name="position_xy")
     velocity_xy = _finite_pair(payload["velocity_xy"], field_name="velocity_xy")
     try:
-        position_z = float(payload["position_z"])
-        heading = float(payload["heading_rad"])
-        length = float(payload["length_m"])
-        width = float(payload["width_m"])
+        position_z = float(cast(Any, payload["position_z"]))
+        heading = float(cast(Any, payload["heading_rad"]))
+        length = float(cast(Any, payload["length_m"]))
+        width = float(cast(Any, payload["width_m"]))
     except (TypeError, ValueError) as error:
         raise ValueError("Live actor dimensions and pose must be numeric") from error
     if not all(isfinite(value) for value in (position_z, heading, length, width)):
@@ -95,7 +95,7 @@ def actor_snapshot_from_payload(payload: Mapping[str, object]) -> ActorSnapshot:
         width_m=width,
     )
     cap_value = payload.get("configured_speed_cap_mps")
-    cap = None if cap_value is None else float(cap_value)
+    cap = None if cap_value is None else float(cast(Any, cap_value))
     live_lane_id = payload.get("live_lane_id")
     if live_lane_id is not None and (not isinstance(live_lane_id, str) or not live_lane_id):
         raise ValueError("Live actor live_lane_id must be a non-empty string when supplied")

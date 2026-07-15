@@ -6,6 +6,7 @@ from thesis_rl.rulebook.v2.aggregation import aggregate_rulebook_result
 from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
 from thesis_rl.rulebook.v2.memory import merge_cache_deltas, merge_memory_deltas
 from collections.abc import Mapping
+from typing import cast
 
 from thesis_rl.rulebook.v2.registry import DEFAULT_RULEBOOK_V2_REGISTRY, RulebookV2Registry
 from thesis_rl.rulebook.v2.types import CacheDelta, MemoryDelta, RulebookMemory, RuleComponentResult
@@ -21,7 +22,7 @@ def evaluate_monitor_transition(*, memory: RulebookMemory, component_outputs: tu
     progress_deltas = () if progress_output is None else (progress_output,)
     if progress_output is not None:
         results += (progress_output[0],)
-        raw_progress_m = progress_output[0].raw["route_delta_m"]
+        raw_progress_m = cast(float, progress_output[0].raw["route_delta_m"])
         progress_margin = progress_output[0].cost
     memory_deltas = tuple(output[1] for output in component_outputs + progress_deltas if output[1].writes)
     cache_deltas = (pending_cache_delta,) + tuple(output[2] for output in component_outputs + progress_deltas)

@@ -14,7 +14,6 @@ from thesis_rl.rulebook.rules.utils import (
     get_mass,
     get_polygon,
     is_vru,
-    signed_poly_clearance,
     xy,
 )
 from thesis_rl.rulebook.types import RuleEvalInput, RuleResult

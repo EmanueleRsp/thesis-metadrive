@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import fields, replace
+from typing import Any, cast
 
 from thesis_rl.rulebook.v2.geometry.canonical import canonical_geometry_wkb
 from thesis_rl.rulebook.v2.registry import DEFAULT_RULEBOOK_V2_REGISTRY
@@ -88,13 +89,13 @@ def merge_memory_deltas(
             if field_name in updates:
                 raise ValueError(f"Duplicate MemoryDelta writer for field: {field_name}")
             updates[field_name] = value
-    return replace(memory, **updates)
+    return replace(memory, **cast(Any, updates))
 
 
 def merge_cache_deltas(deltas: tuple[CacheDelta, ...]) -> CacheDelta:
     """Merge pending zones after canonical byte-equivalence validation."""
 
-    merged: dict[str, object] = {}
+    merged: dict[str, Any] = {}
     for delta in deltas:
         for zone in delta.new_conflict_zones:
             existing = merged.get(zone.zone_id)
@@ -107,7 +108,7 @@ def merge_cache_deltas(deltas: tuple[CacheDelta, ...]) -> CacheDelta:
                 or existing != zone
             ):
                 raise ValueError(f"Conflicting geometries for conflict zone ID: {zone.zone_id}")
-    return CacheDelta(new_conflict_zones=tuple(merged.values()))
+    return CacheDelta(new_conflict_zones=tuple(cast(Any, merged.values())))
 
 
 def apply_cache_delta(cache: EpisodeCache, delta: CacheDelta) -> EpisodeCache:

@@ -50,7 +50,9 @@ def _track_samples(track: Mapping[str, Any]) -> tuple[OfflineTrackSample, ...]:
 
 def _lane_record(lane_id: str, lane: Mapping[str, Any]) -> RouteLaneRecord:
     points = _array_points(lane.get("polyline"))
-    centerline = RoutePolyline(tuple(tuple(float(x) for x in point) for point in points))
+    centerline = RoutePolyline(
+        tuple((float(point[0]), float(point[1]), float(point[2])) for point in points)
+    )
     polygon_value = lane.get("polygon")
     if polygon_value is not None:
         polygon_points = _array_points(polygon_value)
