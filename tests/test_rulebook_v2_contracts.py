@@ -18,7 +18,7 @@ from thesis_rl.rulebook.v2.context.map_matching import (
     OfflineTrackSample,
     map_match_sdc_track_to_task_route,
 )
-from thesis_rl.rulebook.v2.context.static_adapter import normalize_static_records
+from thesis_rl.rulebook.v2.context.static_adapter import normalize_static_records, validate_reset_contract
 from thesis_rl.rulebook.v2.context.static_sources import StaticRecordAdapter, StaticRecordSources
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
@@ -93,6 +93,7 @@ def test_task_route_eligibility_index_is_deterministic_and_excludes_invalid_reco
     )
     index = build_task_route_eligibility_index((eligible_b, eligible_a))
     assert tuple(index.by_scenario_uid) == ("a", "b")
+    assert index.eligible_scenario_uids == frozenset({"a"})
     assert index.eligible("a").scenario_uid == "a"
     with pytest.raises(ValueError, match="not Rulebook v2 eligible"):
         index.eligible("b")
@@ -184,6 +185,14 @@ def test_static_record_sources_are_strict_and_normalize_source_neutrally():
     assert result.validation_errors == ()
     with pytest.raises(ValueError, match="Missing"):
         StaticRecordSources.from_mapping({})
+
+
+def test_reset_contract_rejects_caps_spawn_overlap_and_unknown_signal():
+    from thesis_rl.rulebook.v2.geometry.footprint import oriented_bounding_box
+    ego = ActorSnapshot("ego", ActorClass.VEHICLE, (0, 0), 0, 0, (0, 0), oriented_bounding_box(center_xy=(0, 0), heading_rad=0, length_m=4, width_m=2), "lane", None)
+    other = ActorSnapshot("other", ActorClass.VEHICLE, (0, 0), 0, 0, (0, 0), oriented_bounding_box(center_xy=(0, 0), heading_rad=0, length_m=2, width_m=1), "lane", None)
+    errors = validate_reset_contract(ego=ego, actors=(other,), signal_states_by_physical_id={"sig": "UNKNOWN"})
+    assert errors == ("ego_speed_cap_invalid", "vehicle_speed_cap_invalid:other", "spawn_overlap:other", "signal_state_unknown:sig")
 
 
 def test_v2_config_rejects_nonconformant_execution_or_order() -> None:

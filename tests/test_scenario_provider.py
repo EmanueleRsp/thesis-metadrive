@@ -115,3 +115,16 @@ def test_fixed_sequence_rejects_invalid_record() -> None:
     invalid = replace(_record(0, "pg"), validation_status="invalid")
     with pytest.raises(ValueError, match="invalid scenarios"):
         FixedSequenceScenarioProvider([invalid])
+
+
+def test_providers_can_filter_to_offline_rulebook_eligible_uids():
+    records = [_record(0, "pg"), _record(1, "pg")]
+    provider = UniformScenarioProvider(
+        records, global_seed=0, source_probabilities={"waymo": 0.0, "pg": 1.0},
+        eligible_scenario_uids={records[1].scenario_uid},
+    )
+    assert provider.sample(split="train", worker_id=0) == records[1]
+    fixed = FixedSequenceScenarioProvider(
+        records, eligible_scenario_uids={records[1].scenario_uid}, repeat=True,
+    )
+    assert fixed.sample(split="train", worker_id=0) == records[1]

@@ -48,7 +48,7 @@ in una successiva revisione della specifica prima del freeze finale.
 | F0 | Allineamento normativo, scope e contratti | `COMPLETATA` | — |
 | F1 | Tipi canonici, configurazione e registry v2 | `COMPLETATA` | F0 |
 | F2 | Primitive geometriche canoniche e 2.5D | `COMPLETATA` | F1 |
-| F3 | Task route, adapter statici e validazione offline | `PRONTA_PER_VERIFICA` | F1, F2 |
+| F3 | Task route, adapter statici e validazione offline | `COMPLETATA` | F1, F2 |
 | F4 | Snapshot live e contact-onset hook | `PRONTA_PER_VERIFICA` | F1 |
 | F5 | Eventi, memoria, cache e zone lifecycle | `PRONTA_PER_VERIFICA` | F2–F4 |
 | F6 | R1 collisione e R2 interazione dinamica | `PRONTA_PER_VERIFICA` | F4, F5 |
@@ -569,7 +569,7 @@ planner non può quindi inserirla nel replay buffer.
 
 ## F3 — Task route, adapter statici e validazione offline
 
-**Stato:** `IN_CORSO`
+**Stato:** `COMPLETATA`
 
 ### Attività
 
@@ -578,27 +578,40 @@ planner non può quindi inserirla nel replay buffer.
       conservare timing o future pose nel record.
 - [x] Implementare estrazione diretta del task route PG tramite builder
       source-neutral di topologia lane.
-- [ ] Costruire adapter PG/Waymo verso lane, map feature, logical boundary,
-      traffic control, crosswalk, priority e roundabout records.
+- [x] Costruire adapter PG/Waymo verso lane, map feature, logical boundary,
+      traffic control e crosswalk; priority/roundabout assenti nelle fixture
+      sono rappresentati esplicitamente come cataloghi vuoti/NA.
 - [x] Implementare conversione offline Waymo sulle fixture ScenarioNet
       vendorizzate: lane centerline/width, task route SDC topology-only,
       map features, crosswalk/road-line e signal control line; lane invalide
       sono escluse tipicamente.
+- [x] Convertire `STOP_SIGN` con lane controllate e control line derivata;
+      control point ambigui/incompatibili sono esclusi offline.
+- [x] Rappresentare esplicitamente l'assenza di `MovementPriorityRecord` nelle
+      fixture PG/Waymo: nessuna precedenza viene inferita dalla geometria.
+- [x] Implementare conversione offline PG su `ScenarioDescription`: lane
+      polygon/centerline, task route SDC topology-only, map features e signal
+      controls tramite lo stesso contratto canonico.
 - [x] Definire contratto source-neutral `StaticRecordSources`/`StaticRecordAdapter`
       per iniettare gli estrattori PG/Waymo senza branch runtime per sorgente.
-- [ ] Riutilizzare dove corretto l'estrazione topologica offline esistente,
+- [x] Riutilizzare dove corretto l'estrazione topologica offline esistente,
       senza usarne le soglie euristiche come primitive runtime.
-- [ ] Implementare validazione route, quote, lane polygon/width, controlli,
-      signal sequences, spawn overlap e configured speed caps.
+- [x] Implementare validazione source-neutral di route, quote, lane
+      polygon/width, controlli, spawn overlap e configured speed caps.
+- [x] Collegare validazione completa delle signal sequences all'artifact
+      sorgente-specifico (lunghezza e stati `UNKNOWN` rifiutati offline).
 - [x] Implementare validazione source-neutral di unicità lane/control group,
       quote finite, control line e record control completi.
 - [x] Implementare artifact di eleggibilità separato dal generico
       `validation_status` del catalogo.
 - [x] Indicizzare l'artifact per scenario UID, versione rulebook, versione
       adapter, hash config geometrica e hash calibrazione.
-- [ ] Aggiornare provider/runtime affinché il pool rulebook v2 includa soltanto
+- [x] Aggiornare provider/runtime affinché il pool rulebook v2 includa soltanto
       record eleggibili.
-- [ ] Produrre report di esclusione per sorgente e causa.
+- [x] Aggiungere filtro opzionale `eligible_scenario_uids` a Uniform/Fixed
+      provider; il pool v2 può essere costruito direttamente dall'indice
+      offline senza fallback.
+- [x] Produrre report di esclusione per sorgente/adapter e causa.
 - [x] Produrre report tipizzato di esclusione per adapter e causa a partire
       dall'indice offline.
 
@@ -623,16 +636,18 @@ planner non può quindi inserirla nel replay buffer.
       osservazione o traiettorie future.
 - [x] Validare al bootstrap completezza e callable-ness dei provider live;
       mapping parziali o con chiavi sconosciute falliscono prima del reset.
-- [ ] Risolvere ID persistenti e classi canoniche degli oggetti MetaDrive.
-- [ ] Catturare pose 3D, velocità, heading, footprint, lane ID e speed cap.
+- [x] Risolvere ID persistenti e classi canoniche degli oggetti MetaDrive tramite
+      payload live obbligatorio (`actor_id` + `actor_class`), senza fallback.
+- [x] Catturare pose 3D, velocità, heading, footprint OBB, lane ID e speed cap.
 - [x] Implementare un buffer episodico thread-safe/control-step-safe per i
       contact onset.
-- [ ] Estendere localmente il callback collisioni vendorizzato preservando il
-      callback MetaDrive originale.
-- [ ] Estrarre actor ID, class, contact point e normale orientata ego -> altro.
-- [ ] Deduplicare per actor ID nel control step senza perdere i contact point.
-- [ ] Rilevare contatti nati e terminati tra due control frame.
-- [ ] Verificare con test differenziale che l'hook non cambi la dinamica.
+- [x] Estendere localmente il callback collisioni vendorizzato preservando il
+      callback MetaDrive originale e il suo return value.
+- [x] Estrarre actor ID, class, contact point e normale unitaria orientata ego -> altro.
+- [x] Deduplicare per actor ID nel control step senza perdere i contact point.
+- [x] Rilevare contatti nati e terminati tra due control frame.
+- [ ] Verificare con test differenziale su simulatori PG/ScenarioNet che l'hook non
+      cambi la dinamica.
 
 ### Criteri di uscita
 
@@ -854,7 +869,7 @@ transizioni.
 |---|---|---|---|---|
 | ISS-001 | `APERTO` | alta | Percentuale di scenari realmente eleggibili non ancora nota | Audit F3 su campione stratificato prima di completare tutte le regole |
 | ISS-002 | `APERTO` | alta | Map-matching del task route può risultare ambiguo su junction/route parallele | Algoritmo deterministico + esclusione tipizzata; discutere solo se l'esclusione è eccessiva |
-| ISS-003 | `APERTO` | media | API Panda3D per normale/contact manifold da verificare sul commit locale | Spike F4 con fixture frontale e normale invertita |
+| ISS-003 | `APERTO` | media | API Panda3D per normale/contact manifold e equivalenza dinamica da verificare su un episodio reale | Contratto/installazione hook F4 completati; eseguire spike differenziale PG/ScenarioNet con fixture frontale e normale invertita |
 | ISS-004 | `APERTO` | media | Qualità di polygon, width e quota differisce fra PG e Waymo | Report validazione per campo e sorgente in F3 |
 | ISS-005 | `APERTO` | media | `MovementKey` può essere ambigua prima della conflict zone | Restare `NOT_APPLICABLE`; misurare frequenza nel pilot |
 | ISS-006 | `APERTO` | media | Costo del continuous SAT su tutti gli attori live non ancora misurato | Benchmark F10 prima di valutare DEF-PERF-001 |
@@ -946,8 +961,19 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F3 | Contratto `StaticRecordSources`/`StaticRecordAdapter` per provider PG/Waymo espliciti e normalizzazione comune | 36 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | F3 | Report tipizzato di eleggibilità/esclusione per adapter e causa | 36 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | F3 | Converter offline Waymo per fixture vendorizzata verso lane/task-route/map/control canonici | 87 test Rulebook v2 passati nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F3 | Converter offline PG source-neutral e test di fail-fast; fixture PG non montata nel container di test | 3 test converter passati, 1 skip per fixture assente, Ruff verde |
+| 2026-07-15 | F3 | Stop-sign statici Waymo/PG: lane controllate, control line e filtro dei punti non risolvibili | 3 test converter passati, 1 skip PG per fixture non montata, Ruff e diff check verdi |
+| 2026-07-15 | F3 | Verifica fixture: nessun campo pairwise priority/junction/roundabout; adapter restituisce catalogo priority vuoto e vehicle-yield resta NOT_APPLICABLE | test Waymo converter passato, Ruff verde |
+| 2026-07-15 | F3 | Validator reset offline per cap ego/veicoli, spawn overlap e signal `UNKNOWN` | 19 test F3 mirati passati, 1 skip PG per fixture non montata, Ruff verde |
+| 2026-07-15 | F3 | Validazione sequenze semaforiche source-specifiche: lunghezza e `LANE_STATE_UNKNOWN` registrati come esclusioni | 19 test F3 mirati passati, 1 skip PG per fixture non montata, Ruff e diff check verdi |
+| 2026-07-15 | F3 | Provider Uniform/Fixed filtrabili per UID eleggibili dell'artifact offline | 27 test F3/provider passati, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F3 | Chiusura fase: converter PG/Waymo, validazione reset/sequenze, artifact/index/report e filtro provider | 89 test Rulebook v2 passati, 1 skip PG per fixture non montata, Ruff e `git diff --check` verdi |
 | 2026-07-15 | Regressione | Verifica suite completa repository dopo wiring registry | 385 passati, 8 falliti fuori dal perimetro v2; ISS-011 aperto e dettagliato sopra |
 | 2026-07-15 | F8/F9 | Invarianti di aggregazione, merge transazionale, wrapper monitor-only, contratto `RulebookV2Adapter` e wiring runtime v2 esplicito | 79 test mirati Rulebook/runtime nel container, Ruff e `git diff --check` verdi |
+| 2026-07-15 | F4 | Contratti live per actor snapshot/OBB, contact-manifold normalizzata e wrapper callback vendor-preserving; transizioni contatto born/terminated/persistent | 93 test Rulebook v2 passati, 1 skip PG per fixture non montata, Ruff e `git diff --check` verdi; resta il test differenziale con simulatore reale |
+| 2026-07-15 | F4 | Hook installabile sul confine `setContactAddedCallback`, callback vendor e return value preservati; test di ordine e boundary fake | 94 test Rulebook v2 passati, 1 skip PG per fixture non montata, Ruff e `git diff --check` verdi; resta il test differenziale PG/ScenarioNet |
+| 2026-07-15 | F4 | Regressione v1/reward/wiring dopo gli export e il collision hook | 40 test mirati passati (evaluator v1, reward manager/wrapper, runtime wiring, contratti v2); reward Gymnasium invariato |
+| 2026-07-15 | F4/F3 | Corretto glob ricorsivo della fixture PG e irrigiditi gli ID actor/contact (nessuna coercizione silenziosa) | Suite live/snapshot/PG: 11 passati; suite Rulebook v2 cumulativa: 95 passati; Ruff e diff check verdi |
 
 ---
 

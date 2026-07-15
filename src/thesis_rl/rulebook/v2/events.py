@@ -19,6 +19,35 @@ class ZoneTransitionEvents:
     exited: bool
 
 
+@dataclass(frozen=True, slots=True)
+class ContactSetTransition:
+    """Birth/termination partition for two consecutive control snapshots."""
+
+    born_actor_ids: frozenset[str]
+    terminated_actor_ids: frozenset[str]
+    persistent_actor_ids: frozenset[str]
+
+
+def derive_contact_transition(
+    previous_active_ids: frozenset[str],
+    current_active_ids: frozenset[str],
+) -> ContactSetTransition:
+    """Derive contact births and terminations without relying on crash flags."""
+
+    previous = frozenset(previous_active_ids)
+    current = frozenset(current_active_ids)
+    if any(
+        not isinstance(actor_id, str) or not actor_id
+        for actor_id in (*previous, *current)
+    ):
+        raise ValueError("Active contact IDs must be non-empty")
+    return ContactSetTransition(
+        born_actor_ids=current - previous,
+        terminated_actor_ids=previous - current,
+        persistent_actor_ids=previous & current,
+    )
+
+
 def detect_zone_transition(
     *,
     pre_ego_footprint: BaseGeometry,

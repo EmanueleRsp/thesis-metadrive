@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from shapely.geometry import Polygon
 
-from thesis_rl.rulebook.v2 import ActorClass, ContactOnsetBuffer
+from thesis_rl.rulebook.v2 import ActorClass, ContactOnsetBuffer, derive_contact_transition
 from thesis_rl.rulebook.v2.context.snapshotter import capture_env_snapshot
 from thesis_rl.rulebook.v2.types import ActorSnapshot, ContactOnsetRecord
 
@@ -56,3 +56,17 @@ def test_contact_buffer_preserves_points_and_drains_atomically() -> None:
     drained = buffer.drain()
     assert len(drained) == 2
     assert buffer.drain() == ()
+
+
+def test_contact_transition_reports_birth_termination_and_persistence() -> None:
+    transition = derive_contact_transition(
+        frozenset({"persistent", "terminated"}),
+        frozenset({"persistent", "born"}),
+    )
+    assert transition.born_actor_ids == frozenset({"born"})
+    assert transition.terminated_actor_ids == frozenset({"terminated"})
+    assert transition.persistent_actor_ids == frozenset({"persistent"})
+    with pytest.raises(ValueError, match="non-empty"):
+        derive_contact_transition(frozenset({""}), frozenset())
+    with pytest.raises(ValueError, match="non-empty"):
+        derive_contact_transition(frozenset({None}), frozenset())  # type: ignore[arg-type]

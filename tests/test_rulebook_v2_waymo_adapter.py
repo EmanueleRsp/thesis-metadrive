@@ -19,6 +19,8 @@ def test_bundled_waymo_fixture_converts_to_canonical_static_records():
     assert result.route_lanes
     assert result.scenario_uid == "waymo-fixture"
     assert not any(error.startswith("task_route_lane_missing") for error in result.validation_errors)
+    assert any(control.control_type.value == "stop" for control in result.traffic_controls)
+    assert result.movement_priority_records == ()
 
 
 def test_waymo_adapter_fails_fast_without_lane_geometry():

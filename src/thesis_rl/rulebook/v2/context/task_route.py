@@ -45,6 +45,11 @@ class TaskRouteEligibilityIndex:
     def by_scenario_uid(self) -> Mapping[str, TaskRouteEligibility]:
         return {record.scenario_uid: record for record in self.records}
 
+    @property
+    def eligible_scenario_uids(self) -> frozenset[str]:
+        """UID set suitable for constructing a rulebook training pool."""
+        return frozenset(record.scenario_uid for record in self.records if record.rulebook_eligible)
+
     def eligible(self, scenario_uid: str) -> TaskRouteEligibility:
         try:
             record = self.by_scenario_uid[scenario_uid]

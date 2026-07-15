@@ -24,9 +24,12 @@ class ScenarioProvider(ABC):
         raise NotImplementedError
 
 
-def _valid_records(records: Sequence[ScenarioRecord]) -> tuple[ScenarioRecord, ...]:
+def _valid_records(records: Sequence[ScenarioRecord], eligible_scenario_uids: Collection[str] | None = None) -> tuple[ScenarioRecord, ...]:
+    eligible = None if eligible_scenario_uids is None else {str(value) for value in eligible_scenario_uids}
     return tuple(
-        record for record in records if record.validation_status in {"valid", "warning"}
+        record for record in records
+        if record.validation_status in {"valid", "warning"}
+        and (eligible is None or record.scenario_uid in eligible)
     )
 
 
@@ -40,10 +43,11 @@ class UniformScenarioProvider(ScenarioProvider):
         strict: bool = True,
         allow_fallback: bool = False,
         default_arm: str | None = None,
+        eligible_scenario_uids: Collection[str] | None = None,
     ) -> None:
         if not strict or allow_fallback:
             raise ValueError("ScenarioNet v1 provider requires strict=true and allow_fallback=false")
-        self._records = _valid_records(records)
+        self._records = _valid_records(records, eligible_scenario_uids)
         if not self._records:
             raise ValueError("provider requires at least one valid scenario")
         probabilities = dict(source_probabilities or {"waymo": 0.5, "pg": 0.5})
@@ -138,9 +142,10 @@ class FixedSequenceScenarioProvider(ScenarioProvider):
         *,
         repeat: bool = False,
         default_arm: str | None = None,
+        eligible_scenario_uids: Collection[str] | None = None,
     ) -> None:
-        self._records = _valid_records(records)
-        if len(self._records) != len(records):
+        self._records = _valid_records(records, eligible_scenario_uids)
+        if eligible_scenario_uids is None and len(self._records) != len(records):
             raise ValueError("fixed sequence contains invalid scenarios")
         if not self._records:
             raise ValueError("fixed sequence cannot be empty")

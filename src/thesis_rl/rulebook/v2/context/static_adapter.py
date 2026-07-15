@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
+from typing import Mapping
 from types import MappingProxyType
 
 from thesis_rl.rulebook.v2.geometry.canonical import canonicalize_geometry, stable_geometry_id
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
-from thesis_rl.rulebook.v2.types import MapFeatureRecord, TaskRouteRecord, TrafficControlRecord
+from thesis_rl.rulebook.v2.types import MapFeatureRecord, MovementPriorityRecord, TaskRouteRecord, TrafficControlRecord
+from thesis_rl.rulebook.v2.types import ActorClass, ActorSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,10 +20,36 @@ class StaticAdapterResult:
     route_lanes: tuple[RouteLaneRecord, ...]
     map_features: dict[str, MapFeatureRecord]
     traffic_controls: tuple[TrafficControlRecord, ...]
+    movement_priority_records: tuple[MovementPriorityRecord, ...] = ()
     validation_errors: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "map_features", MappingProxyType(dict(self.map_features)))
+
+
+def validate_reset_contract(
+    *,
+    ego: ActorSnapshot,
+    actors: tuple[ActorSnapshot, ...],
+    signal_states_by_physical_id: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
+    """Validate offline reset invariants required before rulebook training."""
+    errors: list[str] = []
+    if ego.configured_speed_cap_mps is None or ego.configured_speed_cap_mps <= 0.0:
+        errors.append("ego_speed_cap_invalid")
+    for actor in actors:
+        if actor.actor_class == ActorClass.VEHICLE and (
+            actor.configured_speed_cap_mps is None or actor.configured_speed_cap_mps <= 0.0
+        ):
+            errors.append(f"vehicle_speed_cap_invalid:{actor.actor_id}")
+        if ego.footprint.intersection(actor.footprint).area > 1.0e-6:
+            errors.append(f"spawn_overlap:{actor.actor_id}")
+    unknown = sorted(
+        physical_id for physical_id, state in (signal_states_by_physical_id or {}).items()
+        if state in {"UNKNOWN", "LANE_STATE_UNKNOWN"}
+    )
+    errors.extend(f"signal_state_unknown:{physical_id}" for physical_id in unknown)
+    return tuple(errors)
 
 
 def normalize_static_records(
@@ -31,6 +59,7 @@ def normalize_static_records(
     route_lanes: tuple[RouteLaneRecord, ...],
     map_features: tuple[MapFeatureRecord, ...],
     traffic_controls: tuple[TrafficControlRecord, ...],
+    movement_priority_records: tuple[MovementPriorityRecord, ...] = (),
 ) -> StaticAdapterResult:
     """Canonicalize adapter output and return typed validation errors, never fallbacks."""
 
@@ -86,5 +115,6 @@ def normalize_static_records(
         route_lanes=route_lanes,
         map_features=normalized_features,
         traffic_controls=traffic_controls,
+        movement_priority_records=movement_priority_records,
         validation_errors=tuple(errors),
     )
