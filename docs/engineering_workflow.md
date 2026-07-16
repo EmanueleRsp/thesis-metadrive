@@ -120,3 +120,16 @@ code and tests, mandatory and regression tests pass, applicable quality and smok
 checks are recorded, documentation matches behavior, deviations are approved,
 limitations are explicit, the ExecPlan matches the final implementation, the
 index is current, and the diff has been reviewed.
+
+## ChatGPT Project Source Sync
+
+The separate ChatGPT project uses these repository files as uploaded sources:
+
+- `project_index.md`;
+- `engineering_workflow.md`;
+- `templates/specification_template.md`.
+
+Every final Codex report must identify exactly which of these sources changed and
+must be replaced in the ChatGPT project. If none changed, the report must say that
+no source update is required. This check is part of task closure and must not be
+delegated to the user.
