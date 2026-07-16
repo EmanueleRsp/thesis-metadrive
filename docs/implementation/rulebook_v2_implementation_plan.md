@@ -3,7 +3,7 @@
 ## Scopo
 
 Questo documento traduce
-[`rulebook_v2_spec.md`](../specifications/rulebook_v2_spec.md) in un piano operativo e mantiene lo
+[`rulebook_v4.6_specification.md`](../specifications/rulebook_v4.6_specification.md) in un piano operativo e mantiene lo
 stato di avanzamento dell'implementazione.
 
 La specifica resta la fonte normativa per formule, dominio delle regole,

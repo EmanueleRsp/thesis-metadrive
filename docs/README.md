@@ -23,9 +23,9 @@ run instructions. Start specification-driven work with the
 
 ## Authoritative Specifications
 
-- [Rulebook v2, version 4.6](specifications/rulebook_v2_spec.md)
-- [Automatic curriculum learning](specifications/curriculum_learning_specification.md)
-- [ScenarioNet integration v1](specifications/scenarionet_integration_spec_v1.md)
+- [Rulebook v2, version 4.6](specifications/rulebook_v4.6_specification.md)
+- [Automatic curriculum learning v1](specifications/automatic_curriculum_learning_v1_specification.md)
+- [ScenarioNet integration v1](specifications/scenarionet_integration_v1_specification.md)
 
 The semantic observation v1.1 specification has not yet been supplied. The
 authority index is definitive when this summary and the registry differ.

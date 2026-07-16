@@ -1,6 +1,6 @@
 # Curriculum Learning Specification for MetaDrive Autonomous Driving RL
 
-**Version:** not declared in the source document  
+**Version:** v1  
 **Status:** user-approved authoritative specification  
 **Approval confirmed:** 2026-07-16  
 **Scope:** scenario-level automatic curriculum learning for MetaDrive-based autonomous driving experiments  

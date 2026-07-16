@@ -13,9 +13,9 @@ Before implementation:
 
 Current authoritative documents:
 
-- `rulebook_v2_spec.md`, version `4.6-final-implementation-complete`;
-- `curriculum_learning_specification.md`, currently unversioned;
-- `scenarionet_integration_spec_v1.md`, version v1.
+- `rulebook_v4.6_specification.md`, version `4.6-final-implementation-complete`;
+- `automatic_curriculum_learning_v1_specification.md`, version v1;
+- `scenarionet_integration_v1_specification.md`, version v1.
 
 The semantic observation v1.1 specification has not yet been supplied. Do not
 infer its contract from the implementation.
