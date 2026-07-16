@@ -27,15 +27,17 @@ run instructions. Start specification-driven work with the
 - [Rulebook v2, version 4.6](specifications/rulebook_v4.6_specification.md)
 - [Automatic curriculum learning v1](specifications/automatic_curriculum_learning_v1_specification.md)
 - [ScenarioNet integration v1.1](specifications/scenarionet_integration_spec_v1.1.md)
+- [Semantic observation v1.1](specifications/observation_v1.1_specification.md)
+- [Encoder architecture v1.0](specifications/encoder_v1.0_specification.md)
 
-The semantic observation v1.1 specification has not yet been supplied. The
-authority index is definitive when this summary and the registry differ.
+The authority index is definitive when this summary and the registry differ.
 
 ## Implementation Plans
 
 - [Rulebook v2](implementation/rulebook_v2_implementation_plan.md)
 - [Scenario ACL](implementation/scenario_acl_implementation_plan.md)
 - [ScenarioNet integration](implementation/scenarionet_integration_implementation_plan.md)
+- [Semantic observation and encoder v1](implementation/semantic_observation_encoder_v1_exec_plan.md)
 - [Documentation restructure](implementation/repository_documentation_restructure_exec_plan.md)
 - [Repository quality commands](implementation/repository_quality_commands_exec_plan.md)
 

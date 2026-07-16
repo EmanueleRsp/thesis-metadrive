@@ -15,12 +15,13 @@ Current authoritative documents:
 
 - `rulebook_v4.6_specification.md`, version `4.6-final-implementation-complete`;
 - `automatic_curriculum_learning_v1_specification.md`, version v1;
-- `scenarionet_integration_spec_v1.1.md`, version 1.1.
+- `scenarionet_integration_spec_v1.1.md`, version 1.1;
+- `observation_v1.1_specification.md`, ID `OBS-V1.1`, version
+  `1.1-final-implementation-complete`.
+- `encoder_v1.0_specification.md`, ID `ENC-V1.0`, version
+  `1.0-final-implementation-complete`.
 
 `scenarionet_integration_v1_specification.md` is retained as a superseded
 historical record.
-
-The semantic observation v1.1 specification has not yet been supplied. Do not
-infer its contract from the implementation.
 
 Use `../templates/specification_template.md` for new specifications.
