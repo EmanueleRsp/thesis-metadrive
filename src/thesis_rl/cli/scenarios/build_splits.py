@@ -229,6 +229,41 @@ def main() -> int:
         if selection_mode == "balanced_arm_source"
         else legacy_total_arm_deficit
     )
+    selection_report = (
+        {
+            "requested_by_split_source_arm": {
+                split: {
+                    arm: {source: values["sources"][source]["target"] for source in SOURCES}
+                    for arm, values in balance_diagnostics[split]["arms"].items()
+                }
+                for split in SPLITS
+            },
+            "selected_by_split_source_arm": {
+                split: {
+                    arm: {source: values["sources"][source]["actual"] for source in SOURCES}
+                    for arm, values in balance_diagnostics[split]["arms"].items()
+                }
+                for split in SPLITS
+            },
+            "deficits_by_split_source_arm": {
+                split: {
+                    arm: {source: values["sources"][source]["deficit"] for source in SOURCES}
+                    for arm, values in balance_diagnostics[split]["arms"].items()
+                }
+                for split in SPLITS
+            },
+            "source_compensation_by_split_arm": {
+                split: {
+                    arm: values["source_compensation_from_equal_share"]
+                    for arm, values in balance_diagnostics[split]["arms"].items()
+                }
+                for split in SPLITS
+            },
+            "total_arm_deficit": total_arm_deficit,
+        }
+        if balance_diagnostics
+        else {}
+    )
     manifest = validate_split_manifest(
         {
             "split_seed": int(args.split_seed),
@@ -275,6 +310,7 @@ def main() -> int:
                 "arm_minimums": arm_minimums,
                 "arm_diagnostics": arm_diagnostics,
                 "arm_source_balance_diagnostics": balance_diagnostics,
+                "selection_report": selection_report,
                 "legacy_total_arm_deficit": legacy_total_arm_deficit,
                 "balance_total_arm_deficit": balance_total_arm_deficit,
                 "total_arm_deficit": total_arm_deficit,
@@ -304,6 +340,7 @@ def main() -> int:
         "population_counts": population_counts,
         "arm_diagnostics": arm_diagnostics,
         "arm_source_balance_diagnostics": balance_diagnostics,
+        "selection_report": selection_report,
         "legacy_total_arm_deficit": legacy_total_arm_deficit,
         "balance_total_arm_deficit": balance_total_arm_deficit,
         "total_arm_deficit": total_arm_deficit,

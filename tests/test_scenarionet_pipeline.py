@@ -516,6 +516,7 @@ def test_arm_balanced_split_falls_back_to_available_source() -> None:
     assert a4["actual"] == 2
     assert a4["sources"]["waymo"]["actual"] == 2
     assert a4["sources"]["pg"]["actual"] == 0
+    assert a4["source_compensation_from_equal_share"] == {"waymo": 1.0, "pg": -1.0}
 
 
 def test_arm_balancing_trims_pg_before_waymo() -> None:

@@ -807,11 +807,16 @@ def arm_source_balance_diagnostics(
                     "deficit": max(0, target - actual),
                 }
             arm_target = split_arm_targets[split][arm]
+            ideal_per_source = arm_target / len(SOURCES)
             split_payload["arms"][arm] = {
                 "target": arm_target,
                 "actual": actual_total,
                 "deficit": max(0, arm_target - actual_total),
                 "sources": source_payload,
+                "source_compensation_from_equal_share": {
+                    source: source_payload[source]["actual"] - ideal_per_source
+                    for source in SOURCES
+                },
             }
         diagnostics[split] = split_payload
     return diagnostics

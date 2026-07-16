@@ -210,6 +210,10 @@ external credentials and must not overwrite frozen data.
   group, source-total, and seed-derived arm-total constraints. Larger pools
   retain deterministic greedy selection plus strict pre-freeze rejection; this
   prevents a false success while the scalable solver remains M2 work.
+- Split reports and manifests now contain the requested, selected, and
+  deficit `split × arm × source` matrices plus an explicit compensation from
+  equal within-arm source share. Structural A4 Waymo-only and empirically rare
+  Waymo A0 cases are therefore auditable rather than treated as failures.
 - `docker compose run --rm dev uv run --no-sync python -m pytest -q
   tests/test_scenario_records.py tests/test_scenario_catalog.py` passed: 12
   tests.
@@ -260,6 +264,7 @@ No deviations identified.
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/envs/factory.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py tests/test_scenario_provider.py` | PASS | 2026-07-16 | 25 passed; verifies the Rulebook-eligibility runtime boundary and provider regressions |
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 153 passed, 2 skipped in 11.73 s; skips require an externally prepared ScenarioNet runtime dataset |
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/pipeline.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-16 | 17 passed; covers exact small-pool grouped selection and strict split-contract regressions |
+| `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/pipeline.py src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py tests/test_scenario_manifests.py` | PASS | 2026-07-16 | 22 passed; verifies source×arm compensation diagnostics and split-manifest compatibility |
 | Focused pytest command | NOT_RUN | 2026-07-16 | Host environment lacks `uv` and `python`; run in provisioned container |
 | Full real-data acquisition | NOT_RUN | 2026-07-16 | Requires credentials and can mutate dataset artifacts |
 
