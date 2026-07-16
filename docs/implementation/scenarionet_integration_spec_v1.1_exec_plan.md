@@ -214,6 +214,11 @@ external credentials and must not overwrite frozen data.
   deficit `split × arm × source` matrices plus an explicit compensation from
   equal within-arm source share. Structural A4 Waymo-only and empirically rare
   Waymo A0 cases are therefore auditable rather than treated as failures.
+- `waymo_pool_status` can now consume the Rulebook-annotated catalog and
+  require `rulebook_eligible=true` in its accounting. This closes the
+  testable status interface needed by acquisition; wiring the downloader to
+  re-run catalog/Rulebook evaluation under one cumulative 128-shard cap remains
+  open.
 - `docker compose run --rm dev uv run --no-sync python -m pytest -q
   tests/test_scenario_records.py tests/test_scenario_catalog.py` passed: 12
   tests.
@@ -265,6 +270,7 @@ No deviations identified.
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 153 passed, 2 skipped in 11.73 s; skips require an externally prepared ScenarioNet runtime dataset |
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/pipeline.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-16 | 17 passed; covers exact small-pool grouped selection and strict split-contract regressions |
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/pipeline.py src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py tests/test_scenario_manifests.py` | PASS | 2026-07-16 | 22 passed; verifies source×arm compensation diagnostics and split-manifest compatibility |
+| `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/waymo_pool.py src/thesis_rl/cli/scenarios/waymo_pool_status.py tests/test_waymo_pool.py && ruff check ... && python -m pytest -q tests/test_waymo_pool.py` | PASS | 2026-07-16 | 8 passed; verifies optional Rulebook-required Waymo feasibility from an annotated catalog |
 | Focused pytest command | NOT_RUN | 2026-07-16 | Host environment lacks `uv` and `python`; run in provisioned container |
 | Full real-data acquisition | NOT_RUN | 2026-07-16 | Requires credentials and can mutate dataset artifacts |
 

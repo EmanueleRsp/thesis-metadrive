@@ -11,7 +11,7 @@ from typing import Sequence
 from thesis_rl.scenarios.arms import ARMS
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 
-WAYMO_POOL_POLICY_VERSION = "waymo_pool_v4"
+WAYMO_POOL_POLICY_VERSION = "waymo_pool_v5"
 
 
 @dataclass(frozen=True)
@@ -44,11 +44,13 @@ def is_waymo_pool_eligible(
     entry: ScenarioCatalogEntry,
     *,
     allowed_signal_reliabilities: Sequence[str],
+    require_rulebook_eligible: bool = False,
 ) -> bool:
     allowed = frozenset(str(value) for value in allowed_signal_reliabilities)
     return (
         entry.record.validation_status in {"valid", "warning"}
         and entry.features.signal_reliability in allowed
+        and (not require_rulebook_eligible or entry.record.rulebook_eligible is True)
     )
 
 
@@ -58,6 +60,7 @@ def summarize_waymo_pool(
     allowed_signal_reliabilities: Sequence[str],
     required: int,
     required_by_arm: dict[str, int] | None = None,
+    require_rulebook_eligible: bool = False,
 ) -> WaymoPoolStatus:
     """Summarize candidates without assigning train/validation/test splits."""
 
@@ -67,8 +70,7 @@ def summarize_waymo_pool(
     if not allowed:
         raise ValueError("allowed signal reliabilities must not be empty")
     normalized_required_by_arm = {
-        str(arm): int(count)
-        for arm, count in (required_by_arm or {}).items()
+        str(arm): int(count) for arm, count in (required_by_arm or {}).items()
     }
     unknown_arms = set(normalized_required_by_arm) - set(ARMS)
     if unknown_arms:
@@ -86,6 +88,7 @@ def summarize_waymo_pool(
         if is_waymo_pool_eligible(
             entry,
             allowed_signal_reliabilities=allowed,
+            require_rulebook_eligible=require_rulebook_eligible,
         )
     ]
     signal_counts = Counter(entry.features.signal_reliability for entry in entries)

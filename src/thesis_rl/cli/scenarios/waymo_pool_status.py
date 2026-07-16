@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from thesis_rl.scenarios.arms import ARMS
+from thesis_rl.scenarios.catalog import read_scenario_catalog
 from thesis_rl.scenarios.waymo import load_converted_waymo_entries
 from thesis_rl.scenarios.waymo_pool import (
     WAYMO_POOL_POLICY_VERSION,
@@ -23,6 +24,7 @@ def _cached_payload(
     required: int,
     required_by_arm: dict[str, int],
     allowed: list[str],
+    require_rulebook_eligible: bool,
 ) -> dict[str, Any] | None:
     if not report.is_file():
         return None
@@ -35,6 +37,7 @@ def _cached_payload(
         "required": required,
         "required_by_arm": required_by_arm,
         "allowed_signal_reliabilities": sorted(allowed),
+        "require_rulebook_eligible": require_rulebook_eligible,
     }
     if any(payload.get(key) != value for key, value in expected.items()):
         return None
@@ -59,7 +62,11 @@ def _parse_required_arms(values: list[str] | None) -> dict[str, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database", required=True)
+    parser.add_argument("--database")
+    parser.add_argument(
+        "--catalog",
+        help="Optional Rulebook-annotated catalog used instead of loading the database.",
+    )
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--required", type=int, required=True)
     parser.add_argument(
@@ -76,12 +83,19 @@ def main() -> int:
     parser.add_argument("--report")
     parser.add_argument("--shards-output")
     parser.add_argument("--reuse-report-if-current", action="store_true")
+    parser.add_argument("--require-rulebook-eligible", action="store_true")
     parser.add_argument("--format", choices=("json", "env"), default="json")
     args = parser.parse_args()
 
-    database = Path(args.database).expanduser().resolve()
+    if not args.database and not args.catalog:
+        parser.error("one of --database or --catalog is required")
+    database = Path(args.database).expanduser().resolve() if args.database else None
     report = Path(args.report).expanduser() if args.report else None
-    database_fingerprint = fingerprint_waymo_database(database)
+    database_fingerprint = (
+        fingerprint_waymo_database(database)
+        if database is not None
+        else f"catalog:{Path(args.catalog).expanduser().resolve().stat().st_mtime_ns}"
+    )
     required_by_arm = _parse_required_arms(args.required_arm)
     payload = (
         _cached_payload(
@@ -90,12 +104,19 @@ def main() -> int:
             required=args.required,
             required_by_arm=required_by_arm,
             allowed=args.allowed,
+            require_rulebook_eligible=bool(args.require_rulebook_eligible),
         )
         if args.reuse_report_if_current and report is not None
         else None
     )
     if payload is None:
-        if database.is_dir() and any(database.rglob("sd_*.pkl")):
+        if args.catalog:
+            entries = tuple(
+                entry
+                for entry in read_scenario_catalog(args.catalog).entries
+                if entry.record.source == "waymo"
+            )
+        elif database is not None and database.is_dir() and any(database.rglob("sd_*.pkl")):
             entries, _ = load_converted_waymo_entries(
                 database,
                 data_root=Path(args.data_root).expanduser().resolve(),
@@ -107,11 +128,13 @@ def main() -> int:
             allowed_signal_reliabilities=args.allowed,
             required=args.required,
             required_by_arm=required_by_arm,
+            require_rulebook_eligible=bool(args.require_rulebook_eligible),
         )
         payload = {
             "policy_version": WAYMO_POOL_POLICY_VERSION,
             "database_fingerprint": database_fingerprint,
             "allowed_signal_reliabilities": sorted(args.allowed),
+            "require_rulebook_eligible": bool(args.require_rulebook_eligible),
             "total": status.total,
             "eligible": status.eligible,
             "required": status.required,
@@ -143,14 +166,8 @@ def main() -> int:
         print(f"SCENARIONET_WAYMO_ELIGIBLE_DEFICIT\t{payload['deficit']}")
         for arm in ARMS:
             arm_key = arm.upper()
-            print(
-                f"SCENARIONET_WAYMO_ELIGIBLE_{arm_key}\t"
-                f"{payload['eligible_by_arm'].get(arm, 0)}"
-            )
-            print(
-                f"SCENARIONET_WAYMO_DEFICIT_{arm_key}\t"
-                f"{payload['arm_deficits'].get(arm, 0)}"
-            )
+            print(f"SCENARIONET_WAYMO_ELIGIBLE_{arm_key}\t{payload['eligible_by_arm'].get(arm, 0)}")
+            print(f"SCENARIONET_WAYMO_DEFICIT_{arm_key}\t{payload['arm_deficits'].get(arm, 0)}")
         complete = "true" if payload["complete"] else "false"
         print(f"SCENARIONET_WAYMO_POOL_COMPLETE\t{complete}")
     else:
