@@ -815,6 +815,8 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Eseguire smoke deterministici su fixture PG e Waymo.
 - [x] Eseguire pilot su campione stratificato per sorgente/topologia.
 - [x] Misurare eleggibilità e cause di esclusione sul campione pilot.
+- [x] Integrare il filtro statico Rulebook v2 prima della costruzione degli
+      split ScenarioNet e delle runtime view.
 - [ ] Misurare costo runtime del monitor per step.
 - [x] Verificare assenza di future-track access nel monitor online.
 - [x] Verificare equivalenza geometrica e ID fra reset ripetuti tramite test
@@ -879,7 +881,7 @@ transizioni.
 
 | ID | Stato | Severità | Problema/rischio | Azione proposta |
 |---|---|---|---|---|
-| ISS-001 | `APERTO` | alta | Pilot finale hash-validato su 10 PG + 10 Waymo: 13 eleggibili (65%) e 7 esclusi tipicamente, senza eccezioni; la percentuale sull'intero pool e il reset smoke restano da produrre | Costruire l'eligibility artifact sull'intero catalogo e completare il reset smoke; il pilot campionato è evidenza, non l'indice finale |
+| ISS-001 | `APERTO` | alta | Pilot finale hash-validato su 10 PG + 10 Waymo: 13 eleggibili (65%) e 7 esclusi tipicamente, senza eccezioni; il filtro ora è integrato a monte degli split ma l'artifact sull'intero catalogo e il reset smoke restano da produrre | Eseguire `make rulebook-v2-filter-catalog` o l'intera pipeline e completare il reset smoke; il pilot campionato resta soltanto evidenza preliminare |
 | ISS-002 | `RISOLTO` | alta | Le ambiguità PG erano campioni singoli sui confini canonici di lane consecutive; quattro Waymo hanno invece gap/non copertura reale della task route | Risoluzione deterministica soltanto per transizioni contigue confermate dai campioni adiacenti; route non univoche escluse con `task_route_lane_association_ambiguous_or_unavailable`, senza nearest-lane fallback |
 | ISS-003 | `RISOLTO` | media | API Panda3D per callback di contatto e installazione hook verificati sul commit locale | Test differenziale reale ScenarioEnv/Waymo con seed/azioni identici: osservazioni, reward e terminazioni invariati |
 | ISS-004 | `APERTO` | media | Qualità di polygon, width e quota differisce fra PG e Waymo; il pilot ha trovato due `ROAD_EDGE_BOUNDARY` Waymo a punto singolo nello stesso scenario | Mantenere esclusione tipizzata `invalid_map_feature_geometry`; misurare la frequenza sull'intero catalogo prima di valutare una regola di pertinenza più selettiva |
@@ -1021,6 +1023,8 @@ Per ogni fase completata aggiungere:
 | 2026-07-16 | F10/ISS-011/012 | Allineati gli smoke alla catalog/runtime ufficiale coerente e sanate le annotazioni v2 | `pytest -q`: 432 passati, 0 skipped; `ruff check src tests`: passato; `mypy --ignore-missing-imports src/thesis_rl/rulebook/v2`: success su 40 file; senza ignore restano 22 errori esclusivamente di stub Shapely/Panda3D; `git diff --check`: passato |
 | 2026-07-16 | F10/ISS-001/002/004 | Correzione pilot reale: transizioni PG al boundary risolte solo con continuità canonica; route Waymo non univoche, geometrie degeneri e segnali pertinenti `UNKNOWN` diventano esclusioni tipizzate; segnali non raggiungibili non escludono | Pilot finale hash-validato: 13/20 eleggibili, 7 esclusi, 0 `adapter_exception`; cause: 4 route non map-matchabili, 1 scenario con due boundary a punto singolo, 2 scenari con signal `UNKNOWN` pertinente; mean 0.636 s, p95 lower 2.219 s |
 | 2026-07-16 | Regressione/F10 | Verifica cumulativa dopo i fix adapter | 28 test mirati passati; `make rulebook-v2-check`: 117 passati, Ruff e diff check verdi; suite completa: 437 passati in 28.56 s |
+| 2026-07-16 | F10 | Filtro Rulebook v2 integrato prima dello split ScenarioNet | Nuova CLI filtra il catalogo grezzo, salva `catalog_eligibility.json` con esiti/hash/cause e passa soltanto il catalogo eleggibile a split e runtime view; 4 test dedicati e 38 test pipeline/v2 mirati passati; esecuzione sull'intero catalogo resta da effettuare |
+| 2026-07-16 | F10 | Verifica integrazione filtro a monte | `pytest -q` completo terminato con successo; Ruff sui file aggiunti/modificati passato; `git diff --check` pulito. L'esecuzione sul catalogo ScenarioNet completo resta un'attività dati separata e produrrà l'artifact di audit definitivo. |
 
 ---
 

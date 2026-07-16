@@ -1,4 +1,4 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu rulebook-v2-init rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu rulebook-v2-init rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
 
 RULEBOOK_V2_DATA_ROOT ?= data/scenarionet
 RULEBOOK_V2_CONTAINER_DATA_ROOT ?= /workspace/data/scenarionet
@@ -7,11 +7,17 @@ RULEBOOK_V2_TRIALS ?= $(RULEBOOK_V2_DATA_ROOT)/rulebook_v2/braking_trials.json
 RULEBOOK_V2_CALIBRATION ?= $(RULEBOOK_V2_DATA_ROOT)/rulebook_v2/calibration_b_e.json
 RULEBOOK_V2_PILOT_REPORT ?= $(RULEBOOK_V2_DATA_ROOT)/rulebook_v2/pilot_final.json
 RULEBOOK_V2_PILOT_PRELIMINARY ?= $(RULEBOOK_V2_DATA_ROOT)/rulebook_v2/pilot_offline.json
+RULEBOOK_V2_RAW_CATALOG ?= $(RULEBOOK_V2_DATA_ROOT)/catalog/scenario_catalog_raw.parquet
+RULEBOOK_V2_FILTERED_CATALOG ?= $(RULEBOOK_V2_DATA_ROOT)/catalog/scenario_catalog_rulebook_v2.parquet
+RULEBOOK_V2_ELIGIBILITY ?= $(RULEBOOK_V2_DATA_ROOT)/rulebook_v2/catalog_eligibility.json
 RULEBOOK_V2_EGO_CONFIG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/ego_config.json
 RULEBOOK_V2_TRIALS_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/braking_trials.json
 RULEBOOK_V2_CALIBRATION_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/calibration_b_e.json
 RULEBOOK_V2_PILOT_REPORT_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/pilot_final.json
 RULEBOOK_V2_PILOT_PRELIMINARY_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/pilot_offline.json
+RULEBOOK_V2_RAW_CATALOG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_raw.parquet
+RULEBOOK_V2_FILTERED_CATALOG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_rulebook_v2.parquet
+RULEBOOK_V2_ELIGIBILITY_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/catalog_eligibility.json
 
 rulebook-v2-init:
 	mkdir -p "$(RULEBOOK_V2_DATA_ROOT)/rulebook_v2"
@@ -37,6 +43,19 @@ rulebook-v2-validate-calibration:
 	@test -f "$(RULEBOOK_V2_CALIBRATION)" || (echo "Missing $(RULEBOOK_V2_CALIBRATION): run make rulebook-v2-calibrate" >&2; exit 2)
 	@ego_hash=$$(docker compose run --rm dev uv run --no-sync python -c 'import hashlib,json; from pathlib import Path; p=Path("$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)"); print(hashlib.sha256(json.dumps(json.loads(p.read_text()),sort_keys=True,separators=(",",":")).encode()).hexdigest())'); \
 	docker compose run --rm dev uv run --no-sync python -c 'from thesis_rl.rulebook.v2.calibration import load_calibration_artifact; a=load_calibration_artifact("$(RULEBOOK_V2_CALIBRATION_CONTAINER)", expected_config_hash="'"$$ego_hash"'"); print(a)'
+
+rulebook-v2-filter-catalog:
+	@test -f "$(RULEBOOK_V2_RAW_CATALOG)" || (echo "Missing $(RULEBOOK_V2_RAW_CATALOG): build the raw ScenarioNet catalog first" >&2; exit 2)
+	@test -f "$(RULEBOOK_V2_EGO_CONFIG)" || (echo "Missing $(RULEBOOK_V2_EGO_CONFIG)" >&2; exit 2)
+	@test -f "$(RULEBOOK_V2_CALIBRATION)" || (echo "Missing $(RULEBOOK_V2_CALIBRATION): run make rulebook-v2-calibrate" >&2; exit 2)
+	docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.scenarios.filter_rulebook_v2_catalog \
+		--catalog "$(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" \
+		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
+		--output-catalog "$(RULEBOOK_V2_FILTERED_CATALOG_CONTAINER)" \
+		--eligibility-output "$(RULEBOOK_V2_ELIGIBILITY_CONTAINER)" \
+		--ego-config "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" \
+		--calibration "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" \
+		--overwrite
 
 rulebook-v2-pilot:
 	docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.rulebook_v2_pilot \

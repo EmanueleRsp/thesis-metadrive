@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
+import hashlib
+import json
 from typing import Mapping
 
 from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
@@ -78,6 +80,19 @@ def load_rulebook_v2_config(data: Mapping[str, object]) -> RulebookV2Config:
     config = RulebookV2Config(version=version)
     config.validate()
     return config
+
+
+def geometry_config_hash(config: RulebookV2Config | None = None) -> str:
+    """Return the canonical provenance hash for the frozen geometry contract."""
+
+    resolved = config or RulebookV2Config()
+    resolved.validate()
+    payload = {
+        "rulebook_version": resolved.version,
+        "geometry": asdict(resolved.geometry),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def fail_not_evaluable(*, scenario_id: str, step_index: int, component: str, cause: str) -> None:

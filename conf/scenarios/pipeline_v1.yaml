@@ -13,6 +13,11 @@ pg:
   seed_start: 920000
   workers: 10
 
+# The final ScenarioNet splits are Rulebook v2 pools: static Rulebook
+# eligibility is evaluated before split assignment and recorded separately.
+rulebook_v2:
+  enabled: true
+
 split:
   seed: 0
   auto: true

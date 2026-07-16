@@ -112,6 +112,38 @@ primo campione sotto il 90% e quello sotto il 10% della velocità iniziale.
 data/scenarionet/rulebook_v2/calibration_b_e.json
 ```
 
+### Filtro Rulebook prima degli split
+
+La pipeline ScenarioNet ora esegue il filtro Rulebook v2 **prima** di assegnare
+gli split. Il catalogo grezzo resta un artifact di audit; soltanto gli scenari
+che superano map-matching, geometrie, segnali pertinenti e contratti hash
+possono entrare in `train`, `validation` o `test`.
+
+Per eseguire soltanto questo passaggio sul catalogo grezzo esistente:
+
+```bash
+make rulebook-v2-filter-catalog
+```
+
+Produce:
+
+```text
+data/scenarionet/catalog/scenario_catalog_rulebook_v2.parquet
+data/scenarionet/rulebook_v2/catalog_eligibility.json
+```
+
+Il JSON contiene ogni scenario analizzato, l'esito, le cause di esclusione,
+l'hash geometrico e l'hash della calibrazione. Per rigenerare l'intera pipeline
+con il filtro a monte, inclusi split e runtime view:
+
+```bash
+make scenarionet-pipeline
+```
+
+La configurazione `conf/scenarios/pipeline_v1.yaml` abilita il filtro v2. Il
+comando richiede quindi `ego_config.json` e `calibration_b_e.json` validi;
+se uno dei due manca, la pipeline termina senza costruire split non conformi.
+
 Il pilot preliminare non dichiara l'eleggibilità finale: misura conversione
 statica e task-route eligibility. Il report viene scritto in:
 
