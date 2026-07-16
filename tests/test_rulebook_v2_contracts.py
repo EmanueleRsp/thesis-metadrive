@@ -16,6 +16,7 @@ from thesis_rl.rulebook.v2.config import ExecutionConfig, RULEBOOK_V2_VERSION
 from thesis_rl.rulebook.v2.context.task_route import build_task_route_record, validate_task_route, build_task_route_eligibility_index, build_task_route_exclusion_report
 from thesis_rl.rulebook.v2.context.map_matching import (
     OfflineTrackSample,
+    TaskRouteMapMatchError,
     map_match_sdc_track_to_task_route,
 )
 from thesis_rl.rulebook.v2.context.static_adapter import normalize_static_records, validate_reset_contract
@@ -132,6 +133,50 @@ def test_offline_sdc_map_match_retains_lane_sequence_but_not_track_samples() -> 
     )
     assert record.lane_ids == ("lane-a",)
     assert not hasattr(record, "track")
+
+
+def test_offline_map_match_resolves_single_sample_on_canonical_lane_boundary() -> None:
+    first = RouteLaneRecord(
+        "lane-a",
+        Polygon(((0.0, -2.0), (5.0, -2.0), (5.0, 2.0), (0.0, 2.0))),
+        RoutePolyline(((0.0, 0.0, 0.0), (5.0, 0.0, 0.0))),
+    )
+    second = RouteLaneRecord(
+        "lane-b",
+        Polygon(((5.0, -2.0), (10.0, -2.0), (10.0, 2.0), (5.0, 2.0))),
+        RoutePolyline(((5.0, 0.0, 0.0), (10.0, 0.0, 0.0))),
+    )
+    record = map_match_sdc_track_to_task_route(
+        scenario_uid="scenario-boundary",
+        track=(
+            OfflineTrackSample((4.0, 0.0), 0.0, 0.0),
+            OfflineTrackSample((5.0, 0.0), 0.0, 0.0),
+            OfflineTrackSample((6.0, 0.0), 0.0, 0.0),
+        ),
+        route_lanes={"lane-a": first, "lane-b": second},
+        source_geometry_bytes=b"map",
+        adapter_version="test-v1",
+    )
+    assert record.lane_ids == ("lane-a", "lane-b")
+
+
+def test_offline_map_match_types_unavailable_lane_as_offline_exclusion() -> None:
+    lane = RouteLaneRecord(
+        "lane-a",
+        Polygon(((0.0, -2.0), (5.0, -2.0), (5.0, 2.0), (0.0, 2.0))),
+        RoutePolyline(((0.0, 0.0, 0.0), (5.0, 0.0, 0.0))),
+    )
+    with pytest.raises(TaskRouteMapMatchError) as caught:
+        map_match_sdc_track_to_task_route(
+            scenario_uid="scenario-missing",
+            track=(OfflineTrackSample((100.0, 100.0), 0.0, 0.0),),
+            route_lanes={"lane-a": lane},
+            source_geometry_bytes=b"map",
+            adapter_version="test-v1",
+        )
+    assert caught.value.validation_error == (
+        "task_route_lane_association_ambiguous_or_unavailable"
+    )
 
 
 def test_static_adapter_normalizes_geometry_and_reports_missing_route_lanes() -> None:

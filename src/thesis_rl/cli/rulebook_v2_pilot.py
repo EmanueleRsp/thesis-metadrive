@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from thesis_rl.rulebook.v2.config import RULEBOOK_V2_VERSION
+from thesis_rl.rulebook.v2.context.map_matching import TaskRouteMapMatchError
 from thesis_rl.rulebook.v2.context.pg_static_adapter import build_pg_static_adapter_result
 from thesis_rl.rulebook.v2.context.task_route import validate_task_route
 from thesis_rl.rulebook.v2.context.waymo_static_adapter import build_waymo_static_adapter_result
@@ -59,6 +60,7 @@ def _run_one(
 ) -> dict[str, Any]:
     started = time.perf_counter()
     relative_path = str(path.relative_to(data_root))
+    scenario_uid = f"{source}:{path.stem}"
     try:
         with path.open("rb") as handle:
             scenario = pickle.load(handle)
@@ -78,9 +80,11 @@ def _run_one(
             status = "task_route_eligible" if eligibility.rulebook_eligible else "task_route_excluded"
         elif not errors:
             status = "task_route_deferred_missing_hash"
+    except TaskRouteMapMatchError as error:
+        status = "adapter_excluded"
+        errors = [error.validation_error]
     except Exception as error:
         status = "adapter_exception"
-        scenario_uid = f"{source}:{path.stem}"
         errors = [f"{type(error).__name__}:{error}"]
     return {
         "source": source,

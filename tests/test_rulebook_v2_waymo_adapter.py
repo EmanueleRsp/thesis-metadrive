@@ -8,6 +8,51 @@ import pytest
 from thesis_rl.rulebook.v2.context.waymo_static_adapter import build_waymo_static_adapter_result
 
 
+def _minimal_scenario(*, signal_lane_reachable: bool) -> dict:
+    return {
+        "id": "minimal",
+        "length": 2,
+        "metadata": {"sdc_id": "ego"},
+        "tracks": {
+            "ego": {
+                "state": {
+                    "position": [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+                    "heading": [0.0, 0.0],
+                    "valid": [True, True],
+                }
+            }
+        },
+        "map_features": {
+            "lane-a": {
+                "type": "LANE_SURFACE_STREET",
+                "polyline": [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+                "width": [3.5, 3.5],
+                "exit_lanes": ["lane-b"] if signal_lane_reachable else [],
+            },
+            "lane-b": {
+                "type": "LANE_SURFACE_STREET",
+                "polyline": [[10.0, 0.0, 0.0], [20.0, 0.0, 0.0]],
+                "width": [3.5, 3.5],
+                "exit_lanes": [],
+            },
+            "edge": {
+                "type": "ROAD_EDGE_BOUNDARY",
+                "polyline": [[3.0, -2.0, 0.0]],
+            },
+        },
+        "dynamic_map_states": {
+            "signal": {
+                "type": "TRAFFIC_LIGHT",
+                "lane": "lane-b",
+                "stop_point": [11.0, 0.0, 0.0],
+                "state": {
+                    "object_state": ["LANE_STATE_UNKNOWN", "LANE_STATE_UNKNOWN"]
+                },
+            }
+        },
+    }
+
+
 def test_bundled_waymo_fixture_converts_to_canonical_static_records():
     paths = sorted(glob.glob("third_party/metadrive/metadrive/assets/waymo/sd_*.pkl"))
     if not paths:
@@ -26,3 +71,26 @@ def test_bundled_waymo_fixture_converts_to_canonical_static_records():
 def test_waymo_adapter_fails_fast_without_lane_geometry():
     with pytest.raises(ValueError, match="no lane geometry"):
         build_waymo_static_adapter_result({"map_features": {}, "metadata": {}}, scenario_uid="s")
+
+
+def test_waymo_adapter_types_single_point_map_feature_instead_of_raising_geos():
+    result = build_waymo_static_adapter_result(
+        _minimal_scenario(signal_lane_reachable=False),
+        scenario_uid="minimal",
+    )
+    assert "invalid_map_feature_geometry:edge" in result.validation_errors
+
+
+@pytest.mark.parametrize(
+    ("reachable", "expected"),
+    ((False, False), (True, True)),
+)
+def test_waymo_adapter_validates_unknown_signal_only_when_topologically_relevant(
+    reachable: bool,
+    expected: bool,
+) -> None:
+    result = build_waymo_static_adapter_result(
+        _minimal_scenario(signal_lane_reachable=reachable),
+        scenario_uid="minimal",
+    )
+    assert ("signal_state_unknown:signal" in result.validation_errors) is expected

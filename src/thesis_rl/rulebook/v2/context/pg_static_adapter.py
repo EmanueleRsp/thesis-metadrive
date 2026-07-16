@@ -11,7 +11,11 @@ from typing import Any
 import numpy as np
 from shapely.geometry import LineString, Polygon
 
-from thesis_rl.rulebook.v2.context.map_matching import OfflineTrackSample, map_match_sdc_track_to_task_route
+from thesis_rl.rulebook.v2.context.map_matching import (
+    OfflineTrackSample,
+    map_match_sdc_track_to_task_route,
+    reachable_lane_ids,
+)
 from thesis_rl.rulebook.v2.context.static_adapter import StaticAdapterResult, normalize_static_records
 from thesis_rl.rulebook.v2.geometry.controls import derive_control_line
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
@@ -62,6 +66,14 @@ def _lane_record(lane_id: str, lane: Mapping[str, Any]) -> RouteLaneRecord:
     return RouteLaneRecord(lane_id, polygon, centerline)
 
 
+def _lane_successors(features: Mapping[Any, Any]) -> dict[str, tuple[str, ...]]:
+    return {
+        str(feature_id): tuple(str(successor) for successor in feature.get("exit_lanes", ()))
+        for feature_id, feature in features.items()
+        if isinstance(feature, Mapping) and str(feature.get("type", "")).startswith("LANE_")
+    }
+
+
 def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid: str, adapter_version: str = "pg-v2") -> StaticAdapterResult:
     """Convert one procedural ScenarioDescription to canonical static records."""
     features = scenario.get("map_features")
@@ -81,6 +93,7 @@ def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid:
     source_hash = hashlib.sha256(json.dumps(sorted(lanes), separators=(",", ":")).encode()).digest()
     task_route = map_match_sdc_track_to_task_route(scenario_uid=scenario_uid, track=_track_samples(tracks[sdc_id]), route_lanes=lanes, source_geometry_bytes=source_hash, adapter_version=adapter_version)
     map_records: list[MapFeatureRecord] = []
+    feature_errors: list[str] = []
     for feature_id, feature in features.items():
         if not isinstance(feature, Mapping):
             continue
@@ -89,7 +102,15 @@ def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid:
         if feature_class is None or raw_geometry is None:
             continue
         points = _array_points(raw_geometry)
-        geometry = Polygon(tuple((float(x), float(y)) for x, y, _ in points)) if feature.get("polygon") is not None else LineString(tuple((float(x), float(y)) for x, y, _ in points))
+        polygonal = feature.get("polygon") is not None
+        if len(points) < (3 if polygonal else 2):
+            feature_errors.append(f"invalid_map_feature_geometry:{feature_id}")
+            continue
+        geometry = (
+            Polygon(tuple((float(x), float(y)) for x, y, _ in points))
+            if polygonal
+            else LineString(tuple((float(x), float(y)) for x, y, _ in points))
+        )
         map_records.append(MapFeatureRecord(str(feature_id), feature_class, geometry, float(np.median(points[:, 2]))))
     controls: list[TrafficControlRecord] = []
     signal_errors: list[str] = []
@@ -112,6 +133,10 @@ def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid:
             except ValueError:
                 continue
             controls.append(TrafficControlRecord(f"{feature_id}:{lane_id}", ApproachControl.STOP, (lane_id,), movement, line.geometry, line.route_s_m, float(point[2]), ()))
+    relevant_lane_ids = reachable_lane_ids(
+        route_lane_ids=task_route.lane_ids,
+        lane_successors=_lane_successors(features),
+    )
     dynamic_states = scenario.get("dynamic_map_states", {})
     if isinstance(dynamic_states, Mapping):
         for physical_id, dynamic in dynamic_states.items():
@@ -122,10 +147,11 @@ def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid:
             if point_value is None or lane_id not in lanes:
                 continue
             states = dynamic.get("state", {}).get("object_state") if isinstance(dynamic.get("state"), Mapping) else None
-            if not isinstance(states, (list, tuple, np.ndarray)) or len(states) != int(scenario.get("length", 0)):
-                signal_errors.append(f"signal_sequence_invalid:{physical_id}")
-            elif any(str(state) == "LANE_STATE_UNKNOWN" for state in states):
-                signal_errors.append(f"signal_state_unknown:{physical_id}")
+            if lane_id in relevant_lane_ids:
+                if not isinstance(states, (list, tuple, np.ndarray)) or len(states) != int(scenario.get("length", 0)):
+                    signal_errors.append(f"signal_sequence_invalid:{physical_id}")
+                elif any(str(state) == "LANE_STATE_UNKNOWN" for state in states):
+                    signal_errors.append(f"signal_state_unknown:{physical_id}")
             point = _array_points(np.asarray(point_value).reshape(1, -1))[0]
             movement = MovementKey(lane_id, f"control:{physical_id}", lane_id)
             try:
@@ -134,4 +160,9 @@ def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid:
                 continue
             controls.append(TrafficControlRecord(str(physical_id), ApproachControl.SIGNAL, (lane_id,), movement, line.geometry, line.route_s_m, float(point[2]), (str(physical_id),)))
     result = normalize_static_records(scenario_uid=scenario_uid, task_route=task_route, route_lanes=tuple(lanes.values()), map_features=tuple(map_records), traffic_controls=tuple(controls), movement_priority_records=())
-    return replace(result, validation_errors=tuple((*result.validation_errors, *signal_errors)))
+    return replace(
+        result,
+        validation_errors=tuple(
+            (*result.validation_errors, *feature_errors, *signal_errors)
+        ),
+    )

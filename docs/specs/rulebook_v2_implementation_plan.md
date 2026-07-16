@@ -813,12 +813,13 @@ planner non può quindi inserirla nel replay buffer.
 - [x] Produrre artifact in memoria con hash della configurazione ego.
 - [ ] Eseguire tutti i test obbligatori della sezione 15.
 - [x] Eseguire smoke deterministici su fixture PG e Waymo.
-- [ ] Eseguire pilot su campione stratificato per sorgente/topologia.
-- [ ] Misurare eleggibilità, cause di esclusione e costo runtime per step.
+- [x] Eseguire pilot su campione stratificato per sorgente/topologia.
+- [x] Misurare eleggibilità e cause di esclusione sul campione pilot.
+- [ ] Misurare costo runtime del monitor per step.
 - [x] Verificare assenza di future-track access nel monitor online.
 - [x] Verificare equivalenza geometrica e ID fra reset ripetuti tramite test
       di canonicalizzazione e candidate rebuild deterministico.
-- [x] Eseguire suite completa: 432 passati, senza skip; ISS-011 risolto.
+- [x] Eseguire suite completa: 437 passati, senza skip; ISS-011 risolto.
 - [x] Eseguire Ruff sui file del perimetro F10/v2.
 - [x] Eseguire type checking mirato del modulo calibrazione; audit package completo tracciato in ISS-012.
 - [x] Aggiornare documentazione, comandi `make` di validazione e metadata run.
@@ -878,17 +879,18 @@ transizioni.
 
 | ID | Stato | Severità | Problema/rischio | Azione proposta |
 |---|---|---|---|---|
-| ISS-001 | `APERTO` | alta | Percentuale di scenari realmente eleggibili non ancora conclusiva: pilot offline 2026-07-15 (10 PG + 10 Waymo) ha prodotto 8 conversioni con task-route eligibility differita per hash mancanti, 4 esclusioni signal `UNKNOWN` e 8 eccezioni adapter | Completare il pilot con hash ego/geometria e reset smoke; usare il report `data/scenarionet/rulebook_v2/pilot/offline_pilot_20260715.json` come base, non come eligibility artifact finale |
-| ISS-002 | `APERTO` | alta | Map-matching del task route può risultare ambiguo su junction/route parallele | Algoritmo deterministico + esclusione tipizzata; discutere solo se l'esclusione è eccessiva |
+| ISS-001 | `APERTO` | alta | Pilot finale hash-validato su 10 PG + 10 Waymo: 13 eleggibili (65%) e 7 esclusi tipicamente, senza eccezioni; la percentuale sull'intero pool e il reset smoke restano da produrre | Costruire l'eligibility artifact sull'intero catalogo e completare il reset smoke; il pilot campionato è evidenza, non l'indice finale |
+| ISS-002 | `RISOLTO` | alta | Le ambiguità PG erano campioni singoli sui confini canonici di lane consecutive; quattro Waymo hanno invece gap/non copertura reale della task route | Risoluzione deterministica soltanto per transizioni contigue confermate dai campioni adiacenti; route non univoche escluse con `task_route_lane_association_ambiguous_or_unavailable`, senza nearest-lane fallback |
 | ISS-003 | `RISOLTO` | media | API Panda3D per callback di contatto e installazione hook verificati sul commit locale | Test differenziale reale ScenarioEnv/Waymo con seed/azioni identici: osservazioni, reward e terminazioni invariati |
-| ISS-004 | `APERTO` | media | Qualità di polygon, width e quota differisce fra PG e Waymo | Report validazione per campo e sorgente in F3 |
+| ISS-004 | `APERTO` | media | Qualità di polygon, width e quota differisce fra PG e Waymo; il pilot ha trovato due `ROAD_EDGE_BOUNDARY` Waymo a punto singolo nello stesso scenario | Mantenere esclusione tipizzata `invalid_map_feature_geometry`; misurare la frequenza sull'intero catalogo prima di valutare una regola di pertinenza più selettiva |
 | ISS-005 | `APERTO` | media | `MovementKey` può essere ambigua prima della conflict zone | Restare `NOT_APPLICABLE`; misurare frequenza nel pilot |
 | ISS-006 | `APERTO` | media | Costo del continuous SAT su tutti gli attori live non ancora misurato | Benchmark F10 prima di valutare DEF-PERF-001 |
-| ISS-007 | `APERTO` | alta | Artifact di calibrazione `b_e` non ancora disponibile | Implementare protocollo e bloccare solo pilot/freeze finale, non unit test sintetici |
+| ISS-007 | `RISOLTO` | alta | Artifact di calibrazione `b_e` prodotto e validato contro l'hash della configurazione ego | `ego_min_brake_mps2=4.0`, hash `ce25f5a02c7be3974048ac8d3f664a43a73715c7a26882f226982d28b444cf00` |
 | ISS-008 | `RISOLTO` | media | Shell di lavoro senza `pytest`, Ruff, Shapely e MetaDrive | Verifiche eseguite nel container `dev`: dipendenze disponibili, 23 test e Ruff verdi; versioni registrate in F0 |
 | ISS-009 | `RISOLTO` | media | `RoutePolyline` deve unificare punti consecutivi entro 1 mm in XY, ma la specifica non definisce la quota risultante se tali punti hanno `z` differenti | DEC-011: cluster XY medio, mediana z, validazione con `z_tol=3 m`; approvata dall'utente il 2026-07-15 |
 | ISS-010 | `RISOLTO` | media | La specifica assegna alle componenti disgiunte di conflict zone un indice `k` “dopo ordinamento canonico”, senza definire la chiave d'ordinamento | DEC-012: ordine lessicografico crescente del WKB DEC-007; approvata dall'utente il 2026-07-15 |
-| ISS-011 | `RISOLTO` | media | Cataloghi smoke e mapping runtime erano artifact obsoleti: i file reali erano presenti sotto `database_7`, mentre gli artifact puntavano a `database_0`; la view ufficiale `scenario_catalog.parquet` + `runtime/train` era coerente | I test smoke usano la catalog/runtime view ufficiale reale già presente e verificata; nessun dato sintetico, fallback o modifica al core v2 |
+| ISS-011 | `RISOLTO` | media | Cataloghi smoke e mapping runtime erano artifact obsoleti: i file reali erano presenti sotto `database_7`, mentre gli artifact puntavano a `database_0`; la view ufficiale `scenario_catalog.parquet` + `runtime/train` era coerente | Suite completa finale dopo i fix pilot: 437 passati, nessuno skip; nessun dato sintetico, fallback o modifica al core v2 |
+| ISS-013 | `APERTO` | alta | Gli export PG esistenti non persistono i lane ID della route pianificata; l'adapter legacy ricava ancora la task route via map-match offline della track SDC, mentre DEC-001 richiede estrazione diretta dalla route/topologia generata | Raccomandato: persistere il task route nel generatore/exporter PG e rigenerare gli artifact. Alternativa temporanea: documentare il map-match offline come deviazione per i dataset legacy; non usare inferenza nearest-lane o graph path arbitraria |
 | ISS-012 | `APERTO` | bassa | Il codice v2 passa `mypy --ignore-missing-imports` senza errori in 40 file. Senza ignore restano 22 errori esclusivamente per import esterni non tipizzati: stub Shapely mancanti e `panda3d.core` senza `py.typed` | Installare/configurare stub compatibili per le versioni congelate; nessuna modifica semantica necessaria |
 
 Quando un problema richiede una scelta non coperta dalla specifica:
@@ -1012,9 +1014,13 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F10 | Calibrazione e validazione artifact `b_e` | Artifact scritto e ricaricato con hash `ce25f5a02c7be3974048ac8d3f664a43a73715c7a26882f226982d28b444cf00`; `ego_min_brake_mps2=4.0`; target `make rulebook-v2-validate-calibration` passato |
 | 2026-07-15 | F10 | Pilot offline preliminare dopo calibrazione | `make rulebook-v2-pilot` passato; report con 8 `adapter_exception`, 4 `adapter_excluded` e 8 `task_route_deferred_missing_hash`; non è ancora eligibility finale |
 | 2026-07-15 | F10 | Regressione dopo correzione overshoot runner e calibrazione reale | `make rulebook-v2-check`: 112 test passati, Ruff passato, `git diff --check` pulito |
+| 2026-07-16 | F10 | Pilot finale con hash ego/geometria forniti | `hashes_supplied=true`, 20 scenari campionati: 8 `task_route_eligible`, 4 `adapter_excluded` per `signal_state_unknown`, 8 `adapter_exception` (7 associazioni lane ambigue/non disponibili, 1 geometria GEOS degenerata); il pilot ha completato il contratto hash ma l'eligibility finale resta aperta |
+| 2026-07-16 | Regressione/F10 | Check dopo aggiornamento ISS esterni | `make rulebook-v2-check`: 112 test passati, Ruff passato, `git diff --check` pulito |
 | 2026-07-15 | F10/ISS-011 | Correzioni suite esterna: forced-rule v1 esplicito (`full` + scales), aspettativa preset Hydra allineata a `td3_sb3`, validazione ACL e firme compatibili (`chunk_id`, `rng`), smoke ScenarioNet con verifica preventiva catalogo/runtime reale | Test mirati: 37 passati, 2 skip per runtime/cataloghi reali incoerenti; Ruff sui file modificati passato; `git diff --check` passato; nessun accesso a `current_sdc_route` e nessuna modifica al core Rulebook v2 |
 | 2026-07-15 | F10/ISS-011 | Suite completa finale e audit type-check | `pytest -q`: 430 passati, 2 skipped; `mypy --ignore-missing-imports src/thesis_rl/rulebook/v2`: 58 errori legacy/typing; `ruff check src tests`: 9 errori preesistenti fuori dai file modificati; `git diff --check` pulito |
 | 2026-07-16 | F10/ISS-011/012 | Allineati gli smoke alla catalog/runtime ufficiale coerente e sanate le annotazioni v2 | `pytest -q`: 432 passati, 0 skipped; `ruff check src tests`: passato; `mypy --ignore-missing-imports src/thesis_rl/rulebook/v2`: success su 40 file; senza ignore restano 22 errori esclusivamente di stub Shapely/Panda3D; `git diff --check`: passato |
+| 2026-07-16 | F10/ISS-001/002/004 | Correzione pilot reale: transizioni PG al boundary risolte solo con continuità canonica; route Waymo non univoche, geometrie degeneri e segnali pertinenti `UNKNOWN` diventano esclusioni tipizzate; segnali non raggiungibili non escludono | Pilot finale hash-validato: 13/20 eleggibili, 7 esclusi, 0 `adapter_exception`; cause: 4 route non map-matchabili, 1 scenario con due boundary a punto singolo, 2 scenari con signal `UNKNOWN` pertinente; mean 0.636 s, p95 lower 2.219 s |
+| 2026-07-16 | Regressione/F10 | Verifica cumulativa dopo i fix adapter | 28 test mirati passati; `make rulebook-v2-check`: 117 passati, Ruff e diff check verdi; suite completa: 437 passati in 28.56 s |
 
 ---
 
