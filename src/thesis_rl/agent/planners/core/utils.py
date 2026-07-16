@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 
 from thesis_rl.agent.planners.encoders.factory import build_encoder
-from thesis_rl.contracts.observation_spec import ObservationSpec
+from thesis_rl.contracts.observation_schema import SemanticObservationSchemaV11
 
 
 def to_plain_dict(cfg: Any) -> dict[str, Any]:
@@ -67,9 +67,13 @@ def soft_update(source: nn.Module, target: nn.Module, tau: float) -> None:
 
 def assert_box_spaces(env: Any) -> tuple[gym.spaces.Box, gym.spaces.Box]:
     if not isinstance(env.observation_space, gym.spaces.Box):
-        raise TypeError(f"Only Box observation spaces are supported, got {type(env.observation_space).__name__}")
+        raise TypeError(
+            f"Only Box observation spaces are supported, got {type(env.observation_space).__name__}"
+        )
     if not isinstance(env.action_space, gym.spaces.Box):
-        raise TypeError(f"Only Box action spaces are supported, got {type(env.action_space).__name__}")
+        raise TypeError(
+            f"Only Box action spaces are supported, got {type(env.action_space).__name__}"
+        )
     return env.observation_space, env.action_space
 
 
@@ -79,19 +83,18 @@ def safe_atanh(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
 
 
 def build_encoder_for_env(cfg_encoder: Any, cfg_obs: Any, obs_dim: int):
-    spec = ObservationSpec.from_obs_config(cfg_obs)
     enc_cfg = to_plain_dict(cfg_encoder)
     enc_type = str(enc_cfg.get("type", "none")).lower()
-
-    if enc_type == "lq" and obs_dim != spec.flat_dim:
-        raise ValueError(
-            "LQ encoder requires semantic-state layout consistency: "
-            f"obs_dim={obs_dim}, expected={spec.flat_dim}"
-        )
+    obs_cfg = to_plain_dict(cfg_obs)
+    observation_schema = (
+        SemanticObservationSchemaV11()
+        if str(obs_cfg.get("type", "")).lower() in {"semantic", "semantic_state", "semantic_v2"}
+        else None
+    )
     if enc_type == "none":
-        enc_cfg["input_dim"] = obs_dim
         enc_cfg["output_dim"] = obs_dim
-    if enc_type == "mlp":
-        enc_cfg["input_dim"] = obs_dim
-
-    return build_encoder(cfg_encoder=enc_cfg, obs_spec=spec)
+    return build_encoder(
+        cfg_encoder=enc_cfg,
+        input_dim=obs_dim,
+        observation_schema=observation_schema,
+    )

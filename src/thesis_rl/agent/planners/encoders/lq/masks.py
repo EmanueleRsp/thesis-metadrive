@@ -1,27 +1,24 @@
-from __future__ import annotations
+"""Semantic v1.1 LQ global-mask helper."""
 
 import torch
 
-from thesis_rl.agent.planners.encoders.lq.unflatten import StructuredObservation
+from thesis_rl.contracts.observation_schema import SemanticObservationTensorBatch
 
 
-def build_global_token_mask(obs: StructuredObservation) -> torch.Tensor:
-    """Build a [B, T] validity mask for tokenized semantic observations."""
-
-    batch_size, history, _ = obs.ego.shape
-    ego_mask = torch.ones((batch_size, history), dtype=obs.ego.dtype, device=obs.ego.device)
-    lane_mask = torch.ones((batch_size, 1), dtype=obs.ego.dtype, device=obs.ego.device)
-
-    dynamic_mask = obs.dynamic_mask.reshape(batch_size, -1)
-    mask = torch.cat(
-        [
-            ego_mask,
-            obs.route_mask,
-            dynamic_mask,
-            obs.static_mask,
-            obs.control_mask,
-            lane_mask,
-        ],
+def build_global_token_mask(observation: SemanticObservationTensorBatch) -> torch.Tensor:
+    batch_size = observation.ego_history.shape[0]
+    device = observation.ego_history.device
+    return torch.cat(
+        (
+            observation.ego_history_mask,
+            torch.ones((batch_size, 1), device=device, dtype=observation.ego_history_mask.dtype),
+            observation.route_mask,
+            observation.dynamic_mask.reshape(batch_size, 80),
+            observation.static_mask,
+            torch.ones((batch_size, 1), device=device, dtype=observation.static_mask.dtype),
+            observation.controls_mask,
+            observation.interactions_mask,
+            torch.ones((batch_size, 1), device=device, dtype=observation.interactions_mask.dtype),
+        ),
         dim=1,
-    )
-    return mask
+    ).bool()

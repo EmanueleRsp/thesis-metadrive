@@ -1,6 +1,8 @@
-name: lq
-type: lq
-d_model: 64
+name: latent_query_v2
+type: latent_query_v2
+architecture_version: 1.0-final
+required_observation_schema: 1.1-final
+token_dim: 64
 num_latents: 16
 latent_dim: 128
 output_dim: 256
@@ -10,7 +12,7 @@ ff_dim: 256
 activation: relu
 dropout: 0.0
 attention_dropout: 0.0
-residual_gating: true
+residual_gating: false
 type_embedding: true
 time_embedding: true
 slot_embedding: true

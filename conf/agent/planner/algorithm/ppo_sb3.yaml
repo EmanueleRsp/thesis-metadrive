@@ -23,3 +23,5 @@ policy_kwargs:
   net_arch:
     pi: [64, 64]
     vf: [64, 64]
+  share_features_extractor: true
+  ortho_init: false

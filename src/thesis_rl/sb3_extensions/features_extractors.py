@@ -39,7 +39,10 @@ class ThesisEncoderFeatureExtractor(BaseFeaturesExtractor):
         self.encoder = encoder
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        flat_obs = observations.float()
-        if flat_obs.ndim > 2:
-            flat_obs = torch.flatten(flat_obs, start_dim=1)
+        flat_obs = observations.to(dtype=torch.float32)
+        if flat_obs.ndim != 2:
+            raise ValueError(
+                "Thesis encoders require a flat SB3 observation [B, D]; "
+                f"got {tuple(flat_obs.shape)}."
+            )
         return self.encoder(flat_obs)

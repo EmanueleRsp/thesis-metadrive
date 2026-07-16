@@ -84,8 +84,7 @@ def _decoder_policy_kwargs(
         )
     if layer_norm:
         raise ValueError(
-            f"`{backend_name}` SB3 bridge does not yet support decoder "
-            "layer_norm=true."
+            f"`{backend_name}` SB3 bridge does not yet support decoder layer_norm=true."
         )
 
     hidden_layers = [int(width) for width in decoder_cfg.get("hidden_layers", [])]
@@ -220,9 +219,7 @@ def build_algorithm_spec(
 
     return Sb3AlgorithmSpec(
         replay_buffer_class=replay_buffer_class,
-        replay_buffer_kwargs={}
-        if replay_buffer_kwargs is None
-        else dict(replay_buffer_kwargs),
+        replay_buffer_kwargs={} if replay_buffer_kwargs is None else dict(replay_buffer_kwargs),
         algorithm_kwargs={} if algorithm_kwargs is None else dict(algorithm_kwargs),
     )
 
@@ -285,6 +282,12 @@ def build_sb3_specs_from_configs(
     if _should_apply_decoder_bridge(backend_name, decoder_cfg):
         bridged_policy_kwargs.update(_decoder_policy_kwargs(backend_name, decoder_cfg))
     bridged_policy_kwargs.update(_maybe_encoder_policy_kwargs(encoder_cfg, obs_cfg))
+    if str((encoder_cfg or {}).get("type", "none")).strip().lower() != "none":
+        if str(backend_name).lower() in {"td3_sb3", "sac_sb3"}:
+            bridged_policy_kwargs["share_features_extractor"] = False
+        elif str(backend_name).lower() == "ppo_sb3":
+            bridged_policy_kwargs["share_features_extractor"] = True
+            bridged_policy_kwargs["ortho_init"] = False
     return build_policy_spec(
         policy=policy_spec.policy,
         policy_kwargs=bridged_policy_kwargs,

@@ -4,7 +4,7 @@
 
 - Plan ID: `PLAN-OBS-ENC-V1`
 - Feature: semantic observation v1.1 and encoder v1.0 reconciliation
-- Status: `DRAFT`
+- Status: `IN_PROGRESS`
 - Created: `2026-07-16`
 - Last updated: `2026-07-16`
 - Branch: `scenarionet-implementation` at `52e1794`
@@ -97,7 +97,7 @@ in online observation construction.
 | `DEC-002` | implementation detail | Define unknown other-agent manoeuvre behavior. | hypothesize zones / emit only causal zones | Emit no token when zone geometry needs a future exit; retain known geometry with undefined priority. | Observation content and tests | Approved by `OBS-V1.1` |
 | `DEC-003` | implementation detail | SB3 extractor ownership. | pass module instance / construct from config | Construct one encoder per extractor from plain config and schema. | Gradient routing and targets | Approved by `ENC-V1.0` |
 | `DEC-004` | implementation detail | Checkpoint publication. | sidecar pairs / immutable generation plus pointer | Immutable generation directory and atomic verified `latest.json`. | Resume safety | Approved by `ENC-V1.0` |
-| `DEC-005` | plan approval | Freeze this mandatory test matrix before production changes. | start coding / approve this plan first | Obtain explicit approval of this ExecPlan. | Test protection and milestone sequencing | Awaiting approval |
+| `DEC-005` | plan approval | Freeze this mandatory test matrix before production changes. | start coding / approve this plan first | Obtain explicit approval of this ExecPlan. | Test protection and milestone sequencing | Approved by explicit user approval on `2026-07-16` |
 
 ## 7. Proposed Design
 
@@ -128,13 +128,13 @@ variant is introduced by this plan.
 |---|---|---|---|---|
 | `OBS-REQ-001` | `AC-OBS-001` | route/context modules, environment factory | `TEST-OBS-001`, `TEST-OBS-002` | Planned |
 | `OBS-REQ-002` | `AC-OBS-002` | stacked LiDAR observation, map navigation, noise wrapper | `TEST-OBS-003`--`TEST-OBS-005` | Planned |
-| `OBS-REQ-003` | `AC-OBS-003` | schema, semantic builder | `TEST-OBS-006`--`TEST-OBS-008` | Planned |
+| `OBS-REQ-003` | `AC-OBS-003` | `src/thesis_rl/contracts/observation_schema.py` | `tests/test_observation_schema_v11.py` | Partial: the unique schema is implemented and verified; the runtime builder remains pending. |
 | `OBS-REQ-004` | `AC-OBS-004` | selection/history/context utilities | `TEST-OBS-009`--`TEST-OBS-012` | Planned |
-| `OBS-REQ-005` | `AC-OBS-005` | context provider and transition wiring | `TEST-OBS-013`, `TEST-OBS-014` | Planned |
+| `OBS-REQ-005` | `AC-OBS-005` | `src/thesis_rl/contracts/causal_scene_context.py` | `tests/test_causal_scene_context.py` | Partial: immutable observation-safe boundary implemented; environment lifecycle wiring remains pending. |
 | `OBS-REQ-006` | `AC-OBS-006` | Hydra configs, manifest/logging helpers | `TEST-OBS-015`, `TEST-OBS-016` | Planned |
-| `ENC-REQ-001` | `AC-ENC-001` | base/MLP encoder | `TEST-ENC-001`--`TEST-ENC-003` | Planned |
-| `ENC-REQ-002` | `AC-ENC-002` | LQ tokenizer, embeddings, blocks | `TEST-ENC-004`--`TEST-ENC-007` | Planned |
-| `ENC-REQ-003` | `AC-ENC-003` | SB3 extractor/builders/configs | `TEST-ENC-008`--`TEST-ENC-011` | Planned |
+| `ENC-REQ-001` | `AC-ENC-001` | `src/thesis_rl/agent/planners/encoders/base.py`, `mlp_encoder.py` | `tests/test_encoders_v10.py` | Implemented and focused-verified. |
+| `ENC-REQ-002` | `AC-ENC-002` | `lq_encoder.py`, `contracts/observation_schema.py` | `tests/test_encoders_v10.py`, `tests/test_observation_schema_v11.py` | Implemented and focused-verified. |
+| `ENC-REQ-003` | `AC-ENC-003` | `sb3_extensions/features_extractors.py`, `builders.py` | `tests/test_sb3_extensions.py`, `tests/test_sb3_direct_backends.py` | Partial: strict flat bridge and sharing flags verified; complete optimizer/target routing matrix remains pending. |
 | `ENC-REQ-004` | `AC-ENC-004` | checkpointing | `TEST-ENC-012`--`TEST-ENC-014` | Planned |
 | `ENC-REQ-005` | `AC-ENC-005` | presets and smoke driver | `TEST-ENC-015` | Planned |
 
@@ -205,13 +205,15 @@ completion gate because its baseline is not clean.
 
 ## 10. Milestones
 
-- [ ] **M1 — Schema and causal route/context.** Create the schema, map route,
-  context interface, and deterministic unit tests. Depends on `DEC-005`.
+- [ ] **M1 — Schema and causal route/context.** The unique schema and immutable
+  observation-safe context boundary are implemented and focused-tested. Map-based
+  route construction and environment-owned commit lifecycle remain pending.
 - [ ] **M2 — Observation implementations.** Implement semantic v1.1 and
   stacked LiDAR observations, config, masks, noise, and regression tests.
   Depends on M1.
-- [ ] **M3 — Encoder contract.** Implement MLP/LQ v1.0 and schema-driven
-  tokenization with unit tests. Depends on M1.
+- [ ] **M3 — Encoder contract.** The v1.0 MLP/LQ core, validation, schema-driven
+  tokenization, and focused tests are implemented. Full acceptance coverage and
+  end-to-end backend routing remain pending.
 - [ ] **M4 — SB3 and checkpoints.** Integrate extractor ownership, policy
   kwargs, checkpoint generations, and integration tests. Depends on M3.
 - [ ] **M5 — End-to-end verification.** Run mandatory regressions, quality
@@ -226,8 +228,18 @@ completion gate because its baseline is not clean.
   approved contract; no production code has changed.
 - `2026-07-16`: Repository analysis confirmed legacy observation/encoder
   divergence and verified local MetaDrive/SB3 revisions.
-- Next step: obtain explicit approval of this `DRAFT` ExecPlan before changing
-  production code or protected tests.
+- `2026-07-16`: User explicitly approved `PLAN-OBS-ENC-V1`, including its
+  mandatory test strategy, milestones M1--M5, and recorded decisions. All
+  approval gates are resolved; implementation started with acceptance tests.
+- `2026-07-16`: Implemented the single `SemanticObservationSchemaV11` source
+  of truth (2541 flat values, 122 tokens, deterministic fingerprint) and an
+  immutable `CausalSceneContext` that exposes only canonical cache, snapshot,
+  and causal memory. Runtime route construction and transition lifecycle are
+  not yet wired.
+- `2026-07-16`: Implemented the encoder v1.0 MLP/LQ core, strict rank/dtype/
+  finite validation, LQ masked-token zeroing, and explicit SB3 sharing flags.
+  The legacy semantic runtime observation and checkpoint generation contract
+  remain unreconciled and prevent declaring M2/M4/M5 complete.
 
 ## 12. Deviations
 
@@ -257,12 +269,20 @@ No deviations identified.
 |---|---|---|---|
 | Static arithmetic check for semantic flat/token dimensions | `PASS` | `2026-07-16` | `2541` flat dimensions and `122` raw tokens confirmed during review. |
 | `git diff --check` | `PASS` | `2026-07-16` | Documentation promotion and planning changes had no whitespace errors. |
-| Focused observation/encoder tests | `NOT_RUN` | `2026-07-16` | Production implementation and v1.1 tests do not exist yet. |
-| `make smoke` | `NOT_RUN` | `2026-07-16` | Must run after M2/M4 implementation. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_causal_scene_context.py tests/test_observation_schema_v11.py tests/test_encoders_v10.py tests/test_semantic_state_observation.py tests/test_sb3_extensions.py tests/test_sb3_direct_backends.py` | `PASS` | `2026-07-16` | 29 passed in 16.68s. |
+| `docker compose run --rm dev uv run --no-sync ruff check <modified Python paths>` | `PASS` | `2026-07-16` | All checks passed. |
+| `docker compose run --rm dev uv run --no-sync ruff format --check <modified Python paths>` | `PASS` | `2026-07-16` | 18 files already formatted after focused Ruff formatting. |
+| `git diff --check` | `PASS` | `2026-07-16` | Final focused diff has no whitespace errors. |
+| `make smoke` | `NOT_RUN` | `2026-07-16` | Not applicable yet: M2 and M4 are incomplete, so the nine-combination smoke matrix cannot satisfy the approved contract. |
 
 ## 15. Final Reconciliation
 
-All requirements and acceptance criteria are `NOT_IMPLEMENTED` and
-`NOT_VERIFIED` pending M1--M5. No experimental use is authorized from this
-plan yet. The approved specifications and ADR-002 are authoritative; this
-ExecPlan is a draft implementation record and does not alter them.
+`OBS-REQ-003`, `OBS-REQ-005`, and `ENC-REQ-003` are `PARTIAL`; `ENC-REQ-001`
+and `ENC-REQ-002` are `IMPLEMENTED` and focused-`VERIFIED`. All remaining
+requirements remain `NOT_IMPLEMENTED` or `NOT_VERIFIED`. In particular,
+map-based route construction, the semantic and LiDAR runtime observations,
+causal transition commit wiring, checkpoint generation publication/load, visual
+diagnostics, and the nine-case smoke matrix remain required work. No
+experimental use is authorized from this plan yet. The approved specifications
+and ADR-002 remain authoritative; this ExecPlan records partial implementation
+only and does not alter them.

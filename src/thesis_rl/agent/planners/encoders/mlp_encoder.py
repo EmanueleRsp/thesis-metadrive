@@ -19,22 +19,23 @@ def _activation(name: str) -> type[nn.Module]:
     raise ValueError(f"Unsupported activation: {name}")
 
 
-class MLPEncoder(BaseEncoder):
+class FlatMLPEncoder(BaseEncoder):
     def __init__(
         self,
         input_dim: int,
-        hidden_layers: Iterable[int],
-        output_dim: int,
+        hidden_layers: Iterable[int] = (512, 512, 256),
+        output_dim: int = 256,
         activation: str = "relu",
         layer_norm: bool = True,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
+        self.input_dim = int(input_dim)
         self.output_dim = int(output_dim)
 
         act = _activation(activation)
         layers: list[nn.Module] = []
-        prev = int(input_dim)
+        prev = self.input_dim
 
         for width in hidden_layers:
             width_i = int(width)
@@ -47,9 +48,15 @@ class MLPEncoder(BaseEncoder):
             prev = width_i
 
         layers.append(nn.Linear(prev, self.output_dim))
-        layers.append(nn.LayerNorm(self.output_dim))
+        if layer_norm:
+            layers.append(nn.LayerNorm(self.output_dim))
         layers.append(act())
         self.net = nn.Sequential(*layers)
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.net(obs)
+    def forward(self, flat_obs: torch.Tensor) -> torch.Tensor:
+        self._validate_input(flat_obs)
+        return self.net(flat_obs)
+
+
+# Compatibility alias for callers that use the historical internal name.
+MLPEncoder = FlatMLPEncoder

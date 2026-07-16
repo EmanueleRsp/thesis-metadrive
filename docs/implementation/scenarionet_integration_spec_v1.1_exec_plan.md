@@ -162,7 +162,7 @@ external credentials and must not overwrite frozen data.
 - [x] M1 — Completed. Reconciled record/manifest/report eligibility schema and audit population accounting, including record-level Rulebook provenance, strict pre-freeze split validation, and canonical YAML manifests. Depends on `DEC-SN-001`–`005`; validates the available portions of `TEST-SN-001`–`006`.
 - [x] M2 — Completed. Implemented strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. The selector enforces per-split source and arm capacity, uses exhaustive exact search for small grouped fixtures (≤18 groups), and uses a deterministic transportation-based constructive solver for the normal large singleton-group population. The shell pipeline repeats catalog → Rulebook → split feasibility and acquires at most one forced 16-shard batch per cycle under the cumulative 128-shard cap. `build_splits` now writes a PG replenishment report on both success and selection failure, separating a true filtered-PG count shortage from joint Waymo/group infeasibility. Validates the implemented portions of `TEST-SN-002`–`008`.
 - [x] M3 — Completed implementation reconciliation for runtime views, providers, ACL six-arm interface, environment behavior, and logging. The environment factory rejects an audit or legacy catalog containing any valid/warning record without `rulebook_eligible=true`; provider construction and runtime mapping use only this checked population. The provider layer supports strict uniform-by-arm sampling with explicit one-sided source-cell fallback and carries sampling metadata into reset and terminal-step info. Runtime aggregation records reset/step/episode matrices by `source × arm`, and evaluation CSVs persist ScenarioNet identity, sampling, and completion fields. The real runtime-database/vector smoke remains M4 because it requires a prepared external fixture. Validates the implemented portions of `TEST-SN-009`–`014`.
-- [ ] M4 — In progress; blocked only for the real fixture/vector smoke. The checked local runtime fixture is paired with a pre-v1.1 catalog containing valid PG records without `rulebook_eligible=true`, so the required runtime boundary correctly rejects it. Rebuilding or replacing that frozen catalog/runtime artifact is an approval-gated data mutation. Documentation reconciliation and non-mutating final audit remain pending. Validates `TEST-SN-015` and mandatory checks.
+- [ ] M4 — In progress; blocked only for the real fixture/vector smoke. The checked local runtime fixture is paired with a pre-v1.1 catalog containing valid PG records without `rulebook_eligible=true`, so the required runtime boundary correctly rejects it. The user approved rebuilding/replacing the frozen catalog/runtime artifact. The first serial rebuild was deliberately stopped at the user's request; the user will restart the Rulebook filter manually with `--workers 16`. Documentation reconciliation and non-mutating final audit remain pending. Validates `TEST-SN-015` and mandatory checks.
 
 ## 11. Progress And Findings Log
 
@@ -269,8 +269,12 @@ external credentials and must not overwrite frozen data.
   `rulebook_eligible != true`. The vectorized integration tests therefore
   skip after the intended fail-closed runtime validation rather than exercising
   the fixture. This is a stale artifact discrepancy, not an implementation
-  failure. Do not rebuild or overwrite the catalog/runtime view without user
-  approval because the data manifest is a frozen experimental artifact.
+  failure. The user subsequently approved the frozen-artifact rebuild.
+- A full-corpus Rulebook filter rebuild was started with `--workers 1` after
+  duplicate attempts were detected, but that serial execution was explicitly
+  stopped by the user after about 71 minutes. No output artifacts were
+  published. The user will restart the exact filter command manually with
+  `--workers 16`; do not run another concurrent filter process.
 - `docker compose run --rm dev uv run --no-sync ruff check
   src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py
   src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py`

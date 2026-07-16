@@ -1,5 +1,6 @@
 name: mlp
 type: mlp
+architecture_version: 1.0-final
 output_dim: 256
 hidden_layers: [512, 512, 256]
 activation: relu

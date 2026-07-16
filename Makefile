@@ -12,6 +12,7 @@ RULEBOOK_V2_PILOT_PRELIMINARY ?= $(RULEBOOK_V2_DATA_ROOT)/rulebook_v2/pilot_offl
 RULEBOOK_V2_RAW_CATALOG ?= $(RULEBOOK_V2_DATA_ROOT)/catalog/scenario_catalog_raw.parquet
 RULEBOOK_V2_FILTERED_CATALOG ?= $(RULEBOOK_V2_DATA_ROOT)/catalog/scenario_catalog_rulebook_v2.parquet
 RULEBOOK_V2_ELIGIBILITY ?= $(RULEBOOK_V2_DATA_ROOT)/rulebook_v2/catalog_eligibility.json
+RULEBOOK_V2_WORKERS ?= 16
 RULEBOOK_V2_EGO_CONFIG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/ego_config.json
 RULEBOOK_V2_TRIALS_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/braking_trials.json
 RULEBOOK_V2_CALIBRATION_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/calibration_b_e.json
@@ -57,6 +58,7 @@ rulebook-v2-filter-catalog:
 		--eligibility-output "$(RULEBOOK_V2_ELIGIBILITY_CONTAINER)" \
 		--ego-config "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" \
 		--calibration "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" \
+		--workers "$(RULEBOOK_V2_WORKERS)" \
 		--overwrite
 
 rulebook-v2-pilot:

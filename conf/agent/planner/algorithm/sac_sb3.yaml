@@ -23,3 +23,4 @@ use_sde_at_warmup: false
 monitor_ema_alpha: 0.1
 policy_kwargs:
   net_arch: [256, 256]
+  share_features_extractor: false
