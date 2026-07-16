@@ -1,4 +1,6 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog up up-gpu shell test gpu-check smoke smoke-gpu config config-gpu rulebook-v2-init rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu config config-gpu rulebook-v2-init rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
+
+PYTHON_QUALITY_PATHS ?= src tests scripts
 
 RULEBOOK_V2_DATA_ROOT ?= data/scenarionet
 RULEBOOK_V2_CONTAINER_DATA_ROOT ?= /workspace/data/scenarionet
@@ -149,6 +151,15 @@ shell:
 
 test:
 	docker compose run --rm dev uv run --no-sync python -m pytest -q
+
+lint:
+	docker compose run --rm dev uv run --no-sync ruff check $(PYTHON_QUALITY_PATHS)
+
+format:
+	docker compose run --rm dev uv run --no-sync ruff format $(PYTHON_QUALITY_PATHS)
+
+format-check:
+	docker compose run --rm dev uv run --no-sync ruff format --check $(PYTHON_QUALITY_PATHS)
 
 gpu-check:
 	docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev uv run --no-sync python -c 'import torch; assert torch.cuda.is_available(); x = torch.tensor([1.0], device="cuda"); assert (x * 2).item() == 2.0; print(f"torch={torch.__version__} gpu={torch.cuda.get_device_name(0)} capability={torch.cuda.get_device_capability(0)}")'

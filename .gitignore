@@ -16,6 +16,8 @@ __pycache__/
 outputs/
 /checkpoints/
 /data/
+/incoming/*
+!/incoming/README.md
 /.container-home/
 /multirun/
 /wandb/

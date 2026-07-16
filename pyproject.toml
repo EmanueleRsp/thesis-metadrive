@@ -43,6 +43,12 @@ pandas = ["setuptools<81"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+extend-exclude = [
+  ".container-home",
+  "data",
+  "outputs",
+  "third_party",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

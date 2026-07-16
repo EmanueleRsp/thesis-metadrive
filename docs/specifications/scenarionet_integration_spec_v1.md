@@ -1,6 +1,8 @@
 # Specifica di implementazione — Integrazione ScenarioNet nel progetto di tesi
 
 **Stato:** specifica architetturale e implementativa v1 — pronta per l’implementazione  
+**Authority:** user-approved authoritative specification  
+**Approval confirmed:** 2026-07-16  
 **Ambito:** integrazione di scenari reali Waymo/ScenarioNet e scenari procedurali MetaDrive in una pipeline unificata di training ed evaluation  
 **Training principale previsto:** 1.500.000 environment steps  
 **Setting:** single-agent ego control, post-perception / mid-to-end  

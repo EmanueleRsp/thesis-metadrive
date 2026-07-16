@@ -3,7 +3,7 @@
 ## Scopo
 
 Questo documento traduce la specifica
-[`scenarionet_integration_spec_v1.md`](scenarionet_integration_spec_v1.md) in un
+[`scenarionet_integration_spec_v1.md`](../specifications/scenarionet_integration_spec_v1.md) in un
 piano operativo e mantiene lo stato di avanzamento dell'integrazione.
 
 La specifica rimane la fonte normativa. Questo file registra:

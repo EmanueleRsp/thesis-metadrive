@@ -248,7 +248,7 @@ the default remains `false`.
 La conversione reale non è inclusa nei test ordinari perché richiede dati
 licenziati. Una volta disponibile il database, eseguire nell'ambiente del
 progetto i comandi di validazione e costruzione delle viste runtime descritti
-nel tracker [`scenarionet_integration_implementation_plan.md`](../specs/scenarionet_integration_implementation_plan.md).
+nel tracker [`scenarionet_integration_implementation_plan.md`](../implementation/scenarionet_integration_implementation_plan.md).
 
 ## Pipeline completa con un solo comando
 

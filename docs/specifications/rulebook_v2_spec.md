@@ -5,6 +5,8 @@ author: "Report tecnico per la tesi"
 date: "15 luglio 2026"
 lang: it-IT
 version: "4.6-final-implementation-complete"
+status: "approved"
+approval_confirmed: "2026-07-16"
 ---
 
 # Sintesi esecutiva

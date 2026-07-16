@@ -45,6 +45,34 @@ Expected:
 Visual/manual checks:
 - Scan test output summary: no skipped-critical suites, no intermittent errors.
 
+## Code Quality Commands
+
+Run the canonical Ruff lint target over project-owned Python code:
+
+```bash
+make lint
+```
+
+Formatting commands use the same default scope (`src tests scripts`):
+
+```bash
+make format
+make format-check
+```
+
+The lint baseline is clean. The repository-wide formatting baseline is not yet
+clean, so do not run mass formatting as part of a semantic change. Until a
+dedicated formatting-only change establishes the baseline, format and check only
+new or materially modified files:
+
+```bash
+make format PYTHON_QUALITY_PATHS="src/thesis_rl/module.py tests/test_module.py"
+make format-check PYTHON_QUALITY_PATHS="src/thesis_rl/module.py tests/test_module.py"
+```
+
+Global mypy enforcement and a mandatory coverage threshold are intentionally
+deferred. Do not invent either as an implementation gate.
+
 ## 0.2) Rulebook v2 F10: calibrazione e pilot
 
 I target `make` automatizzano soltanto la parte riproducibile. Le prove di

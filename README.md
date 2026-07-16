@@ -14,9 +14,14 @@ conf/
 docs/
   architecture/
   archive/
+  decisions/
+  implementation/
+  protocols/
   setup/
-  specs/
+  specifications/
+  templates/
   workflows/
+incoming/
 scripts/
 src/
 tests/
@@ -50,9 +55,10 @@ The project currently uses local editable dependencies for:
 - `third_party/metadrive`
 - `third_party/stable-baselines3`
 
-`third_party/scenarionet` is included and prepared in the workspace layout for
-future dataset integration. The current phase does not yet implement the full
-ScenarioNet training pipeline inside `thesis_rl`.
+`third_party/scenarionet` supports the implemented ScenarioNet/Waymo/procedural
+scenario pipeline under `thesis_rl.scenarios`. Its exact pinned revision and the
+current integration status are recorded in the repository documentation and
+dataset manifest.
 
 For Docker builds, the repository starts from the official minimal Python
 3.10 image. PyTorch 2.8 is installed from the backend selected per machine by
@@ -257,7 +263,26 @@ uv run --no-sync python -m thesis_rl.cli.train
 uv run --no-sync python -m thesis_rl.cli.evaluate
 ```
 
-### 5. Verify End-To-End Training
+### 5. Quality Commands
+
+Canonical Docker-based commands for project-owned Python code are:
+
+```bash
+make lint
+make format
+make format-check
+```
+
+The default scope is `src tests scripts`; vendored projects and runtime data are
+excluded. The lint baseline is clean. Formatting is being adopted gradually, so
+use `PYTHON_QUALITY_PATHS` for files changed by normal feature work and reserve a
+repository-wide formatting run for a dedicated reviewable change:
+
+```bash
+make format-check PYTHON_QUALITY_PATHS="src/thesis_rl/module.py tests/test_module.py"
+```
+
+### 6. Verify End-To-End Training
 
 After `./setup.sh` has passed, the quickest manual confirmation that the repo
 really works end-to-end is a smoke training run:
