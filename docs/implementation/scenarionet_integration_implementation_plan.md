@@ -1,5 +1,9 @@
 # Piano di implementazione e tracker — ScenarioNet v1
 
+> Historical v1 implementation record. Superseded for current implementation
+> work by [`scenarionet_integration_spec_v1.1_exec_plan.md`](scenarionet_integration_spec_v1.1_exec_plan.md)
+> on 2026-07-16; retained for traceability only.
+
 ## Scopo
 
 Questo documento traduce la specifica

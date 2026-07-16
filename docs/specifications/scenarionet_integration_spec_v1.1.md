@@ -1,18 +1,68 @@
 # Specifica di implementazione — Integrazione ScenarioNet nel progetto di tesi
 
-**Stato:** specifica architetturale e implementativa v1 — superseded
-**Authority:** superseded by `scenarionet_integration_spec_v1.1.md` on 2026-07-16
-**Approval confirmed:** 2026-07-16  
-**Ambito:** integrazione di scenari reali Waymo/ScenarioNet e scenari procedurali MetaDrive in una pipeline unificata di training ed evaluation  
-**Training principale previsto:** 1.500.000 environment steps  
-**Setting:** single-agent ego control, post-perception / mid-to-end  
-**Formato canonico degli scenari:** `ScenarioDescription`
+## Metadata
+
+- **Feature:** ScenarioNet integration
+- **Specification ID:** `SCENARIONET-INTEGRATION`
+- **Version:** `1.1`
+- **Status:** `APPROVED`
+- **Date:** `2026-07-16`
+- **Supersedes:** `scenarionet_integration_v1_specification.md`, version `1`
+- **Related specifications:** Automatic Curriculum Learning specification; Rulebook specification; Semantic Observation specification
+- **Related ADRs:** `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`
+- **Authoritative:** `YES`
+- **Scope:** integration of real Waymo/ScenarioNet scenarios and MetaDrive procedural scenarios into a unified training and evaluation pipeline
+- **Main planned training budget:** `1_500_000` environment steps
+- **Setting:** single-agent ego control, post-perception / mid-to-end
+- **Canonical scenario format:** `ScenarioDescription`
+
+> Questa revisione è la specifica autorevole dopo l’approvazione esplicita
+> dell’utente e la registrazione del percorso effettivo in `project_index.md`.
+
+### Registro di approvazione
+
+- **Date:** `2026-07-16`
+- **Evidence:** explicit user message in this Codex conversation: “Approvo la
+  specifica ScenarioNet Integration v1.1.”
+- **Approved scope:** the complete v1.1 specification, including the recorded
+  review decisions in the following section.
+
+### Decisioni di revisione confermate
+
+- Gli arm semantici ScenarioNet e lo spazio arm del MAB `scenario_acl_scenarionet`
+  restano gli stessi sei arm correnti `A0`–`A5`; questa revisione non ne cambia
+  nomi, formule o semantica.
+- Se il converter Waymo non espone un vero identificativo di log o segmento,
+  `source_file`/TFRecord shard è sola provenienza tecnica e il gruppo di split
+  coincide con lo scenario originale.
+- Gli split runtime rulebook-based richiedono anche
+  `rulebook_eligible=true`; il catalogo audit conserva separatamente gli
+  scenari esclusi.
+- `extra_steps_after_scenario` è congelato a `50` per tutte le sorgenti.
+- L'acquisizione Waymo usa batch di 16 shard e un cap di 128 nuovi shard.
+- Il requisito causale di questa specifica copre la pipeline ScenarioNet; il
+  contratto completo dell'osservazione semantica resta alla relativa specifica.
 
 ---
 
 ## 1. Scopo del documento
 
-Questo documento definisce in modo completo e vincolante la prima versione dell’integrazione di ScenarioNet nel progetto.
+Questo documento definisce in modo completo la revisione 1.1 dell’integrazione di ScenarioNet nel progetto.
+
+La revisione 1.1 risolve in particolare l’ambiguità tra:
+
+```text
+generazione o acquisizione del candidate pool
+≠
+selezione stratificata degli split finali
+≠
+sampling online durante training e curriculum
+```
+
+La generazione PG non viene forzata a produrre quote minime per arm. Gli split
+finali vengono invece costruiti con una politica esplicita `arm-first` e
+`source-aware`, soggetta ai vincoli di qualità, disgiunzione e riproducibilità
+specificati più avanti.
 
 La specifica copre:
 
@@ -79,7 +129,7 @@ Sono vietati:
 
 #### Route ego e causalità
 
-Nella v1 la route ego resa disponibile dal modulo di navigazione di `ScenarioEnv`
+Nella v1.1 la route ego resa disponibile dal modulo di navigazione di `ScenarioEnv`
 può essere usata internamente dall’environment per navigazione, progresso,
 destinazione, successo e valutazione della rilevanza degli elementi di scena. Non
 si implementa in questa fase un nuovo route planner o un nuovo map-matching
@@ -102,7 +152,7 @@ La definizione concreta dei route tokens appartiene alla successiva specifica de
 `SemanticStateObservation`; l’integrazione ScenarioNet deve soltanto preservare
 una route ego valida e impedire leakage temporale.
 
-### 2.2 Sorgenti degli scenari
+### 2.2 Sorgenti degli scenari e significato del 50/50
 
 La configurazione principale usa:
 
@@ -111,19 +161,35 @@ La configurazione principale usa:
 50% MetaDrive procedural generation
 ```
 
-Il rapporto 50/50 è il default sperimentale della v1: è una scelta di bilanciamento ragionevole e riproducibile, non un valore dichiarato universalmente ottimale.
+Il rapporto 50/50 è una scelta sperimentale del progetto, motivata ma non
+considerata universalmente ottimale.
 
-Il 50/50 si riferisce a:
+Il 50/50 ha due significati distinti:
 
-1. composizione del pool di training;
-2. probabilità della sorgente nei reset di training.
+1. **composizione degli split primari:** ogni split contiene esattamente la quota
+   Waymo e PG definita in §5, salvo una deviazione approvata e registrata;
+2. **sampling della baseline uniforme:** poiché i conteggi complessivi delle due
+   sorgenti sono uguali, il provider uniforme realizza il 50/50 dei reset in
+   aspettativa e deve verificarlo statisticamente.
 
-Non garantisce il 50/50 esatto delle transizioni, perché le durate episodiche possono differire.
+Il 50/50 **non** è un vincolo per ogni cella `source × arm`. La ripartizione
+interna per arm è un target best-effort, perché alcune celle sono
+strutturalmente o empiricamente vuote, in particolare:
 
-Il logging deve quindi distinguere:
+```text
+A4_vru × PG = unavailable in the v1.1 generator
+```
 
-- quota dei reset per sorgente;
-- quota degli environment step per sorgente.
+Il 50/50 dei reset non è inoltre garantito quando un curriculum sceglie gli arms
+in modo adattivo: se il curriculum seleziona A4, la sorgente deve essere Waymo.
+In tali modalità devono essere registrate le frequenze effettive.
+
+Il 50/50 non garantisce il 50/50 delle transizioni, perché le durate episodiche
+possono differire. Il logging distingue quindi almeno:
+
+- reset per sorgente;
+- environment step per sorgente;
+- episodi e step per `source × arm`.
 
 ### 2.3 Dataset reale
 
@@ -155,18 +221,35 @@ Tutte le operazioni successive devono dipendere da questo formato e non dalla so
 
 ### 2.6 Mutation
 
-La mutation degli scenari è disattivata nella v1.
+La mutation degli scenari è disattivata nella v1.1.
 
 ```yaml
 scenario_mutation:
   enabled: false
 ```
 
-### 2.7 Curriculum nativo di ScenarioNet
+### 2.7 Curriculum nativo di ScenarioNet e contratto con l’ACL
 
 Non si usa il curriculum nativo di `ScenarioEnv`.
 
-Il futuro curriculum sarà implementato esternamente tramite l’interfaccia `ScenarioProvider` e lavorerà sugli arms definiti in questo documento. La v1 implementa soltanto un provider uniforme; l’ACL esistente verrà adattato successivamente senza modificare l’environment.
+Il curriculum del progetto è esterno all’environment, usa l’interfaccia
+`ScenarioProvider` e lavora sugli arms definiti in questo documento. La presente
+specifica stabilisce soltanto il contratto di catalogo e sampling tra ScenarioNet
+e ACL; la formula del learning potential, il buffer e l’aggiornamento del MAB
+restano definiti dalla specifica ACL autorevole.
+
+Quando un provider riceve un arm:
+
+```text
+arm selected
+→ select a source among the non-empty cells for that arm
+→ sample a scenario from the selected source × arm pool
+```
+
+La probabilità sorgente condizionata all’arm è `0.5/0.5` quando entrambe le
+celle sono disponibili. Se una cella è vuota, tutta la massa viene assegnata
+alla sorgente disponibile. Questa è una regola esplicita del contratto, non un
+fallback silenzioso.
 
 ---
 
@@ -184,7 +267,7 @@ Codex deve:
 
 Non è necessario scegliere manualmente tutte le versioni prima di iniziare. La compatibilità viene risolta sull’installazione effettiva e poi registrata.
 
-La v1 usa come sorgente reale esclusivamente la variante Waymo:
+La v1.1 usa come sorgente reale esclusivamente la variante Waymo:
 
 ```text
 training_20s
@@ -202,6 +285,10 @@ Schema minimo:
 
 ```yaml
 dataset_id: scenarionet_v1
+
+specification:
+  id: SCENARIONET-INTEGRATION
+  version: 1.1
 
 software:
   project_commit: null
@@ -266,7 +353,8 @@ ${SCENARIONET_DATA_ROOT}/
 ├── runtime/
 │   ├── train/
 │   ├── validation/
-│   └── test/
+│   ├── test/
+│   └── test_waymo_natural/       # optional, disabled by default
 │
 ├── catalog/
 │   ├── scenario_catalog.parquet
@@ -279,6 +367,7 @@ ${SCENARIONET_DATA_ROOT}/
     ├── train.json
     ├── validation.json
     ├── test.json
+    ├── test_waymo_natural.json   # optional
     └── split_manifest.yaml
 ```
 
@@ -312,7 +401,27 @@ dataset:
 
 Questi valori sono la baseline pianificata.
 
-Possono essere ridotti soltanto per vincoli tecnici documentati. Una riduzione deve modificare il manifest dello split e non deve essere effettuata silenziosamente.
+Per ciascuno split primario di numerosità totale `N_s`, il target per arm è:
+
+```text
+floor(N_s / 6) oppure ceil(N_s / 6)
+```
+
+con differenza massima pari a uno tra i conteggi degli arms. Il resto della
+divisione viene distribuito deterministicamente secondo `split_seed`; non si
+assegna sempre l’unità aggiuntiva agli stessi arms.
+
+Target indicativi:
+
+| Split | Totale | Target per arm |
+|---|---:|---:|
+| train | 2000 | 333–334 |
+| validation | 500 | 83–84 |
+| test | 1000 | 166–167 |
+
+Possono essere ridotti soltanto per vincoli tecnici documentati. Una riduzione
+deve modificare il manifest dello split, preservare la stessa politica di
+bilanciamento e non deve essere effettuata silenziosamente.
 
 ### 5.2 Profili di sviluppo
 
@@ -339,7 +448,7 @@ Le run di sviluppo non sostituiscono la run principale.
 
 ### 6.1 Waymo
 
-La v1 usa esclusivamente gli scenari provenienti da:
+La v1.1 usa esclusivamente gli scenari provenienti da:
 
 ```text
 Waymo training_20s
@@ -356,7 +465,7 @@ Waymo training_20s convertito
 └── thesis final test
 ```
 
-Gli split ufficiali Waymo `validation` e `testing` non vengono utilizzati nella v1, poiché non corrispondono necessariamente alla stessa variante di scenari completi da 20 secondi usata dal database ScenarioNet di riferimento.
+Gli split ufficiali Waymo `validation` e `testing` non vengono utilizzati nella v1.1, poiché non corrispondono necessariamente alla stessa variante di scenari completi da 20 secondi usata dal database ScenarioNet di riferimento.
 
 La suddivisione interna deve essere:
 
@@ -370,11 +479,16 @@ Ordine di preferenza per la chiave di gruppo:
 ```text
 source_log_id
 segment_id
-source_file_id / TFRecord shard
+source_file_id, soltanto se dimostra di identificare un log o segmento condiviso
 strongest equivalent metadata available
 ```
 
-Se il formato `training_20s` contiene scenari già indipendenti e non sovrapposti e non espone un identificativo superiore, il gruppo può coincidere con lo scenario originale. La scelta effettiva deve essere registrata nel manifest.
+Nel converter ScenarioNet checkoutato, `metadata.source_file` identifica il file
+TFRecord di provenienza e non un log o segmento: è quindi un campo di audit e
+non una chiave di raggruppamento. Se `training_20s` non espone un identificativo
+superiore che dimostri una dipendenza fra scenari, il gruppo coincide con lo
+scenario originale (`scenario_id`). La scelta effettiva e l'evidenza del campo
+usato devono essere registrate nel manifest.
 
 Il thesis final test non deve essere usato per:
 
@@ -404,7 +518,7 @@ Non sono ammessi:
 - lo stesso scenario rigenerato in più split;
 - in future versioni, parent e child mutato in split differenti.
 
-Non è richiesta una deduplicazione geometrica sofisticata nella v1.
+Non è richiesta una deduplicazione geometrica sofisticata nella v1.1.
 
 ### 6.3 Verifica degli split
 
@@ -424,23 +538,21 @@ Deve inoltre eseguire il controllo di overlap fornito dalla versione ScenarioNet
 
 ```yaml
 split_seed: 0
+split_policy: balanced_arm_source
 
 source_policy:
   waymo_source: waymo_training_20s
-
   thesis_train: internal_grouped_split
   thesis_validation: internal_grouped_split
   thesis_test: internal_grouped_split
-
   excluded:
     waymo_official_validation:
-      reason: not_used_in_v1
-
+      reason: not_used_in_v1_1
     waymo_official_testing:
-      reason: not_used_in_v1
+      reason: not_used_in_v1_1
 
 grouping:
-  waymo: strongest_available_source_group
+  waymo: source_log_or_segment_else_scenario_id
   pg: generation_seed
 
 counts:
@@ -454,9 +566,143 @@ counts:
     waymo: 500
     pg: 500
 
+balancing:
+  arm_targets: near_uniform
+  max_arm_count_difference: 1
+  source_target_within_arm: best_effort_50_50
+  preserve_exact_source_totals: true
+  structural_empty_cells:
+    A4_vru:
+      pg: true
+  allow_cross_source_fill_within_same_arm: true
+  allow_relabeling: false
+  allow_duplicate_records: false
+  allow_quality_filter_relaxation: false
+
+selection_report:
+  requested_by_split_source_arm: {}
+  selected_by_split_source_arm: {}
+  deficits_by_split_source_arm: {}
+  source_compensation_by_split_arm: {}
+  total_arm_deficit: null
+
+waymo_acquisition:
+  ordering_seed: 0
+  batch_size_shards: 16
+  max_new_shards: 128
+  processed_shards: []
+  stop_reason: null
+
 catalog_hash: null
 created_at: null
 ```
+
+### 6.5 Candidate pool, eligible pool e selected split
+
+Le tre popolazioni non devono essere confuse:
+
+```text
+candidate pool
+→ quality, reliability and Rulebook eligibility filters
+→ eligible pool
+→ grouped balanced selection
+→ selected train / validation / test records
+```
+
+- `candidate pool`: tutti gli scenari convertiti o generati e catalogabili;
+- `eligible pool`: scenari che superano i filtri hard di validità, qualità,
+  affidabilità e, per gli split runtime rulebook-based,
+  `rulebook_eligible=true`;
+- `selected split`: sottoinsieme finale congelato usato dagli esperimenti.
+
+La classificazione A0–A5 avviene prima della selezione degli split. Soglie,
+feature e filtri devono essere congelati prima di usare la matrice
+`source × arm` per la selezione.
+
+### 6.6 Politica `balanced_arm_source`
+
+Per ogni split la selezione segue questa priorità:
+
+1. disgiunzione dei gruppi e assenza di leakage;
+2. filtri hard di validità, qualità e affidabilità;
+3. numerosità totale dello split;
+4. conteggio complessivo esatto per sorgente;
+5. conteggio quasi uniforme A0–A5;
+6. target 50/50 Waymo–PG dentro ogni arm.
+
+Il vincolo 6 è il primo rilassabile. I vincoli 1 e 2 non possono essere
+rilassati per riempire quote.
+
+Per ogni arm:
+
+```text
+attempt 50% Waymo + 50% PG
+if one source is insufficient:
+    fill the missing quota from the other source in the same arm
+then compensate source totals across other arms with available surplus
+```
+
+Sono vietati:
+
+- duplicazione di scenari;
+- modifica delle label per far tornare i conteggi;
+- modifica opportunistica di soglie o feature;
+- inclusione di scenari invalidi o con segnale non affidabile;
+- sostituzione silenziosa tra arms diversi.
+
+A4 è Waymo-only nella v1.1. L’eventuale scarsità Waymo in A0 viene coperta da
+PG e registrata, non corretta riclassificando scenari reali.
+
+### 6.7 Acquisizione incrementale Waymo
+
+Poiché Waymo è disponibile per shard e la resa dei filtri non è nota a priori,
+la preparazione è incrementale e deficit-driven.
+
+Procedura obbligatoria:
+
+1. selezionare un batch di shard mai processati usando ordine deterministico;
+2. scaricare e convertire il batch;
+3. validare, estrarre feature e classificare senza cambiare soglie;
+4. aggiornare la matrice dell’eligible pool;
+5. verificare se la politica `balanced_arm_source` può soddisfare i target;
+6. fermarsi quando i target hard sono soddisfatti;
+7. altrimenti elaborare il batch successivo fino al cap configurato.
+
+Il cap `max_new_shards` è obbligatorio e si applica agli shard mai processati
+aggiunti dalla preparazione corrente. I valori congelati per la v1.1 sono:
+
+```yaml
+batch_size_shards: 16
+max_new_shards: 128
+```
+
+Al raggiungimento del cap la pipeline deve
+produrre un report di deficit ed errore esplicito; non può continuare senza
+limite né rilassare i filtri.
+
+Gli shard successivi non possono essere scelti sulla base delle prestazioni
+dell’agente. I file raw possono essere eliminati soltanto dopo conversione
+riuscita e verifica di un output non vuoto. L’overshoot dell’ultimo batch è
+ammesso e tracciato; gli scenari eleggibili non selezionati restano nell’audit
+pool.
+
+### 6.8 Test Waymo-natural opzionale
+
+È ammesso un holdout diagnostico aggiuntivo `test_waymo_natural`, costruito
+esclusivamente da gruppi Waymo eleggibili non presenti negli split primari e
+senza riequilibrare gli arms.
+
+Contratto:
+
+- disabilitato di default;
+- numerosità configurata esplicitamente prima della selezione;
+- selezione deterministica e group-disjoint;
+- nessun uso per calibrazione, checkpoint selection o tuning;
+- metriche riportate separatamente dal test bilanciato primario.
+
+Il test primario misura copertura comparativa delle competenze A0–A5. Il test
+Waymo-natural, se abilitato, misura le prestazioni sulla distribuzione empirica
+post-filtro del pool Waymo e non sostituisce il benchmark bilanciato.
 
 ## 7. Scenario catalog
 
@@ -502,6 +748,8 @@ class ScenarioRecord:
     signal_reliability: str           # not_applicable | complete | partial | missing
     validation_status: str            # valid | warning | invalid
     validation_warnings: tuple[str, ...]
+    rulebook_eligible: bool | None
+    rulebook_validation_errors: tuple[str, ...]
 ```
 
 Identificativo consigliato:
@@ -527,8 +775,15 @@ has_pedestrian
 has_cyclist
 relevant_agents_q90
 relevant_vehicles_q90
+relevant_vrus_q90
 min_vehicle_distance_m
 min_vru_distance_to_route_m
+vehicle_conflict_count
+vru_conflict_count
+min_vehicle_conflict_dcpa_m
+min_vehicle_conflict_tcpa_s
+min_vru_conflict_dcpa_m
+min_vru_conflict_tcpa_s
 low_traffic
 dense_traffic
 vru_interaction
@@ -559,63 +814,31 @@ Gli arms descrivono lo scenario risultante, non il profilo usato per generarlo.
 ### 8.1 Arms definitivi
 
 ```text
-A0_simple_lane_follow
-A1_vehicle_interaction
-A2_merge_or_roundabout
-A3_intersection
-A4_vru_interaction
-A5_complex_mixed
+A0_simple_low_traffic
+A1_traffic
+A2_junction
+A3_complex_junction
+A4_vru
+A5_critical_mixed
 ```
 
 ### 8.2 Significato
 
-#### A0 — Simple lane following
+La tassonomia è quella già implementata per ScenarioNet e condivisa dal MAB
+ACL semantico (`K=6`). Questa v1.1 non modifica le formule né rimappa artifact
+esistenti.
 
-- nessuna topologia complessa rilevante;
-- nessuna interazione veicolare persistente secondo `relevant_vehicles_q90`;
-  sono comunque ammessi veicoli lontani o presenze brevi che non rendono
-  positivo il novantesimo percentile temporale;
-- nessun VRU rilevante;
-- compito dominante: route following e controllo base.
+- `A0_simple_low_traffic`: scenario topologicamente semplice, con al più otto
+  veicoli rilevanti al novantesimo percentile temporale;
+- `A1_traffic`: traffico o topologia non classificata nei livelli superiori;
+- `A2_junction`: junction o topologia rilevante con complessità intermedia;
+- `A3_complex_junction`: junction con traffico o conflitti elevati;
+- `A4_vru`: contesto VRU rilevante; nella v1.1 può essere Waymo-only;
+- `A5_critical_mixed`: topologia con conflitto VRU, oppure combinazione
+  topologica/traffico che soddisfa le condizioni critiche di §16.
 
-#### A1 — Vehicle interaction
-
-- interazione con traffico veicolare;
-- strada ordinaria;
-- nessun merge, roundabout o incrocio rilevante;
-- compiti: distanza, adattamento velocità, accodamento e cambio corsia.
-
-#### A2 — Merge or roundabout
-
-- merge, diverge, bottleneck, ramp o roundabout;
-- struttura rilevante per la route ego.
-
-Non è obbligatorio distinguere automaticamente i sottotipi se la versione convertita non li espone direttamente.
-
-#### A3 — Intersection
-
-Comprende tutte le junction rilevanti per la route:
-
-- incroci semaforizzati;
-- incroci non semaforizzati;
-- incroci con stop;
-- T-junction e forme equivalenti disponibili.
-
-Il tipo di controllo resta un tag secondario e sarà utilizzato dal rulebook e dall’evaluation.
-
-#### A4 — VRU interaction
-
-- pedone o ciclista potenzialmente rilevante per la route ego;
-- può essere alimentato prevalentemente o esclusivamente da Waymo nella v1.
-
-#### A5 — Complex mixed
-
-- almeno due fattori semantici distinti tra:
-  - intersection;
-  - merge o roundabout;
-  - VRU interaction.
-
-Il solo traffico denso non rende automaticamente uno scenario A5: rimane un tag di difficoltà.
+Il tipo di controllo, merge e roundabout restano tag indipendenti. Il profilo
+PG è diagnostico e non determina mai il `primary_arm`.
 
 ### 8.3 Tag indipendenti
 
@@ -655,7 +878,7 @@ PG profile
 → primary arm
 ```
 
-Codex deve implementare i profili usando esclusivamente le configurazioni e i road block nativi disponibili nella versione MetaDrive locale. Non deve sviluppare nella v1 un generatore stradale, un sistema di precedenza, semafori o VRU custom.
+Codex deve implementare i profili usando esclusivamente le configurazioni e i road block nativi disponibili nella versione MetaDrive locale. Non deve sviluppare nella v1.1 un generatore stradale, un sistema di precedenza, semafori o VRU custom.
 
 Se un blocco richiesto non è disponibile, lo script deve segnalarlo chiaramente e non sostituirlo con un’euristica complessa non prevista.
 
@@ -693,7 +916,7 @@ max_episode_length: 500
 Target prevalente:
 
 ```text
-A0_simple_lane_follow
+A0_simple_low_traffic
 ```
 
 ### 9.3 P1 — Vehicle interaction
@@ -714,7 +937,7 @@ max_episode_length: 500
 Target prevalente:
 
 ```text
-A1_vehicle_interaction
+A1_traffic
 ```
 
 ### 9.4 P2 — Merge or roundabout
@@ -737,7 +960,7 @@ La route ego deve attraversare il blocco richiesto, quando questa verifica è re
 Target prevalente:
 
 ```text
-A2_merge_or_roundabout
+A2_junction
 ```
 
 ### 9.5 P3 — Intersection
@@ -760,7 +983,7 @@ Il profilo usa l’intersezione nativa disponibile. Non è richiesto generare se
 Target prevalente:
 
 ```text
-A3_intersection
+A2_junction or A3_complex_junction
 ```
 
 ### 9.6 P5 — Complex mixed
@@ -783,7 +1006,7 @@ Se la versione locale non permette di imporre due blocchi complessi, il profilo 
 
 ### 9.7 A4 e PG
 
-Non si richiede nella v1 un profilo PG specifico per `A4_vru_interaction`.
+Non si richiede nella v1.1 un profilo PG specifico per `A4_vru`.
 
 La copertura di pedoni e ciclisti può provenire principalmente da Waymo. Un generatore PG custom per VRU è una possibile estensione, non un requisito di completamento.
 
@@ -791,7 +1014,7 @@ La copertura di pedoni e ciclisti può provenire principalmente da Waymo. Un gen
 
 `accident_prob` rimane a zero nei profili principali.
 
-Gli ostacoli statici non definiscono un arm autonomo nella v1. Possono essere conservati tramite il tag:
+Gli ostacoli statici non definiscono un arm autonomo nella v1.1. Possono essere conservati tramite il tag:
 
 ```text
 has_static_obstacle
@@ -886,29 +1109,34 @@ Dopo l’eventuale revisione:
 pg_profiles_v1 = frozen
 ```
 
-### 11.3 Dataset PG finale
+### 11.3 Candidate pool PG e selezione finale
 
-Si genera un numero prefissato di scenari validi, senza inseguire quote rigide per arm.
+Si genera un candidate pool PG sufficiente a ottenere i conteggi validi
+complessivi richiesti, senza imporre al generatore minimi A0–A5.
 
-Target principale:
+Target selezionato principale:
 
 ```text
-1.000 scenari PG validi per il training
+train:      1.000 PG
+validation:   250 PG
+test:         500 PG
 ```
-
-Più gli scenari previsti per validation e test.
 
 Procedura:
 
-1. generare il pool PG con seed registrati;
-2. scartare gli scenari invalidi;
-3. costruire gli split tramite seed disgiunti;
-4. unire il train candidate PG al train candidate Waymo;
-5. calcolare Q40 e Q75 sul train candidate;
-6. assegnare gli arms;
-7. produrre il report finale della distribuzione.
+1. generare un candidate pool con seed registrati e disgiunti;
+2. scartare gli scenari invalidi secondo i filtri hard;
+3. estrarre le feature e assegnare gli arms prima dello split;
+4. unire gli eligible pool PG e Waymo;
+5. applicare la selezione grouped `balanced_arm_source` descritta in §6;
+6. congelare gli split e produrre la matrice target/selected/deficit.
 
-Non si rigenera il dataset soltanto per rendere uguali gli arms. Un arm raro viene documentato e gestito dal sampler/curriculum successivo.
+La pipeline può generare ulteriori seed PG se il numero totale di scenari PG
+validi è insufficiente. Non deve però modificare profili, label, soglie o
+continuare a generare specificamente finché ogni profilo produce una quota per
+arm. `enforce_minimum_scenarios_per_arm=false` descrive esclusivamente questa
+assenza di enforcement a livello di generazione; non vieta la selezione
+stratificata degli split finali.
 
 ---
 
@@ -938,7 +1166,7 @@ Il nome del profilo PG non costituisce prova della topologia dello scenario. Per
 
 `pg_profile` resta nel catalogo e nel manifest esclusivamente per diagnosi e riproducibilità.
 
-Non si implementa nella v1 un riconoscitore geometrico complesso basato soltanto sulle polylines.
+Non si implementa nella v1.1 un riconoscitore geometrico complesso basato soltanto sulle polylines.
 
 Codex deve ispezionare il converter e lo schema realmente presenti nel submodule per usare i campi corretti; non deve inventare nomi di metadata.
 
@@ -979,9 +1207,16 @@ class ScenarioFeatures:
 
     relevant_agents_q90: float
     relevant_vehicles_q90: float
+    relevant_vrus_q90: float
 
     min_vehicle_distance_m: float | None
     min_vru_distance_to_route_m: float | None
+    vehicle_conflict_count: int
+    vru_conflict_count: int
+    min_vehicle_conflict_dcpa_m: float | None
+    min_vehicle_conflict_tcpa_s: float | None
+    min_vru_conflict_dcpa_m: float | None
+    min_vru_conflict_tcpa_s: float | None
 
     low_traffic: bool
     dense_traffic: bool
@@ -1065,7 +1300,7 @@ relevant_agents:
   temporal_quantile: 0.90
 ```
 
-Una futura versione potrà aggiungere filtraggio topologico più sofisticato. Non è requisito della v1, salvo che il pilot mostri falsi positivi evidenti su strade sovrapposte o non connesse.
+Una futura versione potrà aggiungere filtraggio topologico più sofisticato. Non è requisito della v1.1, salvo che il pilot mostri falsi positivi evidenti su strade sovrapposte o non connesse.
 
 ---
 
@@ -1178,17 +1413,33 @@ soglie non vengono mai ricalcolate sui set di evaluation.
 ### 16.1 Fattori
 
 ```python
-merge_roundabout = f.has_merge_or_roundabout is True
-intersection = f.has_intersection is True
-vru_context = f.vru_interaction
-vehicle_interaction = f.relevant_vehicles_q90 > 0
+topology = (
+    f.has_merge_or_roundabout is True
+    or f.has_intersection is True
+)
+mixed_topology = (
+    f.has_merge_or_roundabout is True
+    and f.has_intersection is True
+)
+vru_context = f.vru_interaction or f.vru_conflict_count > 0
+complex_traffic = (
+    f.relevant_agents_q90 >= 25.0
+    or f.vehicle_conflict_count >= 4
+)
 ```
 
-`vehicle_interaction` usa `relevant_vehicles_q90` anziché la sola presenza di
-un veicolo nello scenario. In questo modo A1 richiede che almeno un veicolo sia
-effettivamente vicino all'ego per una parte non trascurabile dell'episodio:
-un veicolo lontano, presente soltanto nel file, non rende lo scenario
-un'interazione veicolare.
+Le soglie della tassonomia esistente sono congelate:
+
+```text
+A0_MAX_RELEVANT_VEHICLES_Q90 = 8.0
+A1_JUNCTION_MAX_RELEVANT_AGENTS_Q90 = 8.0
+A1_JUNCTION_MAX_VEHICLE_CONFLICT_COUNT = 1
+ARM_COMPLEX_RELEVANT_AGENTS_Q90 = 25.0
+ARM_COMPLEX_VEHICLE_CONFLICT_COUNT = 4
+ARM_MIXED_TOPOLOGY_CONFLICT_COUNT = 3
+ARM_CRITICAL_RELEVANT_AGENTS_Q90 = 30.0
+ARM_CRITICAL_VEHICLE_CONFLICT_COUNT = 6
+```
 
 Le informazioni sul tipo di controllo dell’intersezione restano tag secondari:
 
@@ -1199,69 +1450,76 @@ has_stop_sign
 has_unknown_signal
 ```
 
-### 16.2 Complessità mista
-
-A5 richiede almeno due fattori semantici distinti:
-
-```python
-semantic_count = sum([
-    merge_roundabout,
-    intersection,
-    vru_context,
-])
-
-complex_mixed = semantic_count >= 2
-```
-
-Il traffico denso e l'interazione veicolare rimangono tag e misure di
-difficoltà, ma non spostano da soli uno scenario in A5. Questa scelta impedisce
-che quasi ogni incrocio trafficato venga assorbito dall'arm misto.
-
-### 16.3 Algoritmo
+### 16.2 Algoritmo
 
 ```python
 def assign_primary_arm(f: ScenarioFeatures) -> str:
-    merge_roundabout = f.has_merge_or_roundabout is True
-    intersection = f.has_intersection is True
-    vru_context = f.vru_interaction
-    vehicle_interaction = f.relevant_vehicles_q90 > 0
+    topology = (
+        f.has_merge_or_roundabout is True
+        or f.has_intersection is True
+    )
+    mixed_topology = (
+        f.has_merge_or_roundabout is True
+        and f.has_intersection is True
+    )
+    vru_context = f.vru_interaction or f.vru_conflict_count > 0
+    complex_traffic = (
+        f.relevant_agents_q90 >= 25.0
+        or f.vehicle_conflict_count >= 4
+    )
+    critical = topology and (
+        f.vru_conflict_count > 0
+        or (mixed_topology and f.vehicle_conflict_count >= 3)
+        or (
+            f.relevant_agents_q90 >= 30.0
+            and f.vehicle_conflict_count >= 6
+        )
+    )
 
-    semantic_count = sum([
-        merge_roundabout,
-        intersection,
-        vru_context,
-    ])
-
-    if semantic_count >= 2:
-        return "A5_complex_mixed"
+    if critical:
+        return "A5_critical_mixed"
 
     if vru_context:
-        return "A4_vru_interaction"
+        return "A4_vru"
 
-    if intersection:
-        return "A3_intersection"
+    if topology and complex_traffic:
+        return "A3_complex_junction"
 
-    if merge_roundabout:
-        return "A2_merge_or_roundabout"
+    if topology:
+        if (
+            f.relevant_agents_q90 <= 8.0
+            and f.vehicle_conflict_count <= 1
+        ):
+            return "A1_traffic"
+        return "A2_junction"
 
-    if vehicle_interaction:
-        return "A1_vehicle_interaction"
+    known_simple = (
+        f.has_merge_or_roundabout is False
+        and f.has_intersection is False
+    )
+    if known_simple and f.relevant_vehicles_q90 <= 8.0:
+        return "A0_simple_low_traffic"
 
-    return "A0_simple_lane_follow"
+    return "A1_traffic"
 ```
 
-Uno scenario con `topology_tag="unknown"` può comunque essere classificato
-come A1, A4 o A0 sulla base delle altre feature. Non viene forzata una
-classificazione topologica non affidabile.
+Uno scenario con `topology_tag="unknown"` non viene forzato in A0: può essere
+classificato A1 o A4 sulla base delle feature affidabili disponibili.
 
-### 16.4 Controllo distribuzione
+### 16.3 Controllo distribuzione e uso delle label
 
-Dopo la catalogazione:
+Dopo la catalogazione e prima della selezione:
 
-- si salva la distribuzione per arm e sorgente;
-- un arm raro viene ispezionato, ma non si modificano automaticamente soglie o dataset per renderlo grande quanto gli altri;
-- A4 può essere prevalentemente Waymo;
-- eventuali aggregazioni future vengono decise prima del training principale.
+- si salva la matrice dell’eligible pool per `source × arm`;
+- si ispezionano arms rari o distribuzioni implausibili;
+- non si modificano automaticamente soglie, feature o label per soddisfare quote;
+- A4 è Waymo-only nella configurazione corrente;
+- la selezione finale applica `balanced_arm_source` senza cambiare la semantica
+  degli arms.
+
+Un audit può rivelare un errore scientifico nella classificazione. In tal caso
+si apre una nuova revisione di feature/arm, si ricostruisce integralmente il
+catalogo e si registra la modifica. Non si ritoccano singoli scenari o conteggi.
 
 ## 17. Validazione degli scenari
 
@@ -1333,7 +1591,8 @@ has_unknown_signal = signal_reliability in {"partial", "missing"}
 `not_applicable` non genera warning e non rende lo scenario non valutabile. Le
 regole dipendenti dai semafori restituiscono `NOT_EVALUABLE` soltanto nei casi
 `partial` o `missing`. Lo scenario può comunque restare utilizzabile per le altre
-regole e per collision avoidance.
+regole e per collision avoidance nel catalogo audit, ma non entra negli split
+runtime rulebook-based finché `rulebook_eligible` non è vero.
 
 ### 17.4 Stati di validazione
 
@@ -1346,6 +1605,23 @@ invalid
 - `valid`: utilizzabile senza anomalie note;
 - `warning`: utilizzabile, ma con feature non valutabili;
 - `invalid`: non entra negli split runtime.
+
+### 17.5 Eleggibilità Rulebook degli split runtime
+
+Poiché il training finale riusa il reward Rulebook, ogni scenario selezionato
+per `runtime/train`, `runtime/validation` o `runtime/test` deve avere:
+
+```text
+validation_status ∈ {valid, warning}
+→ hard quality filters passed
+→ allowed signal-reliability policy passed
+→ rulebook_eligible = true
+```
+
+Il validatore Rulebook produce `rulebook_eligible` e gli errori diagnostici
+prima della selezione degli split. Gli scenari non eleggibili restano nel
+catalogo audit con la causa di esclusione; non vengono corretti, imputati o
+riammessi per soddisfare una quota.
 
 ---
 
@@ -1543,11 +1819,10 @@ Non si fa affidamento sulla semantica truthy/falsy di `ScenarioEnv.allowed_more_
 
 Il replay buffer deve conservare separatamente `terminated` e `truncated`; la truncation temporale non viene trattata automaticamente come terminale per il bootstrap.
 
-Prima del congelamento definitivo si esegue un pilot visivo su un piccolo campione Waymo `training_20s`:
-
-- si mantiene `50` se il comportamento post-traccia è accettabile;
-- si imposta `0` se il traffico oltre la traccia rende lo scenario incoerente;
-- non si implementano extrapolatori custom nella v1.
+Prima del congelamento definitivo si esegue un pilot visivo su un piccolo
+campione Waymo `training_20s` per verificare l'applicazione del contratto
+`length + 50`; il pilot non modifica il valore. Non si implementano
+extrapolatori custom nella v1.1.
 
 Gli scenari Waymo `training_20s` avranno normalmente una lunghezza vicina a 200 step, ma il codice usa sempre la lunghezza effettivamente esportata nello `ScenarioDescription`.
 
@@ -1602,7 +1877,7 @@ physical_out_of_road = (
 
 `is_physically_out_of_road` deve riusare i flag, le collisioni con boundary o le
 primitive di lane localization disponibili nella versione MetaDrive locale. Non
-deve introdurre nella v1 un nuovo algoritmo geometrico avanzato della superficie
+deve introdurre nella v1.1 un nuovo algoritmo geometrico avanzato della superficie
 stradale.
 
 Schema concettuale:
@@ -1802,21 +2077,24 @@ class ScenarioProvider:
         ...
 ```
 
-### 22.1 Implementazione v1
+### 22.1 Baseline uniforme
 
 ```python
 class UniformScenarioProvider(ScenarioProvider):
     ...
 ```
 
-Sampling di training:
+Sampling di training predefinito:
 
 ```text
 source ~ Bernoulli(0.5)
-scenario ~ Uniform(valid train scenarios of source)
+scenario ~ Uniform(valid selected train scenarios of source)
 ```
 
-Il provider restituisce il `ScenarioRecord`; l’environment usa il relativo `runtime_index` per il reset.
+Poiché train contiene esattamente 1.000 record per sorgente, questo sampling è
+equivalente al sampling uniforme sui 2.000 record selezionati. La distribuzione
+attesa degli arms è quindi quella bilanciata costruita nello split, con la sola
+differenza massima di un record tra arms.
 
 Il provider opera in modalità stretta:
 
@@ -1825,13 +2103,38 @@ strict: true
 allow_fallback: false
 ```
 
-Se una sorgente richiesta, un arm richiesto o lo split selezionato non contiene
-scenari validi, il provider genera un errore esplicito. Non sono ammesse
-rinormalizzazioni, sostituzioni di sorgente o fallback silenziosi.
+Se la sorgente o lo split richiesto è vuoto, il provider genera un errore
+esplicito. Non sono ammesse sostituzioni di sorgente nella baseline uniforme.
 
-### 22.2 Integrazione con `reset()`
+### 22.2 Sampling uniforme condizionato all’arm
 
-`ThesisScenarioEnv` deve interrogare il provider a ogni reset automatico, incluso l’auto-reset eseguito dal vectorized environment.
+Per separare l’effetto del curriculum dall’effetto della sola stratificazione è
+supportata la baseline:
+
+```python
+class ArmUniformScenarioProvider(ScenarioProvider):
+    ...
+```
+
+Contratto:
+
+```text
+arm ~ Uniform(A0, ..., A5)
+source ~ ConditionalBalancedSource(arm)
+scenario ~ Uniform(pool[split, arm, source])
+```
+
+`ConditionalBalancedSource(arm)` assegna probabilità `0.5/0.5` quando entrambe
+le sorgenti sono disponibili; se una cella è vuota, assegna probabilità `1.0`
+alla sorgente disponibile e registra `source_cell_fallback=true`.
+
+Questa regola è esplicita e testata. Non può sostituire l’arm richiesto con un
+altro arm.
+
+### 22.3 Integrazione con `reset()`
+
+`ThesisScenarioEnv` deve interrogare il provider a ogni reset automatico,
+incluso l’auto-reset eseguito dal vectorized environment.
 
 Contratto concettuale:
 
@@ -1851,21 +2154,22 @@ def _select_next_scenario(self, force_runtime_index=None):
     return runtime_index
 ```
 
-L’hook concreto da sovrascrivere deve essere scelto dopo aver ispezionato la versione locale di `ScenarioEnv`.
+L’hook concreto da sovrascrivere deve essere scelto dopo aver ispezionato la
+versione locale di `ScenarioEnv`.
 
 A ogni reset deve essere verificato che:
 
 ```text
-runtime_index selezionato
-→ scenario caricato
-→ scenario_uid atteso
+runtime_index selected
+→ scenario loaded
+→ expected scenario_uid
 ```
 
-Un disallineamento fra catalogo e runtime database deve generare un errore esplicito, non un warning silenzioso.
+Un disallineamento fra catalogo e runtime database genera un errore esplicito.
 
-### 22.3 Evaluation
+### 22.4 Evaluation
 
-Validation e test usano un provider dedicato:
+Validation e test usano:
 
 ```python
 class FixedSequenceScenarioProvider(ScenarioProvider):
@@ -1883,26 +2187,30 @@ Contratto:
 - lista fissa di `scenario_uid`;
 - ordine deterministico;
 - ogni scenario eseguito esattamente una volta quando `repeat=false`;
-- nessun curriculum;
-- nessun sampling casuale;
-- nessun fallback;
-- nessuna modifica del catalogo;
-- errore esplicito quando la sequenza è terminata o contiene record non
-  risolvibili.
+- nessun curriculum o sampling casuale;
+- nessun fallback o modifica del catalogo;
+- errore esplicito a sequenza terminata o record non risolvibile.
 
-Nella v1 l'evaluation usa un solo environment oppure una partizione statica
-precomputata della sequenza tra worker. Non si usa un coordinatore dinamico.
+Il test primario usa la sequenza bilanciata. L’eventuale test Waymo-natural usa
+una seconda sequenza e produce risultati separati.
 
-### 22.4 Futuro ACL
-
-Il futuro:
+### 22.5 Contratto con l’ACL
 
 ```python
 class ACLScenarioProvider(ScenarioProvider):
     ...
 ```
 
-userà la stessa interfaccia e potrà ricevere:
+L’ACL ScenarioNet usa esattamente gli stessi sei arm semantici A0–A5 del
+catalogo (`K=6`) e sceglie l’arm secondo la propria specifica. Dopo la scelta:
+
+```text
+arm ~ ACL/MAB
+source ~ ConditionalBalancedSource(arm)
+scenario ~ ACL selection or replay within the selected arm/source cells
+```
+
+Il provider può usare:
 
 ```text
 scenario_uid
@@ -1913,7 +2221,10 @@ learning_potential
 last_sampled_step
 ```
 
-L’adattamento dell’ACL esistente al multi-environment non è requisito di questa integrazione v1. Non si implementa ora un coordinatore distribuito del curriculum.
+La distribuzione sorgente effettiva non è vincolata al 50/50 quando la
+distribuzione degli arms è adattiva. Devono essere registrati reset e step per
+`source × arm`. La logica interna del buffer, replay e learning potential non è
+ridefinita da questo documento.
 
 ## 23. Vectorized environments e seed
 
@@ -1932,7 +2243,7 @@ Metodo di avvio consigliato:
 spawn
 ```
 
-Ogni processo possiede il proprio environment e il proprio provider/sampler locale nella v1.
+Ogni processo possiede il proprio environment e il proprio provider/sampler locale nella v1.1.
 
 Non si usa il meccanismo multi-worker interno di `ScenarioEnv` come sistema principale di partizionamento.
 
@@ -1987,19 +2298,35 @@ terminated
 truncated
 ```
 
-Quando l’ACL sarà attivo si aggiungeranno:
+Quando il sampling stratificato o l’ACL sono attivi si aggiungono:
 
 ```text
-learning_potential
 sampling_mode
+requested_arm
+source_cell_fallback
+learning_potential, quando definito dall’ACL
 ```
 
 ### 24.2 Per run
 
 ```text
-reset per source
-step per source
-episodi per arm
+resets per source
+steps per source
+episodes per arm
+resets per source × arm
+steps per source × arm
+episodes per source × arm
+sampling mode
+```
+
+Per la preparazione del dataset devono inoltre essere persistiti:
+
+```text
+candidate and eligible counts per source × arm
+requested split counts per split × source × arm
+selected counts per split × source × arm
+deficits and source compensations
+processed Waymo shards and stop reason
 ```
 
 ### 24.3 Diagnostica dataset PG
@@ -2070,13 +2397,13 @@ Gli script devono essere CLI riproducibili e supportare conteggi piccoli per lo 
 
 ### Fase 2 — Waymo
 
-1. acquisire Waymo `training_20s`;
-2. convertire tramite ScenarioNet;
+1. acquisire Waymo `training_20s` da shard mai processati in ordine deterministico;
+2. convertire tramite ScenarioNet e applicare i filtri hard;
 3. eseguire la validazione ufficiale disponibile;
 4. estrarre il più forte identificativo di gruppo disponibile;
-5. costruire gli split interni train, validation e test;
-6. verificare l’assenza di overlap;
-7. creare record del catalogo e viste runtime.
+5. aggiornare l’eligible pool e la matrice `source × arm`;
+6. ripetere per batch fino alla stopping rule o al cap configurato;
+7. creare record del catalogo e conservare l’audit pool.
 
 ### Fase 3 — PG e pilot
 
@@ -2088,18 +2415,20 @@ Gli script devono essere CLI riproducibili e supportare conteggi piccoli per lo 
 
 ### Fase 4 — Dataset e split
 
-1. generare successivamente il numero prefissato di scenari PG validi;
-2. costruire train, validation e test tramite seed disgiunti;
-3. costruire le viste runtime ScenarioNet;
-4. validare assenza di overlap.
+1. generare il candidate pool PG senza target generator-level per arm;
+2. classificare gli eligible pool Waymo e PG prima dello split;
+3. costruire train, validation e test grouped con `balanced_arm_source`;
+4. produrre target, conteggi, compensazioni e deficit;
+5. costruire le viste runtime e validare assenza di overlap.
 
 ### Fase 5 — Feature e arms
 
 1. estrarre le feature Waymo + PG;
 2. calcolare Q40/Q75 esclusivamente sul train candidate bilanciato per sorgente;
-3. assegnare tag e primary arm;
+3. assegnare tag e primary arm prima della selezione finale;
 4. salvare distribuzioni e soglie;
-5. non modificare il dataset per rendere uguali gli arms.
+5. non modificare feature, soglie o label per soddisfare quote;
+6. applicare il bilanciamento soltanto nella selezione grouped degli split.
 
 ### Fase 6 — Environment unificato
 
@@ -2152,12 +2481,15 @@ runtime_index → scenario_uid consistency
 feature extraction con topology unknown
 feature extraction con topology mixed
 arm assignment
-A1 basato su relevant_vehicles_q90
+boundaries and priorities of the existing A0–A5 taxonomy
 signal_reliability not_applicable senza warning
 has_unknown_signal vero soltanto per partial/missing
 threshold computation
 seed reproducibility
 provider source balance
+uniform-over-record equivalence with equal source counts
+arm-uniform conditional source selection
+explicit source-cell fallback without arm substitution
 provider invoked on automatic reset
 extra_steps_after_scenario=0
 extra_steps_after_scenario=50
@@ -2188,17 +2520,18 @@ fixed evaluation sequence
 
 ### 27.3 Causal leakage test
 
-Il codice dell’observation e del reward deve verificare che:
+Questa specifica verifica che la pipeline ScenarioNet non introduca leakage
+nell'interfaccia passata alla policy. Il contratto completo di costruzione e
+verifica dell'osservazione semantica appartiene alla futura specifica dedicata.
+I test di questa integrazione verificano che:
 
-- nessun indice temporale maggiore del current step venga letto per costruire
-  feature dinamiche di ego, agenti o traffic controls;
-- nessuna future track venga passata alla policy;
 - la geometria di navigazione futura della route ego possa essere letta soltanto
   come path geometrico, senza preservarne l'indicizzazione temporale;
 - la route ego eventualmente esposta sia priva di timestamp, velocità,
   accelerazioni, azioni o validity mask future;
 - nessuna etichetta di arm o sorgente venga inserita nell’osservazione;
-- nessuna future signal phase venga usata.
+- nessuna future signal phase, future track o metadato di curriculum venga
+  inoltrato dalla pipeline ScenarioNet alla policy.
 
 Le tracce complete restano ammesse soltanto per feature extraction offline e catalogazione.
 
@@ -2221,12 +2554,25 @@ extra_steps_after_scenario=50 → truncation alla lunghezza esportata + 50
 I test devono verificare la semantica applicativa della tesi e non limitarsi a
 replicare il comportamento aggregato nativo di `ScenarioEnv`.
 
-### 27.5 Split test
+### 27.5 Split e acquisition test
 
 ```text
 all Waymo records originate from training_20s
 no source group shared across thesis train/validation/test
+source_file is provenance-only when no source log or segment is available
 thesis test never used by threshold or profile calibration scripts
+exact total source counts per split
+arm counts differ by at most one per split
+within-arm source balancing is best-effort and deterministic
+A4 × PG is empty and filled by Waymo without relabeling
+no duplicate record is selected
+no quality or reliability filter is relaxed to fill a quota
+same seed and eligible pool produce identical splits
+deficit reports match requested minus selected counts
+Waymo acquisition processes only unseen shards
+Waymo acquisition stops when hard targets are feasible or at max_new_shards=128
+Waymo shard choice is independent of agent evaluation results
+optional Waymo-natural test is group-disjoint from all primary splits
 ```
 
 ### 27.6 Validation test
@@ -2244,40 +2590,49 @@ termination/truncation finite
 
 ## 28. Definition of done
 
-L’integrazione ScenarioNet v1 è completata quando:
+L’integrazione ScenarioNet v1.1 soddisfa il contratto quando:
 
 1. Waymo e PG vengono caricati tramite la stessa API applicativa.
 2. Entrambi usano la stessa action space e observation interface.
 3. Il reward custom esistente funziona su entrambe le sorgenti.
 4. La data root è configurabile tramite `.env`.
-5. Le viste runtime train, validation e test risolvono correttamente i record del catalogo.
+5. Le viste runtime risolvono correttamente i record del catalogo.
 6. Tutti gli scenari Waymo provengono da `training_20s` e gli split interni non condividono gruppi.
 7. Gli split PG usano seed disgiunti.
-8. Gli scenari inclusi hanno superato la validazione richiesta.
-9. Le feature topologiche usano soltanto dati disponibili; i casi incerti diventano `unknown` e quelli realmente misti diventano `mixed`.
-10. Gli arms definitivi A0–A5 vengono assegnati senza dipendere dal profilo PG dichiarato.
-11. A1 usa `relevant_vehicles_q90 > 0`, non la sola presenza di un veicolo nel file.
-12. Q40 e Q75 sono calcolati soltanto sul train candidate e riutilizzati in evaluation.
-13. `ThesisScenarioEnv` usa `reactive_traffic=true` e preserva le termination native di collisione e destinazione.
-14. La sola linea continua è non terminale, mentre l'uscita fisica dalla superficie stradale è terminale.
-15. La separazione usa primitive native locali e non introduce un riconoscitore geometrico avanzato della drivable area.
-16. `relax_out_of_road_done=false`, `out_of_route_done=false` e `truncate_as_terminate=false` sono applicati secondo le API locali e corretti dalla semantica del subclass.
-17. L’horizon è `scenario.length + extra_steps_after_scenario`, con supporto corretto sia per `50` sia per `0`.
-18. `terminated` e `truncated` restano distinti nel training loop e nel replay buffer.
-19. Ogni scenario selezionato dal provider corrisponde allo `scenario_uid` caricato.
-20. `UniformScenarioProvider` realizza il 50/50 per reset in modalità stretta e senza fallback.
-21. `FixedSequenceScenarioProvider` realizza validation e test in ordine fisso senza fallback.
-22. Gli environment vectorizzati funzionano a processi e si chiudono correttamente.
-23. L’evaluation usa una sequenza fissa.
-24. Il logging conserva le metriche e gli identificativi minimi definiti.
-25. Nessuna informazione futura o metadato del curriculum viene esposto alla policy.
-26. Gli script di conversione, generazione PG, validazione, catalogazione e split sono eseguibili con conteggi piccoli e completi.
-27. Una smoke run con il training loop completo termina senza errori sistematici.
-28. Manifest, catalogo, split e soglie sono salvati e associati alla run.
+8. Gli scenari inclusi hanno superato i filtri hard richiesti, incluso
+   `rulebook_eligible=true` per gli split runtime rulebook-based.
+9. Candidate, eligible e selected pool sono distinti e contabilizzati.
+10. Feature e arms vengono calcolati prima della selezione degli split.
+11. Gli arms A0–A5 della tassonomia ScenarioNet corrente sono assegnati senza
+    dipendere dal profilo PG dichiarato.
+12. Le soglie e le priorità della tassonomia corrente, incluse quelle di
+    conflitto e VRU, sono applicate senza sostituzioni implicite.
+13. Q40 e Q75 sono calcolati soltanto sul train candidate e riutilizzati in evaluation.
+14. Gli split train, validation e test rispettano i conteggi complessivi Waymo/PG approvati.
+15. In ogni split i conteggi A0–A5 differiscono al massimo di uno.
+16. Il 50/50 dentro ogni arm è best-effort; i deficit vengono coperti dalla stessa categoria con l’altra sorgente e registrati.
+17. A4-PG resta vuoto nella v1.1 e A4 viene coperto da Waymo senza duplicazioni o relabeling.
+18. Nessun filtro, soglia o label viene modificato per soddisfare quote.
+19. L’acquisizione Waymo usa shard mai processati, ordine deterministico, cap e stopping rule registrati.
+20. `ThesisScenarioEnv` usa `reactive_traffic=true` e preserva le termination native di collisione e destinazione.
+21. La sola linea continua è non terminale, mentre l’uscita fisica dalla superficie stradale è terminale.
+22. L’horizon è `scenario.length + extra_steps_after_scenario` e distingue termination da truncation.
+23. Ogni scenario selezionato dal provider corrisponde allo `scenario_uid` caricato.
+24. `UniformScenarioProvider` realizza il 50/50 dei reset in modalità stretta e senza fallback.
+25. `ArmUniformScenarioProvider` usa source balancing condizionato e non sostituisce mai l’arm richiesto.
+26. `ACLScenarioProvider` registra la distribuzione effettiva `source × arm` e rispetta la specifica ACL per la selezione adattiva.
+27. `FixedSequenceScenarioProvider` realizza validation e test in ordine fisso senza fallback.
+28. Gli environment vectorizzati funzionano a processi e si chiudono correttamente.
+29. Il logging conserva metriche, identificativi, matrici target/selected/deficit e statistiche `source × arm`.
+30. Nessuna informazione futura o metadato del curriculum viene esposto alla policy.
+31. Gli script di conversione, generazione PG, acquisizione Waymo, validazione, catalogazione e split sono eseguibili con conteggi piccoli e completi.
+32. Una smoke run con il training loop completo termina senza errori sistematici.
+33. Manifest, catalogo, split, soglie e hash sono salvati e associati alla run.
+34. Se `test_waymo_natural` è abilitato, è disgiunto e riportato separatamente.
 
 ## 29. Elementi deliberatamente data-dependent
 
-La sorgente Waymo della v1 è già congelata come:
+La sorgente Waymo della v1.1 è già congelata come:
 
 ```text
 training_20s
@@ -2294,9 +2649,9 @@ nomi esatti delle chiavi API
 road block PG nativi disponibili
 topology metadata realmente prodotti dal converter
 strongest available Waymo grouping identifier
+test_waymo_natural count, only if the optional holdout is enabled
 tau_low
 tau_dense
-extra_steps_after_scenario = 50 oppure 0 dopo il pilot visivo
 semantica concreta del done_function nativo della versione MetaDrive installata
 ```
 
@@ -2307,7 +2662,7 @@ Le regole sono:
 ```text
 dettaglio API → ispezionare la versione locale e adattare il codice;
 feature non disponibile in modo affidabile → usare unknown;
-funzionalità PG non nativa → non implementare un sottosistema custom nella v1;
+funzionalità PG non nativa → non implementare un sottosistema custom nella v1.1;
 valore data-dependent → calcolarlo o verificarlo con la procedura prevista e congelarlo nel manifest.
 ```
 
@@ -2320,6 +2675,11 @@ project:
   setting: single_agent_post_perception
   action_space: continuous
 
+specification:
+  id: SCENARIONET-INTEGRATION
+  version: 1.1
+  status: UNDER_REVIEW
+
 data:
   root_env_variable: SCENARIONET_DATA_ROOT
   format: ScenarioDescription
@@ -2331,9 +2691,7 @@ software:
   allow_arbitrary_submodule_update: false
 
 dataset:
-  source_reset_probability:
-    waymo: 0.5
-    pg: 0.5
+  split_policy: balanced_arm_source
 
   waymo_split_policy:
     source: training_20s
@@ -2342,7 +2700,10 @@ dataset:
     test: internal_grouped_split
     exclude_official_validation: true
     exclude_official_testing: true
-    group_by: strongest_available_source_group
+    group_by: source_log_or_segment_else_scenario_id
+
+  runtime_eligibility:
+    require_rulebook_eligible: true
 
   train:
     waymo: 1000
@@ -2353,6 +2714,34 @@ dataset:
   test:
     waymo: 500
     pg: 500
+
+  balancing:
+    primary_arm_target: near_uniform
+    max_arm_count_difference: 1
+    exact_source_totals: true
+    source_within_arm: best_effort_50_50
+    allow_cross_source_fill_within_same_arm: true
+    structural_empty_cells:
+      A4_vru:
+        pg: true
+    allow_relabeling: false
+    allow_duplicates: false
+    allow_quality_filter_relaxation: false
+
+  optional_waymo_natural_test:
+    enabled: false
+    count: null
+    grouped_and_disjoint: true
+    preserve_post_filter_arm_distribution: true
+
+  waymo_acquisition:
+    incremental: true
+    deterministic_unseen_shards_only: true
+    batch_size_shards: 16
+    max_new_shards: 128
+    stop_when_hard_targets_feasible: true
+    allow_agent_performance_based_mining: false
+    retain_unselected_eligible_in_audit_pool: true
 
 training:
   total_timesteps: 1_500_000
@@ -2410,7 +2799,10 @@ pg:
   generation: offline
   use_native_metadrive_blocks_only: true
   max_episode_length: 500
-  accepted_train_target: 1000
+  selected_targets:
+    train: 1000
+    validation: 250
+    test: 500
   pilot_scenarios_per_profile: 20
   profiles:
     - P0_simple
@@ -2420,16 +2812,17 @@ pg:
     - P5_complex_mixed
   mutation: false
   accident_prob_core_profiles: 0.0
-  enforce_minimum_scenarios_per_arm: false
+  enforce_minimum_scenarios_per_arm_during_generation: false
 
 arms:
+  taxonomy_version: scenarionet_semantic_v1
   names:
-    - A0_simple_lane_follow
-    - A1_vehicle_interaction
-    - A2_merge_or_roundabout
-    - A3_intersection
-    - A4_vru_interaction
-    - A5_complex_mixed
+    - A0_simple_low_traffic
+    - A1_traffic
+    - A2_junction
+    - A3_complex_junction
+    - A4_vru
+    - A5_critical_mixed
 
   relevant_agents:
     radius_m: 50.0
@@ -2447,9 +2840,21 @@ arms:
 
 provider:
   strict: true
-  allow_fallback: false
-  training: UniformScenarioProvider
+  training_default: UniformScenarioProvider
+  training_arm_uniform: ArmUniformScenarioProvider
+  training_acl: ACLScenarioProvider
   evaluation: FixedSequenceScenarioProvider
+  uniform:
+    source_probability:
+      waymo: 0.5
+      pg: 0.5
+    allow_fallback: false
+  arm_conditioned:
+    source_target_when_both_available:
+      waymo: 0.5
+      pg: 0.5
+    explicit_single_source_cell: true
+    allow_arm_substitution: false
 
 vectorization:
   process_based: true
@@ -2464,6 +2869,8 @@ logging:
     - source
     - split
     - primary_arm
+    - sampling_mode
+    - source_cell_fallback
     - worker_id
     - episode_length
     - episode_return
@@ -2479,65 +2886,132 @@ logging:
     - resets_per_source
     - steps_per_source
     - episodes_per_arm
+    - resets_per_source_arm
+    - steps_per_source_arm
+    - episodes_per_source_arm
+    - split_requested_selected_deficits
+    - waymo_processed_shards_and_stop_reason
 
 validation:
   official_scenarionet_when_available: true
   thesis_smoke_validation: true
 ```
 
-La configurazione riepilogativa rappresenta lo schema applicativo del progetto. La factory deve passare a MetaDrive soltanto le chiavi supportate dalla versione locale; sezioni descrittive come `termination` ed `episode_control` non devono essere inoltrate direttamente come chiavi sconosciute.
+La configurazione riepilogativa rappresenta lo schema applicativo del progetto.
+La factory deve passare a MetaDrive soltanto le chiavi supportate dalla versione
+locale; le sezioni descrittive non devono essere inoltrate come chiavi sconosciute.
 
 ## 31. Decisione finale
 
-La pipeline v1 è definita come:
+La pipeline v1.1 è definita come:
 
 ```text
 checked-out ScenarioNet submodule + compatible local MetaDrive
-→ Waymo training_20s
-→ ScenarioNet conversion
-→ internal grouped train/validation/test split
-→ MetaDrive PG offline with native blocks only
+→ Waymo training_20s acquired incrementally from deterministic unseen shards
+→ MetaDrive PG generated offline without generator-level arm quotas
 → ScenarioDescription
-→ official validation where available
-→ thesis smoke validation
-→ unified ScenarioCatalog with relative paths
-→ runtime train/validation/test views
-→ feature extraction based on realized scenario metadata
+→ official and thesis validation
+→ candidate pool
+→ hard quality, reliability and Rulebook eligibility filters
+→ eligible pool
+→ feature extraction and six primary arms before split selection
 → train-only Q40/Q75 thresholds
-→ tags + six primary arms
-→ strict UniformScenarioProvider controlling training resets
-→ FixedSequenceScenarioProvider for validation/test
+→ grouped balanced_arm_source selection
+→ exact split source totals + near-uniform A0–A5
+→ best-effort 50/50 source balance within each arm
+→ explicit same-arm cross-source fill for unavailable cells
+→ frozen ScenarioCatalog and runtime views
+→ UniformScenarioProvider for the default baseline
+→ ArmUniformScenarioProvider for the stratified baseline
+→ ACLScenarioProvider with source conditional on selected arm
+→ FixedSequenceScenarioProvider for balanced validation/test
+→ optional disjoint Waymo-natural diagnostic test
 → ThesisScenarioEnv
-→ existing custom reward
-→ native collision/destination termination
-→ custom physical-out-of-road / continuous-line separation
-→ explicit scenario-length truncation
-→ separate terminated/truncated semantics
-→ process-based vectorized training
+→ custom reward and explicit termination/truncation semantics
+→ process-based vectorized training and source × arm logging
 ```
 
-Questa specifica congela l’integrazione ScenarioNet v1 mantenendo un’implementazione fattibile e proporzionata alla tesi.
+La decisione scientifica chiave è:
 
-Non fanno parte della v1:
+> `enforce_minimum_scenarios_per_arm=false` riguarda la generazione PG e non
+> impedisce la selezione finale di split bilanciati per arm. Gli split primari
+> sono deliberatamente costruiti come challenge benchmark A0–A5, mentre
+> l’eventuale Waymo-natural test conserva la distribuzione empirica post-filtro.
+
+Non fanno parte della v1.1:
 
 ```text
-riconoscimento geometrico topologico avanzato
-nuovo riconoscitore geometrico avanzato custom della drivable area
-generazione custom di semafori, VRU o precedenze
+relabeling manuale per soddisfare quote
+rilassamento dei filtri per riempire celle
+mining di shard guidato dalle performance dell’agente
+riconoscimento geometrico topologico avanzato non previsto
+nuovo generatore custom di semafori, VRU o precedenze
 mutation degli scenari
-ACL multi-worker
-ottimizzazione sistematica della purezza dei profili PG
 ```
 
-Su questa base verranno successivamente integrati:
+La specifica è `APPROVED` e autorevole. Con l’approvazione sono stati aggiornati
+o devono rimanere allineati:
+
+1. il percorso/versione in `project_index.md`;
+2. il riferimento della ScenarioNet implementation plan;
+3. gli ExecPlan correlati che citano ancora ScenarioNet v1;
+4. il manifest del dataset o il report di riconciliazione che dimostri che gli
+   artifact già costruiti soddisfano integralmente la v1.1.
+
+## 32. Tracciabilità della revisione
+
+| Change ID | Sezioni | Modifica rispetto alla v1 | Impatto |
+|---|---|---|---|
+| `CHG-SN-001` | §2.2, §5, §6 | Distinzione tra 50/50 complessivo e bilanciamento best-effort dentro gli arms | Scientifico, sperimentale |
+| `CHG-SN-002` | §6.5–§6.7, §11.3 | Separazione candidate/eligible/selected e acquisizione Waymo deficit-driven | Architetturale, implementativo |
+| `CHG-SN-003` | §6.6, §16.4 | Split `balanced_arm_source`, A4 Waymo-only, divieto di relabeling/filter relaxation | Scientifico, dataset |
+| `CHG-SN-004` | §22 | Baseline uniforme, arm-uniform e contratto source-conditioned dell’ACL | Sperimentale |
+| `CHG-SN-005` | §6.8, §22.4 | Test Waymo-natural opzionale e separato | Valutazione |
+| `CHG-SN-006` | §24, §27, §28, §30 | Logging, test e acceptance criteria `source × arm` | Verifica e riproducibilità |
+| `CHG-SN-007` | §6, §17, §19, §22, §27–§30 | Grouping Waymo verificato, filtro Rulebook runtime, horizon `+50`, arm ACL/dataset condivisi e configurazione acquisizione congelata | Scientifico, compatibilità, riproducibilità |
+
+## 33. Fonti scientifiche e natura delle decisioni
+
+### 33.1 Fatti derivati dalla letteratura
+
+- **ScenarioNet:** la piattaforma unifica scenari reali e procedurali in un
+  formato comune e usa distribuzioni di training controllate, inclusi livelli
+  curricolari di dimensione definita. Questo sostiene la separazione tra pool
+  disponibile e distribuzione di sampling, ma non prescrive i sei arms A0–A5 o
+  la loro uniformità.
+- **MetaDrive:** gli esperimenti mostrano che dimensione, diversità e rapporto
+  tra scenari reali e procedurali modificano la generalizzazione. Questo motiva
+  il logging separato per sorgente e un test reale held-out, ma non dimostra che
+  il rapporto Waymo–PG 50/50 sia ottimale.
+- **Prioritized Level Replay:** il curriculum può modificare il sampling su un
+  insieme finito di livelli/scenari, mantenendo separata la valutazione
+  held-out. Questo motiva la distinzione tra composizione degli split e sampling
+  online adattivo.
+
+### 33.2 Adattamenti originali del progetto
+
+Le seguenti scelte sono decisioni originali della tesi e non conclusioni
+dirette delle fonti:
 
 ```text
-scene context completo
-rulebook definitivo
-semantic observation
-encoder
-baseline scalarizzata
-automatic curriculum learning
-algoritmi lessicografici
-algoritmi distribuzionali
+six semantic arms A0–A5
+near-uniform primary train/validation/test splits
+exact overall 50/50 Waymo–PG per primary split
+best-effort 50/50 source allocation inside each arm
+A4 as Waymo-only in the current generator
+balanced_arm_source greedy selection
+optional Waymo-natural diagnostic holdout
 ```
+
+Queste scelte devono quindi essere descritte nella tesi come protocollo
+sperimentale del progetto e validate tramite risultati per arm e sorgente.
+
+### 33.3 Riferimenti primari
+
+1. Q. Li et al., “ScenarioNet: Open-Source Platform for Large-Scale Traffic
+   Scenario Simulation and Modeling,” *NeurIPS Datasets and Benchmarks*, 2023.
+2. Q. Li et al., “MetaDrive: Composing Diverse Driving Scenarios for
+   Generalizable Reinforcement Learning,” *IEEE Transactions on Pattern Analysis
+   and Machine Intelligence*, 2022; arXiv:2109.12674.
+3. M. Jiang et al., “Prioritized Level Replay,” *Proceedings of the 38th
+   International Conference on Machine Learning*, PMLR 139, 2021.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
@@ -14,9 +14,7 @@ ValidationStatus = Literal["valid", "warning", "invalid"]
 
 SOURCES = frozenset({"waymo", "pg"})
 SPLITS = frozenset({"train", "validation", "test"})
-TOPOLOGY_TAGS = frozenset(
-    {"simple", "merge_or_roundabout", "intersection", "mixed", "unknown"}
-)
+TOPOLOGY_TAGS = frozenset({"simple", "merge_or_roundabout", "intersection", "mixed", "unknown"})
 SIGNAL_RELIABILITIES = frozenset({"not_applicable", "complete", "partial", "missing"})
 TOPOLOGY_CONFIDENCES = frozenset({"unknown", "medium", "high"})
 VALIDATION_STATUSES = frozenset({"valid", "warning", "invalid"})
@@ -63,6 +61,8 @@ class ScenarioRecord:
     signal_reliability: SignalReliability
     validation_status: ValidationStatus
     validation_warnings: tuple[str, ...]
+    rulebook_eligible: bool | None = None
+    rulebook_validation_errors: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         for name in ("scenario_uid", "scenario_id", "dataset_version", "primary_arm"):
@@ -88,11 +88,16 @@ class ScenarioRecord:
             raise ValueError("PG records require a generation seed")
         if len(set(self.tags)) != len(self.tags):
             raise ValueError("tags must not contain duplicates")
+        if self.rulebook_eligible is not None and not isinstance(self.rulebook_eligible, bool):
+            raise ValueError("rulebook_eligible must be boolean or null")
+        if len(set(self.rulebook_validation_errors)) != len(self.rulebook_validation_errors):
+            raise ValueError("rulebook_validation_errors must not contain duplicates")
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["tags"] = list(self.tags)
         payload["validation_warnings"] = list(self.validation_warnings)
+        payload["rulebook_validation_errors"] = list(self.rulebook_validation_errors)
         return payload
 
     @classmethod
@@ -100,6 +105,7 @@ class ScenarioRecord:
         data = dict(payload)
         data["tags"] = tuple(data.get("tags", ()))
         data["validation_warnings"] = tuple(data.get("validation_warnings", ()))
+        data["rulebook_validation_errors"] = tuple(data.get("rulebook_validation_errors") or ())
         return cls(**data)
 
 
@@ -154,9 +160,7 @@ class ScenarioFeatures:
         if self.signal_reliability not in SIGNAL_RELIABILITIES:
             raise ValueError(f"unsupported signal reliability: {self.signal_reliability!r}")
         if self.topology_confidence not in TOPOLOGY_CONFIDENCES:
-            raise ValueError(
-                f"unsupported topology confidence: {self.topology_confidence!r}"
-            )
+            raise ValueError(f"unsupported topology confidence: {self.topology_confidence!r}")
         if len(set(self.topology_evidence)) != len(self.topology_evidence):
             raise ValueError("topology evidence must not contain duplicates")
         if (

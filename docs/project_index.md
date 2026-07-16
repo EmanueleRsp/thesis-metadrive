@@ -28,7 +28,7 @@ document from being mistaken for an approved scientific contract.
 | Rulebook v2 | `specifications/rulebook_v4.6_specification.md`; version `4.6-final-implementation-complete` | `AUTHORITATIVE`; user confirmation 2026-07-16 | `implementation/rulebook_v2_implementation_plan.md`; reports implementation in progress | Final reconciliation required before `VERIFIED` |
 | Semantic observation v1.1 | No dedicated specification supplied | `MISSING` | Implementation exists in `src/thesis_rl/envs/observations/semantic_state.py`, `conf/obs/semantic_state.yaml`, and `tests/test_semantic_state_observation.py`; no dedicated ExecPlan found | User will provide the approved v1.1 specification through `../incoming/` |
 | Automatic curriculum learning | `specifications/automatic_curriculum_learning_v1_specification.md`; version v1 | `AUTHORITATIVE`; version and authority confirmed by the user on 2026-07-16 | `implementation/scenario_acl_implementation_plan.md`; its internal implementation stages v1/v2 are complete, v3 not started, and v4 deferred | Final reconciliation required before `VERIFIED` |
-| ScenarioNet integration | `specifications/scenarionet_integration_v1_specification.md`; version v1 | `AUTHORITATIVE`; user confirmation 2026-07-16 | `implementation/scenarionet_integration_implementation_plan.md`; reports implementation and dataset v1 complete with non-blocking audit work | Final reconciliation required before `VERIFIED` |
+| ScenarioNet integration | `specifications/scenarionet_integration_spec_v1.1.md`; version `1.1` | `AUTHORITATIVE`; explicit user approval 2026-07-16 | `implementation/scenarionet_integration_spec_v1.1_exec_plan.md`; `IN_PROGRESS` | v1 artifacts and implementation require reconciliation against v1.1 before `VERIFIED` |
 | RL baselines | No dedicated approved specification found | `MISSING` | PPO, SAC, and TD3 configurations and tests exist; the local SB3 submodule is pinned at commit `6a196a60c7df3550ac5832caad54ef8dce9a6f31` | Approved behavioral specification and accepted deviations from upstream |
 | Encoder architecture | No dedicated approved specification found | `MISSING` | Encoder code and configuration exist | Approved encoder contract and compatibility requirements |
 | Replay-buffer extensions | No dedicated approved specification found | `MISSING` | No authority can be inferred from implementation notes | Approved N-step/PER scope and algorithm-specific semantics |
@@ -51,12 +51,16 @@ root.
   `rulebook_v4.4_final.md`, `rulebook_v4.1_final_updated.md`, and
   `observation_spec_v1.0_final_implementation_complete.md` were not found.
 - Do not create a supersession relationship from these names alone.
+- ScenarioNet integration v1 is superseded by
+  `specifications/scenarionet_integration_spec_v1.1.md` following the explicit
+  user approval recorded on 2026-07-16. Its specification and implementation
+  plan remain historical traceability records.
 
 ## Decisions
 
-The `decisions/` directory currently contains no project ADRs. A proposal or
-discussion note is not an approved decision. Add an ADR to this index only after
-its status and user approval are explicit.
+| ADR | Status | Approval evidence | Affected scope |
+|---|---|---|---|
+| `decisions/ADR-001-scenarionet-v1-1-dataset-policy.md` | `APPROVED` | Explicit user approval of ScenarioNet Integration v1.1 on 2026-07-16 | ScenarioNet v1.1 dataset, ACL arm, horizon, and eligibility policy |
 
 ## ExecPlan Registry
 
@@ -64,11 +68,12 @@ its status and user approval are explicit.
 |---|---|---|---|---|
 | Rulebook v2 | `specifications/rulebook_v4.6_specification.md` | `implementation/rulebook_v2_implementation_plan.md` | `IN_PROGRESS` | 2026-07-16 |
 | Rulebook v2 catalog filter parallelization | Rulebook v2 §15.11; ScenarioNet v1 §17/§24 | `implementation/rulebook_v2_catalog_filter_parallelization_exec_plan.md` | `IN_PROGRESS` | 2026-07-16 |
-| ScenarioNet catalog build parallelization | `specifications/scenarionet_integration_v1_specification.md` v1 | `implementation/scenarionet_catalog_build_parallelization_exec_plan.md` | `IMPLEMENTED` | 2026-07-16 |
-| ScenarioNet pipeline integrity and restructure v2 | `specifications/scenarionet_integration_v1_specification.md` v1 | `implementation/scenarionet_pipeline_restructure_v2_exec_plan.md` | `AWAITING_DECISIONS` | 2026-07-16 |
+| ScenarioNet catalog build parallelization | Historical ScenarioNet v1 | `implementation/scenarionet_catalog_build_parallelization_exec_plan.md` | `IMPLEMENTED`; reconciliation under v1.1 pending | 2026-07-16 |
+| ScenarioNet pipeline integrity and restructure v2 | Historical ScenarioNet v1 | `implementation/scenarionet_pipeline_restructure_v2_exec_plan.md` | `SUPERSEDED` by v1.1 planning | 2026-07-16 |
 | Semantic observation | `MISSING` | `MISSING` | Implementation exists; specification reconciliation unavailable | Not established |
 | Scenario ACL | `specifications/automatic_curriculum_learning_v1_specification.md` | `implementation/scenario_acl_implementation_plan.md` | Internal stages v1/v2 reported complete; later stages incomplete/deferred | Date not declared in metadata |
-| ScenarioNet integration | `specifications/scenarionet_integration_v1_specification.md` | `implementation/scenarionet_integration_implementation_plan.md` | `IMPLEMENTED`, not `VERIFIED` | 2026-07-15 |
+| ScenarioNet integration v1 | Historical `specifications/scenarionet_integration_v1_specification.md` | `implementation/scenarionet_integration_implementation_plan.md` | `SUPERSEDED`; retain for traceability | 2026-07-15 |
+| ScenarioNet integration v1.1 | `specifications/scenarionet_integration_spec_v1.1.md` | `implementation/scenarionet_integration_spec_v1.1_exec_plan.md` | `IN_PROGRESS` | 2026-07-16 |
 | Documentation structure | User instructions dated 2026-07-16 | `implementation/repository_documentation_restructure_exec_plan.md` | `VERIFIED` | 2026-07-16 |
 | Repository quality commands | User process decision dated 2026-07-16 | `implementation/repository_quality_commands_exec_plan.md` | `VERIFIED` | 2026-07-16 |
 

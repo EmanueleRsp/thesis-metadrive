@@ -3,7 +3,8 @@
 ## 1. Metadata
 
 - Feature and plan ID: ScenarioNet catalog build parallelization, `SCB-PAR-001`
-- Authoritative specification: `docs/specifications/scenarionet_integration_v1_specification.md`, version `v1`, `AUTHORITATIVE`
+- Historical authoritative specification at implementation: `docs/specifications/scenarionet_integration_v1_specification.md`, version `v1`
+- Current authoritative specification: `docs/specifications/scenarionet_integration_spec_v1.1.md`, version `1.1`; reconciliation is tracked in `docs/implementation/scenarionet_integration_spec_v1.1_exec_plan.md`
 - Related specification: `docs/specifications/rulebook_v4.6_specification.md`, version `4.6-final-implementation-complete`, `AUTHORITATIVE`
 - Status: `IMPLEMENTED`
 - Created: 2026-07-16

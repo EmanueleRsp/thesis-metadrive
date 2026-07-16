@@ -20,12 +20,13 @@ run instructions. Start specification-driven work with the
 - [templates/adr_template.md](templates/adr_template.md)
 - [templates/feature_implementation_request.md](templates/feature_implementation_request.md)
 - [templates/session_continuation_request.md](templates/session_continuation_request.md)
+- [templates/test_suite_restructure_request.md](templates/test_suite_restructure_request.md)
 
 ## Authoritative Specifications
 
 - [Rulebook v2, version 4.6](specifications/rulebook_v4.6_specification.md)
 - [Automatic curriculum learning v1](specifications/automatic_curriculum_learning_v1_specification.md)
-- [ScenarioNet integration v1](specifications/scenarionet_integration_v1_specification.md)
+- [ScenarioNet integration v1.1](specifications/scenarionet_integration_spec_v1.1.md)
 
 The semantic observation v1.1 specification has not yet been supplied. The
 authority index is definitive when this summary and the registry differ.

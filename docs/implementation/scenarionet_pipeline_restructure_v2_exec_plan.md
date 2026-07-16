@@ -5,14 +5,17 @@
 - Plan ID: `SCENARIO-PIPELINE-RESTRUCTURE-V2`
 - Feature: end-to-end ScenarioNet dataset acquisition, eligibility, splitting,
   reporting, and runtime freeze
-- Authoritative specification: `docs/specifications/scenarionet_integration_v1_specification.md`,
-  version v1, user-approved on 2026-07-16
-- Status: `AWAITING_DECISIONS`
+- Historical specification at creation: `docs/specifications/scenarionet_integration_v1_specification.md`, version v1
+- Current authoritative specification: `docs/specifications/scenarionet_integration_spec_v1.1.md`, version 1.1
+- Status: `SUPERSEDED`
 - Created: 2026-07-16
 - Last updated: 2026-07-16
 - Branch: current working branch
 - Related ADRs: none; `docs/decisions/` is currently absent
 - Owner: thesis repository maintainers
+
+> Superseded by [`scenarionet_integration_spec_v1.1_exec_plan.md`](scenarionet_integration_spec_v1.1_exec_plan.md).
+> Its open v1 policy gates are resolved by the approved v1.1 specification and ADR-001.
 
 ## 2. Objective And Scope
 

@@ -68,6 +68,18 @@ def test_scenario_record_round_trip_preserves_tuples() -> None:
     assert isinstance(restored.tags, tuple)
 
 
+def test_scenario_record_round_trip_preserves_rulebook_eligibility() -> None:
+    record = _record(
+        rulebook_eligible=False,
+        rulebook_validation_errors=("unresolved route signal",),
+    )
+
+    restored = ScenarioRecord.from_dict(record.to_dict())
+
+    assert restored.rulebook_eligible is False
+    assert restored.rulebook_validation_errors == ("unresolved route signal",)
+
+
 @pytest.mark.parametrize(
     "relative_path",
     ["/absolute/scenario.pkl", "../escape.pkl", "pg/../escape.pkl", "pg\\scenario.pkl"],
