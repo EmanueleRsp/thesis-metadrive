@@ -4,7 +4,8 @@ from dataclasses import replace
 
 import pytest
 
-from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
+from thesis_rl.envs.factory import _runtime_rulebook_records
+from thesis_rl.scenarios.catalog import ScenarioCatalog, ScenarioCatalogEntry
 from thesis_rl.scenarios.pipeline import (
     assign_catalog_runtime_indices,
     assign_arm_balanced_splits_to_targets,
@@ -242,6 +243,19 @@ def test_pipeline_excludes_explicitly_rulebook_ineligible_records() -> None:
 
     assert len(selected) == 6
     assert all(entry.record.rulebook_eligible is not False for entry in selected)
+
+
+def test_runtime_catalog_rejects_unverified_rulebook_records() -> None:
+    entry = _entry("waymo", 0)
+    catalog = ScenarioCatalog((entry,))
+
+    with pytest.raises(ValueError, match="rulebook_eligible=True"):
+        _runtime_rulebook_records(catalog, split="train")
+
+    approved_catalog = ScenarioCatalog(
+        (ScenarioCatalogEntry(replace(entry.record, rulebook_eligible=True), entry.features),)
+    )
+    assert _runtime_rulebook_records(approved_catalog, split="train") == approved_catalog.records
 
 
 def test_arm_balanced_split_targets_split_arm_and_source_halves() -> None:

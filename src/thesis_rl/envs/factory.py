@@ -58,9 +58,7 @@ def _configure_agent_observation(
                 "Causal observation contract forbids exposing future time-indexed trajectories."
             )
         if bool(semantic_cfg.get("expose_future_signal_phase", False)):
-            raise ValueError(
-                "Causal observation contract forbids exposing future signal phases."
-            )
+            raise ValueError("Causal observation contract forbids exposing future signal phases.")
 
         SemanticStateObservation.set_external_config(semantic_cfg)
         env_cfg["agent_observation"] = SemanticStateObservation
@@ -82,8 +80,7 @@ def _configure_agent_observation(
         return
 
     raise ValueError(
-        f"Unsupported observation type '{obs_type}'. "
-        "Supported values: lidar_state, semantic_state"
+        f"Unsupported observation type '{obs_type}'. Supported values: lidar_state, semantic_state"
     )
 
 
@@ -101,7 +98,7 @@ def _validate_scenarionet_catalog_runtime(catalog: Any, *, split: str, data_dire
     available = set(verify_runtime_mapping(runtime))
     expected = {
         Path(record.relative_path).name
-        for record in catalog.valid_records(split=split)
+        for record in _runtime_rulebook_records(catalog, split=split)
     }
     missing = sorted(expected.difference(available))
     unexpected = sorted(available.difference(expected))
@@ -117,6 +114,22 @@ def _validate_scenarionet_catalog_runtime(catalog: Any, *, split: str, data_dire
             + ", ".join(details)
             + ". Set env.config.data_directory to the runtime view built from this catalog."
         )
+
+
+def _runtime_rulebook_records(catalog: Any, *, split: str | None = None) -> tuple[Any, ...]:
+    """Return the only catalog records admissible to a v1.1 runtime view."""
+
+    records = catalog.valid_records(split=split)
+    non_eligible = [
+        record.scenario_uid for record in records if record.rulebook_eligible is not True
+    ]
+    if non_eligible:
+        scope = f" for split={split!r}" if split is not None else ""
+        raise ValueError(
+            "ScenarioNet runtime catalog requires rulebook_eligible=True"
+            f"{scope}; offending records: {sorted(non_eligible)[:5]}"
+        )
+    return records
 
 
 def _scenarionet_dataset_root(cfg_env: Any) -> Path | None:
@@ -213,7 +226,7 @@ def make_env(
             data_directory=str(data_directory),
         )
         if catalog is not None and int(env_cfg.get("num_scenarios", -1)) <= 0:
-            split_records = catalog.valid_records(split=split)
+            split_records = _runtime_rulebook_records(catalog, split=split)
             if not split_records:
                 raise ValueError(f"ScenarioNet catalog has no valid records for split={split!r}")
             # MetaDrive's engine computes its seed modulus before the data
@@ -226,7 +239,7 @@ def make_env(
             num_scenarios = int(env_cfg.get("num_scenarios", -1))
             records = tuple(
                 record
-                for record in catalog.records
+                for record in _runtime_rulebook_records(catalog)
                 if (
                     provider_worker_count > 1
                     and record.runtime_index is not None

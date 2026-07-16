@@ -161,7 +161,7 @@ external credentials and must not overwrite frozen data.
 
 - [x] M1 — Completed. Reconciled record/manifest/report eligibility schema and audit population accounting, including record-level Rulebook provenance, strict pre-freeze split validation, and canonical YAML manifests. Depends on `DEC-SN-001`–`005`; validates the available portions of `TEST-SN-001`–`006`.
 - [ ] M2 — In progress. Implement strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. The selector now enforces per-split source and arm capacity while selecting; a constructive feasibility solver and complete acquisition/PG reports remain. Validates `TEST-SN-002`–`008`.
-- [ ] M3 — Reconcile runtime views, providers, ACL six-arm interface, and environment/logging behavior. Validates `TEST-SN-009`–`014`.
+- [ ] M3 — In progress. Reconcile runtime views, providers, ACL six-arm interface, and environment/logging behavior. The environment factory now rejects an audit or legacy catalog containing any valid/warning record without `rulebook_eligible=true`; provider construction and runtime mapping use only this checked population. Validates `TEST-SN-009`–`014`.
 - [ ] M4 — Run fixture pipeline, vectorized smoke, documentation reconciliation, and final artifact audit. Validates `TEST-SN-015` and mandatory checks.
 
 ## 11. Progress And Findings Log
@@ -202,6 +202,10 @@ external credentials and must not overwrite frozen data.
 - The canonical split manifest now also records the approved Waymo acquisition
   ordering seed, batch size, and cap. The shell pipeline passes these values
   from the sole YAML policy source into the split CLI.
+- Runtime defense is now duplicated at the environment boundary: an
+  unverified, false, or legacy-null Rulebook eligibility field produces an
+  actionable failure before the runtime view is mapped or a provider is
+  created. This prevents accidental use of an audit catalog in training.
 - `docker compose run --rm dev uv run --no-sync python -m pytest -q
   tests/test_scenario_records.py tests/test_scenario_catalog.py` passed: 12
   tests.
@@ -249,6 +253,8 @@ No deviations identified.
 | `git diff --check` | PASS | 2026-07-16 | No whitespace errors after the M1 changes |
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 154 passed in 25.27 s after M1 completion and source-capacity selector changes |
 | `docker compose run --rm dev uv run --no-sync ruff format ... && ruff check ... && python -m pytest -q tests/test_scenario_manifests.py tests/test_scenarionet_pipeline.py` | PASS | 2026-07-16 | 20 passed; validates the canonical manifest acquisition fields and selector regression |
+| `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/envs/factory.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py tests/test_scenario_provider.py` | PASS | 2026-07-16 | 25 passed; verifies the Rulebook-eligibility runtime boundary and provider regressions |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 153 passed, 2 skipped in 11.73 s; skips require an externally prepared ScenarioNet runtime dataset |
 | Focused pytest command | NOT_RUN | 2026-07-16 | Host environment lacks `uv` and `python`; run in provisioned container |
 | Full real-data acquisition | NOT_RUN | 2026-07-16 | Requires credentials and can mutate dataset artifacts |
 
