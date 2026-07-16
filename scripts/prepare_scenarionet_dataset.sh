@@ -77,6 +77,7 @@ split_seed="${SCENARIONET_SPLIT_SEED:?pipeline YAML must define split.seed}"
 overwrite="${SCENARIONET_OVERWRITE:-false}"
 auto_split="${SCENARIONET_AUTO_SPLIT:?pipeline YAML must define split.auto}"
 rulebook_v2_enabled="${SCENARIONET_RULEBOOK_V2_ENABLED:?pipeline YAML must define rulebook_v2.enabled}"
+rulebook_v2_workers="${SCENARIONET_RULEBOOK_V2_WORKERS:?pipeline YAML must define rulebook_v2.workers}"
 
 waymo_train_target="${SCENARIONET_WAYMO_TRAIN_TARGET:?pipeline YAML must define waymo train target}"
 waymo_validation_target="${SCENARIONET_WAYMO_VALIDATION_TARGET:?pipeline YAML must define waymo validation target}"
@@ -105,6 +106,7 @@ echo "  Arm balance: enabled=${balance_enabled}, target_total=${balance_target_t
 echo "  Waymo required A4_vru: ${waymo_required_a4_vru}"
 echo "  Split mode: auto=${auto_split}, seed=${split_seed}"
 echo "  Rulebook v2 eligibility before split: ${rulebook_v2_enabled}"
+echo "  Rulebook v2 filter workers: ${rulebook_v2_workers}"
 echo "  Official simulation check: ${run_simulation_check} (workers=${check_workers})"
 
 if ! is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
@@ -169,6 +171,7 @@ if is_true "$rulebook_v2_enabled"; then
     --eligibility-output "$rulebook_eligibility" \
     --ego-config "${data_root}/rulebook_v2/ego_config.json" \
     --calibration "${data_root}/rulebook_v2/calibration_b_e.json" \
+    --workers "$rulebook_v2_workers" \
     "${catalog_overwrite[@]}"
   catalog_for_splits="$catalog_rulebook"
 else

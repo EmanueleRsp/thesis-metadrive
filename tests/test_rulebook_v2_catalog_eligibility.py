@@ -4,32 +4,42 @@ import json
 import pickle
 from pathlib import Path
 
+import pytest
+
 from thesis_rl.cli.scenarios.filter_rulebook_v2_catalog import main as filter_catalog_main
 from thesis_rl.rulebook.v2.calibration import write_calibration_artifact
 from thesis_rl.rulebook.v2.config import geometry_config_hash
-from thesis_rl.rulebook.v2.context.catalog_eligibility import evaluate_catalog_entry
+from thesis_rl.rulebook.v2.context.catalog_eligibility import (
+    evaluate_catalog_entries,
+    evaluate_catalog_entry,
+)
 from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 from thesis_rl.scenarios.catalog import read_scenario_catalog, write_scenario_catalog
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
 
 
-def _entry(*, path: str) -> ScenarioCatalogEntry:
+def _entry(
+    *,
+    path: str,
+    scenario_id: str = "eligibility-1",
+    pg_seed: int = 1,
+) -> ScenarioCatalogEntry:
     record = ScenarioRecord(
-        scenario_uid="pg:eligibility:1",
-        scenario_id="eligibility-1",
+        scenario_uid=f"pg:eligibility:{scenario_id}",
+        scenario_id=scenario_id,
         source="pg",
         relative_path=path,
         official_split=None,
         source_log_id=None,
-        source_scenario_id="eligibility-1",
+        source_scenario_id=scenario_id,
         dataset_version="scenarionet_v1",
         converter_version=None,
         split="train",
         runtime_index=None,
         length=2,
         pg_profile="P0_simple",
-        pg_seed=1,
+        pg_seed=pg_seed,
         map_id="S",
         primary_arm="A0_simple_low_traffic",
         tags=(),
@@ -38,7 +48,7 @@ def _entry(*, path: str) -> ScenarioCatalogEntry:
         validation_warnings=(),
     )
     features = ScenarioFeatures(
-        scenario_id="eligibility-1",
+        scenario_id=scenario_id,
         source="pg",
         length=2,
         route_length_m=10.0,
@@ -90,8 +100,13 @@ def _scenario(*, off_lane: bool = False) -> dict:
     }
 
 
-def _write_scenario(root: Path, *, off_lane: bool = False) -> str:
-    relative = "pg/database/P0_simple/1/scenario.pkl"
+def _write_scenario(
+    root: Path,
+    *,
+    off_lane: bool = False,
+    scenario_id: str = "1",
+) -> str:
+    relative = f"pg/database/P0_simple/{scenario_id}/scenario.pkl"
     path = root / relative
     path.parent.mkdir(parents=True)
     with path.open("wb") as handle:
@@ -100,7 +115,9 @@ def _write_scenario(root: Path, *, off_lane: bool = False) -> str:
 
 
 def test_geometry_config_hash_is_canonical_for_the_frozen_defaults() -> None:
-    assert geometry_config_hash() == "f08ef3fb4790d532275974aa14bf08f91b62e9f0b55cc1a05d8d60ec4070eb97"
+    assert (
+        geometry_config_hash() == "f08ef3fb4790d532275974aa14bf08f91b62e9f0b55cc1a05d8d60ec4070eb97"
+    )
 
 
 def test_catalog_eligibility_accepts_static_rulebook_compatible_entry(tmp_path: Path) -> None:
@@ -115,7 +132,9 @@ def test_catalog_eligibility_accepts_static_rulebook_compatible_entry(tmp_path: 
     assert result.validation_errors == ()
 
 
-def test_catalog_eligibility_excludes_unmappable_route_without_runtime_fallback(tmp_path: Path) -> None:
+def test_catalog_eligibility_excludes_unmappable_route_without_runtime_fallback(
+    tmp_path: Path,
+) -> None:
     relative = _write_scenario(tmp_path, off_lane=True)
     result = evaluate_catalog_entry(
         _entry(path=relative),
@@ -127,14 +146,59 @@ def test_catalog_eligibility_excludes_unmappable_route_without_runtime_fallback(
     assert result.validation_errors == ("task_route_lane_association_ambiguous_or_unavailable",)
 
 
+def test_catalog_eligibility_parallel_path_matches_sequential_and_reports_progress(
+    tmp_path: Path,
+) -> None:
+    eligible_path = _write_scenario(tmp_path, scenario_id="1")
+    excluded_path = _write_scenario(tmp_path, off_lane=True, scenario_id="2")
+    entries = (
+        _entry(path=excluded_path, scenario_id="2", pg_seed=2),
+        _entry(path=eligible_path, scenario_id="1", pg_seed=1),
+    )
+    kwargs = {
+        "data_root": tmp_path,
+        "geometry_config_hash": geometry_config_hash(),
+        "calibration_hash": "ego-hash",
+    }
+    sequential = evaluate_catalog_entries(entries, workers=1, **kwargs)
+    progress: list[tuple[int, int]] = []
+    parallel = evaluate_catalog_entries(
+        entries,
+        workers=2,
+        progress_callback=lambda completed, total: progress.append((completed, total)),
+        **kwargs,
+    )
+
+    assert parallel == sequential
+    assert [result.scenario_uid for result in parallel] == [
+        "pg:eligibility:1",
+        "pg:eligibility:2",
+    ]
+    assert progress == [(1, 2), (2, 2)]
+
+
+def test_catalog_eligibility_rejects_non_positive_worker_count(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="workers must be positive"):
+        evaluate_catalog_entries(
+            (),
+            data_root=tmp_path,
+            geometry_config_hash=geometry_config_hash(),
+            calibration_hash="ego-hash",
+            workers=0,
+        )
+
+
 def test_catalog_filter_cli_writes_audit_artifact_and_filters_split_input(
     tmp_path: Path,
     monkeypatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     relative = _write_scenario(tmp_path)
     catalog_path = write_scenario_catalog((_entry(path=relative),), tmp_path / "raw.parquet")
     ego_config = tmp_path / "ego_config.json"
-    ego_config.write_text(json.dumps({"vehicle_config": {"vehicle_model": "default"}}), encoding="utf-8")
+    ego_config.write_text(
+        json.dumps({"vehicle_config": {"vehicle_model": "default"}}), encoding="utf-8"
+    )
     calibration_path = write_calibration_artifact(
         RSSCalibrationArtifact(
             config_hash="af7ab58234038ae1123049ca38dd24a9da9d5dd0bf8354d5a0bdbcd3fafac44c",
@@ -160,6 +224,8 @@ def test_catalog_filter_cli_writes_audit_artifact_and_filters_split_input(
             str(ego_config),
             "--calibration",
             str(calibration_path),
+            "--workers",
+            "2",
         ],
     )
     assert filter_catalog_main() == 0
@@ -167,3 +233,8 @@ def test_catalog_filter_cli_writes_audit_artifact_and_filters_split_input(
     payload = json.loads(artifact.read_text(encoding="utf-8"))
     assert payload["eligible_records"] == 1
     assert payload["excluded_records"] == 0
+    captured = capsys.readouterr()
+    assert "Evaluating 1 catalog entries with 2" in captured.err
+    assert "worker process(es)" in captured.err
+    assert "Rulebook v2 filtering complete:" in captured.err
+    assert "eligible=1, excluded=0" in captured.err

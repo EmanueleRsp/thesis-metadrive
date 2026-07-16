@@ -59,6 +59,7 @@ its status and user approval are explicit.
 | Feature | Specification | ExecPlan | Reported status | Last document update |
 |---|---|---|---|---|
 | Rulebook v2 | `specifications/rulebook_v2_spec.md` | `implementation/rulebook_v2_implementation_plan.md` | `IN_PROGRESS` | 2026-07-16 |
+| Rulebook v2 catalog filter parallelization | Rulebook v2 §15.11; ScenarioNet v1 §17/§24 | `implementation/rulebook_v2_catalog_filter_parallelization_exec_plan.md` | `IN_PROGRESS` | 2026-07-16 |
 | Semantic observation | `MISSING` | `MISSING` | Implementation exists; specification reconciliation unavailable | Not established |
 | Scenario ACL | `specifications/curriculum_learning_specification.md` | `implementation/scenario_acl_implementation_plan.md` | v1/v2 reported complete; later phases incomplete/deferred | Date not declared in metadata |
 | ScenarioNet integration | `specifications/scenarionet_integration_spec_v1.md` | `implementation/scenarionet_integration_implementation_plan.md` | `IMPLEMENTED`, not `VERIFIED` | 2026-07-15 |

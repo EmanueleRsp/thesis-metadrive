@@ -169,6 +169,15 @@ the final split or runtime database. Acquisition state is written under
 fingerprint of converted paths, sizes and modification times; changing the
 database, eligibility policy or policy version triggers a full rescan.
 
+The Rulebook v2 static eligibility stage is CPU-bound and runs with a bounded
+spawned process pool. Its default is `rulebook_v2.workers: 8` in the same YAML
+file. The parent process owns a Rich progress dashboard showing completed
+records, rate, elapsed time, and ETA; the eligibility and catalog artifacts are
+still written only after all records have been evaluated. Reduce the worker
+value when host memory or thermal limits require it. Results remain ordered by
+`scenario_uid`, so changing the worker count does not change the catalog or
+audit semantics.
+
 `make waymo-pipeline` remains the manual fixed-shard conversion command and
 continues to honor `WAYMO_NUM_FILES`; it is useful for smoke tests, not for
 filling the final eligible target automatically.

@@ -18,6 +18,8 @@ run instructions. Start specification-driven work with the
 - [decisions/](decisions/): architecture decision records
 - [templates/specification_template.md](templates/specification_template.md)
 - [templates/adr_template.md](templates/adr_template.md)
+- [templates/feature_implementation_request.md](templates/feature_implementation_request.md)
+- [templates/session_continuation_request.md](templates/session_continuation_request.md)
 
 ## Authoritative Specifications
 

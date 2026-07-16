@@ -9,6 +9,17 @@ import hashlib
 import json
 from pathlib import Path
 
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+
 from thesis_rl.rulebook.v2.calibration import load_calibration_artifact
 from thesis_rl.rulebook.v2.config import RULEBOOK_V2_VERSION, geometry_config_hash
 from thesis_rl.rulebook.v2.context.catalog_eligibility import evaluate_catalog_entries
@@ -35,8 +46,16 @@ def main() -> int:
     parser.add_argument("--eligibility-output", type=Path, required=True)
     parser.add_argument("--ego-config", type=Path, required=True)
     parser.add_argument("--calibration", type=Path, required=True)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of spawned worker processes used for static eligibility evaluation.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
+    if args.workers < 1:
+        parser.error("--workers must be positive")
 
     catalog_path = args.catalog.expanduser().resolve()
     data_root = args.data_root.expanduser().resolve()
@@ -49,12 +68,35 @@ def main() -> int:
     )
     geometry_hash = geometry_config_hash()
     catalog = read_scenario_catalog(catalog_path)
-    eligibility = evaluate_catalog_entries(
-        catalog.entries,
-        data_root=data_root,
-        geometry_config_hash=geometry_hash,
-        calibration_hash=calibration.config_hash,
+    console = Console(stderr=True)
+    console.log(
+        f"Evaluating {len(catalog.entries)} catalog entries with {args.workers} worker process(es)"
     )
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("•"),
+        TimeElapsedColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        task_id = progress.add_task("Rulebook v2 static eligibility", total=len(catalog.entries))
+
+        def report_progress(completed: int, total: int) -> None:
+            progress.update(task_id, completed=completed, total=total)
+
+        eligibility = evaluate_catalog_entries(
+            catalog.entries,
+            data_root=data_root,
+            geometry_config_hash=geometry_hash,
+            calibration_hash=calibration.config_hash,
+            workers=args.workers,
+            progress_callback=report_progress,
+        )
     by_uid = {record.scenario_uid: record for record in eligibility}
     entries_by_uid = {entry.record.scenario_uid: entry for entry in catalog.entries}
     selected = tuple(
@@ -68,9 +110,7 @@ def main() -> int:
         raise FileExistsError(f"refusing to overwrite eligibility artifact: {eligibility_output}")
     write_scenario_catalog(selected, output_catalog, overwrite=True)
 
-    cause_counts = Counter(
-        error for record in eligibility for error in record.validation_errors
-    )
+    cause_counts = Counter(error for record in eligibility for error in record.validation_errors)
     source_counts = {
         source: {
             "eligible": sum(
@@ -111,6 +151,10 @@ def main() -> int:
     eligibility_output.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+    )
+    console.log(
+        f"Rulebook v2 filtering complete: eligible={len(selected)}, "
+        f"excluded={len(eligibility) - len(selected)}"
     )
     print(
         json.dumps(

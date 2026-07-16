@@ -171,6 +171,10 @@ make scenarionet-pipeline
 La configurazione `conf/scenarios/pipeline_v1.yaml` abilita il filtro v2. Il
 comando richiede quindi `ego_config.json` e `calibration_b_e.json` validi;
 se uno dei due manca, la pipeline termina senza costruire split non conformi.
+The `rulebook_v2.workers` parameter controls the process count for static
+filtering; its default is 8. The CLI shows a Rich dashboard with completed
+records, rate, elapsed time, and ETA while keeping artifacts deterministic and
+ordered by `scenario_uid`.
 
 Il pilot preliminare non dichiara l'eleggibilità finale: misura conversione
 statica e task-route eligibility. Il report viene scritto in:

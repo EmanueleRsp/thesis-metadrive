@@ -24,6 +24,7 @@ _CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "SCENARIONET_PG_SEED_START": ("pg", "seed_start"),
     "SCENARIONET_PG_WORKERS": ("pg", "workers"),
     "SCENARIONET_RULEBOOK_V2_ENABLED": ("rulebook_v2", "enabled"),
+    "SCENARIONET_RULEBOOK_V2_WORKERS": ("rulebook_v2", "workers"),
     "SCENARIONET_SPLIT_SEED": ("split", "seed"),
     "SCENARIONET_AUTO_SPLIT": ("split", "auto"),
     "SCENARIONET_WAYMO_TRAIN_TARGET": ("split", "targets", "waymo", "train"),

@@ -5,18 +5,19 @@ waymo:
   auto_expand: true
   batch_shards: 16
   max_new_shards: 128
-  workers: 8
+  workers: 16
   keep_raw_batches: false
 
 pg:
   count_per_profile: 350
   seed_start: 920000
-  workers: 10
+  workers: 16
 
 # The final ScenarioNet splits are Rulebook v2 pools: static Rulebook
 # eligibility is evaluated before split assignment and recorded separately.
 rulebook_v2:
   enabled: true
+  workers: 16
 
 split:
   seed: 0
@@ -89,4 +90,4 @@ balance:
 
 checks:
   simulation: true
-  workers: 8
+  workers: 16
