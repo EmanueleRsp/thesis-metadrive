@@ -178,6 +178,12 @@ value when host memory or thermal limits require it. Results remain ordered by
 `scenario_uid`, so changing the worker count does not change the catalog or
 audit semantics.
 
+Stage `[3/9]` uses the configured `waymo.workers` and `pg.workers` values to
+load pickle files, extract features, validate records, and assign catalog
+metadata in bounded spawned processes. Rich shows separate Waymo and PG loading
+tasks. Parquet, group mapping, and report writes remain parent-owned and
+deterministic.
+
 `make waymo-pipeline` remains the manual fixed-shard conversion command and
 continues to honor `WAYMO_NUM_FILES`; it is useful for smoke tests, not for
 filling the final eligible target automatically.

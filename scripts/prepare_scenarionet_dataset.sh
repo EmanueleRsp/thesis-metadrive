@@ -156,6 +156,8 @@ docker compose run --rm "$pipeline_service" uv run --no-sync python \
   --data-root "$data_root" \
   --pg-seed-start "$pg_seed_start" \
   --pg-count "$pg_count" \
+  --waymo-workers "$waymo_workers" \
+  --pg-workers "$pg_workers" \
   --output "$catalog_raw" \
   --groups-output "$groups_path" \
   "${catalog_overwrite[@]}"

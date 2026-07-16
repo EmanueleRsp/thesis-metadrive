@@ -41,7 +41,8 @@ direct result from literature.
 
 Define relevant symbols, units, coordinate frames, masks, categories, and time
 conventions. For each assumption state its source, validation, and failure
-behavior.
+behavior. Classify it as guaranteed upstream, runtime-validated,
+configuration-provided, or an explicit research limitation.
 
 ## 4. Inputs And Prohibited Information
 
@@ -69,8 +70,8 @@ evaluator-generated, and diagnostic-only information.
 - Failure or fallback behavior: `<explicit result>`
 - Interactions: `<related requirements/components>`
 
-Avoid undefined terms such as “appropriate”, “reasonable”, or “nearby”. Repeat
-for every requirement.
+Avoid undefined terms such as “appropriate”, “reasonable”, “nearby”, “safe”, or
+“complex”. Repeat for every requirement.
 
 ## 7. Mathematical And Algorithmic Contract
 
@@ -121,7 +122,9 @@ checkpoints, evaluation, and previous experiments. Define migration when needed.
 - Then: `<objective expected result>`
 - Related requirements: `REQ-...`
 
-Acceptance criteria must test observable behavior rather than private structure.
+Acceptance criteria must be objectively pass/fail, test observable behavior
+rather than private structure, cover every core requirement, and include relevant
+boundary and failure cases.
 
 ## 13. Required Validation Categories
 
@@ -160,7 +163,24 @@ missing required behavior.
 Identify the exact concept supported by each paper, official document, approved
 decision, ADR, related specification, or verified dependency constraint.
 
-## 17. Approval Record
+## 17. Implementation Handoff Checklist
+
+Before setting `Status: APPROVED`, confirm:
+
+- [ ] Scope, exclusions, and optional behavior are explicit.
+- [ ] Inputs and outputs define types, shapes, units, frames, ranges, and masks.
+- [ ] Prohibited future, privileged, leaked, and diagnostic-only data is listed.
+- [ ] Formulas, algorithms, applicability, and fallbacks are unambiguous.
+- [ ] State, timing, reset, termination, and truncation behavior is defined.
+- [ ] Configuration fields and scientifically frozen defaults are identified.
+- [ ] Errors, diagnostics, reproducibility, compatibility, and migration are covered.
+- [ ] Every core requirement maps to objective acceptance criteria.
+- [ ] Required validation categories are selected or marked `Not applicable`.
+- [ ] Scientific sources, project adaptations, and approved decisions are distinct.
+- [ ] No material decision remains open.
+- [ ] Known limitations are intentional and do not hide missing requirements.
+
+## 18. Approval Record
 
 - Approved by: `<name or role>`
 - Approval date: `<YYYY-MM-DD>`

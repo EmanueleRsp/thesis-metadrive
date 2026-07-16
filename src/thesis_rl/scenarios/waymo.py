@@ -12,6 +12,7 @@ from typing import Any, Sequence
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 from thesis_rl.scenarios.arms import assign_primary_arm, derive_scenario_tags
 from thesis_rl.scenarios.features import extract_scenario_features
+from thesis_rl.scenarios.parallel import ProgressCallback, ordered_process_map
 from thesis_rl.scenarios.quality import apply_catalog_quality_policy
 from thesis_rl.scenarios.records import ScenarioRecord
 from thesis_rl.scenarios.splits import (
@@ -37,8 +38,7 @@ def validate_training_20s_source(raw_data_path: str | Path) -> tuple[Path, ...]:
     files = tuple(sorted(root.glob("training_20s.tfrecord*")))
     if not files:
         raise ValueError(
-            "Waymo source must contain files named training_20s.tfrecord*; "
-            f"none found in {root}"
+            f"Waymo source must contain files named training_20s.tfrecord*; none found in {root}"
         )
     return files
 
@@ -166,6 +166,8 @@ def load_converted_waymo_entries(
     *,
     data_root: str | Path | None = None,
     dataset_version: str = "training_20s",
+    workers: int = 1,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[tuple[ScenarioCatalogEntry, ...], dict[str, str]]:
     root = Path(database_path).expanduser().resolve()
     if not root.is_dir():
@@ -180,44 +182,58 @@ def load_converted_waymo_entries(
     if not files:
         raise ValueError(f"converted Waymo database contains no scenario files: {root}")
     base = Path(data_root).expanduser().resolve() if data_root is not None else root.parent.parent
-    entries: list[ScenarioCatalogEntry] = []
-    groups: dict[str, str] = {}
-    for path in files:
-        with path.open("rb") as handle:
-            scenario = pickle.load(handle)
-        scenario_id = str(scenario.get("id", ""))
-        if not scenario_id:
-            raise ValueError(f"scenario file has no id: {path}")
-        features = extract_scenario_features(scenario, "waymo")
-        group_id = waymo_group_id(scenario)
-        relative_path = path.relative_to(base).as_posix()
-        record = ScenarioRecord(
-            scenario_uid=f"waymo:{dataset_version}:{scenario_id}",
-            scenario_id=scenario_id,
-            source="waymo",
-            relative_path=relative_path,
-            official_split="training_20s",
-            source_log_id=group_id,
-            source_scenario_id=scenario_id,
-            dataset_version=dataset_version,
-            converter_version=None,
-            split="train",
-            runtime_index=None,
-            length=int(scenario["length"]),
-            pg_profile=None,
-            pg_seed=None,
-            map_id=None,
-            primary_arm=assign_primary_arm(features),
-            tags=derive_scenario_tags(features),
-            signal_reliability=features.signal_reliability,
-            validation_status="valid",
-            validation_warnings=(),
-        )
-        record = apply_catalog_quality_policy(record, features)
-        entries.append(ScenarioCatalogEntry(record=record, features=features))
-        groups[record.scenario_uid] = group_id
+    tasks = tuple((path, str(base), dataset_version) for path in files)
+    loaded = ordered_process_map(
+        tasks,
+        _load_waymo_entry,
+        workers=workers,
+        progress_callback=progress_callback,
+    )
+    entries = tuple(entry for entry, _group_id in loaded)
+    groups = {entry.record.scenario_uid: group_id for entry, group_id in loaded}
     assert_waymo_training_20s([entry.record for entry in entries])
-    return tuple(entries), groups
+    return entries, groups
+
+
+def _load_waymo_entry(
+    task: tuple[Path, str, str],
+) -> tuple[ScenarioCatalogEntry, str]:
+    """Load and catalog one converted Waymo scenario in a worker process."""
+
+    path, base_value, dataset_version = task
+    base = Path(base_value)
+    with path.open("rb") as handle:
+        scenario = pickle.load(handle)
+    scenario_id = str(scenario.get("id", ""))
+    if not scenario_id:
+        raise ValueError(f"scenario file has no id: {path}")
+    features = extract_scenario_features(scenario, "waymo")
+    group_id = waymo_group_id(scenario)
+    relative_path = path.relative_to(base).as_posix()
+    record = ScenarioRecord(
+        scenario_uid=f"waymo:{dataset_version}:{scenario_id}",
+        scenario_id=scenario_id,
+        source="waymo",
+        relative_path=relative_path,
+        official_split="training_20s",
+        source_log_id=group_id,
+        source_scenario_id=scenario_id,
+        dataset_version=dataset_version,
+        converter_version=None,
+        split="train",
+        runtime_index=None,
+        length=int(scenario["length"]),
+        pg_profile=None,
+        pg_seed=None,
+        map_id=None,
+        primary_arm=assign_primary_arm(features),
+        tags=derive_scenario_tags(features),
+        signal_reliability=features.signal_reliability,
+        validation_status="valid",
+        validation_warnings=(),
+    )
+    record = apply_catalog_quality_policy(record, features)
+    return ScenarioCatalogEntry(record=record, features=features), group_id
 
 
 def assign_waymo_internal_splits(

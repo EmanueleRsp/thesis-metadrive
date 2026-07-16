@@ -240,6 +240,7 @@ No deviations identified.
 | Path | Action | Purpose |
 |---|---|---|
 | `src/thesis_rl/rulebook/v2/context/catalog_eligibility.py` | Modified | Bounded process pool and deterministic result collection |
+| `src/thesis_rl/scenarios/parallel.py` | Added | Shared bounded ordered process map |
 | `src/thesis_rl/cli/scenarios/filter_rulebook_v2_catalog.py` | Modified | Rich dashboard, worker argument, and summaries |
 | `src/thesis_rl/cli/scenarios/pipeline_config.py` | Modified | Resolve Rulebook worker configuration |
 | `conf/scenarios/pipeline_v1.yaml` | Modified | Versioned default worker count |

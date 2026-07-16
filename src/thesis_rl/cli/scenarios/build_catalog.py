@@ -11,9 +11,13 @@ from thesis_rl.scenarios.catalog import write_scenario_catalog
 from thesis_rl.scenarios.paths import ScenarioDataPaths
 from thesis_rl.scenarios.pipeline import group_ids_for_entries
 from thesis_rl.scenarios.pg.loader import load_exported_pg_entries
-from thesis_rl.scenarios.reports import compute_arm_distribution, compute_feature_statistics, write_json_report
+from thesis_rl.scenarios.reports import (
+    compute_arm_distribution,
+    compute_feature_statistics,
+    write_json_report,
+)
 from thesis_rl.scenarios.waymo import load_converted_waymo_entries
-from thesis_rl.cli.scenarios.ui import console, print_key_value_table, print_panel
+from thesis_rl.cli.scenarios.ui import console, make_progress, print_key_value_table, print_panel
 
 
 def main() -> int:
@@ -25,6 +29,18 @@ def main() -> int:
     parser.add_argument("--pg-database")
     parser.add_argument("--pg-seed-start", type=int)
     parser.add_argument("--pg-count", type=int)
+    parser.add_argument(
+        "--waymo-workers",
+        type=int,
+        default=1,
+        help="Number of spawned workers used to load Waymo scenarios.",
+    )
+    parser.add_argument(
+        "--pg-workers",
+        type=int,
+        default=1,
+        help="Number of spawned workers used to load PG scenarios.",
+    )
     parser.add_argument("--output")
     parser.add_argument("--groups-output")
     parser.add_argument("--report-output")
@@ -32,21 +48,35 @@ def main() -> int:
     args = parser.parse_args()
     if not args.data_root:
         raise SystemExit("--data-root or SCENARIONET_DATA_ROOT is required")
+    if args.waymo_workers < 1 or args.pg_workers < 1:
+        parser.error("--waymo-workers and --pg-workers must be positive")
 
     paths = ScenarioDataPaths(Path(args.data_root))
     waymo_database = Path(args.waymo_database or paths.root / "waymo" / "database")
     pg_database = Path(args.pg_database or paths.root / "pg" / "database")
     output = Path(args.output or paths.root / "catalog" / "scenario_catalog.parquet")
-    groups_output = Path(
-        args.groups_output or paths.root / "splits" / "scenario_groups.json"
-    )
-    report_output = Path(
-        args.report_output or paths.root / "catalog" / "catalog_report.json"
-    )
+    groups_output = Path(args.groups_output or paths.root / "splits" / "scenario_groups.json")
+    report_output = Path(args.report_output or paths.root / "catalog" / "catalog_report.json")
 
-    with console.status("Loading converted Waymo and PG scenarios", spinner="dots"):
+    with make_progress() as progress:
+        waymo_task = progress.add_task("Loading Waymo catalog entries", total=None)
+        pg_task = progress.add_task("Loading PG catalog entries", total=None)
+
+        def update_waymo(completed: int, total: int) -> None:
+            progress.update(waymo_task, completed=completed, total=total)
+
+        def update_pg(completed: int, total: int) -> None:
+            progress.update(pg_task, completed=completed, total=total)
+
+        console.log(
+            f"Loading catalog entries with Waymo workers={args.waymo_workers}, "
+            f"PG workers={args.pg_workers}"
+        )
         waymo_entries, _waymo_groups = load_converted_waymo_entries(
-            waymo_database, data_root=paths.root
+            waymo_database,
+            data_root=paths.root,
+            workers=args.waymo_workers,
+            progress_callback=update_waymo,
         )
         pg_entries = load_exported_pg_entries(
             pg_database,
@@ -54,6 +84,8 @@ def main() -> int:
             split="train",
             seed_start=args.pg_seed_start,
             count_per_profile=args.pg_count,
+            workers=args.pg_workers,
+            progress_callback=update_pg,
         )
     entries = tuple(waymo_entries) + tuple(pg_entries)
     with console.status("Writing unified ScenarioNet catalog and group mapping", spinner="dots"):
@@ -81,9 +113,7 @@ def main() -> int:
     write_json_report(report, report_output, overwrite=args.overwrite)
     print_panel(
         "Catalog built",
-        f"Total scenarios: {report['total']}\n"
-        f"Catalog: {output}\n"
-        f"Groups: {groups_output}",
+        f"Total scenarios: {report['total']}\nCatalog: {output}\nGroups: {groups_output}",
     )
     print_key_value_table(
         "Catalog source counts",
