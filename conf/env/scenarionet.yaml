@@ -54,6 +54,7 @@ episode_control:
   extra_steps_after_scenario: 50
 
 provider:
+  # Supported kinds: uniform, arm_uniform, fixed_sequence.
   kind: uniform
   strict: true
   allow_fallback: false

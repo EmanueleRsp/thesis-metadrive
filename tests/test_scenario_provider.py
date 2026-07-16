@@ -4,11 +4,21 @@ from dataclasses import replace
 
 import pytest
 
-from thesis_rl.scenarios.provider import FixedSequenceScenarioProvider, UniformScenarioProvider
+from thesis_rl.scenarios.provider import (
+    ArmUniformScenarioProvider,
+    FixedSequenceScenarioProvider,
+    UniformScenarioProvider,
+)
 from thesis_rl.scenarios.records import ScenarioRecord
 
 
-def _record(index: int, source: str, *, split: str = "train") -> ScenarioRecord:
+def _record(
+    index: int,
+    source: str,
+    *,
+    split: str = "train",
+    arm: str = "A0_simple_low_traffic",
+) -> ScenarioRecord:
     return ScenarioRecord(
         scenario_uid=f"{source}:v1:{index}",
         scenario_id=str(index),
@@ -25,7 +35,7 @@ def _record(index: int, source: str, *, split: str = "train") -> ScenarioRecord:
         pg_profile=None if source == "waymo" else "P0_simple",
         pg_seed=None if source == "waymo" else index,
         map_id="S",
-        primary_arm="A0_simple_low_traffic",
+        primary_arm=arm,
         tags=(),
         signal_reliability="not_applicable",
         validation_status="valid",
@@ -81,9 +91,9 @@ def test_uniform_provider_excludes_buffered_scenarios_from_fresh_sampling() -> N
     assert provider.has_candidate(
         split="train", arm="A0_simple_low_traffic", excluded_scenario_uids=excluded
     )
-    assert provider.sample(
-        split="train", worker_id=0, excluded_scenario_uids=excluded
-    ) == records[1]
+    assert (
+        provider.sample(split="train", worker_id=0, excluded_scenario_uids=excluded) == records[1]
+    )
     assert not provider.has_candidate(
         split="train",
         arm="A0_simple_low_traffic",
@@ -99,6 +109,51 @@ def test_uniform_provider_rejects_unknown_semantic_arm() -> None:
 def test_uniform_provider_rejects_fallback_mode() -> None:
     with pytest.raises(ValueError, match="strict=true"):
         UniformScenarioProvider([_record(0, "pg")], global_seed=0, allow_fallback=True)
+
+
+def test_arm_uniform_provider_samples_all_arms_and_records_one_sided_source_fallback() -> None:
+    records = []
+    for index, arm in enumerate(
+        (
+            "A0_simple_low_traffic",
+            "A1_traffic",
+            "A2_junction",
+            "A3_complex_junction",
+            "A4_vru",
+            "A5_critical_mixed",
+        )
+    ):
+        records.append(_record(index, "waymo", arm=arm))
+        if arm != "A4_vru":
+            records.append(_record(index, "pg", arm=arm))
+    provider = ArmUniformScenarioProvider(records, global_seed=7)
+
+    selected_arms = set()
+    observed_fallback = False
+    for _ in range(120):
+        selected = provider.sample(split="train", worker_id=0)
+        selected_arms.add(selected.primary_arm)
+        metadata = provider.sampling_metadata(worker_id=0)
+        observed_fallback = observed_fallback or bool(metadata["source_cell_fallback"])
+        assert metadata["sampling_mode"] == "arm_uniform"
+        assert metadata["requested_arm"] == selected.primary_arm
+
+    assert selected_arms == {
+        "A0_simple_low_traffic",
+        "A1_traffic",
+        "A2_junction",
+        "A3_complex_junction",
+        "A4_vru",
+        "A5_critical_mixed",
+    }
+    assert observed_fallback is True
+
+
+def test_arm_uniform_provider_rejects_missing_semantic_arm() -> None:
+    provider = ArmUniformScenarioProvider([_record(0, "waymo")], global_seed=0)
+
+    with pytest.raises(LookupError, match="requires every semantic arm"):
+        provider.sample(split="train", worker_id=0)
 
 
 def test_fixed_sequence_provider_order_and_exhaustion() -> None:
@@ -120,11 +175,15 @@ def test_fixed_sequence_rejects_invalid_record() -> None:
 def test_providers_can_filter_to_offline_rulebook_eligible_uids():
     records = [_record(0, "pg"), _record(1, "pg")]
     provider = UniformScenarioProvider(
-        records, global_seed=0, source_probabilities={"waymo": 0.0, "pg": 1.0},
+        records,
+        global_seed=0,
+        source_probabilities={"waymo": 0.0, "pg": 1.0},
         eligible_scenario_uids={records[1].scenario_uid},
     )
     assert provider.sample(split="train", worker_id=0) == records[1]
     fixed = FixedSequenceScenarioProvider(
-        records, eligible_scenario_uids={records[1].scenario_uid}, repeat=True,
+        records,
+        eligible_scenario_uids={records[1].scenario_uid},
+        repeat=True,
     )
     assert fixed.sample(split="train", worker_id=0) == records[1]

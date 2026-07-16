@@ -22,11 +22,14 @@ from thesis_rl.runtime.wiring.builders import collect_scenario_runtime_stats
 def test_scenario_time_limit_supports_zero_and_tail(
     steps: int, length: int, extra: int, expected: bool
 ) -> None:
-    assert scenario_time_limit_reached(
-        episode_steps=steps,
-        scenario_length=length,
-        extra_steps_after_scenario=extra,
-    ) is expected
+    assert (
+        scenario_time_limit_reached(
+            episode_steps=steps,
+            scenario_length=length,
+            extra_steps_after_scenario=extra,
+        )
+        is expected
+    )
 
 
 def test_scene_context_separates_line_from_physical_boundary() -> None:
@@ -52,11 +55,14 @@ def test_scene_context_separates_line_from_physical_boundary() -> None:
 def test_scene_context_termination_reason_is_stable() -> None:
     adapter = SceneContextAdapter()
     vehicle = SimpleNamespace()
-    assert adapter.get_termination_reason(
-        None,
-        vehicle,
-        {"crash_vehicle": True, "max_step": True},
-    ) == "crash_vehicle"
+    assert (
+        adapter.get_termination_reason(
+            None,
+            vehicle,
+            {"crash_vehicle": True, "max_step": True},
+        )
+        == "crash_vehicle"
+    )
 
 
 def test_scenario_time_limit_rejects_invalid_values() -> None:
@@ -290,6 +296,9 @@ def test_collect_scenario_runtime_stats_merges_vector_workers() -> None:
                     "resets_by_source": {"waymo": 2},
                     "steps_by_source": {"waymo": 4},
                     "episodes_by_arm": {"A0": 1},
+                    "resets_by_source_arm": {"waymo": {"A0": 2}},
+                    "steps_by_source_arm": {"waymo": {"A0": 4}},
+                    "episodes_by_source_arm": {"waymo": {"A0": 1}},
                     "termination_reasons": {"success": 1},
                 },
                 {
@@ -299,6 +308,9 @@ def test_collect_scenario_runtime_stats_merges_vector_workers() -> None:
                     "resets_by_source": {"pg": 1},
                     "steps_by_source": {"pg": 3},
                     "episodes_by_arm": {"A1": 1},
+                    "resets_by_source_arm": {"pg": {"A1": 1}},
+                    "steps_by_source_arm": {"pg": {"A1": 3}},
+                    "episodes_by_source_arm": {"pg": {"A1": 1}},
                     "termination_reasons": {"truncated": 1},
                 },
             ]
@@ -308,3 +320,4 @@ def test_collect_scenario_runtime_stats_merges_vector_workers() -> None:
     assert stats["resets"] == 3
     assert stats["steps_by_source"] == {"waymo": 4, "pg": 3}
     assert stats["episodes_by_arm"] == {"A0": 1, "A1": 1}
+    assert stats["steps_by_source_arm"] == {"waymo": {"A0": 4}, "pg": {"A1": 3}}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Collection, Sequence
+from typing import Any, Collection, Sequence
 
 import numpy as np
 
@@ -23,11 +23,22 @@ class ScenarioProvider(ABC):
     ) -> ScenarioRecord:
         raise NotImplementedError
 
+    def sampling_metadata(self, *, worker_id: int) -> dict[str, Any]:
+        """Return metadata for the most recent sample by one worker."""
 
-def _valid_records(records: Sequence[ScenarioRecord], eligible_scenario_uids: Collection[str] | None = None) -> tuple[ScenarioRecord, ...]:
-    eligible = None if eligible_scenario_uids is None else {str(value) for value in eligible_scenario_uids}
+        del worker_id
+        return {}
+
+
+def _valid_records(
+    records: Sequence[ScenarioRecord], eligible_scenario_uids: Collection[str] | None = None
+) -> tuple[ScenarioRecord, ...]:
+    eligible = (
+        None if eligible_scenario_uids is None else {str(value) for value in eligible_scenario_uids}
+    )
     return tuple(
-        record for record in records
+        record
+        for record in records
         if record.validation_status in {"valid", "warning"}
         and (eligible is None or record.scenario_uid in eligible)
     )
@@ -46,7 +57,9 @@ class UniformScenarioProvider(ScenarioProvider):
         eligible_scenario_uids: Collection[str] | None = None,
     ) -> None:
         if not strict or allow_fallback:
-            raise ValueError("ScenarioNet v1 provider requires strict=true and allow_fallback=false")
+            raise ValueError(
+                "ScenarioNet v1 provider requires strict=true and allow_fallback=false"
+            )
         self._records = _valid_records(records, eligible_scenario_uids)
         if not self._records:
             raise ValueError("provider requires at least one valid scenario")
@@ -64,6 +77,7 @@ class UniformScenarioProvider(ScenarioProvider):
         self._global_seed = int(global_seed)
         self._default_arm = _validate_arm(default_arm)
         self._rng_by_worker: dict[int, np.random.Generator] = {}
+        self._sampling_metadata_by_worker: dict[int, dict[str, Any]] = {}
         self.reset_counts: dict[str, int] = defaultdict(int)
 
     def _rng(self, worker_id: int) -> np.random.Generator:
@@ -101,8 +115,7 @@ class UniformScenarioProvider(ScenarioProvider):
         elif candidates:
             available_sources = {record.source for record in candidates}
             source_indices = [
-                index for index, name in enumerate(self._source_names)
-                if name in available_sources
+                index for index, name in enumerate(self._source_names) if name in available_sources
             ]
             probabilities = self._source_probabilities[source_indices]
             probabilities = probabilities / probabilities.sum()
@@ -113,8 +126,16 @@ class UniformScenarioProvider(ScenarioProvider):
             filters = f"split={split!r}, source={source!r}, arm={requested_arm!r}"
             raise LookupError(f"no valid scenarios for {filters}; fallback is disabled")
         selected = candidates[int(rng.integers(0, len(candidates)))]
+        self._sampling_metadata_by_worker[int(worker_id)] = {
+            "sampling_mode": "uniform",
+            "requested_arm": requested_arm,
+            "source_cell_fallback": False,
+        }
         self.reset_counts[selected.source] += 1
         return selected
+
+    def sampling_metadata(self, *, worker_id: int) -> dict[str, Any]:
+        return dict(self._sampling_metadata_by_worker.get(int(worker_id), {}))
 
     def has_candidate(
         self,
@@ -133,6 +154,87 @@ class UniformScenarioProvider(ScenarioProvider):
             and (requested_arm is None or record.primary_arm == requested_arm)
             for record in self._records
         )
+
+
+class ArmUniformScenarioProvider(UniformScenarioProvider):
+    """Sample semantic arms uniformly, then source-conditionally within an arm."""
+
+    def __init__(
+        self,
+        records: Sequence[ScenarioRecord],
+        *,
+        global_seed: int,
+        strict: bool = True,
+        allow_fallback: bool = False,
+        eligible_scenario_uids: Collection[str] | None = None,
+    ) -> None:
+        super().__init__(
+            records,
+            global_seed=global_seed,
+            source_probabilities={"waymo": 0.5, "pg": 0.5},
+            strict=strict,
+            allow_fallback=allow_fallback,
+            eligible_scenario_uids=eligible_scenario_uids,
+        )
+
+    def sample(
+        self,
+        *,
+        split: str,
+        worker_id: int,
+        source: str | None = None,
+        arm: str | None = None,
+        excluded_scenario_uids: Collection[str] = (),
+    ) -> ScenarioRecord:
+        if arm is not None:
+            raise ValueError("arm-uniform provider chooses the semantic arm internally")
+        if source is not None and source not in self._source_names:
+            raise ValueError(f"unsupported source: {source!r}")
+        rng = self._rng(worker_id)
+        excluded = {str(value) for value in excluded_scenario_uids}
+        candidates = [
+            record
+            for record in self._records
+            if record.split == split and record.scenario_uid not in excluded
+        ]
+        available_arms = {record.primary_arm for record in candidates}
+        missing_arms = [scenario_arm for scenario_arm in ARMS if scenario_arm not in available_arms]
+        if missing_arms:
+            raise LookupError(
+                "arm-uniform provider requires every semantic arm in the requested split; "
+                f"split={split!r}, missing={missing_arms}"
+            )
+        requested_arm = ARMS[int(rng.integers(0, len(ARMS)))]
+        arm_candidates = [record for record in candidates if record.primary_arm == requested_arm]
+        if source is not None:
+            selected_source = source
+            source_cell_fallback = False
+        else:
+            available_sources = {record.source for record in arm_candidates}
+            if len(available_sources) == 2:
+                selected_source = self._source_names[int(rng.integers(0, len(self._source_names)))]
+                source_cell_fallback = False
+            elif len(available_sources) == 1:
+                selected_source = next(iter(available_sources))
+                source_cell_fallback = True
+            else:  # pragma: no cover - guarded by the arm-availability check above
+                raise LookupError(f"no valid scenarios for split={split!r}, arm={requested_arm!r}")
+        source_candidates = [
+            record for record in arm_candidates if record.source == selected_source
+        ]
+        if not source_candidates:
+            raise LookupError(
+                "no valid scenarios for requested arm/source cell; fallback is disabled: "
+                f"split={split!r}, arm={requested_arm!r}, source={selected_source!r}"
+            )
+        selected = source_candidates[int(rng.integers(0, len(source_candidates)))]
+        self._sampling_metadata_by_worker[int(worker_id)] = {
+            "sampling_mode": "arm_uniform",
+            "requested_arm": requested_arm,
+            "source_cell_fallback": source_cell_fallback,
+        }
+        self.reset_counts[selected.source] += 1
+        return selected
 
 
 class FixedSequenceScenarioProvider(ScenarioProvider):

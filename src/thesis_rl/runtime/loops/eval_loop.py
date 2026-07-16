@@ -82,7 +82,9 @@ def _append_rule_metrics_rows(
         )
 
 
-def _resolve_eval_env_overrides(curriculum_cfg: CurriculumConfig) -> tuple[dict[str, object] | None, str | None]:
+def _resolve_eval_env_overrides(
+    curriculum_cfg: CurriculumConfig,
+) -> tuple[dict[str, object] | None, str | None]:
     """Resolve evaluation env overrides and selected stage name from curriculum config.
 
     Evaluation is standalone (no persisted curriculum state), so when curriculum mode is
@@ -99,7 +101,9 @@ def _resolve_eval_env_overrides(curriculum_cfg: CurriculumConfig) -> tuple[dict[
         return merged, stage.name
 
     curriculum_manager = CurriculumManager(curriculum_cfg)
-    return curriculum_manager.get_env_config(evaluation=True), curriculum_manager.get_current_stage().name
+    return curriculum_manager.get_env_config(
+        evaluation=True
+    ), curriculum_manager.get_current_stage().name
 
 
 def run_evaluation(cfg: DictConfig) -> None:
@@ -170,7 +174,6 @@ def run_evaluation(cfg: DictConfig) -> None:
     )
 
     try:
-
         # Set seeds
         run_seed = int(cfg.seed)
         set_global_seed(run_seed)
@@ -258,12 +261,19 @@ def run_evaluation(cfg: DictConfig) -> None:
             if hasattr(cfg, "agent")
             else 0.1
         )
-        agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg)
+        agent = Agent(
+            preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg
+        )
         agent.load_adapter(checkpoint_path=ckpt, strict=True)
         eval_id = 1
         stage_name = eval_stage_name or "baseline"
         stage_index = 0
-        if curriculum_cfg.enabled and curriculum_cfg.is_staged and curriculum_cfg.staged.stages and eval_stage_name is not None:
+        if (
+            curriculum_cfg.enabled
+            and curriculum_cfg.is_staged
+            and curriculum_cfg.staged.stages
+            and eval_stage_name is not None
+        ):
             for idx, stage in enumerate(curriculum_cfg.staged.stages):
                 if stage.name == eval_stage_name:
                     stage_index = idx
@@ -331,10 +341,18 @@ def run_evaluation(cfg: DictConfig) -> None:
                 "std_reward": float(metrics.get("std_reward", 0.0)),
                 "mean_env_reward": float(metrics.get("mean_env_reward", 0.0)),
                 "std_env_reward": float(metrics.get("std_env_reward", 0.0)),
-                "mean_scalar_rule_reward": float(metrics.get("mean_scalar_rule_reward", 0.0)) if metrics.get("mean_scalar_rule_reward") is not None else None,
-                "std_scalar_rule_reward": float(metrics.get("std_scalar_rule_reward", 0.0)) if metrics.get("std_scalar_rule_reward") is not None else None,
-                "mean_hybrid_reward": float(metrics.get("mean_hybrid_reward", 0.0)) if metrics.get("mean_hybrid_reward") is not None else None,
-                "std_hybrid_reward": float(metrics.get("std_hybrid_reward", 0.0)) if metrics.get("std_hybrid_reward") is not None else None,
+                "mean_scalar_rule_reward": float(metrics.get("mean_scalar_rule_reward", 0.0))
+                if metrics.get("mean_scalar_rule_reward") is not None
+                else None,
+                "std_scalar_rule_reward": float(metrics.get("std_scalar_rule_reward", 0.0))
+                if metrics.get("std_scalar_rule_reward") is not None
+                else None,
+                "mean_hybrid_reward": float(metrics.get("mean_hybrid_reward", 0.0))
+                if metrics.get("mean_hybrid_reward") is not None
+                else None,
+                "std_hybrid_reward": float(metrics.get("std_hybrid_reward", 0.0))
+                if metrics.get("std_hybrid_reward") is not None
+                else None,
                 "mean_rule_saturation_max": float(metrics.get("mean_rule_saturation_max", 0.0)),
                 "collision_rate": float(metrics.get("collision_rate", 0.0)),
                 "collision_rate_std": float(metrics.get("collision_rate_std", 0.0)),
@@ -386,7 +404,14 @@ def run_evaluation(cfg: DictConfig) -> None:
         episode_trajectory_log_paths = list(per_episode.get("trajectory_log_path", []))
         episode_video_recorded_live = list(per_episode.get("video_recorded_live", []))
         episode_replay_warnings = list(per_episode.get("replay_warning", []))
+        episode_scenario_metadata = list(per_episode.get("scenario_metadata", []))
         for episode_idx in range(len(episode_returns)):
+            scenario_metadata = (
+                episode_scenario_metadata[episode_idx]
+                if episode_idx < len(episode_scenario_metadata)
+                and isinstance(episode_scenario_metadata[episode_idx], dict)
+                else {}
+            )
             scenario_seed = (
                 int(eval_base_seed + episode_idx) if eval_base_seed is not None else None
             )
@@ -402,29 +427,84 @@ def run_evaluation(cfg: DictConfig) -> None:
                     "stage_index": stage_index,
                     "global_step": 0,
                     "scenario_seed": scenario_seed,
-                    "scenario_id": f"seed_{scenario_seed}",
+                    "scenario_uid": scenario_metadata.get("scenario_uid"),
+                    "scenario_id": scenario_metadata.get("scenario_id", f"seed_{scenario_seed}"),
+                    "source": scenario_metadata.get("source"),
+                    "split": scenario_metadata.get("split"),
+                    "primary_arm": scenario_metadata.get("arm"),
+                    "worker_id": scenario_metadata.get("worker_id"),
+                    "termination_reason": scenario_metadata.get("termination_reason"),
+                    "terminated": scenario_metadata.get("terminated"),
+                    "truncated": scenario_metadata.get("truncated"),
+                    "sampling_mode": scenario_metadata.get("sampling_mode"),
+                    "requested_arm": scenario_metadata.get("requested_arm"),
+                    "source_cell_fallback": scenario_metadata.get("source_cell_fallback"),
                     "deterministic": bool(cfg.experiment.eval_deterministic),
                     "reward": float(episode_returns[episode_idx]),
-                    "env_reward": float(episode_env_returns[episode_idx]) if episode_idx < len(episode_env_returns) else None,
-                    "scalar_rule_reward": float(episode_scalar_rule_returns[episode_idx]) if episode_idx < len(episode_scalar_rule_returns) and episode_scalar_rule_returns[episode_idx] is not None else None,
-                    "hybrid_reward": float(episode_hybrid_returns[episode_idx]) if episode_idx < len(episode_hybrid_returns) and episode_hybrid_returns[episode_idx] is not None else None,
-                    "rule_rewards_by_rule": json.dumps(episode_rule_rewards_by_rule[episode_idx], ensure_ascii=True) if episode_idx < len(episode_rule_rewards_by_rule) else None,
-                    "episode_length": int(episode_lengths[episode_idx]) if episode_idx < len(episode_lengths) else None,
-                    "success": float(episode_success[episode_idx]) if episode_idx < len(episode_success) else None,
-                    "collision": float(episode_collision[episode_idx]) if episode_idx < len(episode_collision) else None,
-                    "out_of_road": float(episode_out_of_road[episode_idx]) if episode_idx < len(episode_out_of_road) else None,
-                    "timeout": float(episode_timeout[episode_idx]) if episode_idx < len(episode_timeout) else None,
-                    "route_completion": float(episode_route_completion[episode_idx]) if episode_idx < len(episode_route_completion) else None,
-                    "top_rule_violation_rate": float(episode_top_rule_violation_rate[episode_idx]) if episode_idx < len(episode_top_rule_violation_rate) else None,
-                    "error_value": float(episode_error_value[episode_idx]) if episode_idx < len(episode_error_value) else None,
-                    "violated_rules": str(episode_violated_rules[episode_idx]) if episode_idx < len(episode_violated_rules) else None,
-                    "violation_pattern": str(episode_violation_pattern[episode_idx]) if episode_idx < len(episode_violation_pattern) else None,
-                    "video_path": episode_video_paths[episode_idx] if episode_idx < len(episode_video_paths) else None,
-                    "video_authoritative_path": episode_video_authoritative_paths[episode_idx] if episode_idx < len(episode_video_authoritative_paths) else None,
-                    "video_manifest_path": episode_video_manifest_paths[episode_idx] if episode_idx < len(episode_video_manifest_paths) else None,
-                    "trajectory_log_path": episode_trajectory_log_paths[episode_idx] if episode_idx < len(episode_trajectory_log_paths) else None,
-                    "video_recorded_live": bool(episode_video_recorded_live[episode_idx]) if episode_idx < len(episode_video_recorded_live) else False,
-                    "replay_warning": episode_replay_warnings[episode_idx] if episode_idx < len(episode_replay_warnings) else None,
+                    "env_reward": float(episode_env_returns[episode_idx])
+                    if episode_idx < len(episode_env_returns)
+                    else None,
+                    "scalar_rule_reward": float(episode_scalar_rule_returns[episode_idx])
+                    if episode_idx < len(episode_scalar_rule_returns)
+                    and episode_scalar_rule_returns[episode_idx] is not None
+                    else None,
+                    "hybrid_reward": float(episode_hybrid_returns[episode_idx])
+                    if episode_idx < len(episode_hybrid_returns)
+                    and episode_hybrid_returns[episode_idx] is not None
+                    else None,
+                    "rule_rewards_by_rule": json.dumps(
+                        episode_rule_rewards_by_rule[episode_idx], ensure_ascii=True
+                    )
+                    if episode_idx < len(episode_rule_rewards_by_rule)
+                    else None,
+                    "episode_length": int(episode_lengths[episode_idx])
+                    if episode_idx < len(episode_lengths)
+                    else None,
+                    "success": float(episode_success[episode_idx])
+                    if episode_idx < len(episode_success)
+                    else None,
+                    "collision": float(episode_collision[episode_idx])
+                    if episode_idx < len(episode_collision)
+                    else None,
+                    "out_of_road": float(episode_out_of_road[episode_idx])
+                    if episode_idx < len(episode_out_of_road)
+                    else None,
+                    "timeout": float(episode_timeout[episode_idx])
+                    if episode_idx < len(episode_timeout)
+                    else None,
+                    "route_completion": float(episode_route_completion[episode_idx])
+                    if episode_idx < len(episode_route_completion)
+                    else None,
+                    "top_rule_violation_rate": float(episode_top_rule_violation_rate[episode_idx])
+                    if episode_idx < len(episode_top_rule_violation_rate)
+                    else None,
+                    "error_value": float(episode_error_value[episode_idx])
+                    if episode_idx < len(episode_error_value)
+                    else None,
+                    "violated_rules": str(episode_violated_rules[episode_idx])
+                    if episode_idx < len(episode_violated_rules)
+                    else None,
+                    "violation_pattern": str(episode_violation_pattern[episode_idx])
+                    if episode_idx < len(episode_violation_pattern)
+                    else None,
+                    "video_path": episode_video_paths[episode_idx]
+                    if episode_idx < len(episode_video_paths)
+                    else None,
+                    "video_authoritative_path": episode_video_authoritative_paths[episode_idx]
+                    if episode_idx < len(episode_video_authoritative_paths)
+                    else None,
+                    "video_manifest_path": episode_video_manifest_paths[episode_idx]
+                    if episode_idx < len(episode_video_manifest_paths)
+                    else None,
+                    "trajectory_log_path": episode_trajectory_log_paths[episode_idx]
+                    if episode_idx < len(episode_trajectory_log_paths)
+                    else None,
+                    "video_recorded_live": bool(episode_video_recorded_live[episode_idx])
+                    if episode_idx < len(episode_video_recorded_live)
+                    else False,
+                    "replay_warning": episode_replay_warnings[episode_idx]
+                    if episode_idx < len(episode_replay_warnings)
+                    else None,
                 },
             )
         recorder.append_row(
@@ -444,10 +524,18 @@ def run_evaluation(cfg: DictConfig) -> None:
                 "std_reward": float(metrics.get("std_reward", 0.0)),
                 "mean_env_reward": float(metrics.get("mean_env_reward", 0.0)),
                 "std_env_reward": float(metrics.get("std_env_reward", 0.0)),
-                "mean_scalar_rule_reward": float(metrics.get("mean_scalar_rule_reward", 0.0)) if metrics.get("mean_scalar_rule_reward") is not None else None,
-                "std_scalar_rule_reward": float(metrics.get("std_scalar_rule_reward", 0.0)) if metrics.get("std_scalar_rule_reward") is not None else None,
-                "mean_hybrid_reward": float(metrics.get("mean_hybrid_reward", 0.0)) if metrics.get("mean_hybrid_reward") is not None else None,
-                "std_hybrid_reward": float(metrics.get("std_hybrid_reward", 0.0)) if metrics.get("std_hybrid_reward") is not None else None,
+                "mean_scalar_rule_reward": float(metrics.get("mean_scalar_rule_reward", 0.0))
+                if metrics.get("mean_scalar_rule_reward") is not None
+                else None,
+                "std_scalar_rule_reward": float(metrics.get("std_scalar_rule_reward", 0.0))
+                if metrics.get("std_scalar_rule_reward") is not None
+                else None,
+                "mean_hybrid_reward": float(metrics.get("mean_hybrid_reward", 0.0))
+                if metrics.get("mean_hybrid_reward") is not None
+                else None,
+                "std_hybrid_reward": float(metrics.get("std_hybrid_reward", 0.0))
+                if metrics.get("std_hybrid_reward") is not None
+                else None,
                 "mean_rule_saturation_max": float(metrics.get("mean_rule_saturation_max", 0.0)),
                 "collision_rate": float(metrics.get("collision_rate", 0.0)),
                 "collision_rate_std": float(metrics.get("collision_rate_std", 0.0)),
@@ -485,7 +573,7 @@ def run_evaluation(cfg: DictConfig) -> None:
         if scenario_runtime_stats is not None:
             metadata_updates["scenarionet_runtime_stats"] = scenario_runtime_stats
         update_run_metadata(artifacts_dir, metadata_updates)
-    
+
     except Exception as e:
         duration_seconds = round(time.time() - start_time, 2)
         errors_logger.exception("Evaluation failed | error=%s", str(e))
@@ -495,10 +583,13 @@ def run_evaluation(cfg: DictConfig) -> None:
             error=str(e),
             duration_seconds=duration_seconds,
         )
-        update_run_metadata(artifacts_dir, {
-            "status": "failed",
-            "error": str(e),
-            "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "duration_seconds": duration_seconds,
-        })
+        update_run_metadata(
+            artifacts_dir,
+            {
+                "status": "failed",
+                "error": str(e),
+                "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_seconds": duration_seconds,
+            },
+        )
         raise

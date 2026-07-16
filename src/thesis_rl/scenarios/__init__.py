@@ -14,6 +14,7 @@ from thesis_rl.scenarios.arms import (
 from thesis_rl.scenarios.features import extract_scenario_features
 from thesis_rl.scenarios.paths import ScenarioDataPaths
 from thesis_rl.scenarios.provider import (
+    ArmUniformScenarioProvider,
     FixedSequenceScenarioProvider,
     ScenarioProvider,
     UniformScenarioProvider,
@@ -60,6 +61,7 @@ __all__ = [
     "ScenarioFeatures",
     "ScenarioProvider",
     "ScenarioRecord",
+    "ArmUniformScenarioProvider",
     "UniformScenarioProvider",
     "FixedSequenceScenarioProvider",
     "build_official_check_command",

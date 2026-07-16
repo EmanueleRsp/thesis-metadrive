@@ -73,10 +73,11 @@ class Agent:
         reset_seed_fn: Callable[[int], int | None] | None = None,
         episode_end_callback: Callable[[Any, int, dict[str, Any]], None] | None = None,
         before_episode_reset_callback: Callable[[Any, int], None] | None = None,
-        episode_context_callback: Callable[[Any, dict[str, Any]], dict[str, Any] | None] | None = None,
+        episode_context_callback: Callable[[Any, dict[str, Any]], dict[str, Any] | None]
+        | None = None,
         monitor_extra_rows_callback: Callable[[], list[tuple[str, str]]] | None = None,
     ) -> dict[str, float | int]:
-        '''Train the agent in the given environment for a specified number of timesteps.
+        """Train the agent in the given environment for a specified number of timesteps.
         Args:
             env: The environment to train in. Must have `reset()` and `step()` methods.
             chunk_timesteps: Total number of environment steps to train for.
@@ -97,7 +98,7 @@ class Agent:
                 monitor rows as ``(metric, value)`` pairs.
         Returns:
             Dictionary with chunk-level summary metrics (episodes, moving averages, update stats, fps).
-        '''
+        """
 
         ###################
         ###### SETUP ######
@@ -240,7 +241,6 @@ class Agent:
                 redirect_stderr=False,
             ) as live:
                 for step in range(1, chunk_timesteps + 1):
-
                     ###### STEP ######
 
                     # Preprocess observation
@@ -278,7 +278,9 @@ class Agent:
                         episode_env_reward += float(scalar_reward)
                     episode_success = episode_success or self._extract_success(step_info)
                     episode_collision = episode_collision or self._extract_collision(step_info)
-                    episode_out_of_road = episode_out_of_road or self._extract_out_of_road(step_info)
+                    episode_out_of_road = episode_out_of_road or self._extract_out_of_road(
+                        step_info
+                    )
                     episode_route_completion = max(
                         episode_route_completion,
                         self._extract_route_completion(step_info),
@@ -294,12 +296,16 @@ class Agent:
                         Transition(
                             observation=processed_obs,
                             env_action=np.asarray(action, dtype=np.float32),
-                            buffer_action=lifecycle.to_buffer_action(np.asarray(action, dtype=np.float32)),
+                            buffer_action=lifecycle.to_buffer_action(
+                                np.asarray(action, dtype=np.float32)
+                            ),
                             scalar_reward=float(scalar_reward),
                             terminated=bool(done),
                             truncated=bool(truncated),
                             next_observation=next_processed_obs,
-                            terminal_observation=next_processed_obs if terminated or truncated else None,
+                            terminal_observation=next_processed_obs
+                            if terminated or truncated
+                            else None,
                             info=dict(step_info),
                         )
                     )
@@ -384,7 +390,9 @@ class Agent:
                         self.preprocessor.reset()
                         if before_episode_reset_callback is not None:
                             before_episode_reset_callback(env, episodes)
-                        next_reset_seed = reset_seed_fn(episodes) if reset_seed_fn is not None else None
+                        next_reset_seed = (
+                            reset_seed_fn(episodes) if reset_seed_fn is not None else None
+                        )
                         if next_reset_seed is not None:
                             reset_seeds_used.append(int(next_reset_seed))
                             obs, _ = env.reset(seed=int(next_reset_seed))
@@ -397,10 +405,16 @@ class Agent:
                     progress.update(progress_task, completed=step)
 
                     elapsed = max(time.time() - start_time, 1e-9)
-                    ep_len_mean = float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0
+                    ep_len_mean = (
+                        float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0
+                    )
                     ep_len_std = float(np.std(recent_episode_lens)) if recent_episode_lens else 0.0
-                    ep_rew_mean = float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0
-                    ep_rew_std = float(np.std(recent_episode_rewards)) if recent_episode_rewards else 0.0
+                    ep_rew_mean = (
+                        float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0
+                    )
+                    ep_rew_std = (
+                        float(np.std(recent_episode_rewards)) if recent_episode_rewards else 0.0
+                    )
                     actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
                     critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))
                     learning_rate = float(getattr(lifecycle, "last_learning_rate", float("nan")))
@@ -411,15 +425,21 @@ class Agent:
                     raw_actor = actor_loss
                     raw_critic = critic_loss
                     if not math.isnan(raw_actor):
-                        ema_actor_loss = raw_actor if math.isnan(ema_actor_loss) else (
-                            ema_alpha * raw_actor + (1 - ema_alpha) * ema_actor_loss
+                        ema_actor_loss = (
+                            raw_actor
+                            if math.isnan(ema_actor_loss)
+                            else (ema_alpha * raw_actor + (1 - ema_alpha) * ema_actor_loss)
                         )
                     if not math.isnan(raw_critic):
-                        ema_critic_loss = raw_critic if math.isnan(ema_critic_loss) else (
-                            ema_alpha * raw_critic + (1 - ema_alpha) * ema_critic_loss
+                        ema_critic_loss = (
+                            raw_critic
+                            if math.isnan(ema_critic_loss)
+                            else (ema_alpha * raw_critic + (1 - ema_alpha) * ema_critic_loss)
                         )
 
-                    should_render = log_interval <= 0 or step % log_interval == 0 or step == chunk_timesteps
+                    should_render = (
+                        log_interval <= 0 or step % log_interval == 0 or step == chunk_timesteps
+                    )
                     if should_render:
                         monitor = _build_monitor_table(
                             current_step=global_steps_done + step,
@@ -451,20 +471,12 @@ class Agent:
         lifecycle.end_training()
         self.adapter.end_training()
         elapsed = max(time.time() - start_time, 1e-9)
-        ep_success_rate = (
-            float(np.mean(chunk_episode_success))
-            if chunk_episode_success
-            else None
-        )
+        ep_success_rate = float(np.mean(chunk_episode_success)) if chunk_episode_success else None
         ep_collision_rate = (
-            float(np.mean(chunk_episode_collision))
-            if chunk_episode_collision
-            else None
+            float(np.mean(chunk_episode_collision)) if chunk_episode_collision else None
         )
         ep_out_of_road_rate = (
-            float(np.mean(chunk_episode_out_of_road))
-            if chunk_episode_out_of_road
-            else None
+            float(np.mean(chunk_episode_out_of_road)) if chunk_episode_out_of_road else None
         )
         ep_route_completion_mean = (
             float(np.mean(chunk_episode_route_completion))
@@ -474,15 +486,23 @@ class Agent:
         # Compute std and 95% CI for episode rewards and lengths
         ep_len_final_mean = float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0
         ep_len_final_std = float(np.std(recent_episode_lens)) if recent_episode_lens else 0.0
-        ep_len_ci_95 = 1.96 * ep_len_final_std / np.sqrt(len(recent_episode_lens)) if recent_episode_lens and len(recent_episode_lens) > 1 else 0.0
-        
-        ep_rew_final_mean = float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0
+        ep_len_ci_95 = (
+            1.96 * ep_len_final_std / np.sqrt(len(recent_episode_lens))
+            if recent_episode_lens and len(recent_episode_lens) > 1
+            else 0.0
+        )
+
+        ep_rew_final_mean = (
+            float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0
+        )
         ep_rew_final_std = float(np.std(recent_episode_rewards)) if recent_episode_rewards else 0.0
-        ep_rew_ci_95 = 1.96 * ep_rew_final_std / np.sqrt(len(recent_episode_rewards)) if recent_episode_rewards and len(recent_episode_rewards) > 1 else 0.0
+        ep_rew_ci_95 = (
+            1.96 * ep_rew_final_std / np.sqrt(len(recent_episode_rewards))
+            if recent_episode_rewards and len(recent_episode_rewards) > 1
+            else 0.0
+        )
         ep_env_rew_final_mean = (
-            float(np.mean(recent_episode_env_rewards))
-            if recent_episode_env_rewards
-            else None
+            float(np.mean(recent_episode_env_rewards)) if recent_episode_env_rewards else None
         )
         ep_scalar_rule_rew_final_mean = (
             float(np.mean(recent_episode_scalar_rule_rewards))
@@ -490,11 +510,9 @@ class Agent:
             else None
         )
         ep_hybrid_rew_final_mean = (
-            float(np.mean(recent_episode_hybrid_rewards))
-            if recent_episode_hybrid_rewards
-            else None
+            float(np.mean(recent_episode_hybrid_rewards)) if recent_episode_hybrid_rewards else None
         )
-        
+
         return {
             "episodes": int(episodes),
             "ep_len_mean": ep_len_final_mean,
@@ -578,7 +596,9 @@ class Agent:
                         start_indices = [int(v) for v in env.get_attr("start_index")]
                         scenario_counts = [int(v) for v in env.get_attr("num_scenarios")]
                     worker_seeds: list[int] = []
-                    for rank, (start_index, count) in enumerate(zip(start_indices, scenario_counts)):
+                    for rank, (start_index, count) in enumerate(
+                        zip(start_indices, scenario_counts)
+                    ):
                         if count <= 0:
                             raise ValueError(f"Worker {rank} has invalid num_scenarios={count}.")
                         offset = (int(first_seed) + rank - start_index) % count
@@ -683,7 +703,9 @@ class Agent:
             table.add_row("critic_loss_ema", f"{ema_critic_loss:.3g}")
             table.add_row("learning_rate", f"{learning_rate:.3g}")
             table.add_row("update_calls_chunk", str(int(getattr(lifecycle, "update_count", 0))))
-            table.add_row("grad_steps_chunk", str(int(getattr(lifecycle, "gradient_step_count", 0))))
+            table.add_row(
+                "grad_steps_chunk", str(int(getattr(lifecycle, "gradient_step_count", 0)))
+            )
             return table
 
         def _logs_panel() -> Panel:
@@ -738,8 +760,12 @@ class Agent:
                             episode_hybrid_reward[idx] += float(hybrid_reward)
                             episode_has_hybrid_reward[idx] = True
                         episode_success[idx] = episode_success[idx] or self._extract_success(info)
-                        episode_collision[idx] = episode_collision[idx] or self._extract_collision(info)
-                        episode_out_of_road[idx] = episode_out_of_road[idx] or self._extract_out_of_road(info)
+                        episode_collision[idx] = episode_collision[idx] or self._extract_collision(
+                            info
+                        )
+                        episode_out_of_road[idx] = episode_out_of_road[
+                            idx
+                        ] or self._extract_out_of_road(info)
                         episode_route_completion[idx] = max(
                             float(episode_route_completion[idx]),
                             self._extract_route_completion(info),
@@ -781,7 +807,9 @@ class Agent:
                         recent_episode_rewards.append(float(episode_scalar_reward[idx]))
                         recent_episode_env_rewards.append(float(episode_env_reward[idx]))
                         if episode_has_scalar_rule_reward[idx]:
-                            recent_episode_scalar_rule_rewards.append(float(episode_scalar_rule_reward[idx]))
+                            recent_episode_scalar_rule_rewards.append(
+                                float(episode_scalar_rule_reward[idx])
+                            )
                         if episode_has_hybrid_reward[idx]:
                             recent_episode_hybrid_rewards.append(float(episode_hybrid_reward[idx]))
                         chunk_episode_success.append(1.0 if episode_success[idx] else 0.0)
@@ -803,12 +831,16 @@ class Agent:
                     actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
                     critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))
                     if not math.isnan(actor_loss):
-                        ema_actor_loss = actor_loss if math.isnan(ema_actor_loss) else (
-                            ema_alpha * actor_loss + (1 - ema_alpha) * ema_actor_loss
+                        ema_actor_loss = (
+                            actor_loss
+                            if math.isnan(ema_actor_loss)
+                            else (ema_alpha * actor_loss + (1 - ema_alpha) * ema_actor_loss)
                         )
                     if not math.isnan(critic_loss):
-                        ema_critic_loss = critic_loss if math.isnan(ema_critic_loss) else (
-                            ema_alpha * critic_loss + (1 - ema_alpha) * ema_critic_loss
+                        ema_critic_loss = (
+                            critic_loss
+                            if math.isnan(ema_critic_loss)
+                            else (ema_alpha * critic_loss + (1 - ema_alpha) * ema_critic_loss)
                         )
 
                     progress.update(progress_task, completed=min(collected_steps, chunk_timesteps))
@@ -831,10 +863,20 @@ class Agent:
         elapsed = max(time.time() - start_time, 1e-9)
         ep_len_final_mean = float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0
         ep_len_final_std = float(np.std(recent_episode_lens)) if recent_episode_lens else 0.0
-        ep_len_ci_95 = 1.96 * ep_len_final_std / np.sqrt(len(recent_episode_lens)) if len(recent_episode_lens) > 1 else 0.0
-        ep_rew_final_mean = float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0
+        ep_len_ci_95 = (
+            1.96 * ep_len_final_std / np.sqrt(len(recent_episode_lens))
+            if len(recent_episode_lens) > 1
+            else 0.0
+        )
+        ep_rew_final_mean = (
+            float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0
+        )
         ep_rew_final_std = float(np.std(recent_episode_rewards)) if recent_episode_rewards else 0.0
-        ep_rew_ci_95 = 1.96 * ep_rew_final_std / np.sqrt(len(recent_episode_rewards)) if len(recent_episode_rewards) > 1 else 0.0
+        ep_rew_ci_95 = (
+            1.96 * ep_rew_final_std / np.sqrt(len(recent_episode_rewards))
+            if len(recent_episode_rewards) > 1
+            else 0.0
+        )
 
         return {
             "episodes": int(episodes),
@@ -844,13 +886,27 @@ class Agent:
             "ep_rew_mean": ep_rew_final_mean,
             "ep_rew_std": ep_rew_final_std,
             "ep_rew_ci_95": float(ep_rew_ci_95),
-            "ep_env_rew_mean": float(np.mean(recent_episode_env_rewards)) if recent_episode_env_rewards else None,
-            "ep_scalar_rule_rew_mean": float(np.mean(recent_episode_scalar_rule_rewards)) if recent_episode_scalar_rule_rewards else None,
-            "ep_hybrid_rew_mean": float(np.mean(recent_episode_hybrid_rewards)) if recent_episode_hybrid_rewards else None,
-            "ep_success_rate": float(np.mean(chunk_episode_success)) if chunk_episode_success else None,
-            "ep_collision_rate": float(np.mean(chunk_episode_collision)) if chunk_episode_collision else None,
-            "ep_out_of_road_rate": float(np.mean(chunk_episode_out_of_road)) if chunk_episode_out_of_road else None,
-            "ep_route_completion_mean": float(np.mean(chunk_episode_route_completion)) if chunk_episode_route_completion else None,
+            "ep_env_rew_mean": float(np.mean(recent_episode_env_rewards))
+            if recent_episode_env_rewards
+            else None,
+            "ep_scalar_rule_rew_mean": float(np.mean(recent_episode_scalar_rule_rewards))
+            if recent_episode_scalar_rule_rewards
+            else None,
+            "ep_hybrid_rew_mean": float(np.mean(recent_episode_hybrid_rewards))
+            if recent_episode_hybrid_rewards
+            else None,
+            "ep_success_rate": float(np.mean(chunk_episode_success))
+            if chunk_episode_success
+            else None,
+            "ep_collision_rate": float(np.mean(chunk_episode_collision))
+            if chunk_episode_collision
+            else None,
+            "ep_out_of_road_rate": float(np.mean(chunk_episode_out_of_road))
+            if chunk_episode_out_of_road
+            else None,
+            "ep_route_completion_mean": float(np.mean(chunk_episode_route_completion))
+            if chunk_episode_route_completion
+            else None,
             "actor_loss": float(getattr(lifecycle, "last_actor_loss", float("nan"))),
             "critic_loss": float(getattr(lifecycle, "last_critic_loss", float("nan"))),
             "actor_loss_ema": float(ema_actor_loss) if not math.isnan(ema_actor_loss) else None,
@@ -884,7 +940,7 @@ class Agent:
         artifact_recorder_factory: Any | None = None,
         before_episode_reset_callback: Callable[[Any, int], None] | None = None,
     ) -> dict[str, Any]:
-        '''Evaluate the agent in the given environment for a specified number of episodes.
+        """Evaluate the agent in the given environment for a specified number of episodes.
         Args:
             env: The environment to evaluate in. Must have `reset()` and `step()` methods.
             n_eval_episodes: Number of episodes to evaluate for.
@@ -894,7 +950,7 @@ class Agent:
         Returns:
             Aggregate metrics for the full evaluation set. If `return_episode_metrics=True`,
             the output also includes a `per_episode` section with raw episode vectors.
-        '''
+        """
         # Validate `n_eval_episodes`
         if int(n_eval_episodes) <= 0:
             raise ValueError("`n_eval_episodes` must be > 0.")
@@ -922,6 +978,7 @@ class Agent:
         episode_trajectory_log_paths: list[str | None] = []
         episode_video_recorded_live: list[bool] = []
         episode_replay_warnings: list[str | None] = []
+        episode_scenario_metadata: list[dict[str, Any]] = []
         all_rule_names: set[str] = set()
         rule_priority_by_name: dict[str, int] = {}
         per_rule_episode_min_margins: dict[str, list[float]] = {}
@@ -950,9 +1007,26 @@ class Agent:
                     before_episode_reset_callback(env, episode_idx)
                 scenario_seed = int(base_seed) + episode_idx if base_seed is not None else None
                 if base_seed is not None:
-                    obs, _ = env.reset(seed=scenario_seed)
+                    obs, reset_info = env.reset(seed=scenario_seed)
                 else:
-                    obs, _ = env.reset()
+                    obs, reset_info = env.reset()
+                metadata_keys = (
+                    "scenario_uid",
+                    "scenario_id",
+                    "source",
+                    "split",
+                    "arm",
+                    "scenario_arm",
+                    "worker_id",
+                    "sampling_mode",
+                    "requested_arm",
+                    "source_cell_fallback",
+                )
+                episode_metadata = {
+                    key: reset_info.get(key)
+                    for key in metadata_keys
+                    if isinstance(reset_info, dict) and key in reset_info
+                }
                 artifact_recorder = (
                     artifact_recorder_factory(
                         {
@@ -1019,7 +1093,9 @@ class Agent:
                     ep_collision = ep_collision or self._extract_collision(step_info)
                     ep_out_of_road = ep_out_of_road or self._extract_out_of_road(step_info)
                     ep_success = ep_success or self._extract_success(step_info)
-                    ep_route_completion = max(ep_route_completion, self._extract_route_completion(step_info))
+                    ep_route_completion = max(
+                        ep_route_completion, self._extract_route_completion(step_info)
+                    )
                     if self._has_top_rule_violation(step_info):
                         ep_top_rule_violating_steps += 1
                     for rule_name, rule_priority, margin in self._extract_rule_margins(step_info):
@@ -1059,10 +1135,16 @@ class Agent:
                 episode_scalar_rule_returns.append(
                     float(ep_scalar_rule_return) if ep_has_scalar_rule_reward else None
                 )
-                episode_hybrid_returns.append(float(ep_hybrid_return) if ep_has_hybrid_reward else None)
-                episode_rule_rewards_by_rule.append(dict(sorted(ep_rule_reward_sum_by_rule.items())))
+                episode_hybrid_returns.append(
+                    float(ep_hybrid_return) if ep_has_hybrid_reward else None
+                )
+                episode_rule_rewards_by_rule.append(
+                    dict(sorted(ep_rule_reward_sum_by_rule.items()))
+                )
                 if ep_step_count > 0:
-                    episode_top_rule_violation_rate.append(ep_top_rule_violating_steps / ep_step_count)
+                    episode_top_rule_violation_rate.append(
+                        ep_top_rule_violating_steps / ep_step_count
+                    )
                 else:
                     episode_top_rule_violation_rate.append(0.0)
 
@@ -1070,8 +1152,12 @@ class Agent:
                 for rule_name, min_margin in ep_rule_min_margin.items():
                     per_rule_episode_min_margins.setdefault(rule_name, []).append(float(min_margin))
                     if float(min_margin) < 0.0:
-                        per_rule_violation_count[rule_name] = int(per_rule_violation_count.get(rule_name, 0) + 1)
-                        violated_in_episode.append((rule_name, int(rule_priority_by_name.get(rule_name, 0))))
+                        per_rule_violation_count[rule_name] = int(
+                            per_rule_violation_count.get(rule_name, 0) + 1
+                        )
+                        violated_in_episode.append(
+                            (rule_name, int(rule_priority_by_name.get(rule_name, 0)))
+                        )
 
                 if violated_in_episode:
                     violated_in_episode.sort(key=lambda item: (item[1], item[0]))
@@ -1083,7 +1169,9 @@ class Agent:
                 episode_violation_patterns.append(violation_pattern)
 
                 if ep_rule_min_margin:
-                    p_max = max(int(rule_priority_by_name.get(name, 0)) for name in ep_rule_min_margin)
+                    p_max = max(
+                        int(rule_priority_by_name.get(name, 0)) for name in ep_rule_min_margin
+                    )
                     ev_episode = 0.0
                     for rule_name, min_margin in ep_rule_min_margin.items():
                         priority = int(rule_priority_by_name.get(rule_name, 0))
@@ -1096,7 +1184,9 @@ class Agent:
                 episode_metrics = {
                     "reward": float(ep_return),
                     "env_reward": float(ep_env_return),
-                    "scalar_rule_reward": float(ep_scalar_rule_return) if ep_has_scalar_rule_reward else None,
+                    "scalar_rule_reward": float(ep_scalar_rule_return)
+                    if ep_has_scalar_rule_reward
+                    else None,
                     "hybrid_reward": float(ep_hybrid_return) if ep_has_hybrid_reward else None,
                     "episode_length": int(ep_step_count),
                     "success": bool(ep_success),
@@ -1115,11 +1205,23 @@ class Agent:
                     else {}
                 )
                 episode_video_paths.append(artifact_payload.get("video_path"))
-                episode_video_authoritative_paths.append(artifact_payload.get("video_authoritative_path"))
+                episode_video_authoritative_paths.append(
+                    artifact_payload.get("video_authoritative_path")
+                )
                 episode_video_manifest_paths.append(artifact_payload.get("video_manifest_path"))
                 episode_trajectory_log_paths.append(artifact_payload.get("trajectory_log_path"))
-                episode_video_recorded_live.append(bool(artifact_payload.get("video_recorded_live", False)))
+                episode_video_recorded_live.append(
+                    bool(artifact_payload.get("video_recorded_live", False))
+                )
                 episode_replay_warnings.append(artifact_payload.get("replay_warning"))
+                if isinstance(step_info, dict):
+                    episode_metadata.update(
+                        {key: step_info[key] for key in metadata_keys if key in step_info}
+                    )
+                    episode_metadata["termination_reason"] = step_info.get("termination_reason")
+                episode_metadata["terminated"] = bool(done)
+                episode_metadata["truncated"] = bool(truncated)
+                episode_scenario_metadata.append(episode_metadata)
 
                 if progress is not None and progress_task is not None:
                     progress.advance(progress_task)
@@ -1128,18 +1230,23 @@ class Agent:
                 progress.stop()
 
         counterexample_rate = (
-            float(np.mean([1.0 if pattern != "none" else 0.0 for pattern in episode_violation_patterns]))
+            float(
+                np.mean(
+                    [1.0 if pattern != "none" else 0.0 for pattern in episode_violation_patterns]
+                )
+            )
             if episode_violation_patterns
             else 0.0
         )
-        violated_rules_ratio = (
-            float(sum(1 for rule in all_rule_names if int(per_rule_violation_count.get(rule, 0)) > 0))
-            / float(max(len(all_rule_names), 1))
-        )
+        violated_rules_ratio = float(
+            sum(1 for rule in all_rule_names if int(per_rule_violation_count.get(rule, 0)) > 0)
+        ) / float(max(len(all_rule_names), 1))
         unique_violation_patterns = int(len(set(episode_violation_patterns)))
 
         per_rule_rows: list[dict[str, Any]] = []
-        for rule_name in sorted(all_rule_names, key=lambda name: (rule_priority_by_name.get(name, 0), name)):
+        for rule_name in sorted(
+            all_rule_names, key=lambda name: (rule_priority_by_name.get(name, 0), name)
+        ):
             margins = per_rule_episode_min_margins.get(rule_name, [])
             if margins:
                 mean_margin = float(np.mean(margins))
@@ -1163,7 +1270,9 @@ class Agent:
                 }
             )
 
-        scalar_rule_available_values = [value for value in episode_scalar_rule_returns if value is not None]
+        scalar_rule_available_values = [
+            value for value in episode_scalar_rule_returns if value is not None
+        ]
         hybrid_available_values = [value for value in episode_hybrid_returns if value is not None]
 
         metrics: dict[str, Any] = {
@@ -1182,14 +1291,10 @@ class Agent:
                 else None
             ),
             "mean_hybrid_reward": (
-                float(np.mean(hybrid_available_values))
-                if hybrid_available_values
-                else None
+                float(np.mean(hybrid_available_values)) if hybrid_available_values else None
             ),
             "std_hybrid_reward": (
-                float(np.std(hybrid_available_values))
-                if hybrid_available_values
-                else None
+                float(np.std(hybrid_available_values)) if hybrid_available_values else None
             ),
             "mean_rule_saturation_max": float(np.mean(episode_saturation_max)),
             "collision_rate": float(np.mean(episode_collision)),
@@ -1199,7 +1304,9 @@ class Agent:
             "success_rate_std": float(np.std(episode_success)),
             "route_completion": float(np.mean(episode_route_completion)),
             "top_rule_violation_rate": float(np.mean(episode_top_rule_violation_rate)),
-            "avg_error_value": float(np.mean(episode_error_values)) if episode_error_values else 0.0,
+            "avg_error_value": float(np.mean(episode_error_values))
+            if episode_error_values
+            else 0.0,
             "max_error_value": float(np.max(episode_error_values)) if episode_error_values else 0.0,
             "counterexample_rate": counterexample_rate,
             "violated_rules_ratio": float(violated_rules_ratio),
@@ -1230,6 +1337,7 @@ class Agent:
                 "trajectory_log_path": episode_trajectory_log_paths,
                 "video_recorded_live": episode_video_recorded_live,
                 "replay_warning": episode_replay_warnings,
+                "scenario_metadata": episode_scenario_metadata,
             }
         return metrics
 
@@ -1237,8 +1345,16 @@ class Agent:
     def _extract_rule_margins(step_info: Any) -> list[tuple[str, int, float]]:
         if not isinstance(step_info, dict):
             return []
-        names = step_info.get("rule_metadata", {}).get("rule_names") if isinstance(step_info.get("rule_metadata"), dict) else None
-        priorities = step_info.get("rule_metadata", {}).get("priorities") if isinstance(step_info.get("rule_metadata"), dict) else None
+        names = (
+            step_info.get("rule_metadata", {}).get("rule_names")
+            if isinstance(step_info.get("rule_metadata"), dict)
+            else None
+        )
+        priorities = (
+            step_info.get("rule_metadata", {}).get("priorities")
+            if isinstance(step_info.get("rule_metadata"), dict)
+            else None
+        )
         margins = step_info.get("rule_reward_vector")
         if not isinstance(names, list) or not isinstance(priorities, list):
             return []
@@ -1338,7 +1454,7 @@ class Agent:
         return planner_stem.parent / f"{planner_stem.name}.adapter.pt"
 
     def save(self, checkpoint_path: str | Path) -> None:
-        '''Save planner and adapter state to the specified checkpoint path.'''
+        """Save planner and adapter state to the specified checkpoint path."""
         # Save planner state
         self.planner.save(checkpoint_path)
         # Save adapter state if the adapter is trainable

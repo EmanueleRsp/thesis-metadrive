@@ -16,7 +16,9 @@ def scenario_time_limit_reached(
     """Return whether the exported scenario horizon (plus the configured tail) is met."""
 
     if episode_steps < 0 or scenario_length <= 0 or extra_steps_after_scenario < 0:
-        raise ValueError("episode_steps >= 0, scenario_length > 0 and extra_steps >= 0 are required")
+        raise ValueError(
+            "episode_steps >= 0, scenario_length > 0 and extra_steps >= 0 are required"
+        )
     return episode_steps >= scenario_length + extra_steps_after_scenario
 
 
@@ -25,21 +27,24 @@ try:  # keep importing the package possible in lightweight tooling environments
     from metadrive.envs.scenario_env import ScenarioEnv  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover - exercised in the dedicated container
     ScenarioEnv = object  # type: ignore[assignment,misc]
-    TerminationState = type("TerminationState", (), {
-        "SUCCESS": "arrive_dest",
-        "OUT_OF_ROAD": "out_of_road",
-        "MAX_STEP": "max_step",
-        "CRASH": "crash",
-        "CRASH_VEHICLE": "crash_vehicle",
-        "CRASH_HUMAN": "crash_human",
-        "CRASH_OBJECT": "crash_object",
-        "CRASH_BUILDING": "crash_building",
-        "CRASH_SIDEWALK": "crash_sidewalk",
-    })
+    TerminationState = type(
+        "TerminationState",
+        (),
+        {
+            "SUCCESS": "arrive_dest",
+            "OUT_OF_ROAD": "out_of_road",
+            "MAX_STEP": "max_step",
+            "CRASH": "crash",
+            "CRASH_VEHICLE": "crash_vehicle",
+            "CRASH_HUMAN": "crash_human",
+            "CRASH_OBJECT": "crash_object",
+            "CRASH_BUILDING": "crash_building",
+            "CRASH_SIDEWALK": "crash_sidewalk",
+        },
+    )
 
 
 class ThesisScenarioEnv(ScenarioEnv):
-
     @classmethod
     def default_config(cls):
         config = super().default_config()
@@ -90,8 +95,12 @@ class ThesisScenarioEnv(ScenarioEnv):
             "resets_by_source": Counter(),
             "steps_by_source": Counter(),
             "episodes_by_arm": Counter(),
+            "resets_by_source_arm": Counter(),
+            "steps_by_source_arm": Counter(),
+            "episodes_by_source_arm": Counter(),
             "termination_reasons": Counter(),
         }
+        self._last_sampling_metadata: dict[str, Any] = {}
 
     def _select_provider_seed(self, force_seed: int | None) -> int | None:
         if force_seed is not None:
@@ -110,8 +119,14 @@ class ThesisScenarioEnv(ScenarioEnv):
             arm=self.scenario_arm,
             excluded_scenario_uids=self.scenario_excluded_uids,
         )
+        sampling_metadata = getattr(self.scenario_provider, "sampling_metadata", None)
+        self._last_sampling_metadata = (
+            dict(sampling_metadata(worker_id=self.worker_id)) if callable(sampling_metadata) else {}
+        )
         if record.runtime_index is None:
-            raise ValueError(f"scenario provider returned record without runtime_index: {record.scenario_uid}")
+            raise ValueError(
+                f"scenario provider returned record without runtime_index: {record.scenario_uid}"
+            )
         self.current_scenario_record = record
         return int(record.runtime_index)
 
@@ -305,9 +320,12 @@ class ThesisScenarioEnv(ScenarioEnv):
         info = dict(info)
         metadata = self._scenario_metadata()
         info.update(metadata)
+        info.update(self._last_sampling_metadata)
         source = str(metadata.get("source") or "unknown")
+        arm = str(metadata.get("arm") or "unknown")
         self._runtime_stats["resets"] += 1
         self._runtime_stats["resets_by_source"][source] += 1
+        self._runtime_stats["resets_by_source_arm"][(source, arm)] += 1
         return observation, info
 
     def step(self, action):
@@ -316,25 +334,30 @@ class ThesisScenarioEnv(ScenarioEnv):
         self._attach_route_metrics(info)
         metadata = self._scenario_metadata()
         info.update(metadata)
+        info.update(self._last_sampling_metadata)
         info["termination_reason"] = self._last_done_info.get("termination_reason")
         info["crossed_continuous_line"] = bool(
             self._last_done_info.get("crossed_continuous_line", False)
         )
         source = str(metadata.get("source") or "unknown")
+        arm = str(metadata.get("arm") or "unknown")
         self._runtime_stats["steps"] += 1
         self._runtime_stats["steps_by_source"][source] += 1
+        self._runtime_stats["steps_by_source_arm"][(source, arm)] += 1
         if terminated or truncated:
-            arm = str(metadata.get("arm") or "unknown")
-            reason = str(info.get("termination_reason") or ("truncated" if truncated else "terminated"))
+            reason = str(
+                info.get("termination_reason") or ("truncated" if truncated else "terminated")
+            )
             self._runtime_stats["episodes"] += 1
             self._runtime_stats["episodes_by_arm"][arm] += 1
+            self._runtime_stats["episodes_by_source_arm"][(source, arm)] += 1
             self._runtime_stats["termination_reasons"][reason] += 1
         return observation, reward, terminated, truncated, info
 
     def get_runtime_stats(self) -> dict[str, Any]:
         """Return JSON-safe counters for parent-process/run-level aggregation."""
 
-        return {
+        result = {
             "resets": int(self._runtime_stats["resets"]),
             "steps": int(self._runtime_stats["steps"]),
             "episodes": int(self._runtime_stats["episodes"]),
@@ -343,6 +366,16 @@ class ThesisScenarioEnv(ScenarioEnv):
             "episodes_by_arm": dict(self._runtime_stats["episodes_by_arm"]),
             "termination_reasons": dict(self._runtime_stats["termination_reasons"]),
         }
+        for key in ("resets_by_source_arm", "steps_by_source_arm", "episodes_by_source_arm"):
+            result[key] = {
+                source: {
+                    arm: int(count)
+                    for (counter_source, arm), count in self._runtime_stats[key].items()
+                    if counter_source == source
+                }
+                for source in sorted({source for source, _arm in self._runtime_stats[key]})
+            }
+        return result
 
 
 __all__ = ["SceneContextAdapter", "ThesisScenarioEnv", "scenario_time_limit_reached"]

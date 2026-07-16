@@ -47,6 +47,9 @@ def collect_scenario_runtime_stats(env: Any) -> dict[str, Any] | None:
         "resets_by_source": Counter(),
         "steps_by_source": Counter(),
         "episodes_by_arm": Counter(),
+        "resets_by_source_arm": {},
+        "steps_by_source_arm": {},
+        "episodes_by_source_arm": {},
         "termination_reasons": Counter(),
     }
     for stats in raw_stats:
@@ -63,9 +66,12 @@ def collect_scenario_runtime_stats(env: Any) -> dict[str, Any] | None:
             values = stats.get(key, {})
             if isinstance(values, dict):
                 merged[key].update({str(name): int(count) for name, count in values.items()})
+        for key in ("resets_by_source_arm", "steps_by_source_arm", "episodes_by_source_arm"):
+            values = stats.get(key, {})
+            if isinstance(values, dict):
+                _merge_nested_runtime_counts(merged[key], values)
     return {
-        key: (dict(value) if isinstance(value, Counter) else value)
-        for key, value in merged.items()
+        key: (dict(value) if isinstance(value, Counter) else value) for key, value in merged.items()
     }
 
 
@@ -97,7 +103,25 @@ def merge_scenario_runtime_stats(
         if isinstance(values, dict):
             for name, count in values.items():
                 target[str(name)] = int(target.get(str(name), 0)) + int(count)
+    for key in ("resets_by_source_arm", "steps_by_source_arm", "episodes_by_source_arm"):
+        target = accumulated.setdefault(key, {})
+        values = current.get(key, {})
+        if isinstance(target, dict) and isinstance(values, dict):
+            _merge_nested_runtime_counts(target, values)
     return accumulated
+
+
+def _merge_nested_runtime_counts(target: dict[str, Any], values: dict[str, Any]) -> None:
+    """Merge JSON-safe ``source -> arm -> count`` runtime matrices."""
+
+    for source, arms in values.items():
+        if not isinstance(arms, dict):
+            continue
+        source_target = target.setdefault(str(source), {})
+        if not isinstance(source_target, dict):
+            source_target = target[str(source)] = {}
+        for arm, count in arms.items():
+            source_target[str(arm)] = int(source_target.get(str(arm), 0)) + int(count)
 
 
 class _CrashLoggingEnvWrapper(gym.Wrapper):
@@ -149,7 +173,9 @@ def _load_rulebook_cfg_from_reward(cfg: DictConfig) -> DictConfig:
             "(example: reward.rulebook_config=selection)."
         )
     if rulebook_name == "none":
-        raise ValueError("reward.rulebook_config='none' is invalid when rulebook behavior is active.")
+        raise ValueError(
+            "reward.rulebook_config='none' is invalid when rulebook behavior is active."
+        )
 
     repo_root = Path(__file__).resolve().parents[4]
     rulebook_path = repo_root / "conf" / "rulebook" / f"{rulebook_name}.yaml"
@@ -161,10 +187,7 @@ def _load_rulebook_cfg_from_reward(cfg: DictConfig) -> DictConfig:
 
     loaded = OmegaConf.load(rulebook_path)
     if not isinstance(loaded, DictConfig):
-        raise TypeError(
-            "Loaded rulebook config is not a DictConfig mapping: "
-            f"path={rulebook_path}"
-        )
+        raise TypeError(f"Loaded rulebook config is not a DictConfig mapping: path={rulebook_path}")
     return loaded
 
 
@@ -215,9 +238,7 @@ def build_adapter(cfg: DictConfig, common_kwargs: dict[str, object]) -> BaseAdap
 
 def _resolve_planner_cfg(cfg: DictConfig) -> DictConfig:
     """Merge run-profile planner overrides on top of algorithm defaults."""
-    base_cfg = OmegaConf.create(
-        OmegaConf.to_container(cfg.agent.planner.algorithm, resolve=True)
-    )
+    base_cfg = OmegaConf.create(OmegaConf.to_container(cfg.agent.planner.algorithm, resolve=True))
     planner_overrides = cfg.get("planner")
     if planner_overrides is None:
         return base_cfg
@@ -311,7 +332,9 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
     )
 
 
-def merge_env_config_with_overrides(cfg_env: DictConfig, env_overrides: dict[str, Any]) -> DictConfig:
+def merge_env_config_with_overrides(
+    cfg_env: DictConfig, env_overrides: dict[str, Any]
+) -> DictConfig:
     merged_cfg_env = OmegaConf.create(OmegaConf.to_container(cfg_env, resolve=True))
     config_overrides = dict(env_overrides)
     # ScenarioNet keeps split/provider/episode-control outside the native
@@ -409,11 +432,7 @@ def _worker_env_overrides(
     base = max(total_scenarios // num_envs_int, 1)
     remainder = max(total_scenarios - base * num_envs_int, 0)
     worker_scenarios = base + (1 if int(rank) < remainder else 0)
-    worker_start_seed = (
-        base_start_seed
-        + int(rank) * base
-        + min(int(rank), remainder)
-    )
+    worker_start_seed = base_start_seed + int(rank) * base + min(int(rank), remainder)
     overrides["start_scenario_index" if env_name == "scenarionet" else "start_seed"] = int(
         worker_start_seed
     )

@@ -182,6 +182,7 @@ def make_env(
         from thesis_rl.envs.thesis_scenario_env import ThesisScenarioEnv
         from thesis_rl.scenarios.catalog import read_scenario_catalog
         from thesis_rl.scenarios.provider import (
+            ArmUniformScenarioProvider,
             FixedSequenceScenarioProvider,
             UniformScenarioProvider,
         )
@@ -273,6 +274,15 @@ def make_env(
                     strict=bool(provider_cfg.get("strict", True)),
                     allow_fallback=bool(provider_cfg.get("allow_fallback", False)),
                     default_arm=str(scenario_arm) if scenario_arm is not None else None,
+                )
+            elif provider_kind == "arm_uniform":
+                if scenario_arm is not None:
+                    raise ValueError("arm-uniform provider does not accept provider.arm")
+                scenario_provider = ArmUniformScenarioProvider(
+                    records,
+                    global_seed=int(getattr(cfg_env, "global_seed", 0)),
+                    strict=bool(provider_cfg.get("strict", True)),
+                    allow_fallback=bool(provider_cfg.get("allow_fallback", False)),
                 )
             elif provider_kind == "fixed_sequence":
                 scenario_provider = FixedSequenceScenarioProvider(

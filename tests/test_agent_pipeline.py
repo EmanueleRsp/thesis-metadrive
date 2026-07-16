@@ -162,6 +162,41 @@ class _DummyEnvWithCurriculumSignals(_DummyEnv):
         return obs, reward, done, truncated, info
 
 
+class _DummyScenarioNetEnv(_DummyEnv):
+    def reset(self, **kwargs):
+        observation, _info = super().reset(**kwargs)
+        return observation, {
+            "scenario_uid": "pg:v1:7",
+            "scenario_id": "7",
+            "source": "pg",
+            "split": "test",
+            "arm": "A1_traffic",
+            "worker_id": 2,
+            "sampling_mode": "arm_uniform",
+            "requested_arm": "A1_traffic",
+            "source_cell_fallback": False,
+        }
+
+    def step(self, action):
+        observation, reward, done, truncated, info = super().step(action)
+        if done:
+            info.update(
+                {
+                    "scenario_uid": "pg:v1:7",
+                    "scenario_id": "7",
+                    "source": "pg",
+                    "split": "test",
+                    "arm": "A1_traffic",
+                    "worker_id": 2,
+                    "sampling_mode": "arm_uniform",
+                    "requested_arm": "A1_traffic",
+                    "source_cell_fallback": False,
+                    "termination_reason": "time_limit",
+                }
+            )
+        return observation, reward, done, truncated, info
+
+
 def test_agent_predict_uses_pipeline_order() -> None:
     preprocessor = IdentityPreprocessor()
     planner = _DummyPlanner()
@@ -282,7 +317,9 @@ def test_agent_evaluate_reports_curriculum_metrics() -> None:
     adapter = IdentityAdapter(low=-1.0, high=1.0, expected_shape=(2,))
     agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
 
-    metrics = agent.evaluate(_DummyEnvWithCurriculumSignals(), n_eval_episodes=2, deterministic=True)
+    metrics = agent.evaluate(
+        _DummyEnvWithCurriculumSignals(), n_eval_episodes=2, deterministic=True
+    )
 
     assert metrics["collision_rate"] == 0.0
     assert metrics["collision_rate_std"] == 0.0
@@ -291,3 +328,36 @@ def test_agent_evaluate_reports_curriculum_metrics() -> None:
     assert metrics["success_rate_std"] == 0.0
     assert metrics["route_completion"] == 1.0
     assert metrics["top_rule_violation_rate"] == 0.5
+
+
+def test_agent_evaluate_retains_scenarionet_episode_metadata() -> None:
+    agent = Agent(
+        preprocessor=IdentityPreprocessor(),
+        planner=_DummyPlanner(),
+        adapter=IdentityAdapter(low=-1.0, high=1.0, expected_shape=(2,)),
+    )
+
+    metrics = agent.evaluate(
+        _DummyScenarioNetEnv(),
+        n_eval_episodes=1,
+        deterministic=True,
+        return_episode_metrics=True,
+        show_progress=False,
+    )
+
+    assert metrics["per_episode"]["scenario_metadata"] == [
+        {
+            "scenario_uid": "pg:v1:7",
+            "scenario_id": "7",
+            "source": "pg",
+            "split": "test",
+            "arm": "A1_traffic",
+            "worker_id": 2,
+            "sampling_mode": "arm_uniform",
+            "requested_arm": "A1_traffic",
+            "source_cell_fallback": False,
+            "termination_reason": "time_limit",
+            "terminated": True,
+            "truncated": False,
+        }
+    ]

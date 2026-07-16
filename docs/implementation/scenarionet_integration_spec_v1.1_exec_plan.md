@@ -161,8 +161,8 @@ external credentials and must not overwrite frozen data.
 
 - [x] M1 — Completed. Reconciled record/manifest/report eligibility schema and audit population accounting, including record-level Rulebook provenance, strict pre-freeze split validation, and canonical YAML manifests. Depends on `DEC-SN-001`–`005`; validates the available portions of `TEST-SN-001`–`006`.
 - [x] M2 — Completed. Implemented strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. The selector enforces per-split source and arm capacity, uses exhaustive exact search for small grouped fixtures (≤18 groups), and uses a deterministic transportation-based constructive solver for the normal large singleton-group population. The shell pipeline repeats catalog → Rulebook → split feasibility and acquires at most one forced 16-shard batch per cycle under the cumulative 128-shard cap. `build_splits` now writes a PG replenishment report on both success and selection failure, separating a true filtered-PG count shortage from joint Waymo/group infeasibility. Validates the implemented portions of `TEST-SN-002`–`008`.
-- [ ] M3 — In progress. Reconcile runtime views, providers, ACL six-arm interface, and environment/logging behavior. The environment factory now rejects an audit or legacy catalog containing any valid/warning record without `rulebook_eligible=true`; provider construction and runtime mapping use only this checked population. Validates `TEST-SN-009`–`014`.
-- [ ] M4 — Run fixture pipeline, vectorized smoke, documentation reconciliation, and final artifact audit. Validates `TEST-SN-015` and mandatory checks.
+- [x] M3 — Completed implementation reconciliation for runtime views, providers, ACL six-arm interface, environment behavior, and logging. The environment factory rejects an audit or legacy catalog containing any valid/warning record without `rulebook_eligible=true`; provider construction and runtime mapping use only this checked population. The provider layer supports strict uniform-by-arm sampling with explicit one-sided source-cell fallback and carries sampling metadata into reset and terminal-step info. Runtime aggregation records reset/step/episode matrices by `source × arm`, and evaluation CSVs persist ScenarioNet identity, sampling, and completion fields. The real runtime-database/vector smoke remains M4 because it requires a prepared external fixture. Validates the implemented portions of `TEST-SN-009`–`014`.
+- [ ] M4 — In progress; blocked only for the real fixture/vector smoke. The checked local runtime fixture is paired with a pre-v1.1 catalog containing valid PG records without `rulebook_eligible=true`, so the required runtime boundary correctly rejects it. Rebuilding or replacing that frozen catalog/runtime artifact is an approval-gated data mutation. Documentation reconciliation and non-mutating final audit remain pending. Validates `TEST-SN-015` and mandatory checks.
 
 ## 11. Progress And Findings Log
 
@@ -235,6 +235,42 @@ external credentials and must not overwrite frozen data.
   and any joint selection error. It recommends more PG seeds only for a true
   filtered-PG count shortage, so a Waymo or grouped-split limitation cannot
   cause blind procedural regeneration.
+- The M3 provider gap identified on resumption is closed: the catalog provider
+  now supports uniform selection over all six semantic arms, followed by the
+  specified conditional source selection. A source-cell fallback is permitted
+  and recorded only when the selected arm has exactly one available source;
+  an absent semantic arm is a strict error. The environment propagates this
+  metadata through reset and step info, including terminal episode info.
+- Runtime counters now retain source and arm jointly for resets, steps, and
+  completed episodes, in addition to the existing source-only/arm-only totals.
+  The parent aggregation preserves the JSON-safe `source → arm → count`
+  matrices across vector workers.
+- The evaluation path now retains ScenarioNet reset/terminal metadata per
+  episode and writes it to evaluation CSV rows: scenario UID/ID, source,
+  split, semantic arm, worker, sampling mode, requested arm, source-cell
+  fallback, termination reason, and separate terminated/truncated flags.
+  This replaces a synthetic seed-only scenario ID whenever the environment
+  provides the frozen-catalog identity.
+- `docker compose run --rm dev uv run --no-sync ruff check
+  src/thesis_rl/scenarios/provider.py src/thesis_rl/scenarios/__init__.py
+  src/thesis_rl/envs/factory.py src/thesis_rl/envs/thesis_scenario_env.py
+  src/thesis_rl/runtime/wiring/builders.py tests/test_scenario_provider.py
+  tests/test_thesis_scenario_env.py` and `python -m pytest -q
+  tests/test_scenario_provider.py tests/test_thesis_scenario_env.py` passed:
+  28 tests.
+- `docker compose run --rm dev uv run --no-sync ruff check
+  src/thesis_rl/agent/agent.py src/thesis_rl/runtime/loops/eval_loop.py
+  src/thesis_rl/runtime/loops/train_loop.py tests/test_agent_pipeline.py` and
+  `python -m pytest -q tests/test_agent_pipeline.py tests/test_eval_artifacts.py
+  tests/test_scenario_provider.py tests/test_thesis_scenario_env.py` passed:
+  40 tests.
+- M4 fixture inspection found `data/scenarionet/runtime/train/dataset_summary.pkl`
+  and a catalog, but the catalog contains valid PG records with
+  `rulebook_eligible != true`. The vectorized integration tests therefore
+  skip after the intended fail-closed runtime validation rather than exercising
+  the fixture. This is a stale artifact discrepancy, not an implementation
+  failure. Do not rebuild or overwrite the catalog/runtime view without user
+  approval because the data manifest is a frozen experimental artifact.
 - `docker compose run --rm dev uv run --no-sync ruff check
   src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py
   src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py`
@@ -265,9 +301,12 @@ No deviations identified.
 | `src/thesis_rl/scenarios/{records,catalog,pipeline,splits,manifests,reports,waymo_pool}.py` | Modified/planned modification | Eligibility, split, audit, manifest, scalable singleton-group selection, and PG replenishment-report contract |
 | `src/thesis_rl/cli/scenarios/build_splits.py` | Modified | Strict split CLI and PG replenishment artifact on success/failure |
 | `scripts/{prepare_scenarionet_dataset,expand_waymo_pool}.sh` | Modified | Post-Rulebook bounded Waymo acquisition loop and PG report path |
-| `src/thesis_rl/scenarios/{features,arms,provider,runtime_database,validation}.py` | Planned reconciliation | Preserved arm and runtime behavior |
+| `src/thesis_rl/scenarios/{features,arms,provider,runtime_database,validation}.py` | Modified/planned reconciliation | Preserved arm taxonomy, strict arm-uniform provider, and runtime behavior |
+| `src/thesis_rl/runtime/wiring/builders.py` | Modified | Aggregates ScenarioNet source×arm runtime matrices across workers |
+| `src/thesis_rl/envs/{factory,thesis_scenario_env}.py` | Modified/planned reconciliation | Strict provider construction, sampling metadata, episode contract, and source×arm counters |
+| `src/thesis_rl/agent/agent.py`, `src/thesis_rl/runtime/loops/{train_loop,eval_loop}.py` | Modified | Preserve and persist per-episode ScenarioNet identity, sampling, and completion metadata |
 | `src/thesis_rl/envs/{thesis_scenario_env,scene_context,scenario_env_factory}.py` | Planned verification/modification | Environment contract |
-| `conf/scenarios/pipeline_v1.yaml`, `conf/env/scenarionet.yaml`, `conf/curriculum/scenario_acl_scenarionet.yaml` | Planned modification | Frozen v1.1 policy |
+| `conf/scenarios/pipeline_v1.yaml`, `conf/env/scenarionet.yaml`, `conf/curriculum/scenario_acl_scenarionet.yaml` | Modified/planned modification | Frozen v1.1 policy and documented strict provider modes |
 | `tests/test_scenario_*.py`, `tests/test_thesis_scenario_env.py`, `tests/test_scenarionet_*.py` | Planned additions | Mandatory acceptance matrix |
 
 ## 14. Validation Results
@@ -298,6 +337,10 @@ No deviations identified.
 | `bash -n setup.sh scripts/*.sh && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py src/thesis_rl/cli/scenarios/build_splits.py src/thesis_rl/cli/scenarios/build_catalog.py tests/test_scenarionet_pipeline.py tests/test_scenario_catalog_build.py && ruff check ... && python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py && git diff --check` | PASS | 2026-07-16 | 157 passed, 2 expected skips requiring an external prepared ScenarioNet runtime dataset; six focused files formatted, lint and shell/whitespace checks passed |
 | `bash -n setup.sh scripts/*.sh && shellcheck setup.sh scripts/*.sh && git diff --check` | PASS | 2026-07-16 | Shell syntax, ShellCheck, and whitespace validation pass after preserving dynamic configuration export semantics |
 | `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/scenarios/reports.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-16 | 19 passed after making joint selection-failure reporting explicitly distinct from a completed PG selection |
+| `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/provider.py src/thesis_rl/scenarios/__init__.py src/thesis_rl/envs/factory.py src/thesis_rl/envs/thesis_scenario_env.py src/thesis_rl/runtime/wiring/builders.py tests/test_scenario_provider.py tests/test_thesis_scenario_env.py && ruff check ... && python -m pytest -q tests/test_scenario_provider.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 28 passed; verifies arm-uniform source-cell behavior and source×arm aggregation |
+| `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/agent/agent.py src/thesis_rl/runtime/loops/eval_loop.py src/thesis_rl/runtime/loops/train_loop.py tests/test_agent_pipeline.py && ruff check ... && python -m pytest -q tests/test_agent_pipeline.py tests/test_eval_artifacts.py tests/test_scenario_provider.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 40 passed; verifies per-episode ScenarioNet metadata propagation and CSV-compatible evaluation metrics |
+| `bash -n setup.sh scripts/*.sh && shellcheck setup.sh scripts/*.sh && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/scenarios/provider.py src/thesis_rl/scenarios/__init__.py src/thesis_rl/envs/factory.py src/thesis_rl/envs/thesis_scenario_env.py src/thesis_rl/runtime/wiring/builders.py src/thesis_rl/agent/agent.py src/thesis_rl/runtime/loops/eval_loop.py src/thesis_rl/runtime/loops/train_loop.py tests/test_scenario_provider.py tests/test_thesis_scenario_env.py tests/test_agent_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py tests/test_agent_pipeline.py tests/test_eval_artifacts.py && git diff --check` | PASS | 2026-07-16 | 171 passed, 2 expected skips requiring an external prepared ScenarioNet runtime dataset; formatting, lint, shell, and whitespace checks passed |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q -rs tests/test_scenarionet_vectorized_integration.py` | SKIP | 2026-07-16 | 2 skips: local runtime fixture catalog has valid records without `rulebook_eligible=true`; M4 smoke needs an approved fixture rebuild/replacement |
 | Focused pytest command | NOT_RUN | 2026-07-16 | Host environment lacks `uv` and `python`; run in provisioned container |
 | Full real-data acquisition | NOT_RUN | 2026-07-16 | Requires credentials and can mutate dataset artifacts |
 
