@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import replace
+from itertools import permutations
 from math import ceil
 from typing import Any, Mapping, Sequence
 
@@ -261,62 +262,110 @@ def assign_arm_balanced_splits_to_targets(
     group_counts = {
         group: _group_source_arm_counts(group_entries) for group, group_entries in grouped.items()
     }
-
-    rng = np.random.default_rng(int(seed))
-    remaining = list(grouped)
-    rng.shuffle(remaining)
-    assignments: dict[str, str] = {}
-    current_split = {split: 0 for split in SPLITS}
-    current_source_split = {split: {source: 0 for source in SOURCES} for split in SPLITS}
-    current_arm = {split: {arm: 0 for arm in ARMS} for split in SPLITS}
-    current_source_arm = {
-        split: {source: {arm: 0 for arm in ARMS} for source in SOURCES} for split in SPLITS
-    }
-
-    for split in SPLITS:
-        while remaining and current_split[split] < split_totals[split]:
-            capacity = split_totals[split] - current_split[split]
-            fitting = [
-                group
-                for group in remaining
-                if len(grouped[group]) <= capacity
-                and all(
-                    sum(group_counts[group][source][arm] for arm in ARMS)
-                    <= int(targets[source][split]) - current_source_split[split][source]
-                    for source in SOURCES
-                )
-                and all(
-                    sum(group_counts[group][source][arm] for source in SOURCES)
-                    <= split_arm_targets[split][arm] - current_arm[split][arm]
-                    for arm in ARMS
-                )
-            ]
-            if not fitting:
-                break
-            selected = max(
-                fitting,
-                key=lambda group: _arm_balanced_candidate_key(
-                    group_counts[group],
-                    split=split,
-                    current_arm=current_arm,
-                    current_source_arm=current_source_arm,
-                    split_arm_targets=split_arm_targets,
-                    split_source_arm_targets=split_source_arm_targets,
-                    size=len(grouped[group]),
-                ),
+    if len(grouped) <= 18:
+        exact_assignments = _solve_small_group_assignment(
+            grouped,
+            group_counts=group_counts,
+            targets=targets,
+            split_arm_targets=split_arm_targets,
+            seed=seed,
+        )
+        if exact_assignments is not None:
+            return _materialize_group_assignments(
+                entries,
+                grouped=grouped,
+                assignments=exact_assignments,
+                all_group_ids=all_group_ids,
             )
-            remaining.remove(selected)
-            assignments[selected] = split
-            current_split[split] += len(grouped[selected])
-            for source in SOURCES:
-                current_source_split[split][source] += sum(
-                    group_counts[selected][source][arm] for arm in ARMS
-                )
-                for arm in ARMS:
-                    count = group_counts[selected][source][arm]
-                    current_arm[split][arm] += count
-                    current_source_arm[split][source][arm] += count
 
+    assignments: dict[str, str] = {}
+    # The first pass is conventional train/validation/test order. If it gets
+    # trapped by an indivisible group, retry every deterministic split order;
+    # no retry may relax a hard source or arm quota.
+    split_orders = (SPLITS,) + tuple(order for order in permutations(SPLITS) if order != SPLITS)
+    for attempt, split_order in enumerate(split_orders):
+        rng = np.random.default_rng([int(seed), attempt])
+        remaining = list(grouped)
+        rng.shuffle(remaining)
+        candidate_assignments: dict[str, str] = {}
+        current_split = {split: 0 for split in SPLITS}
+        current_source_split = {split: {source: 0 for source in SOURCES} for split in SPLITS}
+        current_arm = {split: {arm: 0 for arm in ARMS} for split in SPLITS}
+        current_source_arm = {
+            split: {source: {arm: 0 for arm in ARMS} for source in SOURCES} for split in SPLITS
+        }
+
+        for split in split_order:
+            while remaining and current_split[split] < split_totals[split]:
+                capacity = split_totals[split] - current_split[split]
+                fitting = [
+                    group
+                    for group in remaining
+                    if len(grouped[group]) <= capacity
+                    and all(
+                        sum(group_counts[group][source][arm] for arm in ARMS)
+                        <= int(targets[source][split]) - current_source_split[split][source]
+                        for source in SOURCES
+                    )
+                    and all(
+                        sum(group_counts[group][source][arm] for source in SOURCES)
+                        <= split_arm_targets[split][arm] - current_arm[split][arm]
+                        for arm in ARMS
+                    )
+                ]
+                if not fitting:
+                    break
+                selected = max(
+                    fitting,
+                    key=lambda group: _arm_balanced_candidate_key(
+                        group_counts[group],
+                        split=split,
+                        current_arm=current_arm,
+                        current_source_arm=current_source_arm,
+                        split_arm_targets=split_arm_targets,
+                        split_source_arm_targets=split_source_arm_targets,
+                        size=len(grouped[group]),
+                    ),
+                )
+                remaining.remove(selected)
+                candidate_assignments[selected] = split
+                current_split[split] += len(grouped[selected])
+                for source in SOURCES:
+                    current_source_split[split][source] += sum(
+                        group_counts[selected][source][arm] for arm in ARMS
+                    )
+                    for arm in ARMS:
+                        count = group_counts[selected][source][arm]
+                        current_arm[split][arm] += count
+                        current_source_arm[split][source][arm] += count
+
+        assignments = candidate_assignments
+        if (
+            current_split == split_totals
+            and current_source_split
+            == {
+                split: {source: int(targets[source][split]) for source in SOURCES}
+                for split in SPLITS
+            }
+            and current_arm == split_arm_targets
+        ):
+            break
+
+    return _materialize_group_assignments(
+        entries,
+        grouped=grouped,
+        assignments=assignments,
+        all_group_ids=all_group_ids,
+    )
+
+
+def _materialize_group_assignments(
+    entries: Sequence[ScenarioCatalogEntry],
+    *,
+    grouped: Mapping[str, Sequence[ScenarioCatalogEntry]],
+    assignments: Mapping[str, str],
+    all_group_ids: Mapping[str, str],
+) -> tuple[ScenarioCatalogEntry, ...]:
     assigned_by_uid: dict[str, ScenarioRecord] = {}
     for group, group_entries in grouped.items():
         assigned_split = assignments.get(group)
@@ -328,7 +377,6 @@ def assign_arm_balanced_splits_to_targets(
                 split=assigned_split,  # type: ignore[arg-type]
                 runtime_index=None,
             )
-
     result = tuple(
         ScenarioCatalogEntry(
             record=assigned_by_uid[entry.record.scenario_uid],
@@ -342,6 +390,78 @@ def assign_arm_balanced_splits_to_targets(
     assert_pg_seed_disjoint(records)
     assert_no_group_overlap(records, group_id_by_uid=all_group_ids)
     return result
+
+
+def _solve_small_group_assignment(
+    grouped: Mapping[str, Sequence[ScenarioCatalogEntry]],
+    *,
+    group_counts: Mapping[str, Mapping[str, Mapping[str, int]]],
+    targets: Mapping[str, Mapping[str, int]],
+    split_arm_targets: Mapping[str, Mapping[str, int]],
+    seed: int,
+) -> dict[str, str] | None:
+    """Solve small grouped fixtures exactly without adding an optimizer dependency."""
+
+    group_ids = list(grouped)
+    rng = np.random.default_rng(int(seed))
+    rng.shuffle(group_ids)
+    group_ids.sort(key=lambda group: len(grouped[group]), reverse=True)
+    suffix_sizes = [0] * (len(group_ids) + 1)
+    for index in range(len(group_ids) - 1, -1, -1):
+        suffix_sizes[index] = suffix_sizes[index + 1] + len(grouped[group_ids[index]])
+    remaining_source = {
+        split: {source: int(targets[source][split]) for source in SOURCES} for split in SPLITS
+    }
+    remaining_arm = {
+        split: {arm: int(split_arm_targets[split][arm]) for arm in ARMS} for split in SPLITS
+    }
+    required_total = sum(sum(values.values()) for values in targets.values())
+    assignments: dict[str, str] = {}
+
+    def fits(group: str, split: str) -> bool:
+        return all(
+            sum(group_counts[group][source][arm] for arm in ARMS) <= remaining_source[split][source]
+            for source in SOURCES
+        ) and all(
+            sum(group_counts[group][source][arm] for source in SOURCES) <= remaining_arm[split][arm]
+            for arm in ARMS
+        )
+
+    def apply(group: str, split: str, direction: int) -> None:
+        for source in SOURCES:
+            remaining_source[split][source] -= direction * sum(
+                group_counts[group][source][arm] for arm in ARMS
+            )
+        for arm in ARMS:
+            remaining_arm[split][arm] -= direction * sum(
+                group_counts[group][source][arm] for source in SOURCES
+            )
+
+    def search(index: int, selected_total: int) -> bool:
+        if index == len(group_ids):
+            return selected_total == required_total and all(
+                value == 0
+                for split_values in remaining_source.values()
+                for value in split_values.values()
+            )
+        required_remaining = required_total - selected_total
+        if required_remaining < 0 or suffix_sizes[index] < required_remaining:
+            return False
+        group = group_ids[index]
+        for split in SPLITS:
+            if not fits(group, split):
+                continue
+            apply(group, split, 1)
+            assignments[group] = split
+            if search(index + 1, selected_total + len(grouped[group])):
+                return True
+            del assignments[group]
+            apply(group, split, -1)
+        if suffix_sizes[index + 1] >= required_remaining:
+            return search(index + 1, selected_total)
+        return False
+
+    return dict(assignments) if search(0, 0) else None
 
 
 def assert_runtime_split_contract(

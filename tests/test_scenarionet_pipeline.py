@@ -438,6 +438,41 @@ def test_arm_balanced_selector_preserves_exact_source_targets_per_split() -> Non
     )
 
 
+def test_arm_balanced_selector_solves_sparse_feasible_singleton_pool() -> None:
+    entries = []
+    index = 0
+    for source in ("waymo", "pg"):
+        for arm in (
+            "A0_simple_low_traffic",
+            "A1_traffic",
+            "A2_junction",
+            "A3_complex_junction",
+            "A4_vru",
+            "A5_critical_mixed",
+        ):
+            base = _entry(source, index)
+            entries.append(
+                ScenarioCatalogEntry(
+                    replace(base.record, primary_arm=arm, rulebook_eligible=True),
+                    base.features,
+                )
+            )
+            index += 1
+    targets = {
+        "waymo": {"train": 4, "validation": 2, "test": 0},
+        "pg": {"train": 2, "validation": 4, "test": 0},
+    }
+
+    selected = assign_arm_balanced_splits_to_targets(tuple(entries), targets=targets, seed=3)
+
+    assert_runtime_split_contract(
+        selected,
+        targets=targets,
+        require_near_uniform_arms=True,
+        seed=3,
+    )
+
+
 def test_arm_balanced_split_falls_back_to_available_source() -> None:
     entries = []
     index = 0
