@@ -83,9 +83,7 @@ def test_pipeline_assigns_source_splits_and_runtime_indices() -> None:
     indexed = assign_catalog_runtime_indices(split)
     for split_name in ("train", "test"):
         indices = sorted(
-            entry.record.runtime_index
-            for entry in indexed
-            if entry.record.split == split_name
+            entry.record.runtime_index for entry in indexed if entry.record.split == split_name
         )
         assert indices == [0, 1]
 
@@ -98,20 +96,17 @@ def test_waymo_training_shard_is_not_used_as_leakage_group() -> None:
     )
     true_log_record = replace(entry.record, source_log_id="waymo-log-1")
 
-    assert group_id_for_entry(
-        ScenarioCatalogEntry(shard_record, entry.features)
-    ) == "scenario:waymo:v1:0"
-    assert group_id_for_entry(
-        ScenarioCatalogEntry(true_log_record, entry.features)
-    ) == "waymo-log-1"
+    assert (
+        group_id_for_entry(ScenarioCatalogEntry(shard_record, entry.features))
+        == "scenario:waymo:v1:0"
+    )
+    assert (
+        group_id_for_entry(ScenarioCatalogEntry(true_log_record, entry.features)) == "waymo-log-1"
+    )
 
 
 def test_pipeline_auto_split_preserves_whole_groups() -> None:
-    entries = tuple(
-        _entry(source, index)
-        for source in ("waymo", "pg")
-        for index in range(10)
-    )
+    entries = tuple(_entry(source, index) for source in ("waymo", "pg") for index in range(10))
     split = assign_source_splits_to_targets(
         entries,
         targets={
@@ -123,10 +118,7 @@ def test_pipeline_auto_split_preserves_whole_groups() -> None:
     for source in ("waymo", "pg"):
         source_entries = [entry for entry in split if entry.record.source == source]
         assert len(source_entries) == 6
-        assert {
-            entry.record.split
-            for entry in source_entries
-        } == {"train", "validation", "test"}
+        assert {entry.record.split for entry in source_entries} == {"train", "validation", "test"}
 
 
 def test_pipeline_auto_split_prioritizes_arm_minimums_and_reports_deficits() -> None:
@@ -134,27 +126,17 @@ def test_pipeline_auto_split_prioritizes_arm_minimums_and_reports_deficits() -> 
     for source in ("waymo", "pg"):
         for index in range(12):
             entry = _entry(source, index)
-            arm = (
-                "A2_junction"
-                if index in {0, 1, 2}
-                else "A1_traffic"
-            )
+            arm = "A2_junction" if index in {0, 1, 2} else "A1_traffic"
             entries.append(
                 ScenarioCatalogEntry(replace(entry.record, primary_arm=arm), entry.features)
             )
     minimums = {
-        source: {
-            split: {"A2_junction": 1}
-            for split in ("train", "validation", "test")
-        }
+        source: {split: {"A2_junction": 1} for split in ("train", "validation", "test")}
         for source in ("waymo", "pg")
     }
     selected = assign_source_splits_to_targets(
         tuple(entries),
-        targets={
-            source: {"train": 2, "validation": 2, "test": 2}
-            for source in ("waymo", "pg")
-        },
+        targets={source: {"train": 2, "validation": 2, "test": 2} for source in ("waymo", "pg")},
         arm_minimums=minimums,
         seed=5,
     )
@@ -170,15 +152,12 @@ def test_pipeline_auto_split_prioritizes_arm_minimums_and_reports_deficits() -> 
 
 
 def test_pipeline_rejects_arm_minimums_above_source_target() -> None:
-    entries = tuple(
-        _entry(source, index) for source in ("waymo", "pg") for index in range(3)
-    )
+    entries = tuple(_entry(source, index) for source in ("waymo", "pg") for index in range(3))
     with pytest.raises(ValueError, match="arm minimums sum"):
         assign_source_splits_to_targets(
             entries,
             targets={
-                source: {"train": 1, "validation": 1, "test": 1}
-                for source in ("waymo", "pg")
+                source: {"train": 1, "validation": 1, "test": 1} for source in ("waymo", "pg")
             },
             arm_minimums={
                 "waymo": {
@@ -206,10 +185,7 @@ def test_pipeline_excludes_disallowed_signal_reliability() -> None:
             )
     selected = assign_source_splits_to_targets(
         tuple(entries),
-        targets={
-            source: {"train": 1, "validation": 1, "test": 1}
-            for source in ("waymo", "pg")
-        },
+        targets={source: {"train": 1, "validation": 1, "test": 1} for source in ("waymo", "pg")},
         allowed_signal_reliabilities={
             "waymo": ("complete", "not_applicable"),
             "pg": ("complete", "not_applicable"),
@@ -217,9 +193,7 @@ def test_pipeline_excludes_disallowed_signal_reliability() -> None:
         seed=0,
     )
 
-    assert all(
-        entry.record.scenario_uid != "waymo:v1:0" for entry in selected
-    )
+    assert all(entry.record.scenario_uid != "waymo:v1:0" for entry in selected)
 
 
 def test_pipeline_excludes_invalid_records_before_split_accounting() -> None:
@@ -236,15 +210,37 @@ def test_pipeline_excludes_invalid_records_before_split_accounting() -> None:
 
     selected = assign_source_splits_to_targets(
         tuple(entries),
-        targets={
-            source: {"train": 1, "validation": 1, "test": 1}
-            for source in ("waymo", "pg")
-        },
+        targets={source: {"train": 1, "validation": 1, "test": 1} for source in ("waymo", "pg")},
         seed=0,
     )
 
     assert len(selected) == 6
     assert all(entry.record.validation_status == "valid" for entry in selected)
+
+
+def test_pipeline_excludes_explicitly_rulebook_ineligible_records() -> None:
+    entries = []
+    for source in ("waymo", "pg"):
+        for index in range(4):
+            entry = _entry(source, index)
+            entries.append(
+                ScenarioCatalogEntry(
+                    replace(
+                        entry.record,
+                        rulebook_eligible=False if index == 0 else True,
+                    ),
+                    entry.features,
+                )
+            )
+
+    selected = assign_source_splits_to_targets(
+        tuple(entries),
+        targets={source: {"train": 1, "validation": 1, "test": 1} for source in ("waymo", "pg")},
+        seed=0,
+    )
+
+    assert len(selected) == 6
+    assert all(entry.record.rulebook_eligible is not False for entry in selected)
 
 
 def test_arm_balanced_split_targets_split_arm_and_source_halves() -> None:
@@ -315,9 +311,7 @@ def test_arm_balanced_split_falls_back_to_available_source() -> None:
     for _ in range(2):
         base = _entry("waymo", index)
         entries.append(
-            ScenarioCatalogEntry(
-                replace(base.record, primary_arm="A4_vru"), base.features
-            )
+            ScenarioCatalogEntry(replace(base.record, primary_arm="A4_vru"), base.features)
         )
         index += 1
 
@@ -369,9 +363,7 @@ def test_arm_balancing_trims_pg_before_waymo() -> None:
         start=3,
     ):
         base = _entry("waymo", index)
-        entries.append(
-            ScenarioCatalogEntry(replace(base.record, primary_arm=arm), base.features)
-        )
+        entries.append(ScenarioCatalogEntry(replace(base.record, primary_arm=arm), base.features))
 
     balanced, report = balance_arm_distribution(
         tuple(entries),

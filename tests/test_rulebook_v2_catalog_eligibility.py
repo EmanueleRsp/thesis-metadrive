@@ -229,7 +229,11 @@ def test_catalog_filter_cli_writes_audit_artifact_and_filters_split_input(
         ],
     )
     assert filter_catalog_main() == 0
-    assert len(read_scenario_catalog(output_catalog).entries) == 1
+    selected_catalog = read_scenario_catalog(output_catalog)
+    assert len(selected_catalog.entries) == 1
+    selected_record = selected_catalog.entries[0].record
+    assert selected_record.rulebook_eligible is True
+    assert selected_record.rulebook_validation_errors == ()
     payload = json.loads(artifact.read_text(encoding="utf-8"))
     assert payload["eligible_records"] == 1
     assert payload["excluded_records"] == 0

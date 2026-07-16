@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import hashlib
 import json
 from pathlib import Path
@@ -23,7 +23,11 @@ from rich.progress import (
 from thesis_rl.rulebook.v2.calibration import load_calibration_artifact
 from thesis_rl.rulebook.v2.config import RULEBOOK_V2_VERSION, geometry_config_hash
 from thesis_rl.rulebook.v2.context.catalog_eligibility import evaluate_catalog_entries
-from thesis_rl.scenarios.catalog import read_scenario_catalog, write_scenario_catalog
+from thesis_rl.scenarios.catalog import (
+    ScenarioCatalogEntry,
+    read_scenario_catalog,
+    write_scenario_catalog,
+)
 from thesis_rl.scenarios.runtime_database import sha256_file
 
 
@@ -99,9 +103,18 @@ def main() -> int:
         )
     by_uid = {record.scenario_uid: record for record in eligibility}
     entries_by_uid = {entry.record.scenario_uid: entry for entry in catalog.entries}
-    selected = tuple(
-        entry for entry in catalog.entries if by_uid[entry.record.scenario_uid].rulebook_eligible
+    annotated_entries = tuple(
+        ScenarioCatalogEntry(
+            record=replace(
+                entry.record,
+                rulebook_eligible=by_uid[entry.record.scenario_uid].rulebook_eligible,
+                rulebook_validation_errors=by_uid[entry.record.scenario_uid].validation_errors,
+            ),
+            features=entry.features,
+        )
+        for entry in catalog.entries
     )
+    selected = tuple(entry for entry in annotated_entries if entry.record.rulebook_eligible is True)
     if not selected:
         raise ValueError("Rulebook v2 eligibility rejected every catalog entry")
     if output_catalog.exists() and not args.overwrite:

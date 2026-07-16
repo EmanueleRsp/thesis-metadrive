@@ -178,6 +178,8 @@ external credentials and must not overwrite frozen data.
 - Added serializable Rulebook eligibility and exclusion causes to
   `ScenarioRecord`, with a round-trip regression test; the remaining M1
   eligibility selection and manifest work is pending.
+- The Rulebook filter CLI now persists eligibility on selected catalog records;
+  split eligibility rejects every explicitly Rulebook-ineligible record.
 - `docker compose run --rm dev uv run --no-sync python -m pytest -q
   tests/test_scenario_records.py tests/test_scenario_catalog.py` passed: 12
   tests.
@@ -215,7 +217,8 @@ No deviations identified.
 | `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/scenarios/records.py tests/test_scenario_records.py` | PASS | 2026-07-16 | Both files formatted |
 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/scenarios/records.py tests/test_scenario_records.py` | PASS | 2026-07-16 | All checks passed |
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenario_records.py tests/test_scenario_catalog.py` | PASS | 2026-07-16 | 12 passed; validates Rulebook eligibility serialization regression and catalog compatibility |
-| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 148 passed in 23.98 s; applicable ScenarioNet regression suite |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_catalog_eligibility.py tests/test_scenarionet_pipeline.py tests/test_scenario_records.py tests/test_scenario_catalog.py` | PASS | 2026-07-16 | 29 passed after filter and pipeline eligibility integration |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 149 passed in 24.75 s; applicable ScenarioNet regression suite |
 | Focused pytest command | NOT_RUN | 2026-07-16 | Host environment lacks `uv` and `python`; run in provisioned container |
 | Full real-data acquisition | NOT_RUN | 2026-07-16 | Requires credentials and can mutate dataset artifacts |
 

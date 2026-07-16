@@ -40,6 +40,7 @@ def eligible_entries(
         entry
         for entry in entries
         if entry.record.validation_status in {"valid", "warning"}
+        and entry.record.rulebook_eligible is not False
     )
 
 
@@ -94,9 +95,7 @@ def assign_source_splits(
             counts=source_counts,
             seed=int(seed) + (0 if source == "waymo" else 1),
         )
-        assigned_by_uid.update(
-            {record.scenario_uid: record for record in assigned_records}
-        )
+        assigned_by_uid.update({record.scenario_uid: record for record in assigned_records})
 
     result = tuple(
         ScenarioCatalogEntry(
@@ -131,9 +130,7 @@ def assign_source_splits_to_targets(
     if set(targets) != set(SOURCES):
         raise ValueError(f"targets must define exactly {SOURCES}")
     normalized_minimums = _normalize_arm_minimums(arm_minimums)
-    normalized_signal_policy = _normalize_signal_policy(
-        allowed_signal_reliabilities
-    )
+    normalized_signal_policy = _normalize_signal_policy(allowed_signal_reliabilities)
     entries = eligible_entries(entries)
     if not entries:
         raise ValueError("cannot assign splits: catalog has no eligible records")
@@ -163,10 +160,7 @@ def assign_source_splits_to_targets(
         group_ids = list(grouped)
         rng.shuffle(group_ids)
         current = {split: 0 for split in SPLITS}
-        arm_counts = {
-            split: {arm: 0 for arm in ARMS}
-            for split in SPLITS
-        }
+        arm_counts = {split: {arm: 0 for arm in ARMS} for split in SPLITS}
         assignments: dict[str, str] = {}
         remaining = list(group_ids)
         split_order = sorted(SPLITS, key=lambda name: source_targets[name])
@@ -180,9 +174,7 @@ def assign_source_splits_to_targets(
 
                 def candidate_key(group: str) -> tuple[int, int, int, int]:
                     group_arm_counts = {
-                        arm: sum(
-                            entry.record.primary_arm == arm for entry in grouped[group]
-                        )
+                        arm: sum(entry.record.primary_arm == arm for entry in grouped[group])
                         for arm in ARMS
                     }
                     deficit_reduction = sum(
@@ -246,17 +238,14 @@ def assign_arm_balanced_splits_to_targets(
 
     if set(targets) != set(SOURCES):
         raise ValueError(f"targets must define exactly {SOURCES}")
-    normalized_signal_policy = _normalize_signal_policy(
-        allowed_signal_reliabilities
-    )
+    normalized_signal_policy = _normalize_signal_policy(allowed_signal_reliabilities)
     entries = eligible_entries(entries)
     if not entries:
         raise ValueError("cannot assign splits: catalog has no eligible records")
     entries = tuple(
         entry
         for entry in entries
-        if entry.features.signal_reliability
-        in normalized_signal_policy[entry.record.source]
+        if entry.features.signal_reliability in normalized_signal_policy[entry.record.source]
     )
     split_totals = _split_totals(targets)
     split_arm_targets = _split_arm_targets(split_totals)
@@ -270,8 +259,7 @@ def assign_arm_balanced_splits_to_targets(
     for entry in entries:
         grouped.setdefault(all_group_ids[entry.record.scenario_uid], []).append(entry)
     group_counts = {
-        group: _group_source_arm_counts(group_entries)
-        for group, group_entries in grouped.items()
+        group: _group_source_arm_counts(group_entries) for group, group_entries in grouped.items()
     }
 
     rng = np.random.default_rng(int(seed))
@@ -281,8 +269,7 @@ def assign_arm_balanced_splits_to_targets(
     current_split = {split: 0 for split in SPLITS}
     current_arm = {split: {arm: 0 for arm in ARMS} for split in SPLITS}
     current_source_arm = {
-        split: {source: {arm: 0 for arm in ARMS} for source in SOURCES}
-        for split in SPLITS
+        split: {source: {arm: 0 for arm in ARMS} for source in SOURCES} for split in SPLITS
     }
 
     for split in sorted(SPLITS, key=lambda name: split_totals[name]):
@@ -342,10 +329,7 @@ def assign_arm_balanced_splits_to_targets(
 def _split_totals(
     targets: Mapping[str, Mapping[str, int]],
 ) -> dict[str, int]:
-    result = {
-        split: sum(int(targets[source][split]) for source in SOURCES)
-        for split in SPLITS
-    }
+    result = {split: sum(int(targets[source][split]) for source in SOURCES) for split in SPLITS}
     if any(value < 0 for value in result.values()):
         raise ValueError("split targets must be non-negative")
     return result
@@ -357,8 +341,7 @@ def _split_arm_targets(split_totals: Mapping[str, int]) -> dict[str, dict[str, i
         total = int(split_totals[split])
         base, remainder = divmod(total, len(ARMS))
         result[split] = {
-            arm: base + (1 if index < remainder else 0)
-            for index, arm in enumerate(ARMS)
+            arm: base + (1 if index < remainder else 0) for index, arm in enumerate(ARMS)
         }
     return result
 
@@ -368,10 +351,7 @@ def _split_source_arm_targets(
     *,
     available_source_arm: Mapping[str, Mapping[str, int]] | None = None,
 ) -> dict[str, dict[str, dict[str, int]]]:
-    result = {
-        split: {source: {arm: 0 for arm in ARMS} for source in SOURCES}
-        for split in SPLITS
-    }
+    result = {split: {source: {arm: 0 for arm in ARMS} for source in SOURCES} for split in SPLITS}
     for arm in ARMS:
         total_target = sum(int(split_arm_targets[split][arm]) for split in SPLITS)
         ideal_pg = total_target // 2
@@ -411,10 +391,7 @@ def _distribute_quota(total: int, weights: Mapping[str, int]) -> dict[str, int]:
     weight_total = sum(max(0, int(weights[split])) for split in SPLITS)
     if weight_total <= 0:
         return {split: 0 for split in SPLITS}
-    raw = {
-        split: total * max(0, int(weights[split])) / weight_total
-        for split in SPLITS
-    }
+    raw = {split: total * max(0, int(weights[split])) / weight_total for split in SPLITS}
     result = {split: int(raw[split]) for split in SPLITS}
     remainder = total - sum(result.values())
     for split in sorted(SPLITS, key=lambda name: raw[name] - result[name], reverse=True):
@@ -456,8 +433,7 @@ def _arm_balanced_candidate_key(
                 continue
             arm_deficit = max(
                 0,
-                int(split_arm_targets[split][arm])
-                - int(current_arm[split][arm]),
+                int(split_arm_targets[split][arm]) - int(current_arm[split][arm]),
             )
             source_deficit = max(
                 0,
@@ -473,22 +449,17 @@ def _arm_balanced_candidate_key(
             weighted_benefit += (exact * 1.2 + fallback) * arm_weight
             arm_overfill += max(
                 0,
-                int(current_arm[split][arm]) + count
-                - int(split_arm_targets[split][arm]),
+                int(current_arm[split][arm]) + count - int(split_arm_targets[split][arm]),
             )
             source_overfill += max(
                 0,
-                int(current_source_arm[split][source][arm]) + count
+                int(current_source_arm[split][source][arm])
+                + count
                 - int(split_source_arm_targets[split][source][arm]),
             )
     scaled_benefit = int(round(weighted_benefit * 1000))
     score_per_record = int(round(scaled_benefit / max(1, size)))
-    score = (
-        score_per_record * 100
-        + scaled_benefit
-        - arm_overfill * 25
-        - source_overfill * 5
-    )
+    score = score_per_record * 100 + scaled_benefit - arm_overfill * 25 - source_overfill * 5
     return (
         score,
         score_per_record,
@@ -511,9 +482,7 @@ def _normalize_signal_policy(
         normalized = frozenset(str(value) for value in values)
         unknown_values = normalized - SIGNAL_RELIABILITIES
         if unknown_values:
-            raise ValueError(
-                f"unknown signal reliabilities for {source}: {sorted(unknown_values)}"
-            )
+            raise ValueError(f"unknown signal reliabilities for {source}: {sorted(unknown_values)}")
         if not normalized:
             raise ValueError("allowed signal reliabilities must not be empty")
         result[source] = normalized
@@ -523,10 +492,7 @@ def _normalize_signal_policy(
 def _normalize_arm_minimums(
     arm_minimums: Mapping[str, Mapping[str, Mapping[str, int]]] | None,
 ) -> dict[str, dict[str, dict[str, int]]]:
-    result = {
-        source: {split: {arm: 0 for arm in ARMS} for split in SPLITS}
-        for source in SOURCES
-    }
+    result = {source: {split: {arm: 0 for arm in ARMS} for split in SPLITS} for source in SOURCES}
     if arm_minimums is None:
         return result
     unknown_sources = set(arm_minimums) - set(SOURCES)
@@ -725,9 +691,7 @@ def assign_catalog_runtime_indices(
         if not split_entries:
             continue
         assigned_records = assign_runtime_indices([entry.record for entry in split_entries])
-        assigned_by_uid.update(
-            {record.scenario_uid: record for record in assigned_records}
-        )
+        assigned_by_uid.update({record.scenario_uid: record for record in assigned_records})
 
     result: list[ScenarioCatalogEntry] = []
     for entry in entries:
