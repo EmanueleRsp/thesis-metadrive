@@ -17,6 +17,7 @@ from thesis_rl.scenarios.pipeline import (
     balance_arm_distribution,
     group_id_for_entry,
 )
+from thesis_rl.scenarios.reports import compute_pg_replenishment_report
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
 
 
@@ -471,6 +472,67 @@ def test_arm_balanced_selector_solves_sparse_feasible_singleton_pool() -> None:
         require_near_uniform_arms=True,
         seed=3,
     )
+
+
+def test_arm_balanced_selector_scales_beyond_exact_group_threshold() -> None:
+    entries = []
+    index = 0
+    for source in ("waymo", "pg"):
+        for arm in (
+            "A0_simple_low_traffic",
+            "A1_traffic",
+            "A2_junction",
+            "A3_complex_junction",
+            "A4_vru",
+            "A5_critical_mixed",
+        ):
+            for _ in range(2):
+                base = _entry(source, index)
+                entries.append(
+                    ScenarioCatalogEntry(
+                        replace(base.record, primary_arm=arm, rulebook_eligible=True),
+                        base.features,
+                    )
+                )
+                index += 1
+    targets = {
+        "waymo": {"train": 6, "validation": 6, "test": 0},
+        "pg": {"train": 6, "validation": 6, "test": 0},
+    }
+
+    selected = assign_arm_balanced_splits_to_targets(tuple(entries), targets=targets, seed=9)
+
+    assert len(entries) > 18
+    assert_runtime_split_contract(
+        selected,
+        targets=targets,
+        require_near_uniform_arms=True,
+        seed=9,
+    )
+
+
+def test_pg_replenishment_report_separates_pg_shortage_from_joint_failure() -> None:
+    pg = [
+        ScenarioCatalogEntry(
+            replace(_entry("pg", index).record, rulebook_eligible=True),
+            _entry("pg", index).features,
+        )
+        for index in range(2)
+    ]
+    report = compute_pg_replenishment_report(
+        pg,
+        targets={
+            "waymo": {"train": 1, "validation": 0, "test": 0},
+            "pg": {"train": 3, "validation": 0, "test": 0},
+        },
+        allowed_signal_reliabilities=("not_applicable",),
+        selection_error="Waymo grouped split is infeasible",
+    )
+
+    assert report["population_counts"]["runtime_eligible"] == 2
+    assert report["hard_count_shortfall"] == 1
+    assert report["minimum_additional_runtime_eligible_records"] == 1
+    assert report["selection_error"] == "Waymo grouped split is infeasible"
 
 
 def test_arm_balanced_split_falls_back_to_available_source() -> None:

@@ -55,6 +55,8 @@ docker compose --progress quiet build "$pipeline_service"
 while IFS=$'\t' read -r key value; do
   [[ -n "$key" ]] || continue
   printf -v "$key" '%s' "$value"
+  # shellcheck disable=SC2163
+  # Export the dynamically named configuration key.
   export "$key"
 done < <(
   docker compose run --rm -T "$pipeline_service" uv run --no-sync python \
@@ -107,14 +109,7 @@ echo "  Official simulation check: ${run_simulation_check} (workers=${check_work
 
 if ! is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
   if is_true "$waymo_auto_expand"; then
-  stage "[1/9] Expanding the eligible Waymo pool to its configured target"
-      WAYMO_REQUIRED_ELIGIBLE="$((waymo_train_target + waymo_validation_target + waymo_test_target))" \
-      WAYMO_REQUIRED_ARM_A4_VRU="$waymo_required_a4_vru" \
-      WAYMO_BATCH_SHARDS="$waymo_batch_shards" \
-      WAYMO_MAX_NEW_SHARDS="$waymo_max_new_shards" \
-      WAYMO_NUM_WORKERS="$waymo_workers" \
-      WAYMO_KEEP_RAW_BATCHES="$waymo_keep_raw_batches" \
-      make waymo-expand
+    stage "[1/9] Deferring Waymo expansion until post-Rulebook feasibility"
   else
     stage "[1/9] Downloading/converting Waymo training_20s"
     make waymo-pipeline
@@ -146,42 +141,15 @@ if is_true "$overwrite"; then
   catalog_overwrite+=(--overwrite)
 fi
 
-stage "[3/9] Building catalog and groups"
-docker compose run --rm "$pipeline_service" uv run --no-sync python \
-  -m thesis_rl.cli.scenarios.build_catalog \
-  --data-root "$data_root" \
-  --pg-seed-start "$pg_seed_start" \
-  --pg-count "$pg_count" \
-  --waymo-workers "$waymo_workers" \
-  --pg-workers "$pg_workers" \
-  --output "$catalog_raw" \
-  --groups-output "$groups_path" \
-  "${catalog_overwrite[@]}"
-
-catalog_for_splits="$catalog_raw"
-if is_true "$rulebook_v2_enabled"; then
-  stage "[4/9] Filtering the catalog with Rulebook v2 static eligibility"
-  docker compose run --rm "$pipeline_service" uv run --no-sync python \
-    -m thesis_rl.cli.scenarios.filter_rulebook_v2_catalog \
-    --catalog "$catalog_raw" \
-    --data-root "$data_root" \
-    --output-catalog "$catalog_rulebook" \
-    --eligibility-output "$rulebook_eligibility" \
-    --ego-config "${data_root}/rulebook_v2/ego_config.json" \
-    --calibration "${data_root}/rulebook_v2/calibration_b_e.json" \
-    --workers "$rulebook_v2_workers" \
-    "${catalog_overwrite[@]}"
-  catalog_for_splits="$catalog_rulebook"
-else
-  stage "[4/9] Rulebook v2 eligibility filtering disabled"
+if ! is_true "$rulebook_v2_enabled"; then
+  die "ScenarioNet v1.1 requires rulebook_v2.enabled=true"
 fi
 
-stage "[5/9] Building leakage-free train/validation/test splits"
 split_args=(
-  --catalog "$catalog_for_splits"
   --output "$catalog_split"
   --groups "$groups_path"
   --split-manifest "$split_manifest"
+  --pg-replenishment-report "${data_root}/pg/replenishment_report.json"
   --split-seed "$split_seed"
   --waymo-ordering-seed "$split_seed"
   --waymo-batch-shards "$waymo_batch_shards"
@@ -208,8 +176,80 @@ else
     --pg-test "$pg_test_target"
   )
 fi
-docker compose run --rm "$pipeline_service" uv run --no-sync python \
-  -m thesis_rl.cli.scenarios.build_splits "${split_args[@]}" "${catalog_overwrite[@]}"
+
+max_batches=$(( (waymo_max_new_shards + waymo_batch_shards - 1) / waymo_batch_shards ))
+catalog_args=()
+if is_true "$waymo_auto_expand"; then
+  catalog_args+=(--allow-empty-waymo)
+fi
+for ((cycle=0; ; cycle++)); do
+  cycle_overwrite=("${catalog_overwrite[@]}")
+  if (( cycle > 0 )); then
+    cycle_overwrite=(--overwrite)
+  fi
+  stage "[3/9] Building catalog and groups (feasibility cycle $((cycle + 1)))"
+  docker compose run --rm "$pipeline_service" uv run --no-sync python \
+    -m thesis_rl.cli.scenarios.build_catalog \
+    --data-root "$data_root" \
+    --pg-seed-start "$pg_seed_start" \
+    --pg-count "$pg_count" \
+    --waymo-workers "$waymo_workers" \
+    --pg-workers "$pg_workers" \
+    --output "$catalog_raw" \
+    --groups-output "$groups_path" \
+    "${catalog_args[@]}" \
+    "${cycle_overwrite[@]}"
+
+  stage "[4/9] Filtering the catalog with Rulebook v2 static eligibility"
+  docker compose run --rm "$pipeline_service" uv run --no-sync python \
+    -m thesis_rl.cli.scenarios.filter_rulebook_v2_catalog \
+    --catalog "$catalog_raw" \
+    --data-root "$data_root" \
+    --output-catalog "$catalog_rulebook" \
+    --eligibility-output "$rulebook_eligibility" \
+    --ego-config "${data_root}/rulebook_v2/ego_config.json" \
+    --calibration "${data_root}/rulebook_v2/calibration_b_e.json" \
+    --workers "$rulebook_v2_workers" \
+    "${cycle_overwrite[@]}"
+
+  stage "[5/9] Building leakage-free train/validation/test splits"
+  if docker compose run --rm "$pipeline_service" uv run --no-sync python \
+    -m thesis_rl.cli.scenarios.build_splits \
+    --catalog "$catalog_rulebook" \
+    "${split_args[@]}" \
+    "${cycle_overwrite[@]}"; then
+    break
+  fi
+  if ! is_true "$waymo_auto_expand" || is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
+    die "split targets are infeasible after Rulebook filtering; automatic Waymo expansion is disabled"
+  fi
+  if (( cycle >= max_batches )); then
+    die "Waymo cap of ${waymo_max_new_shards} new shards reached before post-Rulebook split feasibility"
+  fi
+  status_output="$(docker compose run --rm -T "$pipeline_service" uv run --no-sync python \
+    -m thesis_rl.cli.scenarios.waymo_pool_status \
+    --catalog "$catalog_rulebook" \
+    --data-root "$data_root" \
+    --required "$((waymo_train_target + waymo_validation_target + waymo_test_target))" \
+    --required-arm "A4_vru=${waymo_required_a4_vru}" \
+    --allowed-signal-reliability complete \
+    --allowed-signal-reliability not_applicable \
+    --require-rulebook-eligible \
+    --format env)"
+  if ! grep -q $'^SCENARIONET_WAYMO_POOL_COMPLETE\tfalse$' <<<"$status_output"; then
+    die "split targets remain infeasible although Waymo post-Rulebook coverage is sufficient; inspect split_report.json for PG/group constraints"
+  fi
+  remaining_cap=$((waymo_max_new_shards - cycle * waymo_batch_shards))
+  stage "[1/9] Acquiring one additional Waymo batch after post-Rulebook deficit"
+  WAYMO_REQUIRED_ELIGIBLE="$((waymo_train_target + waymo_validation_target + waymo_test_target))" \
+    WAYMO_REQUIRED_ARM_A4_VRU="$waymo_required_a4_vru" \
+    WAYMO_BATCH_SHARDS="$waymo_batch_shards" \
+    WAYMO_MAX_NEW_SHARDS="$remaining_cap" \
+    WAYMO_NUM_WORKERS="$waymo_workers" \
+    WAYMO_KEEP_RAW_BATCHES="$waymo_keep_raw_batches" \
+    WAYMO_FORCE_ONE_BATCH=true \
+    make waymo-expand
+done
 
 stage "[6/9] Computing train-only thresholds and assigning arms"
 docker compose run --rm "$pipeline_service" uv run --no-sync python \

@@ -160,7 +160,7 @@ external credentials and must not overwrite frozen data.
 ## 10. Milestones
 
 - [x] M1 — Completed. Reconciled record/manifest/report eligibility schema and audit population accounting, including record-level Rulebook provenance, strict pre-freeze split validation, and canonical YAML manifests. Depends on `DEC-SN-001`–`005`; validates the available portions of `TEST-SN-001`–`006`.
-- [ ] M2 — In progress. Implement strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. The selector now enforces per-split source and arm capacity while selecting, retries deterministic split order, and uses an exact dependency-free solver for small grouped pools (≤18 groups). A scalable constructive feasibility solver and complete acquisition/PG reports remain. Validates `TEST-SN-002`–`008`.
+- [x] M2 — Completed. Implemented strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. The selector enforces per-split source and arm capacity, uses exhaustive exact search for small grouped fixtures (≤18 groups), and uses a deterministic transportation-based constructive solver for the normal large singleton-group population. The shell pipeline repeats catalog → Rulebook → split feasibility and acquires at most one forced 16-shard batch per cycle under the cumulative 128-shard cap. `build_splits` now writes a PG replenishment report on both success and selection failure, separating a true filtered-PG count shortage from joint Waymo/group infeasibility. Validates the implemented portions of `TEST-SN-002`–`008`.
 - [ ] M3 — In progress. Reconcile runtime views, providers, ACL six-arm interface, and environment/logging behavior. The environment factory now rejects an audit or legacy catalog containing any valid/warning record without `rulebook_eligible=true`; provider construction and runtime mapping use only this checked population. Validates `TEST-SN-009`–`014`.
 - [ ] M4 — Run fixture pipeline, vectorized smoke, documentation reconciliation, and final artifact audit. Validates `TEST-SN-015` and mandatory checks.
 
@@ -216,19 +216,39 @@ external credentials and must not overwrite frozen data.
   Waymo A0 cases are therefore auditable rather than treated as failures.
 - `waymo_pool_status` can now consume the Rulebook-annotated catalog and
   require `rulebook_eligible=true` in its accounting. This closes the
-  testable status interface needed by acquisition; wiring the downloader to
-  re-run catalog/Rulebook evaluation under one cumulative 128-shard cap remains
-  open.
+  testable status interface needed by acquisition.
+- The orchestration script now uses that interface: auto-expansion is deferred
+  until a Rulebook-filtered split attempt fails because Waymo coverage is
+  insufficient, then exactly one unseen batch is acquired and the full
+  catalog/Rulebook/split cycle repeats. It supports an initially absent Waymo
+  directory without treating that bootstrap state as a catalog-loader error.
+- The scalable selector handles the repository's verified normal grouping
+  condition—singleton Waymo scenarios when no true log/segment is exposed and
+  singleton PG generation seeds—by allocating exact source and arm quotas as a
+  deterministic transportation problem. Multi-record groups remain indivisible
+  and use the prior exact-small/strict-greedy path; the pre-freeze contract
+  continues to reject any unresolved infeasibility rather than changing a
+  target.
+- `build_splits` now emits `pg/replenishment_report.json` from the
+  Rulebook-filtered catalog. It records candidate through runtime-eligible PG
+  populations, profile/arm matrices, selected counts, hard count shortfall,
+  and any joint selection error. It recommends more PG seeds only for a true
+  filtered-PG count shortage, so a Waymo or grouped-split limitation cannot
+  cause blind procedural regeneration.
+- `docker compose run --rm dev uv run --no-sync ruff check
+  src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py
+  src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py`
+  and `python -m pytest -q tests/test_scenarionet_pipeline.py` passed: 19
+  tests. The new coverage proves exact split/source/arm contract preservation
+  above the former 18-group exact-search threshold and PG shortage reporting.
 - `docker compose run --rm dev uv run --no-sync python -m pytest -q
   tests/test_scenario_records.py tests/test_scenario_catalog.py` passed: 12
   tests.
 - Direct Ruff format and lint checks passed after the image-level `make` target
   proved unavailable.
 
-Next step: complete M2's constructive grouped selection and feasibility/report
-accounting. The current strict validation prevents an infeasible greedy result
-from being frozen, but it is not a replacement for a solver that reaches every
-feasible v1.1 target.
+Next step: resume the already-started M3 runtime/provider/environment/logging
+reconciliation, then perform the M4 fixture pipeline and smoke validation.
 
 ## 12. Deviations
 
@@ -242,7 +262,9 @@ No deviations identified.
 | `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md` | Added | Approved material dataset/runtime policy |
 | `docs/implementation/scenarionet_integration_spec_v1.1_exec_plan.md` | Added | Living v1.1 implementation record |
 | `docs/project_index.md` | Modified | Authority and ExecPlan registry |
-| `src/thesis_rl/scenarios/{records,catalog,pipeline,splits,manifests,reports,waymo_pool}.py` | Planned modification | Eligibility, split, audit, manifest contract |
+| `src/thesis_rl/scenarios/{records,catalog,pipeline,splits,manifests,reports,waymo_pool}.py` | Modified/planned modification | Eligibility, split, audit, manifest, scalable singleton-group selection, and PG replenishment-report contract |
+| `src/thesis_rl/cli/scenarios/build_splits.py` | Modified | Strict split CLI and PG replenishment artifact on success/failure |
+| `scripts/{prepare_scenarionet_dataset,expand_waymo_pool}.sh` | Modified | Post-Rulebook bounded Waymo acquisition loop and PG report path |
 | `src/thesis_rl/scenarios/{features,arms,provider,runtime_database,validation}.py` | Planned reconciliation | Preserved arm and runtime behavior |
 | `src/thesis_rl/envs/{thesis_scenario_env,scene_context,scenario_env_factory}.py` | Planned verification/modification | Environment contract |
 | `conf/scenarios/pipeline_v1.yaml`, `conf/env/scenarionet.yaml`, `conf/curriculum/scenario_acl_scenarionet.yaml` | Planned modification | Frozen v1.1 policy |
@@ -271,6 +293,11 @@ No deviations identified.
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/pipeline.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-16 | 17 passed; covers exact small-pool grouped selection and strict split-contract regressions |
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/pipeline.py src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py tests/test_scenario_manifests.py` | PASS | 2026-07-16 | 22 passed; verifies source×arm compensation diagnostics and split-manifest compatibility |
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/waymo_pool.py src/thesis_rl/cli/scenarios/waymo_pool_status.py tests/test_waymo_pool.py && ruff check ... && python -m pytest -q tests/test_waymo_pool.py` | PASS | 2026-07-16 | 8 passed; verifies optional Rulebook-required Waymo feasibility from an annotated catalog |
+| `bash -n setup.sh scripts/*.sh && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/cli/scenarios/build_catalog.py tests/test_scenario_catalog_build.py && python -m pytest -q tests/test_scenario_catalog_build.py tests/test_waymo_pool.py` | PASS | 2026-07-16 | 14 passed; verifies empty-Waymo bootstrap support and shell syntax without external downloads |
+| `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py src/thesis_rl/cli/scenarios/build_splits.py && ruff check src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-16 | 19 passed; verifies the scalable singleton-group solver and the PG replenishment report |
+| `bash -n setup.sh scripts/*.sh && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py src/thesis_rl/cli/scenarios/build_splits.py src/thesis_rl/cli/scenarios/build_catalog.py tests/test_scenarionet_pipeline.py tests/test_scenario_catalog_build.py && ruff check ... && python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py && git diff --check` | PASS | 2026-07-16 | 157 passed, 2 expected skips requiring an external prepared ScenarioNet runtime dataset; six focused files formatted, lint and shell/whitespace checks passed |
+| `bash -n setup.sh scripts/*.sh && shellcheck setup.sh scripts/*.sh && git diff --check` | PASS | 2026-07-16 | Shell syntax, ShellCheck, and whitespace validation pass after preserving dynamic configuration export semantics |
+| `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/scenarios/reports.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-16 | 19 passed after making joint selection-failure reporting explicitly distinct from a completed PG selection |
 | Focused pytest command | NOT_RUN | 2026-07-16 | Host environment lacks `uv` and `python`; run in provisioned container |
 | Full real-data acquisition | NOT_RUN | 2026-07-16 | Requires credentials and can mutate dataset artifacts |
 

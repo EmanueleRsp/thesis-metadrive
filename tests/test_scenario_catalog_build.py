@@ -153,3 +153,31 @@ def test_build_catalog_cli_reports_rich_progress_and_writes_artifacts(
     assert output.is_file()
     assert groups.is_file()
     assert json.loads(report.read_text(encoding="utf-8"))["total"] == 5
+
+
+def test_build_catalog_cli_allows_empty_waymo_candidate_pool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pg_database = _write_pg_database(tmp_path)
+    output = tmp_path / "catalog" / "raw.parquet"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "build_catalog",
+            "--data-root",
+            str(tmp_path),
+            "--waymo-database",
+            str(tmp_path / "waymo" / "database"),
+            "--pg-database",
+            str(pg_database),
+            "--output",
+            str(output),
+            "--allow-empty-waymo",
+        ],
+    )
+
+    assert build_catalog_main() == 0
+    assert json.loads((output.parent / "catalog_report.json").read_text(encoding="utf-8"))[
+        "by_source"
+    ] == {"pg": 2, "waymo": 0}

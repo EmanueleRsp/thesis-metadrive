@@ -44,6 +44,11 @@ def main() -> int:
     parser.add_argument("--output")
     parser.add_argument("--groups-output")
     parser.add_argument("--report-output")
+    parser.add_argument(
+        "--allow-empty-waymo",
+        action="store_true",
+        help="Treat a missing converted Waymo directory as an empty candidate pool.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     if not args.data_root:
@@ -72,12 +77,16 @@ def main() -> int:
             f"Loading catalog entries with Waymo workers={args.waymo_workers}, "
             f"PG workers={args.pg_workers}"
         )
-        waymo_entries, _waymo_groups = load_converted_waymo_entries(
-            waymo_database,
-            data_root=paths.root,
-            workers=args.waymo_workers,
-            progress_callback=update_waymo,
-        )
+        if args.allow_empty_waymo and not waymo_database.is_dir():
+            waymo_entries = ()
+            progress.update(waymo_task, completed=0, total=0)
+        else:
+            waymo_entries, _waymo_groups = load_converted_waymo_entries(
+                waymo_database,
+                data_root=paths.root,
+                workers=args.waymo_workers,
+                progress_callback=update_waymo,
+            )
         pg_entries = load_exported_pg_entries(
             pg_database,
             data_root=paths.root,

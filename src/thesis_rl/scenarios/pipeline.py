@@ -278,6 +278,20 @@ def assign_arm_balanced_splits_to_targets(
                 all_group_ids=all_group_ids,
             )
 
+    scalable_assignments = _solve_scalable_singleton_group_assignment(
+        grouped,
+        targets=targets,
+        split_arm_targets=split_arm_targets,
+        seed=seed,
+    )
+    if scalable_assignments is not None:
+        return _materialize_group_assignments(
+            entries,
+            grouped=grouped,
+            assignments=scalable_assignments,
+            all_group_ids=all_group_ids,
+        )
+
     assignments: dict[str, str] = {}
     # The first pass is conventional train/validation/test order. If it gets
     # trapped by an indivisible group, retry every deterministic split order;
@@ -462,6 +476,150 @@ def _solve_small_group_assignment(
         return False
 
     return dict(assignments) if search(0, 0) else None
+
+
+def _solve_scalable_singleton_group_assignment(
+    grouped: Mapping[str, Sequence[ScenarioCatalogEntry]],
+    *,
+    targets: Mapping[str, Mapping[str, int]],
+    split_arm_targets: Mapping[str, Mapping[str, int]],
+    seed: int,
+) -> dict[str, str] | None:
+    """Construct an exact assignment for large singleton-group pools.
+
+    The checked-out converter has no verified shared Waymo log/segment field,
+    so normal Waymo groups are singleton scenarios; PG generation seeds are
+    singleton too.  Solving that common case as a transportation problem keeps
+    exact source and arm targets practical for pools far larger than the
+    dependency-free exhaustive solver's fixture-oriented threshold.  Groups
+    with multiple records deliberately fall through to the strict generic
+    path below: they must never be split to make a quota fit.
+    """
+
+    if any(len(entries) != 1 for entries in grouped.values()):
+        return None
+
+    groups_by_source_arm = {source: {arm: [] for arm in ARMS} for source in SOURCES}
+    for group, entries in grouped.items():
+        entry = entries[0]
+        groups_by_source_arm[entry.record.source][entry.record.primary_arm].append(group)
+
+    available = {
+        source: {arm: len(groups_by_source_arm[source][arm]) for arm in ARMS} for source in SOURCES
+    }
+    source_totals = {
+        source: sum(int(targets[source][split]) for split in SPLITS) for source in SOURCES
+    }
+    arm_totals = {arm: sum(int(split_arm_targets[split][arm]) for split in SPLITS) for arm in ARMS}
+    total_requested = sum(source_totals.values())
+    if total_requested != sum(arm_totals.values()):
+        raise ValueError("source and arm target totals disagree")
+    if any(source_totals[source] > sum(available[source].values()) for source in SOURCES):
+        return None
+
+    # Choose the total Waymo allocation for each arm.  The lower bound ensures
+    # that the available PG records can fill the rest of that arm; the upper
+    # bound preserves its exact target.  Assigning one unit at a time makes the
+    # result deterministic and as close to the approved 50/50 preference as
+    # availability permits.
+    waymo_by_arm = {arm: max(0, arm_totals[arm] - available["pg"][arm]) for arm in ARMS}
+    upper_waymo_by_arm = {arm: min(arm_totals[arm], available["waymo"][arm]) for arm in ARMS}
+    if any(waymo_by_arm[arm] > upper_waymo_by_arm[arm] for arm in ARMS):
+        return None
+    remaining_waymo = source_totals["waymo"] - sum(waymo_by_arm.values())
+    if remaining_waymo < 0 or remaining_waymo > sum(
+        upper_waymo_by_arm[arm] - waymo_by_arm[arm] for arm in ARMS
+    ):
+        return None
+    ordered_arms = list(ARMS)
+    np.random.default_rng([int(seed), 31]).shuffle(ordered_arms)
+    arm_order = {arm: index for index, arm in enumerate(ordered_arms)}
+    ideal_waymo_by_arm = {
+        arm: arm_totals[arm] * source_totals["waymo"] / max(1, total_requested) for arm in ARMS
+    }
+    for _ in range(remaining_waymo):
+        candidates = [arm for arm in ARMS if waymo_by_arm[arm] < upper_waymo_by_arm[arm]]
+        if not candidates:
+            return None
+        arm = max(
+            candidates,
+            key=lambda name: (ideal_waymo_by_arm[name] - waymo_by_arm[name], -arm_order[name]),
+        )
+        waymo_by_arm[arm] += 1
+
+    waymo_allocations = _transport_source_arm_quota(
+        arm_totals=waymo_by_arm,
+        split_arm_targets=split_arm_targets,
+        split_source_targets={split: int(targets["waymo"][split]) for split in SPLITS},
+        seed=seed,
+    )
+    if waymo_allocations is None:
+        return None
+    allocations = {
+        "waymo": waymo_allocations,
+        "pg": {
+            split: {
+                arm: int(split_arm_targets[split][arm]) - waymo_allocations[split][arm]
+                for arm in ARMS
+            }
+            for split in SPLITS
+        },
+    }
+    if any(
+        sum(allocations[source][split][arm] for split in SPLITS) > available[source][arm]
+        for source in SOURCES
+        for arm in ARMS
+    ):
+        return None
+
+    assignments: dict[str, str] = {}
+    for source_index, source in enumerate(SOURCES):
+        for arm_index, arm in enumerate(ARMS):
+            group_ids = list(groups_by_source_arm[source][arm])
+            np.random.default_rng([int(seed), source_index, arm_index]).shuffle(group_ids)
+            offset = 0
+            for split in SPLITS:
+                count = allocations[source][split][arm]
+                for group in group_ids[offset : offset + count]:
+                    assignments[group] = split
+                offset += count
+    return assignments
+
+
+def _transport_source_arm_quota(
+    *,
+    arm_totals: Mapping[str, int],
+    split_arm_targets: Mapping[str, Mapping[str, int]],
+    split_source_targets: Mapping[str, int],
+    seed: int,
+) -> dict[str, dict[str, int]] | None:
+    """Allocate one source's per-arm totals to split capacities exactly."""
+
+    remaining_arm = {arm: int(arm_totals[arm]) for arm in ARMS}
+    remaining_split = {split: int(split_source_targets[split]) for split in SPLITS}
+    allocations = {split: {arm: 0 for arm in ARMS} for split in SPLITS}
+    ordered_arms = list(ARMS)
+    ordered_splits = list(SPLITS)
+    np.random.default_rng([int(seed), 41]).shuffle(ordered_arms)
+    np.random.default_rng([int(seed), 43]).shuffle(ordered_splits)
+    # The complete arm×split bipartite graph has integral capacities.  Filling
+    # its most constrained vertices first is a deterministic constructive
+    # transportation algorithm; the final row/column checks retain the hard
+    # contract if a future grouping policy changes this premise.
+    for arm in sorted(ordered_arms, key=lambda name: int(arm_totals[name]), reverse=True):
+        for split in sorted(
+            ordered_splits,
+            key=lambda name: remaining_split[name],
+            reverse=True,
+        ):
+            capacity = int(split_arm_targets[split][arm])
+            count = min(remaining_arm[arm], remaining_split[split], capacity)
+            allocations[split][arm] = count
+            remaining_arm[arm] -= count
+            remaining_split[split] -= count
+    if any(remaining_arm.values()) or any(remaining_split.values()):
+        return None
+    return allocations
 
 
 def assert_runtime_split_contract(

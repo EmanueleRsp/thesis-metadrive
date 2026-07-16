@@ -16,6 +16,7 @@ batch_size="${WAYMO_BATCH_SHARDS:-8}"
 max_new_shards="${WAYMO_MAX_NEW_SHARDS:-128}"
 num_workers="${WAYMO_NUM_WORKERS:-8}"
 keep_raw="${WAYMO_KEEP_RAW_BATCHES:-false}"
+force_one_batch="${WAYMO_FORCE_ONE_BATCH:-false}"
 gcs_uri="${WAYMO_GCS_URI:-gs://waymo_open_dataset_motion_v_1_2_0/uncompressed/scenario/training_20s}"
 object_pattern="${WAYMO_GCS_OBJECT_PATTERN:-training_20s.tfrecord-*}"
 host_data_dir="${HOST_DATA_DIR:-./data}"
@@ -90,13 +91,11 @@ refresh_status() {
 }
 
 refresh_status
-echo "Waymo eligible pool: ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required} "\
-"(converted: ${SCENARIONET_WAYMO_POOL_TOTAL}, deficit: ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT})"
+echo "Waymo eligible pool: ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required} (converted: ${SCENARIONET_WAYMO_POOL_TOTAL}, deficit: ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT})"
 if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
-  echo "Waymo A4_vru target: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU} "\
-"(deficit: ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0})"
+  echo "Waymo A4_vru target: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU} (deficit: ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0})"
 fi
-if is_true "$SCENARIONET_WAYMO_POOL_COMPLETE"; then
+if is_true "$SCENARIONET_WAYMO_POOL_COMPLETE" && ! is_true "$force_one_batch"; then
   echo "Waymo target already satisfied; no download or conversion is needed."
   exit 0
 fi
@@ -140,7 +139,7 @@ log "persistent Waymo converter container is ready"
 
 new_shards=0
 batch_number=0
-while ! is_true "$SCENARIONET_WAYMO_POOL_COMPLETE"; do
+while ! is_true "$SCENARIONET_WAYMO_POOL_COMPLETE" || is_true "$force_one_batch"; do
   (( new_shards < max_new_shards )) || die \
     "safety cap reached with ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT} eligible scenarios still missing"
   remaining_cap=$((max_new_shards - new_shards))
@@ -193,6 +192,10 @@ while ! is_true "$SCENARIONET_WAYMO_POOL_COMPLETE"; do
   log "batch ${batch_number} complete: eligible ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required}; remaining deficit ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
   if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
     log "batch ${batch_number} A4_vru: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU}; remaining A4 deficit ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0}"
+  fi
+  if is_true "$force_one_batch"; then
+    log "forced one-batch expansion complete"
+    break
   fi
 done
 

@@ -21,7 +21,7 @@ from thesis_rl.scenarios.pipeline import (
     arm_selection_diagnostics,
     assert_runtime_split_contract,
 )
-from thesis_rl.scenarios.reports import write_json_report
+from thesis_rl.scenarios.reports import compute_pg_replenishment_report, write_json_report
 from thesis_rl.scenarios.records import SIGNAL_RELIABILITIES
 from thesis_rl.scenarios.runtime_database import sha256_file
 from thesis_rl.cli.scenarios.ui import console, print_key_value_table, print_panel
@@ -73,6 +73,10 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--split-manifest")
     parser.add_argument(
+        "--pg-replenishment-report",
+        help="JSON report describing whether the filtered PG pool needs more offline seeds.",
+    )
+    parser.add_argument(
         "--groups", help="Accepted for compatibility; groups are derived from records."
     )
     parser.add_argument("--split-seed", type=int, default=0)
@@ -110,6 +114,11 @@ def main() -> int:
         .expanduser()
         .resolve()
     )
+    pg_replenishment_path = (
+        Path(args.pg_replenishment_report or output_path.parent / "pg_replenishment_report.json")
+        .expanduser()
+        .resolve()
+    )
     with console.status("Reading catalog and assigning leakage-free splits", spinner="dots"):
         catalog = read_scenario_catalog(catalog_path)
         arm_minimums, signal_policy, split_selection = _read_split_policy(args.arm_minimums_config)
@@ -141,23 +150,43 @@ def main() -> int:
             if not any(value > 0 for source in targets.values() for value in source.values()):
                 raise ValueError("auto-targets requires at least one positive split target")
             requested_targets = targets
-            if split_selection == "balanced_arm_source":
-                entries = assign_arm_balanced_splits_to_targets(
-                    runtime_eligible_entries,
+            try:
+                if split_selection == "balanced_arm_source":
+                    entries = assign_arm_balanced_splits_to_targets(
+                        runtime_eligible_entries,
+                        targets=targets,
+                        seed=int(args.split_seed),
+                        allowed_signal_reliabilities=signal_policy,
+                    )
+                    selection_mode = "balanced_arm_source"
+                else:
+                    entries = assign_source_splits_to_targets(
+                        runtime_eligible_entries,
+                        targets=targets,
+                        seed=int(args.split_seed),
+                        arm_minimums=arm_minimums,
+                        allowed_signal_reliabilities=signal_policy,
+                    )
+                    selection_mode = "grouped_target"
+                assert_runtime_split_contract(
+                    entries,
                     targets=targets,
-                    seed=int(args.split_seed),
+                    require_near_uniform_arms=selection_mode == "balanced_arm_source",
                     allowed_signal_reliabilities=signal_policy,
-                )
-                selection_mode = "balanced_arm_source"
-            else:
-                entries = assign_source_splits_to_targets(
-                    runtime_eligible_entries,
-                    targets=targets,
                     seed=int(args.split_seed),
-                    arm_minimums=arm_minimums,
-                    allowed_signal_reliabilities=signal_policy,
                 )
-                selection_mode = "grouped_target"
+            except ValueError as exc:
+                write_json_report(
+                    compute_pg_replenishment_report(
+                        catalog.entries,
+                        targets=targets,
+                        allowed_signal_reliabilities=signal_policy["pg"],
+                        selection_error=str(exc),
+                    ),
+                    pg_replenishment_path,
+                    overwrite=True,
+                )
+                raise
         else:
             counts = _counts_from_args(args)
             requested_targets = counts
@@ -167,15 +196,18 @@ def main() -> int:
                 seed=int(args.split_seed),
             )
             selection_mode = "exact"
-        if args.auto_targets:
-            assert_runtime_split_contract(
-                entries,
-                targets=targets,
-                require_near_uniform_arms=selection_mode == "balanced_arm_source",
-                allowed_signal_reliabilities=signal_policy,
-                seed=int(args.split_seed),
-            )
         write_scenario_catalog(entries, output_path, overwrite=args.overwrite)
+
+    write_json_report(
+        compute_pg_replenishment_report(
+            catalog.entries,
+            targets=requested_targets,
+            allowed_signal_reliabilities=signal_policy["pg"],
+            selected_entries=entries,
+        ),
+        pg_replenishment_path,
+        overwrite=args.overwrite,
+    )
 
     split_counts = {
         split: {
@@ -332,6 +364,7 @@ def main() -> int:
     report = {
         "catalog": str(output_path),
         "split_manifest": str(manifest_path),
+        "pg_replenishment_report": str(pg_replenishment_path),
         "counts": split_counts,
         "split_seed": int(args.split_seed),
         "input_records": len(catalog.entries),
