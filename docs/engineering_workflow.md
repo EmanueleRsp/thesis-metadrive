@@ -38,6 +38,17 @@ Store the approved specification under `docs/specifications/` and register its
 exact path, version, approval evidence, related ADRs, and implementation status
 in `project_index.md`.
 
+An `UNDER_REVIEW` specification may instead be uploaded to `incoming/`. Codex
+must review it completely against the Definition of Ready, verify
+repository-dependent facts, report material gaps, and request explicit user
+approval. Upload does not imply approval and production implementation must not
+start from an `UNDER_REVIEW` document.
+
+After explicit approval, Codex updates status, authority, approval date and
+evidence; removes `_UNDER_REVIEW` from the canonical versioned filename; moves
+the document to `docs/specifications/`; updates `project_index.md`, supersession
+metadata, and affected links; and only then proceeds to implementation planning.
+
 ### 3. Analysis And Planning
 
 Before production changes, Codex reads the full specification and relevant ADRs,

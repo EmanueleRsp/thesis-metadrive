@@ -3,6 +3,10 @@
 > Delete instructional placeholders only after completing the section. Use
 > `Not applicable` when appropriate. Do not mark the specification approved while
 > a material decision remains open.
+>
+> A review candidate may use a filename ending in `_UNDER_REVIEW.md`. After
+> explicit user approval, set the approval metadata and rename the canonical file
+> without the `_UNDER_REVIEW` suffix before implementation begins.
 
 ## Metadata
 

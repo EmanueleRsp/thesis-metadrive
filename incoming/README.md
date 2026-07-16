@@ -20,5 +20,12 @@ An uploaded filename, date, or version does not establish authority. Codex shoul
 preserve the uploaded source until the destination and content have been
 verified, then remove the processed duplicate from this directory.
 
+For a specification named `*_UNDER_REVIEW.md`, Codex must read and review the
+complete document, report material gaps, and request explicit user approval. The
+upload itself is not approval. Production implementation must not start until the
+user approves the specification and Codex has updated its status and approval
+record, removed `_UNDER_REVIEW` from the canonical filename, moved it to
+`docs/specifications/`, and updated `docs/project_index.md`.
+
 Do not upload secrets, credentials, private keys, raw datasets, or experiment
 outputs here.

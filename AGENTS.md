@@ -36,6 +36,18 @@ formulas, semantics, values, defaults, dimensions, interfaces, experimental
 behavior, dataset policy, or acceptance criteria without approval. A filename or
 higher version number does not establish authority.
 
+An `UNDER_REVIEW` specification, including one uploaded to `incoming/`, is not an
+authoritative implementation contract. Read it completely, verify
+repository-dependent claims, review it against the Definition of Ready, report
+material gaps, and request explicit user approval. Do not begin production
+implementation while its status remains `UNDER_REVIEW`.
+
+After explicit approval, update the document to `APPROVED` and
+`Authoritative: YES`, record approval evidence and date, remove `_UNDER_REVIEW`
+from the canonical filename, move it to `docs/specifications/`, and update
+`docs/project_index.md` plus affected links before creating or resuming the
+implementation-authoritative ExecPlan.
+
 Approved specifications belong in `docs/specifications/`; consult
 `docs/project_index.md` to select the authoritative version. ExecPlans belong in
 `docs/implementation/` and do not override specifications. Protocols under

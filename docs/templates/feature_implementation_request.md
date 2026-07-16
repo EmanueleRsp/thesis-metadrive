@@ -1,17 +1,42 @@
 # Feature Implementation Request Template
 
-Replace every `<PLACEHOLDER>` before using this prompt.
+Replace every `<PLACEHOLDER>` before using this prompt. Use either the approved
+specification path or an `UNDER_REVIEW` document uploaded to `incoming/`.
 
 ```text
-The authoritative specification for this task is:
+The specification candidate or authoritative specification for this task is:
 
-`docs/specifications/<SPECIFICATION_FILE>.md`
+`<incoming/FEATURE_VERSION_UNDER_REVIEW.md | docs/specifications/SPECIFICATION_FILE.md>`
 
 The related ExecPlan must be created or resumed at:
 
 `docs/implementation/<FEATURE>_<VERSION>_exec_plan.md`
 
 Follow `AGENTS.md` and `.agent/PLANS.md` in full.
+
+If the document status is `UNDER_REVIEW`:
+
+1. read the complete document and review it against the Definition of Ready in
+   `docs/engineering_workflow.md`;
+2. verify repository-dependent facts directly from code, configuration, tests,
+   and current documentation;
+3. identify ambiguities, unresolved material decisions, incompatibilities,
+   untestable acceptance criteria, and silent scientific assumptions;
+4. report the findings in Italian and ask me explicitly whether I approve the
+   specification; do not infer approval from the upload or filename;
+5. do not create an implementation-authoritative ExecPlan or modify production
+   code before explicit approval;
+6. if material decisions remain open, resolve them with me before requesting
+   final approval.
+
+After I explicitly approve the specification:
+
+1. set its metadata to `Status: APPROVED` and `Authoritative: YES`;
+2. record the approval date and evidence in its approval record;
+3. rename it to the canonical versioned filename without `_UNDER_REVIEW`;
+4. move it from `incoming/` to `docs/specifications/`;
+5. update `docs/project_index.md`, supersession links, and related document paths;
+6. then continue with the implementation workflow below.
 
 Before modifying production code:
 

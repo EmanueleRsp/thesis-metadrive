@@ -65,6 +65,7 @@ its status and user approval are explicit.
 | Rulebook v2 | `specifications/rulebook_v4.6_specification.md` | `implementation/rulebook_v2_implementation_plan.md` | `IN_PROGRESS` | 2026-07-16 |
 | Rulebook v2 catalog filter parallelization | Rulebook v2 §15.11; ScenarioNet v1 §17/§24 | `implementation/rulebook_v2_catalog_filter_parallelization_exec_plan.md` | `IN_PROGRESS` | 2026-07-16 |
 | ScenarioNet catalog build parallelization | `specifications/scenarionet_integration_v1_specification.md` v1 | `implementation/scenarionet_catalog_build_parallelization_exec_plan.md` | `IMPLEMENTED` | 2026-07-16 |
+| ScenarioNet pipeline integrity and restructure v2 | `specifications/scenarionet_integration_v1_specification.md` v1 | `implementation/scenarionet_pipeline_restructure_v2_exec_plan.md` | `AWAITING_DECISIONS` | 2026-07-16 |
 | Semantic observation | `MISSING` | `MISSING` | Implementation exists; specification reconciliation unavailable | Not established |
 | Scenario ACL | `specifications/automatic_curriculum_learning_v1_specification.md` | `implementation/scenario_acl_implementation_plan.md` | Internal stages v1/v2 reported complete; later stages incomplete/deferred | Date not declared in metadata |
 | ScenarioNet integration | `specifications/scenarionet_integration_v1_specification.md` | `implementation/scenarionet_integration_implementation_plan.md` | `IMPLEMENTED`, not `VERIFIED` | 2026-07-15 |
