@@ -248,7 +248,7 @@ def assign_arm_balanced_splits_to_targets(
         if entry.features.signal_reliability in normalized_signal_policy[entry.record.source]
     )
     split_totals = _split_totals(targets)
-    split_arm_targets = _split_arm_targets(split_totals)
+    split_arm_targets = _split_arm_targets(split_totals, seed=seed)
     available_source_arm = _available_source_arm_counts(entries)
     split_source_arm_targets = _split_source_arm_targets(
         split_arm_targets,
@@ -267,15 +267,30 @@ def assign_arm_balanced_splits_to_targets(
     rng.shuffle(remaining)
     assignments: dict[str, str] = {}
     current_split = {split: 0 for split in SPLITS}
+    current_source_split = {split: {source: 0 for source in SOURCES} for split in SPLITS}
     current_arm = {split: {arm: 0 for arm in ARMS} for split in SPLITS}
     current_source_arm = {
         split: {source: {arm: 0 for arm in ARMS} for source in SOURCES} for split in SPLITS
     }
 
-    for split in sorted(SPLITS, key=lambda name: split_totals[name]):
+    for split in SPLITS:
         while remaining and current_split[split] < split_totals[split]:
             capacity = split_totals[split] - current_split[split]
-            fitting = [group for group in remaining if len(grouped[group]) <= capacity]
+            fitting = [
+                group
+                for group in remaining
+                if len(grouped[group]) <= capacity
+                and all(
+                    sum(group_counts[group][source][arm] for arm in ARMS)
+                    <= int(targets[source][split]) - current_source_split[split][source]
+                    for source in SOURCES
+                )
+                and all(
+                    sum(group_counts[group][source][arm] for source in SOURCES)
+                    <= split_arm_targets[split][arm] - current_arm[split][arm]
+                    for arm in ARMS
+                )
+            ]
             if not fitting:
                 break
             selected = max(
@@ -294,6 +309,9 @@ def assign_arm_balanced_splits_to_targets(
             assignments[selected] = split
             current_split[split] += len(grouped[selected])
             for source in SOURCES:
+                current_source_split[split][source] += sum(
+                    group_counts[selected][source][arm] for arm in ARMS
+                )
                 for arm in ARMS:
                     count = group_counts[selected][source][arm]
                     current_arm[split][arm] += count
@@ -326,6 +344,88 @@ def assign_arm_balanced_splits_to_targets(
     return result
 
 
+def assert_runtime_split_contract(
+    entries: Sequence[ScenarioCatalogEntry],
+    *,
+    targets: Mapping[str, Mapping[str, int]],
+    require_near_uniform_arms: bool,
+    allowed_signal_reliabilities: Mapping[str, Sequence[str]] | None = None,
+    seed: int = 0,
+) -> None:
+    """Validate the non-relaxable v1.1 runtime split constraints.
+
+    Selection code may use a greedy heuristic because groups must remain
+    indivisible.  That heuristic is never allowed to turn an infeasible pool
+    into a silently smaller or scientifically different dataset: the caller
+    must validate this contract before freezing a catalog or manifest.
+    """
+
+    if set(targets) != set(SOURCES):
+        raise ValueError(f"targets must define exactly {SOURCES}")
+    signal_policy = _normalize_signal_policy(allowed_signal_reliabilities)
+
+    invalid_records = [
+        entry.record.scenario_uid
+        for entry in entries
+        if entry.record.validation_status not in {"valid", "warning"}
+    ]
+    if invalid_records:
+        raise ValueError(
+            "runtime splits include records outside valid/warning status: "
+            f"{sorted(invalid_records)[:5]}"
+        )
+    non_rulebook_records = [
+        entry.record.scenario_uid for entry in entries if entry.record.rulebook_eligible is not True
+    ]
+    if non_rulebook_records:
+        raise ValueError(
+            "runtime splits require rulebook_eligible=True; offending records: "
+            f"{sorted(non_rulebook_records)[:5]}"
+        )
+    disallowed_signal_records = [
+        entry.record.scenario_uid
+        for entry in entries
+        if entry.features.signal_reliability not in signal_policy[entry.record.source]
+    ]
+    if disallowed_signal_records:
+        raise ValueError(
+            "runtime splits include records with disallowed signal reliability: "
+            f"{sorted(disallowed_signal_records)[:5]}"
+        )
+
+    for source in SOURCES:
+        if set(targets[source]) != set(SPLITS):
+            raise ValueError(f"{source} targets must define exactly {SPLITS}")
+        for split in SPLITS:
+            target = int(targets[source][split])
+            if target < 0:
+                raise ValueError("split targets must be non-negative")
+            actual = sum(
+                entry.record.source == source and entry.record.split == split for entry in entries
+            )
+            if actual != target:
+                raise ValueError(
+                    f"runtime split target mismatch for {source}/{split}: "
+                    f"requested {target}, selected {actual}"
+                )
+
+    if not require_near_uniform_arms:
+        return
+    expected_arm_counts = _split_arm_targets(_split_totals(targets), seed=seed)
+    for split in SPLITS:
+        arm_counts = {
+            arm: sum(
+                entry.record.split == split and entry.record.primary_arm == arm for entry in entries
+            )
+            for arm in ARMS
+        }
+        if arm_counts != expected_arm_counts[split]:
+            raise ValueError(
+                f"runtime split {split} does not match seed-derived near-uniform arm targets: "
+                f"expected {expected_arm_counts[split]}, selected {arm_counts}"
+            )
+
+
 def _split_totals(
     targets: Mapping[str, Mapping[str, int]],
 ) -> dict[str, int]:
@@ -335,14 +435,16 @@ def _split_totals(
     return result
 
 
-def _split_arm_targets(split_totals: Mapping[str, int]) -> dict[str, dict[str, int]]:
+def _split_arm_targets(
+    split_totals: Mapping[str, int], *, seed: int = 0
+) -> dict[str, dict[str, int]]:
     result: dict[str, dict[str, int]] = {}
-    for split in SPLITS:
+    for split_index, split in enumerate(SPLITS):
         total = int(split_totals[split])
         base, remainder = divmod(total, len(ARMS))
-        result[split] = {
-            arm: base + (1 if index < remainder else 0) for index, arm in enumerate(ARMS)
-        }
+        ordered_arms = list(ARMS)
+        np.random.default_rng([int(seed), split_index]).shuffle(ordered_arms)
+        result[split] = {arm: base + (1 if arm in ordered_arms[:remainder] else 0) for arm in ARMS}
     return result
 
 
@@ -547,9 +649,10 @@ def arm_source_balance_diagnostics(
     targets: Mapping[str, Mapping[str, int]],
     *,
     available_entries: Sequence[ScenarioCatalogEntry] | None = None,
+    seed: int = 0,
 ) -> dict[str, dict[str, Any]]:
     split_totals = _split_totals(targets)
-    split_arm_targets = _split_arm_targets(split_totals)
+    split_arm_targets = _split_arm_targets(split_totals, seed=seed)
     available_source_arm = (
         _available_source_arm_counts(available_entries)
         if available_entries is not None
@@ -710,6 +813,7 @@ __all__ = [
     "assign_source_splits",
     "assign_source_splits_to_targets",
     "assign_arm_balanced_splits_to_targets",
+    "assert_runtime_split_contract",
     "arm_source_balance_diagnostics",
     "balance_arm_distribution",
     "classify_entries",

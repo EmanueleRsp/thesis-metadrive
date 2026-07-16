@@ -68,7 +68,7 @@ catalog_split="${SCENARIONET_SPLIT_CATALOG_PATH:-${data_root}/catalog/scenario_c
 catalog_final="${SCENARIONET_FINAL_CATALOG_PATH:-${data_root}/catalog/scenario_catalog.parquet}"
 rulebook_eligibility="${SCENARIONET_RULEBOOK_V2_ELIGIBILITY_PATH:-${data_root}/rulebook_v2/catalog_eligibility.json}"
 groups_path="${SCENARIONET_GROUPS_PATH:-${data_root}/splits/scenario_groups.json}"
-split_manifest="${SCENARIONET_SPLIT_MANIFEST_PATH:-${data_root}/splits/split_manifest.json}"
+split_manifest="${SCENARIONET_SPLIT_MANIFEST_PATH:-${data_root}/splits/split_manifest.yaml}"
 thresholds_path="${SCENARIONET_THRESHOLDS_PATH:-${data_root}/splits/arm_thresholds.json}"
 pg_count="${SCENARIONET_PG_COUNT:?pipeline YAML must define pg.count_per_profile}"
 pg_seed_start="${SCENARIONET_PG_SEED_START:?pipeline YAML must define pg.seed_start}"
@@ -87,22 +87,18 @@ pg_validation_target="${SCENARIONET_PG_VALIDATION_TARGET:?pipeline YAML must def
 pg_test_target="${SCENARIONET_PG_TEST_TARGET:?pipeline YAML must define pg test target}"
 check_workers="${SCENARIONET_CHECK_WORKERS:?pipeline YAML must define checks.workers}"
 run_simulation_check="${SCENARIONET_RUN_SIMULATION_CHECK:?pipeline YAML must define checks.simulation}"
-balance_enabled="${SCENARIONET_BALANCE_ENABLED:?pipeline YAML must define balance.enabled}"
-balance_target_total="${SCENARIONET_BALANCE_TARGET_TOTAL:?pipeline YAML must define balance.target_total}"
-balance_prefer_source="${SCENARIONET_BALANCE_PREFER_SOURCE:?pipeline YAML must define balance.prefer_source}"
-waymo_required_a4_vru="${SCENARIONET_WAYMO_REQUIRED_A4_VRU:?pipeline YAML must define balance.waymo_required_arms.A4_vru}"
 waymo_auto_expand="${SCENARIONET_WAYMO_AUTO_EXPAND:?pipeline YAML must define waymo.auto_expand}"
 waymo_batch_shards="${SCENARIONET_WAYMO_BATCH_SHARDS:?pipeline YAML must define waymo.batch_shards}"
 waymo_max_new_shards="${SCENARIONET_WAYMO_MAX_NEW_SHARDS:?pipeline YAML must define waymo.max_new_shards}"
 waymo_workers="${SCENARIONET_WAYMO_WORKERS:?pipeline YAML must define waymo.workers}"
 waymo_keep_raw_batches="${SCENARIONET_WAYMO_KEEP_RAW_BATCHES:?pipeline YAML must define waymo.keep_raw_batches}"
+waymo_required_a4_vru="${SCENARIONET_WAYMO_REQUIRED_A4_VRU:?pipeline YAML must define waymo.required_arms.A4_vru}"
 
 echo "Resolved pipeline parameters:"
 echo "  PG: ${pg_count} scenarios/profile, seed=${pg_seed_start}"
 echo "  PG workers: ${pg_workers}"
 echo "  Waymo targets: train=${waymo_train_target}, validation=${waymo_validation_target}, test=${waymo_test_target}"
 echo "  PG targets: train=${pg_train_target}, validation=${pg_validation_target}, test=${pg_test_target}"
-echo "  Arm balance: enabled=${balance_enabled}, target_total=${balance_target_total}, prefer=${balance_prefer_source}"
 echo "  Waymo required A4_vru: ${waymo_required_a4_vru}"
 echo "  Split mode: auto=${auto_split}, seed=${split_seed}"
 echo "  Rulebook v2 eligibility before split: ${rulebook_v2_enabled}"
@@ -112,7 +108,7 @@ echo "  Official simulation check: ${run_simulation_check} (workers=${check_work
 if ! is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
   if is_true "$waymo_auto_expand"; then
   stage "[1/9] Expanding the eligible Waymo pool to its configured target"
-    WAYMO_REQUIRED_ELIGIBLE="$((waymo_train_target + waymo_validation_target + waymo_test_target))" \
+      WAYMO_REQUIRED_ELIGIBLE="$((waymo_train_target + waymo_validation_target + waymo_test_target))" \
       WAYMO_REQUIRED_ARM_A4_VRU="$waymo_required_a4_vru" \
       WAYMO_BATCH_SHARDS="$waymo_batch_shards" \
       WAYMO_MAX_NEW_SHARDS="$waymo_max_new_shards" \
@@ -187,6 +183,9 @@ split_args=(
   --groups "$groups_path"
   --split-manifest "$split_manifest"
   --split-seed "$split_seed"
+  --waymo-ordering-seed "$split_seed"
+  --waymo-batch-shards "$waymo_batch_shards"
+  --waymo-max-new-shards "$waymo_max_new_shards"
   --arm-minimums-config "$pipeline_config"
 )
 if is_true "$auto_split"; then
@@ -221,21 +220,7 @@ docker compose run --rm "$pipeline_service" uv run --no-sync python \
   --balance-seed "$split_seed" \
   "${catalog_overwrite[@]}"
 
-if is_true "$balance_enabled"; then
-  stage "[7/9] Balancing the classified catalog across semantic arms"
-  docker compose run --rm "$pipeline_service" uv run --no-sync python \
-    -m thesis_rl.cli.scenarios.balance_arm_distribution \
-    --catalog "$catalog_final" \
-    --output-catalog "$catalog_final" \
-    --thresholds "$thresholds_path" \
-    --target-total "$balance_target_total" \
-    --seed "$split_seed" \
-    --prefer-source "$balance_prefer_source" \
-    --report "${data_root}/catalog/arm_report.json" \
-    "${catalog_overwrite[@]}"
-else
-  stage "[7/9] Arm balancing skipped: balance.enabled=false"
-fi
+stage "[7/9] Split arm balance already frozen by balanced_arm_source"
 
 stage "[8/9] Building train/validation/test runtime views"
 docker compose run --rm "$pipeline_service" uv run --no-sync python \

@@ -7,6 +7,10 @@ waymo:
   max_new_shards: 128
   workers: 16
   keep_raw_batches: false
+  required_arms:
+    # A4_vru is structurally Waymo-only. This is an acquisition feasibility
+    # lower bound, not a post-selection balancing rule.
+    A4_vru: 584
 
 pg:
   count_per_profile: 350
@@ -26,51 +30,6 @@ split:
   allowed_signal_reliabilities:
     waymo: [complete, not_applicable]
     pg: [complete, not_applicable]
-  # Curriculum-v2 minimum coverage. Groups remain indivisible and deficits are
-  # reported. Waymo A0 is too rare after quality filters to enforce as a
-  # minimum; keep PG A0 coverage as the simple-scenario anchor.
-  arm_minimums:
-    waymo:
-      train:
-        A0_simple_low_traffic: 0
-        A1_traffic: 10
-        A2_junction: 50
-        A3_complex_junction: 160
-        A4_vru: 80
-        A5_critical_mixed: 100
-      validation:
-        A0_simple_low_traffic: 0
-        A1_traffic: 3
-        A2_junction: 15
-        A3_complex_junction: 40
-        A4_vru: 20
-        A5_critical_mixed: 25
-      test:
-        A0_simple_low_traffic: 0
-        A1_traffic: 5
-        A2_junction: 25
-        A3_complex_junction: 80
-        A4_vru: 40
-        A5_critical_mixed: 50
-    pg:
-      train:
-        A0_simple_low_traffic: 300
-        A1_traffic: 250
-        A2_junction: 100
-        A3_complex_junction: 20
-        A5_critical_mixed: 30
-      validation:
-        A0_simple_low_traffic: 75
-        A1_traffic: 60
-        A2_junction: 25
-        A3_complex_junction: 5
-        A5_critical_mixed: 8
-      test:
-        A0_simple_low_traffic: 150
-        A1_traffic: 125
-        A2_junction: 50
-        A3_complex_junction: 10
-        A5_critical_mixed: 15
   targets:
     waymo:
       train: 1000
@@ -80,13 +39,6 @@ split:
       train: 1000
       validation: 250
       test: 500
-
-balance:
-  enabled: false
-  target_total: 3500
-  prefer_source: waymo
-  waymo_required_arms:
-    A4_vru: 584
 
 checks:
   simulation: true

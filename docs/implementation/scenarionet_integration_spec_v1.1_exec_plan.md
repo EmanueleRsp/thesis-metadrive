@@ -159,8 +159,8 @@ external credentials and must not overwrite frozen data.
 
 ## 10. Milestones
 
-- [ ] M1 — In progress. Reconcile record/manifest/report eligibility schema and audit population accounting. Depends on `DEC-SN-001`–`005`; validates `TEST-SN-001`–`006`.
-- [ ] M2 — Implement strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. Validates `TEST-SN-002`–`008`.
+- [x] M1 — Completed. Reconciled record/manifest/report eligibility schema and audit population accounting, including record-level Rulebook provenance, strict pre-freeze split validation, and canonical YAML manifests. Depends on `DEC-SN-001`–`005`; validates the available portions of `TEST-SN-001`–`006`.
+- [ ] M2 — In progress. Implement strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. The selector now enforces per-split source and arm capacity while selecting; a constructive feasibility solver and complete acquisition/PG reports remain. Validates `TEST-SN-002`–`008`.
 - [ ] M3 — Reconcile runtime views, providers, ACL six-arm interface, and environment/logging behavior. Validates `TEST-SN-009`–`014`.
 - [ ] M4 — Run fixture pipeline, vectorized smoke, documentation reconciliation, and final artifact audit. Validates `TEST-SN-015` and mandatory checks.
 
@@ -180,14 +180,38 @@ external credentials and must not overwrite frozen data.
   eligibility selection and manifest work is pending.
 - The Rulebook filter CLI now persists eligibility on selected catalog records;
   split eligibility rejects every explicitly Rulebook-ineligible record.
+- `balanced_arm_source` now derives remainder arms deterministically from the
+  split seed. Before writing a catalog or manifest, the CLI rejects any
+  selected runtime population that does not have exact source totals, the
+  seed-derived near-uniform arm totals, accepted signal reliability, valid or
+  warning validation status, and `rulebook_eligible=true`.
+- The split manifest is now canonical YAML and records requested source
+  targets plus the v1.1 balancing contract. The preparation script uses the
+  same path and no longer applies the obsolete post-split arm-trimming stage.
+- The pipeline configuration no longer contains historical per-source arm
+  minima. Its Waymo-only A4 acquisition lower bound remains explicit under
+  `waymo.required_arms`, separate from final split selection.
+- The split CLI now derives candidate, valid/warning, Rulebook-eligible,
+  runtime-eligible, and selected population counts from the audit catalog and
+  writes them to both the manifest and report. It feeds only the strict
+  runtime-eligible population to selectors.
+- The arm selector now treats both the per-split source capacity and
+  seed-derived per-arm capacity as non-relaxable during candidate selection.
+  The accompanying regression covers unequal per-source split targets on a
+  feasible singleton-group pool.
+- The canonical split manifest now also records the approved Waymo acquisition
+  ordering seed, batch size, and cap. The shell pipeline passes these values
+  from the sole YAML policy source into the split CLI.
 - `docker compose run --rm dev uv run --no-sync python -m pytest -q
   tests/test_scenario_records.py tests/test_scenario_catalog.py` passed: 12
   tests.
 - Direct Ruff format and lint checks passed after the image-level `make` target
   proved unavailable.
 
-Next step: implement M1 acceptance tests and the minimal catalog eligibility
-schema reconciliation.
+Next step: complete M2's constructive grouped selection and feasibility/report
+accounting. The current strict validation prevents an infeasible greedy result
+from being frozen, but it is not a replacement for a solver that reaches every
+feasible v1.1 target.
 
 ## 12. Deviations
 
@@ -219,6 +243,12 @@ No deviations identified.
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenario_records.py tests/test_scenario_catalog.py` | PASS | 2026-07-16 | 12 passed; validates Rulebook eligibility serialization regression and catalog compatibility |
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_catalog_eligibility.py tests/test_scenarionet_pipeline.py tests/test_scenario_records.py tests/test_scenario_catalog.py` | PASS | 2026-07-16 | 29 passed after filter and pipeline eligibility integration |
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 149 passed in 24.75 s; applicable ScenarioNet regression suite |
+| `docker compose run --rm dev uv run --no-sync ruff format ... && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py tests/test_scenario_manifests.py tests/test_scenario_records.py tests/test_rulebook_v2_catalog_eligibility.py tests/test_waymo_pool.py` | PASS | 2026-07-16 | 41 passed; verifies strict Rulebook/signal/source/arm freeze contract, v1.1 manifest schema, and Waymo pool policy |
+| `docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.scenarios.pipeline_config --config conf/scenarios/pipeline_v1.yaml` | PASS | 2026-07-16 | Resolved approved batch 16, cap 128, exact source targets, and Waymo A4 feasibility lower bound |
+| `bash -n scripts/prepare_scenarionet_dataset.sh` | PASS | 2026-07-16 | Shell syntax valid after canonical YAML manifest and removal of post-split trimming |
+| `git diff --check` | PASS | 2026-07-16 | No whitespace errors after the M1 changes |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 154 passed in 25.27 s after M1 completion and source-capacity selector changes |
+| `docker compose run --rm dev uv run --no-sync ruff format ... && ruff check ... && python -m pytest -q tests/test_scenario_manifests.py tests/test_scenarionet_pipeline.py` | PASS | 2026-07-16 | 20 passed; validates the canonical manifest acquisition fields and selector regression |
 | Focused pytest command | NOT_RUN | 2026-07-16 | Host environment lacks `uv` and `python`; run in provisioned container |
 | Full real-data acquisition | NOT_RUN | 2026-07-16 | Requires credentials and can mutate dataset artifacts |
 

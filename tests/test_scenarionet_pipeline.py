@@ -12,6 +12,7 @@ from thesis_rl.scenarios.pipeline import (
     assign_source_splits_to_targets,
     arm_source_balance_diagnostics,
     arm_selection_diagnostics,
+    assert_runtime_split_contract,
     balance_arm_distribution,
     group_id_for_entry,
 )
@@ -290,6 +291,137 @@ def test_arm_balanced_split_targets_split_arm_and_source_halves() -> None:
         assert payload["actual"] == 2
         assert payload["sources"]["waymo"]["actual"] == 1
         assert payload["sources"]["pg"]["actual"] == 1
+
+
+def test_runtime_split_contract_requires_exact_targets_uniform_arms_and_rulebook() -> None:
+    entries = []
+    index = 0
+    for arm in (
+        "A0_simple_low_traffic",
+        "A1_traffic",
+        "A2_junction",
+        "A3_complex_junction",
+        "A4_vru",
+        "A5_critical_mixed",
+    ):
+        for source in ("waymo", "pg"):
+            base = _entry(source, index)
+            entries.append(
+                ScenarioCatalogEntry(
+                    replace(
+                        base.record,
+                        primary_arm=arm,
+                        rulebook_eligible=True,
+                    ),
+                    base.features,
+                )
+            )
+            index += 1
+
+    selected = assign_arm_balanced_splits_to_targets(
+        tuple(entries),
+        targets={
+            "waymo": {"train": 6, "validation": 0, "test": 0},
+            "pg": {"train": 6, "validation": 0, "test": 0},
+        },
+        seed=0,
+    )
+
+    assert_runtime_split_contract(
+        selected,
+        targets={
+            "waymo": {"train": 6, "validation": 0, "test": 0},
+            "pg": {"train": 6, "validation": 0, "test": 0},
+        },
+        require_near_uniform_arms=True,
+    )
+
+    with pytest.raises(ValueError, match="rulebook_eligible=True"):
+        assert_runtime_split_contract(
+            (replace(selected[0], record=replace(selected[0].record, rulebook_eligible=None)),),
+            targets={
+                "waymo": {"train": 1, "validation": 0, "test": 0},
+                "pg": {"train": 0, "validation": 0, "test": 0},
+            },
+            require_near_uniform_arms=False,
+        )
+
+
+def test_runtime_split_contract_rejects_arm_imbalance() -> None:
+    entries = tuple(
+        ScenarioCatalogEntry(
+            replace(_entry("waymo", index).record, rulebook_eligible=True),
+            _entry("waymo", index).features,
+        )
+        for index in range(6)
+    )
+
+    with pytest.raises(ValueError, match="seed-derived near-uniform"):
+        assert_runtime_split_contract(
+            entries,
+            targets={
+                "waymo": {"train": 6, "validation": 0, "test": 0},
+                "pg": {"train": 0, "validation": 0, "test": 0},
+            },
+            require_near_uniform_arms=True,
+        )
+
+
+def test_runtime_split_contract_rejects_disallowed_signal_reliability() -> None:
+    entry = _entry("waymo", 0)
+    selected = (
+        ScenarioCatalogEntry(
+            replace(entry.record, rulebook_eligible=True, signal_reliability="partial"),
+            replace(entry.features, signal_reliability="partial"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="disallowed signal reliability"):
+        assert_runtime_split_contract(
+            selected,
+            targets={
+                "waymo": {"train": 1, "validation": 0, "test": 0},
+                "pg": {"train": 0, "validation": 0, "test": 0},
+            },
+            require_near_uniform_arms=False,
+            allowed_signal_reliabilities={"waymo": ("complete",)},
+        )
+
+
+def test_arm_balanced_selector_preserves_exact_source_targets_per_split() -> None:
+    entries = []
+    index = 0
+    for source in ("waymo", "pg"):
+        for arm in (
+            "A0_simple_low_traffic",
+            "A1_traffic",
+            "A2_junction",
+            "A3_complex_junction",
+            "A4_vru",
+            "A5_critical_mixed",
+        ):
+            for _ in range(3):
+                base = _entry(source, index)
+                entries.append(
+                    ScenarioCatalogEntry(
+                        replace(base.record, primary_arm=arm, rulebook_eligible=True),
+                        base.features,
+                    )
+                )
+                index += 1
+    targets = {
+        "waymo": {"train": 4, "validation": 1, "test": 1},
+        "pg": {"train": 2, "validation": 2, "test": 2},
+    }
+
+    selected = assign_arm_balanced_splits_to_targets(tuple(entries), targets=targets, seed=3)
+
+    assert_runtime_split_contract(
+        selected,
+        targets=targets,
+        require_near_uniform_arms=True,
+        seed=3,
+    )
 
 
 def test_arm_balanced_split_falls_back_to_available_source() -> None:

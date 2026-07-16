@@ -19,7 +19,7 @@ from thesis_rl.scenarios.pipeline import (
     assign_source_splits_to_targets,
     arm_source_balance_diagnostics,
     arm_selection_diagnostics,
-    eligible_entries,
+    assert_runtime_split_contract,
 )
 from thesis_rl.scenarios.reports import write_json_report
 from thesis_rl.scenarios.records import SIGNAL_RELIABILITIES
@@ -72,8 +72,13 @@ def main() -> int:
     parser.add_argument("--catalog", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--split-manifest")
-    parser.add_argument("--groups", help="Accepted for compatibility; groups are derived from records.")
+    parser.add_argument(
+        "--groups", help="Accepted for compatibility; groups are derived from records."
+    )
     parser.add_argument("--split-seed", type=int, default=0)
+    parser.add_argument("--waymo-ordering-seed", type=int)
+    parser.add_argument("--waymo-batch-shards", type=int, default=16)
+    parser.add_argument("--waymo-max-new-shards", type=int, default=128)
     parser.add_argument(
         "--arm-minimums-config",
         help="Pipeline YAML containing optional split.arm_minimums.",
@@ -93,17 +98,33 @@ def main() -> int:
     )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
+    if args.waymo_batch_shards < 1:
+        parser.error("--waymo-batch-shards must be positive")
+    if args.waymo_max_new_shards < 1:
+        parser.error("--waymo-max-new-shards must be positive")
 
     catalog_path = Path(args.catalog).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve()
-    manifest_path = Path(
-        args.split_manifest
-        or output_path.parent.parent / "splits" / "split_manifest.json"
-    ).expanduser().resolve()
+    manifest_path = (
+        Path(args.split_manifest or output_path.parent.parent / "splits" / "split_manifest.yaml")
+        .expanduser()
+        .resolve()
+    )
     with console.status("Reading catalog and assigning leakage-free splits", spinner="dots"):
         catalog = read_scenario_catalog(catalog_path)
-        arm_minimums, signal_policy, split_selection = _read_split_policy(
-            args.arm_minimums_config
+        arm_minimums, signal_policy, split_selection = _read_split_policy(args.arm_minimums_config)
+        valid_or_warning_entries = tuple(
+            entry
+            for entry in catalog.entries
+            if entry.record.validation_status in {"valid", "warning"}
+        )
+        rulebook_eligible_entries = tuple(
+            entry for entry in valid_or_warning_entries if entry.record.rulebook_eligible is True
+        )
+        runtime_eligible_entries = tuple(
+            entry
+            for entry in rulebook_eligible_entries
+            if entry.features.signal_reliability in signal_policy[entry.record.source]
         )
         if args.auto_targets:
             targets = {
@@ -119,9 +140,10 @@ def main() -> int:
             }
             if not any(value > 0 for source in targets.values() for value in source.values()):
                 raise ValueError("auto-targets requires at least one positive split target")
+            requested_targets = targets
             if split_selection == "balanced_arm_source":
                 entries = assign_arm_balanced_splits_to_targets(
-                    catalog.entries,
+                    runtime_eligible_entries,
                     targets=targets,
                     seed=int(args.split_seed),
                     allowed_signal_reliabilities=signal_policy,
@@ -129,7 +151,7 @@ def main() -> int:
                 selection_mode = "balanced_arm_source"
             else:
                 entries = assign_source_splits_to_targets(
-                    catalog.entries,
+                    runtime_eligible_entries,
                     targets=targets,
                     seed=int(args.split_seed),
                     arm_minimums=arm_minimums,
@@ -138,35 +160,46 @@ def main() -> int:
                 selection_mode = "grouped_target"
         else:
             counts = _counts_from_args(args)
+            requested_targets = counts
             entries = assign_source_splits(
-                catalog.entries,
+                runtime_eligible_entries,
                 counts=counts,
                 seed=int(args.split_seed),
             )
             selection_mode = "exact"
+        if args.auto_targets:
+            assert_runtime_split_contract(
+                entries,
+                targets=targets,
+                require_near_uniform_arms=selection_mode == "balanced_arm_source",
+                allowed_signal_reliabilities=signal_policy,
+                seed=int(args.split_seed),
+            )
         write_scenario_catalog(entries, output_path, overwrite=args.overwrite)
 
     split_counts = {
         split: {
             source: sum(
-                entry.record.split == split and entry.record.source == source
-                for entry in entries
+                entry.record.split == split and entry.record.source == source for entry in entries
             )
             for source in SOURCES
         }
         for split in SPLITS
+    }
+    population_counts = {
+        "candidate_records": len(catalog.entries),
+        "valid_or_warning_records": len(valid_or_warning_entries),
+        "rulebook_eligible_records": len(rulebook_eligible_entries),
+        "runtime_eligible_records": len(runtime_eligible_entries),
+        "selected_records": len(entries),
     }
     arm_diagnostics = arm_selection_diagnostics(entries, arm_minimums)
     balance_diagnostics = (
         arm_source_balance_diagnostics(
             entries,
             targets,
-            available_entries=tuple(
-                entry
-                for entry in eligible_entries(catalog.entries)
-                if entry.features.signal_reliability
-                in set(signal_policy.get(entry.record.source, SIGNAL_RELIABILITIES))
-            ),
+            available_entries=runtime_eligible_entries,
+            seed=int(args.split_seed),
         )
         if args.auto_targets
         else {}
@@ -207,11 +240,38 @@ def main() -> int:
                 "waymo": "source_log_id_or_scenario_uid",
                 "pg": "pg_seed",
             },
+            "split_policy": selection_mode,
+            "targets": requested_targets,
+            "balancing": {
+                "arm_targets": "near_uniform"
+                if selection_mode == "balanced_arm_source"
+                else "not_requested",
+                "max_arm_count_difference": 1 if selection_mode == "balanced_arm_source" else None,
+                "source_target_within_arm": "best_effort_50_50"
+                if selection_mode == "balanced_arm_source"
+                else "not_requested",
+                "preserve_exact_source_totals": bool(args.auto_targets),
+                "structural_empty_cells": {"A4_vru": {"pg": True}},
+                "allow_cross_source_fill_within_same_arm": True,
+                "allow_relabeling": False,
+                "allow_duplicate_records": False,
+                "allow_quality_filter_relaxation": False,
+            },
+            "waymo_acquisition": {
+                "ordering_seed": int(
+                    args.split_seed
+                    if args.waymo_ordering_seed is None
+                    else args.waymo_ordering_seed
+                ),
+                "batch_size_shards": int(args.waymo_batch_shards),
+                "max_new_shards": int(args.waymo_max_new_shards),
+            },
             "selection": {
                 "mode": selection_mode,
                 "input_records": len(catalog.entries),
                 "selected_records": len(entries),
                 "excluded_records": len(catalog.entries) - len(entries),
+                "population_counts": population_counts,
                 "arm_minimums": arm_minimums,
                 "arm_diagnostics": arm_diagnostics,
                 "arm_source_balance_diagnostics": balance_diagnostics,
@@ -229,7 +289,10 @@ def main() -> int:
     if manifest_path.exists() and not args.overwrite:
         raise FileExistsError(f"refusing to overwrite split manifest: {manifest_path}")
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path.write_text(
+        yaml.safe_dump(manifest, sort_keys=True),
+        encoding="utf-8",
+    )
     report = {
         "catalog": str(output_path),
         "split_manifest": str(manifest_path),
@@ -238,6 +301,7 @@ def main() -> int:
         "input_records": len(catalog.entries),
         "selected_records": len(entries),
         "excluded_records": len(catalog.entries) - len(entries),
+        "population_counts": population_counts,
         "arm_diagnostics": arm_diagnostics,
         "arm_source_balance_diagnostics": balance_diagnostics,
         "legacy_total_arm_deficit": legacy_total_arm_deficit,

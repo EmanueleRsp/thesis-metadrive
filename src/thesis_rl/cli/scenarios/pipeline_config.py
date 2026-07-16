@@ -20,6 +20,7 @@ _CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "SCENARIONET_WAYMO_MAX_NEW_SHARDS": ("waymo", "max_new_shards"),
     "SCENARIONET_WAYMO_WORKERS": ("waymo", "workers"),
     "SCENARIONET_WAYMO_KEEP_RAW_BATCHES": ("waymo", "keep_raw_batches"),
+    "SCENARIONET_WAYMO_REQUIRED_A4_VRU": ("waymo", "required_arms", "A4_vru"),
     "SCENARIONET_PG_COUNT": ("pg", "count_per_profile"),
     "SCENARIONET_PG_SEED_START": ("pg", "seed_start"),
     "SCENARIONET_PG_WORKERS": ("pg", "workers"),
@@ -33,10 +34,6 @@ _CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "SCENARIONET_PG_TRAIN_TARGET": ("split", "targets", "pg", "train"),
     "SCENARIONET_PG_VALIDATION_TARGET": ("split", "targets", "pg", "validation"),
     "SCENARIONET_PG_TEST_TARGET": ("split", "targets", "pg", "test"),
-    "SCENARIONET_BALANCE_ENABLED": ("balance", "enabled"),
-    "SCENARIONET_BALANCE_TARGET_TOTAL": ("balance", "target_total"),
-    "SCENARIONET_BALANCE_PREFER_SOURCE": ("balance", "prefer_source"),
-    "SCENARIONET_WAYMO_REQUIRED_A4_VRU": ("balance", "waymo_required_arms", "A4_vru"),
     "SCENARIONET_RUN_SIMULATION_CHECK": ("checks", "simulation"),
     "SCENARIONET_CHECK_WORKERS": ("checks", "workers"),
 }

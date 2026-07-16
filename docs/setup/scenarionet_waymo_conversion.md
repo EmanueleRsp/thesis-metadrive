@@ -334,11 +334,11 @@ split:
     pg: {train: 1000, validation: 250, test: 500}
 ```
 
-With `split.auto: true`, Waymo groups may produce counts slightly different
-from the targets; the reduction is explicit in `split_manifest.json`. With
-`false`, the pipeline fails when groups make the counts incompatible. Catalog,
-manifest, threshold, and runtime paths can be customized through their
-dedicated path variables; defaults are under
+With `split.auto: true`, the v1.1 balanced selection fails before freezing
+artifacts when indivisible groups cannot meet exact targets. The requested and
+selected counts are recorded in `split_manifest.yaml`. Catalog, manifest,
+threshold, and runtime paths can be customized through their dedicated path
+variables; defaults are under
 `${SCENARIONET_DATA_ROOT}`.
 
 In caso di errore TensorFlow/protobuf, conservare l'output del container nel

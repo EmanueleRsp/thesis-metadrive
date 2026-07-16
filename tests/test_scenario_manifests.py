@@ -42,8 +42,29 @@ def _dataset_manifest() -> dict[str, object]:
 def _split_manifest() -> dict[str, object]:
     return {
         "split_seed": 0,
+        "split_policy": "balanced_arm_source",
         "source_policy": {},
         "grouping": {},
+        "targets": {
+            "waymo": {"train": 1000, "validation": 250, "test": 500},
+            "pg": {"train": 1000, "validation": 250, "test": 500},
+        },
+        "balancing": {
+            "arm_targets": "near_uniform",
+            "max_arm_count_difference": 1,
+            "source_target_within_arm": "best_effort_50_50",
+            "preserve_exact_source_totals": True,
+            "structural_empty_cells": {"A4_vru": {"pg": True}},
+            "allow_cross_source_fill_within_same_arm": True,
+            "allow_relabeling": False,
+            "allow_duplicate_records": False,
+            "allow_quality_filter_relaxation": False,
+        },
+        "waymo_acquisition": {
+            "ordering_seed": 0,
+            "batch_size_shards": 16,
+            "max_new_shards": 128,
+        },
         "counts": {
             "train": {"waymo": 1000, "pg": 1000},
             "validation": {"waymo": 250, "pg": 250},
@@ -72,6 +93,14 @@ def test_validate_split_manifest_checks_all_source_counts() -> None:
     payload["counts"] = {**payload["counts"], "test": {"waymo": 1, "pg": -1}}  # type: ignore[misc]
 
     with pytest.raises(ManifestValidationError, match="test.pg"):
+        validate_split_manifest(payload)
+
+
+def test_validate_split_manifest_requires_v1_1_targets_and_balancing_policy() -> None:
+    payload = _split_manifest()
+    del payload["balancing"]
+
+    with pytest.raises(ManifestValidationError, match="balancing"):
         validate_split_manifest(payload)
 
 
