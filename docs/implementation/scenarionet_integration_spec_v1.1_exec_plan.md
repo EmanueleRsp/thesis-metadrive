@@ -162,7 +162,8 @@ external credentials and must not overwrite frozen data.
 - [x] M1 — Completed. Reconciled record/manifest/report eligibility schema and audit population accounting, including record-level Rulebook provenance, strict pre-freeze split validation, and canonical YAML manifests. Depends on `DEC-SN-001`–`005`; validates the available portions of `TEST-SN-001`–`006`.
 - [x] M2 — Completed. Implemented strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. The selector enforces per-split source and arm capacity, uses exhaustive exact search for small grouped fixtures (≤18 groups), and uses a deterministic transportation-based constructive solver for the normal large singleton-group population. The shell pipeline repeats catalog → Rulebook → split feasibility and acquires at most one forced 16-shard batch per cycle under the cumulative 128-shard cap. `build_splits` now writes a PG replenishment report on both success and selection failure, separating a true filtered-PG count shortage from joint Waymo/group infeasibility. Validates the implemented portions of `TEST-SN-002`–`008`.
 - [x] M3 — Completed implementation reconciliation for runtime views, providers, ACL six-arm interface, environment behavior, and logging. The environment factory rejects an audit or legacy catalog containing any valid/warning record without `rulebook_eligible=true`; provider construction and runtime mapping use only this checked population. The provider layer supports strict uniform-by-arm sampling with explicit one-sided source-cell fallback and carries sampling metadata into reset and terminal-step info. Runtime aggregation records reset/step/episode matrices by `source × arm`, and evaluation CSVs persist ScenarioNet identity, sampling, and completion fields. The real runtime-database/vector smoke remains M4 because it requires a prepared external fixture. Validates the implemented portions of `TEST-SN-009`–`014`.
-- [ ] M4 — In progress; blocked only for the real fixture/vector smoke. The checked local runtime fixture is paired with a pre-v1.1 catalog containing valid PG records without `rulebook_eligible=true`, so the required runtime boundary correctly rejects it. The user approved rebuilding/replacing the frozen catalog/runtime artifact. The first serial rebuild was deliberately stopped at the user's request; the user will restart the Rulebook filter manually with `--workers 16`. Documentation reconciliation and non-mutating final audit remain pending. Validates `TEST-SN-015` and mandatory checks.
+- [ ] M4 — In progress. The user-approved 16-worker Rulebook rebuild completed and published 5,179 eligible records, but only 1,647 are PG while the final target requires 1,750. Final split construction therefore requires an approved PG replenishment decision. The vectorized smoke now collects and reaches its intended stale-runtime-fixture skip after the import-cycle fix. Documentation reconciliation and non-mutating final audit remain pending. Validates `TEST-SN-015` and mandatory checks.
+- [ ] M5 — In progress. Introduce correctness-preserving incremental feasibility cycles: reuse deterministic PG seeds unless explicit PG overwrite is requested; skip duplicate full Waymo status scans when the caller already validated the catalog deficit; and cache Rulebook eligibility by scenario UID, payload fingerprint, geometry hash, and calibration hash while preserving the full merged audit and split contract. Validate full-vs-incremental equivalence and cache invalidation before marking complete.
 
 ## 11. Progress And Findings Log
 
@@ -275,6 +276,39 @@ external credentials and must not overwrite frozen data.
   stopped by the user after about 71 minutes. No output artifacts were
   published. The user will restart the exact filter command manually with
   `--workers 16`; do not run another concurrent filter process.
+- The user completed the 16-worker rebuild successfully in 25 minutes 13
+  seconds: `eligible=5179`, `excluded=7898`. The published catalog contains
+  3,532 Waymo and 1,647 PG records, with `rulebook_eligible=true` on every
+  published record. This confirms the stale-flag discrepancy is repaired but
+  proves a hard PG deficit of 103 records against the approved final target of
+  1,750 PG scenarios.
+- Running `tests/test_scenarionet_vectorized_integration.py` after the rebuild
+  initially failed during collection with an import cycle between
+  `thesis_rl.contracts.causal_scene_context` and `thesis_rl.rulebook.v2.wrapper`.
+  The package wrapper exports are now lazy, preserving the public API; the
+  focused regression and wrapper/contract tests pass (23 tests). The vector
+  test now collects and reaches its intended stale-runtime-fixture skip.
+- The split diagnostic against the rebuilt catalog fails at the strict runtime
+  contract with `waymo/train` selected `483` versus requested `1000`. The
+  static Waymo population is 3,532, but only 1,240 records are both
+  valid/warning and signal-allowed (`752` not_applicable, `488` complete);
+  305 partial and one missing-signal record are excluded, and 2,152 Waymo
+  records are invalid. The PG report records 1,646 runtime-eligible records
+  versus 1,750 requested (shortfall 104). The existing pool therefore needs
+  both approved PG replenishment and the pipeline's bounded Waymo expansion;
+  rerunning `build_splits` alone cannot succeed.
+- The first incremental optimization pass is implemented. Existing PG output is
+  reused unless `SCENARIONET_PG_OVERWRITE=true`; the auto-expansion path can skip
+  its redundant pre-download and post-conversion full Waymo status scans when
+  the parent pipeline already proved the deficit and requests one batch; and
+  Rulebook eligibility artifacts now retain scenario file fingerprints and
+  reuse only records matching the current geometry/calibration hashes. New or
+  changed records remain evaluated with the configured worker pool, and the
+  merged audit is still written and checked globally. The shell cycle now stops
+  on a reported PG hard shortfall before acquiring more Waymo, avoiding an
+  unrelated external download when the PG pool is the blocking source.
+- Focused incremental validation passed: shell syntax, Ruff format/lint, and
+  14 Rulebook eligibility/Waymo pool tests.
 - `docker compose run --rm dev uv run --no-sync ruff check
   src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py
   src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py`

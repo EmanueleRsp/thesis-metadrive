@@ -45,9 +45,7 @@ def _minimal_scenario(*, signal_lane_reachable: bool) -> dict:
                 "type": "TRAFFIC_LIGHT",
                 "lane": "lane-b",
                 "stop_point": [11.0, 0.0, 0.0],
-                "state": {
-                    "object_state": ["LANE_STATE_UNKNOWN", "LANE_STATE_UNKNOWN"]
-                },
+                "state": {"object_state": ["LANE_STATE_UNKNOWN", "LANE_STATE_UNKNOWN"]},
             }
         },
     }
@@ -63,7 +61,9 @@ def test_bundled_waymo_fixture_converts_to_canonical_static_records():
     assert result.task_route.lane_ids
     assert result.route_lanes
     assert result.scenario_uid == "waymo-fixture"
-    assert not any(error.startswith("task_route_lane_missing") for error in result.validation_errors)
+    assert not any(
+        error.startswith("task_route_lane_missing") for error in result.validation_errors
+    )
     assert any(control.control_type.value == "stop" for control in result.traffic_controls)
     assert result.movement_priority_records == ()
 
@@ -79,6 +79,20 @@ def test_waymo_adapter_types_single_point_map_feature_instead_of_raising_geos():
         scenario_uid="minimal",
     )
     assert "invalid_map_feature_geometry:edge" in result.validation_errors
+
+
+def test_waymo_adapter_prefers_persisted_route_over_future_sdc_track() -> None:
+    scenario = _minimal_scenario(signal_lane_reachable=False)
+    scenario["metadata"]["assigned_route_lane_ids"] = ["lane-a", "lane-b"]
+    scenario["metadata"]["assigned_route_source"] = "waymo_sdc_offline_task_annotation"
+    scenario["tracks"]["ego"]["state"]["position"] = [[1000.0, 1000.0, 0.0]]
+    scenario["tracks"]["ego"]["state"]["heading"] = [3.14]
+    scenario["tracks"]["ego"]["state"]["valid"] = [True]
+
+    result = build_waymo_static_adapter_result(scenario, scenario_uid="metadata-route")
+
+    assert result.task_route.lane_ids == ("lane-a", "lane-b")
+    assert result.task_route.route_assignment_source == "waymo_sdc_offline_task_annotation"
 
 
 @pytest.mark.parametrize(

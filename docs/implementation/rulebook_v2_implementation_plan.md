@@ -3,7 +3,7 @@
 ## Scopo
 
 Questo documento traduce
-[`rulebook_v4.6_specification.md`](../specifications/rulebook_v4.6_specification.md) in un piano operativo e mantiene lo
+[`rulebook_v4.7_specification.md`](../specifications/rulebook_v4.7_specification.md) in un piano operativo e mantiene lo
 stato di avanzamento dell'implementazione.
 
 La specifica resta la fonte normativa per formule, dominio delle regole,
@@ -25,10 +25,10 @@ in una successiva revisione della specifica prima del freeze finale.
 ## Stato complessivo
 
 **Stato:** implementazione in corso  
-**Fase corrente:** F4 — snapshot live e contact-onset hook
-**Ultimo aggiornamento:** 2026-07-15  
+**Fase corrente:** F11 — causal CTRV occupancy conformance
+**Ultimo aggiornamento:** 2026-07-17
 **Specifica di riferimento:** Rulebook v2, versione
-`4.6-final-implementation-complete`
+`4.7-final-implementation-complete`
 
 ### Legenda
 
@@ -56,6 +56,7 @@ in una successiva revisione della specifica prima del freeze finale.
 | F8 | R4 progresso, aggregazione e monitor transazionale | `COMPLETATA` | F6, F7 |
 | F9 | Wrapper, wiring e output del rule vector | `COMPLETATA` | F8 |
 | F10 | Conformità, calibrazione, pilot PG/Waymo e freeze | `IN_CORSO` | F3–F9 |
+| F11 | CTRV causale: history, occupancy solver e conformance | `PRONTA_PER_VERIFICA` | F4–F10, approvazione v4.7 |
 | D1 | Estensione osservazione semantica | `DEFERITA` | Rulebook v2 stabile |
 | D2 | Scalarizzazione e learner lessicografico/distribuzionale | `DEFERITA` | Rule vector stabile |
 
@@ -75,6 +76,9 @@ in una successiva revisione della specifica prima del freeze finale.
 - fail-fast senza output parziali;
 - integrazione monitor-only con l'API Gymnasium e con `info`;
 - test di conformità previsti dalla specifica.
+- causal filtered CTRV for vehicle conflict-zone occupancy, with v4.6 CV TTC
+  and exact straight fallback preserved;
+- frozen a-priori CTRV defaults and implementation-conformance-only validation.
 
 ### Esplicitamente fuori scope
 
@@ -84,6 +88,8 @@ in una successiva revisione della specifica prima del freeze finale.
 - algoritmo distribuzionale;
 - modifica immediata dell'osservazione semantica;
 - tuning dei parametri fisici o geometrici congelati dalla specifica.
+- dataset-wide CTRV calibration, policy-performance validation, ablations,
+  sensitivity analysis, and training-based parameter selection.
 
 Il monitor non deve fare assunzioni su come il vettore verrà consumato. Il
 reward scalare restituito dall'ambiente resta invariato nella prima integrazione.
@@ -1005,6 +1011,9 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F10 | Chiusura tranche di verifica dopo correzione import Ruff nel driver Scenario ACL | 112 test mirati Rulebook v2/Scenario ACL passati; Ruff mirato passato; `git diff --check` pulito; suite completa confermata a 420 passati e 8 falliti esterni (ISS-011) |
 | 2026-07-15 | F10 | Loader artifact: validazione completa dei target, cap normativo e valore positivo/finito; rifiuto artifact oltre cap | 109 test Rulebook v2 passati; Ruff e `git diff --check` verdi; artifact reale e pilot restano aperti (ISS-007) |
 | 2026-07-15 | F10 | CLI `rulebook_v2_calibrate` e `rulebook_v2_pilot`; pilot offline stratificato su 2 PG per profilo (5 profili) + 10 Waymo | Report generato in `data/scenarionet/rulebook_v2/pilot/offline_pilot_20260715.json`: 8 conversioni con task-route eligibility differita (hash non forniti), 4 esclusioni per signal `UNKNOWN`, 8 eccezioni adapter; mean conversion 0.529 s, p95 lower 2.192 s; non è ancora costo monitor per-step né eligibility finale |
+| 2026-07-17 | F11 | Core causal CTRV, history lifecycle, config freezing, deterministic sweep e CV fallback | 29 test focalizzati CTRV/memory/contracts passati; suite `tests/test_rulebook_v2_*.py` 134 passati; Ruff check passata; provider/wiring, causality instrumentation e PG/Waymo curved smoke ancora aperti |
+| 2026-07-17 | F11 | Wiring automatico del preview nel monitor, query comune CTRV/CV per gli intervalli e guardie causali esplicite | Test CTRV/monitor/causality passati; suite Rulebook v2: 138 passati, 1 failure nel test CLI di progress output non correlato; smoke PG/Waymo straight+curved e replay live ancora aperti |
+| 2026-07-17 | F11 | Chiusura suite di conformità CTRV con smoke PG/Waymo, replay deterministico, finitezza e ramo straight v4.6 | 142 test `tests/test_rulebook_v2_*.py` passati; Ruff e `git diff --check` passati; F11 pronta per verifica finale live/provider |
 | 2026-07-15 | Regressione/F10 | Suite completa dopo le CLI F10 e il pilot offline | 423 test passati, 8 falliti fuori dal perimetro v2 (ISS-011); i test Rulebook v2/CLI restano verdi; Ruff e `git diff --check` verdi |
 | 2026-07-15 | F10 | Target Makefile e documentazione operativa per calibrazione, validazione artifact, pilot preliminare/finale e check v2 | `make rulebook-v2-init`, `rulebook-v2-calibrate`, `rulebook-v2-validate-calibration`, `rulebook-v2-pilot`, `rulebook-v2-pilot-final`, `rulebook-v2-f10`; i target rifiutano input mancanti e non generano fallback sintetici |
 | 2026-07-15 | F10 | Verifica reale del target Makefile `rulebook-v2-check` | 111 test Rulebook v2 passati; Ruff passato; `git diff --check` pulito |
@@ -1027,6 +1036,62 @@ Per ogni fase completata aggiungere:
 | 2026-07-16 | F10 | Verifica integrazione filtro a monte | `pytest -q` completo terminato con successo; Ruff sui file aggiunti/modificati passato; `git diff --check` pulito. L'esecuzione sul catalogo ScenarioNet completo resta un'attività dati separata e produrrà l'artifact di audit definitivo. |
 
 ---
+
+## F11 — Causal CTRV occupancy conformance
+
+**Stato:** PRONTA_PER_VERIFICA — core, wiring causale e suite di conformità completati; verifica live provider residua
+**Specifica:** docs/specifications/rulebook_v4.7_specification.md
+**ADR:** docs/decisions/ADR-003-causal-ctrv-conflict-zone-prediction.md
+
+F11 implementa esclusivamente il contratto CTRV approvato. I default sono
+engineering defaults congelati a-priori: non sono oggetto di calibrazione,
+dataset-wide search, sensitivity analysis, ablation o selezione tramite
+performance del learner.
+
+### Requisiti e criteri
+
+- [x] aggiungere history immutabile per ego/live vehicle, writer unico,
+  preview causale e commit transazionale;
+- [x] validare sim_time_s strettamente crescente e cancellare history dopo
+  qualunque assenza o reset;
+- [x] separare TTC CV continuous-SAT da occupancy veicolare CTRV;
+- [x] implementare OLS causale, heading unwrap, signed speed, soglie frozen,
+  propagazione OBB e fallback CV esatto;
+- [x] implementare sweep CTRV 0.02 s, bisezione, merge, OPEN_END e diagnostica;
+- [x] aggiungere guardie anti-future track/route/maneuver per PG e Waymo;
+- [x] eseguire i test di conformità approvati per unit/boundary,
+  lifecycle/timestamp, causality, oracle sintetico e smoke PG/Waymo straight e
+  curved;
+- [x] completare replay deterministico, finitezza/boundedness ed equivalenza
+  v4.6 nel ramo straight sui percorsi sintetici e provider smoke.
+
+### Validazione esclusa
+
+Non sono acceptance gate F11: calibrazione dataset-wide, training runs,
+performance della policy, confronto con path-conditioned prediction,
+CTRV-vs-CV ablation o sensitivity analysis.
+
+### File iniziali previsti
+
+| Path | Action |
+|---|---|
+| src/thesis_rl/rulebook/v2/types.py | add immutable motion-history records and memory field |
+| src/thesis_rl/rulebook/v2/memory.py | add history initialization, preview, merge and lifecycle ownership |
+| src/thesis_rl/rulebook/v2/geometry/continuous_sat.py | preserve exact CV path and expose straight fallback boundary |
+| src/thesis_rl/rulebook/v2/geometry/ctrv.py | implement OLS, unwrap, CTRV propagation and rotating sweep |
+| src/thesis_rl/rulebook/v2/components/controls.py | consume common preview for crosswalk/vehicle yield |
+| src/thesis_rl/rulebook/v2/components/ttc.py | preserve v4.6 CV-only TTC |
+| src/thesis_rl/rulebook/v2/registry.py | assign the single motion-history writer |
+| tests/test_rulebook_v2_ctrv.py | unit, boundary, oracle and lifecycle conformance tests |
+| tests/test_rulebook_v2_causality.py | instrumented future-data guards |
+| tests/test_rulebook_v2_live_integration.py | fixed PG/Waymo straight/curved smoke |
+
+### Decision dependency
+
+The F11 test matrix was frozen by explicit user approval on 2026-07-17;
+implementation is authorized. Protected behavior remains covered by the
+existing Rulebook v2 suite, with the v4.7 geometry-hash expectation updated to
+the new authoritative version.
 
 ## Definition of Done complessiva
 

@@ -5,9 +5,9 @@
 This index prevents an apparently newer, exploratory, or implementation-tracking
 document from being mistaken for an approved scientific contract.
 
-- Last repository inspection: 2026-07-16
+- Last repository inspection: 2026-07-17
 - Index status: `CURRENT_WITH_DOCUMENTED_GAPS`
-- Approval evidence: explicit user confirmations recorded on 2026-07-16
+- Approval evidence: explicit user confirmations recorded on 2026-07-16 and 2026-07-17
 - Rule: repository evidence establishes paths, versions, links, and reported
   implementation status; explicit user approval establishes scientific authority.
 
@@ -25,8 +25,8 @@ document from being mistaken for an approved scientific contract.
 
 | Area | Exact authoritative or candidate document | Authority | Implementation record | Remaining gap |
 |---|---|---|---|---|
-| Rulebook v2 | `specifications/rulebook_v4.6_specification.md`; version `4.6-final-implementation-complete` | `AUTHORITATIVE`; user confirmation 2026-07-16 | `implementation/rulebook_v2_implementation_plan.md`; reports implementation in progress | Final reconciliation required before `VERIFIED` |
-| Semantic observation v1.1 | `specifications/observation_v1.1_specification.md`; ID `OBS-V1.1`, version `1.1-final-implementation-complete` | `AUTHORITATIVE`; explicit user approval 2026-07-16 | `implementation/semantic_observation_encoder_v1_exec_plan.md`; `IN_PROGRESS`; v1.1 schema and causal-context boundary exist, while the legacy runtime observation remains to be replaced | Complete route/context lifecycle, semantic and LiDAR runtime observations, and reconciliation before `VERIFIED` |
+| Rulebook v2 | `specifications/rulebook_v4.7_specification.md`; version `4.7-final-implementation-complete` | `AUTHORITATIVE`; explicit user approval 2026-07-17 | `implementation/rulebook_v2_implementation_plan.md`; F11 `PRONTA_PER_VERIFICA`; causal CTRV wiring and conformance suite implemented | Final live-provider reconciliation required before `VERIFIED` |
+| Semantic observation v1.1 | `specifications/observation_v1.1_specification.md`; ID `OBS-V1.1`, version `1.1-final-implementation-complete`, amended 2026-07-17 by ADR-004 | `AUTHORITATIVE`; explicit user approvals 2026-07-16 and 2026-07-17 | `implementation/semantic_observation_encoder_v1_exec_plan.md`; `IN_PROGRESS`; v1.1 schema, causal-context boundary, assigned-route persistence, and metadata-only adapter path exist, while the legacy runtime observation remains to be replaced | Complete runtime observation/navigation wiring and reconcile before `VERIFIED` |
 | Automatic curriculum learning | `specifications/automatic_curriculum_learning_v1_specification.md`; version v1 | `AUTHORITATIVE`; version and authority confirmed by the user on 2026-07-16 | `implementation/scenario_acl_implementation_plan.md`; its internal implementation stages v1/v2 are complete, v3 not started, and v4 deferred | Final reconciliation required before `VERIFIED` |
 | ScenarioNet integration | `specifications/scenarionet_integration_spec_v1.1.md`; version `1.1` | `AUTHORITATIVE`; explicit user approval 2026-07-16 | `implementation/scenarionet_integration_spec_v1.1_exec_plan.md`; `IN_PROGRESS` | v1 artifacts and implementation require reconciliation against v1.1 before `VERIFIED` |
 | RL baselines | No dedicated approved specification found | `MISSING` | PPO, SAC, and TD3 configurations and tests exist; the local SB3 submodule is pinned at commit `6a196a60c7df3550ac5832caad54ef8dce9a6f31` | Approved behavioral specification and accepted deviations from upstream |
@@ -41,10 +41,14 @@ root.
 
 ## Historical Material
 
-- Rulebook version `4.6-final-implementation-complete` remains the canonical
-  approved identifier. Earlier archived Rulebook labels used a different
+- Rulebook version `4.7-final-implementation-complete` is the canonical
+  approved identifier; it supersedes Rulebook v4.6 for the selected rulebook
+  scope. Earlier archived Rulebook labels used a different
   increment convention, so their numeric relationship must not be interpreted as
   semantic-version precedence.
+- `specifications/rulebook_v4.6_specification.md` remains retained historical
+  material for reproducibility of v4.6 experiments and is not the current
+  implementation authority.
 - `archive/plans/rulebook_v1_specification.md` is archived historical material.
   No inspected authority record formally establishes its supersession chain.
 - The temporary names `rulebook_v4.4_final_corrected(1).md`,
@@ -62,12 +66,14 @@ root.
 |---|---|---|---|
 | `decisions/ADR-001-scenarionet-v1-1-dataset-policy.md` | `APPROVED` | Explicit user approval of ScenarioNet Integration v1.1 on 2026-07-16 | ScenarioNet v1.1 dataset, ACL arm, horizon, and eligibility policy |
 | `decisions/ADR-002-semantic-observation-and-encoder-contract.md` | `APPROVED` | Explicit user approval of observation v1.1 and encoder v1.0 on 2026-07-16 | Semantic observation, encoder architecture, SB3 integration, and checkpoint compatibility |
+| `decisions/ADR-004-assigned-route-metadata-for-pg-and-waymo.md` | `APPROVED` | Explicit user approval on 2026-07-17 | Offline assigned-route metadata and runtime anti-leakage boundary for PG and Waymo |
+| `decisions/ADR-003-causal-ctrv-conflict-zone-prediction.md` | `APPROVED` | Explicit user approval on 2026-07-17 | Causal filtered CTRV for vehicle conflict-zone occupancy, frozen defaults, history lifecycle, and experimental separation |
 
 ## ExecPlan Registry
 
 | Feature | Specification | ExecPlan | Reported status | Last document update |
 |---|---|---|---|---|
-| Rulebook v2 | `specifications/rulebook_v4.6_specification.md` | `implementation/rulebook_v2_implementation_plan.md` | `IN_PROGRESS` | 2026-07-16 |
+| Rulebook v2 | `specifications/rulebook_v4.7_specification.md` | `implementation/rulebook_v2_implementation_plan.md` | `IN_PROGRESS` | 2026-07-17 |
 | Rulebook v2 catalog filter parallelization | Rulebook v2 §15.11; ScenarioNet v1 §17/§24 | `implementation/rulebook_v2_catalog_filter_parallelization_exec_plan.md` | `IN_PROGRESS` | 2026-07-16 |
 | ScenarioNet catalog build parallelization | Historical ScenarioNet v1 | `implementation/scenarionet_catalog_build_parallelization_exec_plan.md` | `IMPLEMENTED`; reconciliation under v1.1 pending | 2026-07-16 |
 | ScenarioNet pipeline integrity and restructure v2 | Historical ScenarioNet v1 | `implementation/scenarionet_pipeline_restructure_v2_exec_plan.md` | `SUPERSEDED` by v1.1 planning | 2026-07-16 |

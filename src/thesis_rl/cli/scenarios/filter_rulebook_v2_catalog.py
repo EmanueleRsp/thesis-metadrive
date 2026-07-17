@@ -23,6 +23,7 @@ from rich.progress import (
 from thesis_rl.rulebook.v2.calibration import load_calibration_artifact
 from thesis_rl.rulebook.v2.config import RULEBOOK_V2_VERSION, geometry_config_hash
 from thesis_rl.rulebook.v2.context.catalog_eligibility import evaluate_catalog_entries
+from thesis_rl.rulebook.v2.context.task_route import TaskRouteEligibility
 from thesis_rl.scenarios.catalog import (
     ScenarioCatalogEntry,
     read_scenario_catalog,
@@ -42,6 +43,75 @@ def _canonical_json_hash(path: Path) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _scenario_fingerprint(entry: ScenarioCatalogEntry, data_root: Path) -> str:
+    """Return a cheap identity for an immutable scenario payload."""
+
+    try:
+        stat = (data_root / entry.record.relative_path).stat()
+    except OSError:
+        return "missing"
+    return f"{stat.st_size}:{stat.st_mtime_ns}"
+
+
+def _load_incremental_cache(
+    path: Path,
+    *,
+    entries: tuple[ScenarioCatalogEntry, ...],
+    data_root: Path,
+    geometry_hash: str,
+    calibration_hash: str,
+) -> dict[str, TaskRouteEligibility]:
+    """Load cache records proven compatible with the current inputs."""
+
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != "rulebook-v2-catalog-eligibility-v2"
+    ):
+        return {}
+    if payload.get("geometry_config_hash") != geometry_hash:
+        return {}
+    if payload.get("calibration_hash") != calibration_hash:
+        return {}
+    records = payload.get("records")
+    if not isinstance(records, list):
+        return {}
+    by_uid = {item.get("scenario_uid"): item for item in records if isinstance(item, dict)}
+    cached: dict[str, TaskRouteEligibility] = {}
+    for entry in entries:
+        item = by_uid.get(entry.record.scenario_uid)
+        if not isinstance(item, dict):
+            continue
+        if item.get("relative_path") != entry.record.relative_path:
+            continue
+        if item.get("scenario_fingerprint") != _scenario_fingerprint(entry, data_root):
+            continue
+        try:
+            cached[entry.record.scenario_uid] = TaskRouteEligibility(
+                scenario_uid=str(item["scenario_uid"]),
+                rulebook_version=str(item["rulebook_version"]),
+                adapter_version=str(item["adapter_version"]),
+                geometry_config_hash=str(item["geometry_config_hash"]),
+                calibration_hash=str(item["calibration_hash"]),
+                rulebook_eligible=bool(item["rulebook_eligible"]),
+                validation_errors=tuple(str(value) for value in item.get("validation_errors", ())),
+                assigned_route_lane_ids=tuple(
+                    str(value) for value in item.get("assigned_route_lane_ids", ())
+                ),
+                assigned_route_source=str(
+                    item.get("assigned_route_source", "offline_task_annotation")
+                ),
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return cached
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog", type=Path, required=True)
@@ -55,6 +125,11 @@ def main() -> int:
         type=int,
         default=1,
         help="Number of spawned worker processes used for static eligibility evaluation.",
+    )
+    parser.add_argument(
+        "--no-incremental",
+        action="store_true",
+        help="Re-evaluate every record instead of reusing compatible eligibility results.",
     )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
@@ -73,42 +148,66 @@ def main() -> int:
     geometry_hash = geometry_config_hash()
     catalog = read_scenario_catalog(catalog_path)
     console = Console(stderr=True)
-    console.log(
-        f"Evaluating {len(catalog.entries)} catalog entries with {args.workers} worker process(es)"
-    )
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TextColumn("•"),
-        TimeElapsedColumn(),
-        TextColumn("•"),
-        TimeRemainingColumn(),
-        console=console,
-        transient=False,
-    ) as progress:
-        task_id = progress.add_task("Rulebook v2 static eligibility", total=len(catalog.entries))
-
-        def report_progress(completed: int, total: int) -> None:
-            progress.update(task_id, completed=completed, total=total)
-
-        eligibility = evaluate_catalog_entries(
-            catalog.entries,
+    entries = tuple(catalog.entries)
+    cached = (
+        {}
+        if args.no_incremental
+        else _load_incremental_cache(
+            eligibility_output,
+            entries=entries,
             data_root=data_root,
-            geometry_config_hash=geometry_hash,
+            geometry_hash=geometry_hash,
             calibration_hash=calibration.config_hash,
-            workers=args.workers,
-            progress_callback=report_progress,
         )
+    )
+    pending = tuple(entry for entry in entries if entry.record.scenario_uid not in cached)
+    console.log(
+        f"Evaluating {len(pending)} of {len(entries)} catalog entries with "
+        f"{args.workers} worker process(es); reusing {len(cached)} compatible results"
+    )
+    evaluated: dict[str, TaskRouteEligibility] = dict(cached)
+    if pending:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("•"),
+            TimeElapsedColumn(),
+            TextColumn("•"),
+            TimeRemainingColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task_id = progress.add_task("Rulebook v2 static eligibility", total=len(pending))
+
+            def report_progress(completed: int, total: int) -> None:
+                progress.update(task_id, completed=completed, total=total)
+
+            evaluated.update(
+                {
+                    result.scenario_uid: result
+                    for result in evaluate_catalog_entries(
+                        pending,
+                        data_root=data_root,
+                        geometry_config_hash=geometry_hash,
+                        calibration_hash=calibration.config_hash,
+                        workers=args.workers,
+                        progress_callback=report_progress,
+                    )
+                }
+            )
+    eligibility = tuple(evaluated[entry.record.scenario_uid] for entry in entries)
     by_uid = {record.scenario_uid: record for record in eligibility}
-    entries_by_uid = {entry.record.scenario_uid: entry for entry in catalog.entries}
+    entries_by_uid = {entry.record.scenario_uid: entry for entry in entries}
     annotated_entries = tuple(
         ScenarioCatalogEntry(
             record=replace(
                 entry.record,
                 rulebook_eligible=by_uid[entry.record.scenario_uid].rulebook_eligible,
                 rulebook_validation_errors=by_uid[entry.record.scenario_uid].validation_errors,
+                assigned_route_lane_ids=by_uid[entry.record.scenario_uid].assigned_route_lane_ids,
+                assigned_route_source=by_uid[entry.record.scenario_uid].assigned_route_source,
             ),
             features=entry.features,
         )
@@ -140,7 +239,7 @@ def main() -> int:
         for source in ("pg", "waymo")
     }
     payload = {
-        "schema": "rulebook-v2-catalog-eligibility-v1",
+        "schema": "rulebook-v2-catalog-eligibility-v2",
         "rulebook_version": RULEBOOK_V2_VERSION,
         "input_catalog": str(catalog_path),
         "input_catalog_hash": sha256_file(catalog_path),
@@ -156,6 +255,9 @@ def main() -> int:
                 **asdict(record),
                 "source": entries_by_uid[record.scenario_uid].record.source,
                 "relative_path": entries_by_uid[record.scenario_uid].record.relative_path,
+                "scenario_fingerprint": _scenario_fingerprint(
+                    entries_by_uid[record.scenario_uid], data_root
+                ),
             }
             for record in eligibility
         ],

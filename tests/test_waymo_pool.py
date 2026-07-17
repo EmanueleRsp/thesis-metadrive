@@ -210,4 +210,4 @@ def test_waymo_database_fingerprint_changes_with_candidate_files(tmp_path) -> No
 
 
 def test_waymo_pool_policy_version_invalidates_old_status_cache() -> None:
-    assert WAYMO_POOL_POLICY_VERSION == "waymo_pool_v5"
+    assert WAYMO_POOL_POLICY_VERSION == "waymo_pool_v6"

@@ -18,7 +18,7 @@
 
 ## 2. Objective And Scope
 
-Implement the approved causal map-based observation contract and its MLP/LQ
+Implement the approved causal assigned-route observation contract and its MLP/LQ
 encoder contract for the fork-backed TD3, SAC, and PPO backends. Success means
 that each approved observation/encoder combination has the exact schema,
 anti-leakage behavior, SB3 ownership, checkpoint compatibility checks, and
@@ -41,7 +41,7 @@ in online observation construction.
 
 | ID | Requirement | Specification section |
 |---|---|---|
-| `OBS-REQ-001` | Build and freeze a map-based ego route at reset; reject invalid routes without native/future fallback. | OBS §2, §4, §14 |
+| `OBS-REQ-001` | Build and freeze the assigned ego route from persisted lane IDs and map geometry at reset; reject invalid routes without native or online-future fallback. | OBS §2, §4, §14 |
 | `OBS-REQ-002` | Provide a `308`-feature LiDAR frame and a deterministic `1540`-feature five-frame stack with the declared detector/noise contract. | OBS §5, §13.4, §14 |
 | `OBS-REQ-003` | Produce semantic v1.1 structured groups, masks, flat order, `D=2541`, and `122` LQ raw tokens from one schema. | OBS §6--§7, §11, §13.5; ENC §5, §8 |
 | `OBS-REQ-004` | Enforce causal selection, history, slot persistence, ambiguous-movement handling, normalization, and zeroed masked payloads. | OBS §2, §7--§10, §13.1--§13.3 |
@@ -98,6 +98,8 @@ in online observation construction.
 | `DEC-003` | implementation detail | SB3 extractor ownership. | pass module instance / construct from config | Construct one encoder per extractor from plain config and schema. | Gradient routing and targets | Approved by `ENC-V1.0` |
 | `DEC-004` | implementation detail | Checkpoint publication. | sidecar pairs / immutable generation plus pointer | Immutable generation directory and atomic verified `latest.json`. | Resume safety | Approved by `ENC-V1.0` |
 | `DEC-005` | plan approval | Freeze this mandatory test matrix before production changes. | start coding / approve this plan first | Obtain explicit approval of this ExecPlan. | Test protection and milestone sequencing | Approved by explicit user approval on `2026-07-16` |
+| `DEC-006` | specification clarification | Treat navigation route as immutable assigned task metadata for both sources. | map-only inferred destination / frozen assigned route / online SDC route | Persist PG generator route or Waymo offline SDC-map-matched route before reset; runtime consumes only lane IDs and map geometry. | Route semantics, dataset metadata, scenario validation, and observation content. | Approved by user on `2026-07-17`; ADR-004 |
+| `DEC-007` | specification clarification | Select the offline source of assigned-route metadata for existing PG exports, which do not persist generator navigation. | (A) offline SDC map-match for PG, matching Waymo; (B) extend/regenerate PG exports with generator-assigned routes. | A for identical source behavior without changing scenario geometry; provenance remains non-policy metadata. | PG dataset annotation provenance and comparability. | Approved by user on `2026-07-17`; ADR-004 |
 
 ## 7. Proposed Design
 
@@ -126,12 +128,12 @@ variant is introduced by this plan.
 
 | Requirement | Acceptance criteria | Implementation | Tests | Status |
 |---|---|---|---|---|
-| `OBS-REQ-001` | `AC-OBS-001` | route/context modules, environment factory | `TEST-OBS-001`, `TEST-OBS-002` | Planned |
-| `OBS-REQ-002` | `AC-OBS-002` | stacked LiDAR observation, map navigation, noise wrapper | `TEST-OBS-003`--`TEST-OBS-005` | Planned |
+| `OBS-REQ-001` | `AC-OBS-001` | `rulebook/v2/context/map_matching.py`, `rulebook/v2/context/pg_static_adapter.py`, `rulebook/v2/context/waymo_static_adapter.py`, `rulebook/v2/geometry/route.py`, `rulebook/v2/context/static_adapter.py`, route metadata in `scenarios/records.py`, `filter_rulebook_v2_catalog.py`, and `thesis_scenario_env.py` | `tests/test_rulebook_v2_contracts.py`, `tests/test_rulebook_v2_catalog_eligibility.py`, `tests/test_rulebook_v2_pg_adapter.py`, `tests/test_rulebook_v2_waymo_adapter.py`, `tests/test_scenario_records.py`, `tests/test_thesis_scenario_env.py` | Partial: offline assignment persistence, metadata-only adapter consumption, fail-closed polyline construction, and reset publication implemented; custom runtime navigation replacement remains pending. |
+| `OBS-REQ-002` | `AC-OBS-002` | `envs/observations/assigned_route.py`, stacked LiDAR observation, map navigation, noise wrapper | `tests/test_assigned_route_observation.py`, `TEST-OBS-003`--`TEST-OBS-005` | Partial: causal fixed-spacing waypoint primitive implemented; full `StackedLidarStateObservation` and detector/noise wiring remain pending. |
 | `OBS-REQ-003` | `AC-OBS-003` | `src/thesis_rl/contracts/observation_schema.py` | `tests/test_observation_schema_v11.py` | Partial: the unique schema is implemented and verified; the runtime builder remains pending. |
 | `OBS-REQ-004` | `AC-OBS-004` | selection/history/context utilities | `TEST-OBS-009`--`TEST-OBS-012` | Planned |
-| `OBS-REQ-005` | `AC-OBS-005` | `src/thesis_rl/contracts/causal_scene_context.py` | `tests/test_causal_scene_context.py` | Partial: immutable observation-safe boundary implemented; environment lifecycle wiring remains pending. |
-| `OBS-REQ-006` | `AC-OBS-006` | Hydra configs, manifest/logging helpers | `TEST-OBS-015`, `TEST-OBS-016` | Planned |
+| `OBS-REQ-005` | `AC-OBS-005` | `src/thesis_rl/contracts/causal_scene_context.py`, `src/thesis_rl/rulebook/v2/wrapper.py` | `tests/test_causal_scene_context.py`, `tests/test_rulebook_v2_causal_context.py` | Partial: immutable boundary and post-commit Rulebook wrapper publication implemented; environment observation lifecycle wiring remains pending. |
+| `OBS-REQ-006` | `AC-OBS-006` | route provenance in catalog records and scenario metadata | `tests/test_scenario_records.py`, `tests/test_rulebook_v2_catalog_eligibility.py` | Partial: route provenance is persisted/logged; full experiment manifest and visual evidence remain pending. |
 | `ENC-REQ-001` | `AC-ENC-001` | `src/thesis_rl/agent/planners/encoders/base.py`, `mlp_encoder.py` | `tests/test_encoders_v10.py` | Implemented and focused-verified. |
 | `ENC-REQ-002` | `AC-ENC-002` | `lq_encoder.py`, `contracts/observation_schema.py` | `tests/test_encoders_v10.py`, `tests/test_observation_schema_v11.py` | Implemented and focused-verified. |
 | `ENC-REQ-003` | `AC-ENC-003` | `sb3_extensions/features_extractors.py`, `builders.py` | `tests/test_sb3_extensions.py`, `tests/test_sb3_direct_backends.py` | Partial: strict flat bridge and sharing flags verified; complete optimizer/target routing matrix remains pending. |
@@ -142,8 +144,8 @@ variant is introduced by this plan.
 
 | ID | Level | Behavior | Fixture/input | Expected result | Requirement |
 |---|---|---|---|---|---|
-| `TEST-OBS-001` | Unit | Map route is independent of future SDC samples. | Same map/current task, altered future trajectory. | Identical route and observation. | `OBS-REQ-001` |
-| `TEST-OBS-002` | Unit | Invalid route fails closed. | Missing lane, destination, or path. | Recorded exclusion/error before control. | `OBS-REQ-001` |
+| `TEST-OBS-001` | Unit | Frozen assigned route is independent of runtime future SDC samples. | Same assignment/map/current task, altered future trajectory. | Identical route and observation. | `OBS-REQ-001` |
+| `TEST-OBS-002` | Unit | Invalid assigned route fails closed. | Missing, invalid, or non-contiguous lane sequence. | Recorded exclusion/error before control. | `OBS-REQ-001` |
 | `TEST-OBS-003` | Unit | LiDAR dimensions and stack order. | Deterministic mocked frames. | `308`, `1540`, oldest-to-current order. | `OBS-REQ-002` |
 | `TEST-OBS-004` | Unit | Ray noise ownership and seed. | Fixed `engine.np_random` state. | One perturbation per declared ray block; reproducible values. | `OBS-REQ-002` |
 | `TEST-OBS-005` | Integration | Upstream shape drift fails. | Simulated navigation/sensor dimension mismatch. | Explicit runtime failure. | `OBS-REQ-002` |
@@ -240,6 +242,75 @@ completion gate because its baseline is not clean.
   finite validation, LQ masked-token zeroing, and explicit SB3 sharing flags.
   The legacy semantic runtime observation and checkpoint generation contract
   remain unreconciled and prevent declaring M2/M4/M5 complete.
+- `2026-07-16`: The Rulebook v2 wrapper now publishes `CausalSceneContext`
+  only after a successful immutable memory/cache commit and never stores the
+  `RulebookResult` in that context. Generic wrapper tests using non-canonical
+  synthetic snapshots remain supported; runtime observation wiring remains
+  pending.
+- `2026-07-16`: Identified the route-source decision before M2 runtime
+  implementation: `pg_static_adapter.py` and `waymo_static_adapter.py` call
+  `map_match_sdc_track_to_task_route(...)`, which consumes SDC track samples.
+  The pre-amendment OBS-V1.1 contract could not reuse this output as a route
+  assignment.
+- `2026-07-17`: User approved `DEC-006`. ADR-004 records the amended contract:
+  PG and Waymo SDC-map-matched routes are frozen offline as immutable assigned
+  task metadata. Runtime code may read only the persisted lane-ID sequence and
+  canonical map geometry; future SDC access remains prohibited online.
+- `2026-07-17`: Inspection of the checked PG fixture showed that its metadata
+  has no assigned route, destination, or goal field; this established the
+  provenance gap that `DEC-007` resolved.
+- `2026-07-17`: User approved `DEC-007/A`: existing PG and Waymo adapters use
+  the same offline SDC map-matching route annotation; runtime will consume only
+  the persisted lane sequence and canonical map geometry.
+- `2026-07-17`: Added `route_assignment_source`, `assigned_route_lane_ids`,
+  catalog persistence, eligibility JSON propagation, and reset metadata
+  publication. PG and Waymo now emit distinct provenance values from the same
+  offline SDC map-matching function; native/custom navigation replacement is
+  still pending.
+- `2026-07-17`: Added fail-closed reset-time construction of
+  `RoutePolyline` from the frozen lane-ID sequence and canonical lane
+  centerlines. Missing or non-contiguous lane sequences are rejected and
+  covered by `tests/test_rulebook_v2_contracts.py`; the custom semantic
+  observation wiring still remains pending.
+- `2026-07-17`: PG and Waymo static adapters now prefer persisted
+  `assigned_route_lane_ids` metadata and do not inspect SDC tracks when it is
+  present. Regression tests alter the future track to an incompatible pose and
+  confirm that the frozen route is unchanged. The track-based branch remains
+  explicitly limited to offline annotation of legacy inputs.
+- `2026-07-17`: `ThesisScenarioEnv` now injects the frozen route metadata into
+  the loaded scenario before downstream static adapters run, while leaving the
+  track payload untouched. Missing route metadata remains a fail-closed reset
+  error.
+- `2026-07-17`: Added the causal `AssignedRouteWaypointAdapter`,
+  `MapRouteNavigationObservation22`, and `RoutePolyline.point_at` primitive
+  for fixed-spacing local waypoints from the frozen route. Runtime attachment
+  to the full MetaDrive LiDAR wrapper and semantic token field mapping remain
+  pending.
+
+## Validation log
+
+| Date | Command | Result |
+|---|---|---|
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_contracts.py tests/test_rulebook_v2_catalog_eligibility.py tests/test_thesis_scenario_env.py tests/test_scenario_records.py` | PASS — 54 passed in 5.73s |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py tests/test_scenario_catalog.py tests/test_scenarionet_pipeline.py tests/test_rulebook_v2_causal_context.py` | PASS — 31 passed in 9.06s |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py` | PASS — 9 passed in 1.46s; persisted route metadata is preferred over altered SDC samples. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_thesis_scenario_env.py tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py` | PASS — 29 passed in 3.25s. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync pytest -q tests/test_assigned_route_observation.py tests/test_rulebook_v2_contracts.py` | PASS — 22 passed in 1.97s. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/rulebook/v2/geometry/route.py src/thesis_rl/envs/observations/assigned_route.py src/thesis_rl/envs/observations/__init__.py tests/test_assigned_route_observation.py` | PASS — all checks passed. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/rulebook/v2/geometry/route.py src/thesis_rl/envs/observations/assigned_route.py src/thesis_rl/envs/observations/__init__.py tests/test_assigned_route_observation.py` | PASS — all files formatted after focused formatting. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_assigned_route_observation.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/observations/assigned_route.py src/thesis_rl/envs/observations/__init__.py tests/test_assigned_route_observation.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/observations/assigned_route.py src/thesis_rl/envs/observations/__init__.py tests/test_assigned_route_observation.py` | PASS — 3 passed, Ruff clean, 3 files formatted. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/rulebook/v2/context/pg_static_adapter.py src/thesis_rl/rulebook/v2/context/waymo_static_adapter.py tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py` | PASS — all checks passed. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/rulebook/v2/context/pg_static_adapter.py src/thesis_rl/rulebook/v2/context/waymo_static_adapter.py tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py` | PASS — all files formatted after focused formatting. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/thesis_scenario_env.py src/thesis_rl/rulebook/v2/context/pg_static_adapter.py src/thesis_rl/rulebook/v2/context/waymo_static_adapter.py tests/test_thesis_scenario_env.py tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py` | PASS — all checks passed. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/thesis_scenario_env.py src/thesis_rl/rulebook/v2/context/pg_static_adapter.py src/thesis_rl/rulebook/v2/context/waymo_static_adapter.py tests/test_thesis_scenario_env.py tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py` | PASS — 6 files already formatted. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check <modified Python paths>` | PASS — all checks passed. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff format --check <modified Python paths>` | PASS — 19 files already formatted. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_causal_scene_context.py tests/test_observation_schema_v11.py tests/test_encoders_v10.py tests/test_semantic_state_observation.py tests/test_sb3_extensions.py tests/test_sb3_direct_backends.py` | PASS — 29 passed in 4.36s. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/rulebook/v2/geometry/route.py && docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_contracts.py` | PASS — Ruff clean; 20 passed in 0.13s. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/thesis_scenario_env.py tests/test_thesis_scenario_env.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/thesis_scenario_env.py tests/test_thesis_scenario_env.py && docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_thesis_scenario_env.py` | PASS — Ruff clean, 2 files formatted, 19 passed in 1.76s. |
+| 2026-07-17 | `git diff --check` | BLOCKED by pre-existing unrelated trailing whitespace in `docs/implementation/rulebook_v2_implementation_plan.md:29`; no whitespace error was introduced by the route changes. |
+| 2026-07-17 | `git diff --check` | PASS — no whitespace errors in the current worktree. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_contracts.py tests/test_rulebook_v2_catalog_eligibility.py tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py tests/test_scenario_catalog.py tests/test_scenario_records.py tests/test_scenarionet_pipeline.py tests/test_thesis_scenario_env.py tests/test_rulebook_v2_causal_context.py tests/test_causal_scene_context.py tests/test_observation_schema_v11.py tests/test_encoders_v10.py tests/test_semantic_state_observation.py tests/test_sb3_extensions.py tests/test_sb3_direct_backends.py` | 117 passed, 1 failed: stale geometry hash assertion in `tests/test_rulebook_v2_catalog_eligibility.py` after unrelated Rulebook v4.7 changes; route/observation tests passed. |
 
 ## 12. Deviations
 
@@ -272,6 +343,8 @@ No deviations identified.
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_causal_scene_context.py tests/test_observation_schema_v11.py tests/test_encoders_v10.py tests/test_semantic_state_observation.py tests/test_sb3_extensions.py tests/test_sb3_direct_backends.py` | `PASS` | `2026-07-16` | 29 passed in 16.68s. |
 | `docker compose run --rm dev uv run --no-sync ruff check <modified Python paths>` | `PASS` | `2026-07-16` | All checks passed. |
 | `docker compose run --rm dev uv run --no-sync ruff format --check <modified Python paths>` | `PASS` | `2026-07-16` | 18 files already formatted after focused Ruff formatting. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_causal_context.py tests/test_causal_scene_context.py tests/test_rulebook_v2_wrapper.py` | `PASS` | `2026-07-16` | 5 passed in 1.90s after the causal-context publication change. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_catalog_eligibility.py tests/test_scenario_records.py tests/test_scenario_catalog.py tests/test_thesis_scenario_env.py tests/test_rulebook_v2_contracts.py` | `PASS` | `2026-07-17` | 55 passed in 5.11s. |
 | `git diff --check` | `PASS` | `2026-07-16` | Final focused diff has no whitespace errors. |
 | `make smoke` | `NOT_RUN` | `2026-07-16` | Not applicable yet: M2 and M4 are incomplete, so the nine-combination smoke matrix cannot satisfy the approved contract. |
 
@@ -280,7 +353,7 @@ No deviations identified.
 `OBS-REQ-003`, `OBS-REQ-005`, and `ENC-REQ-003` are `PARTIAL`; `ENC-REQ-001`
 and `ENC-REQ-002` are `IMPLEMENTED` and focused-`VERIFIED`. All remaining
 requirements remain `NOT_IMPLEMENTED` or `NOT_VERIFIED`. In particular,
-map-based route construction, the semantic and LiDAR runtime observations,
+assigned-route runtime consumption, the semantic and LiDAR runtime observations,
 causal transition commit wiring, checkpoint generation publication/load, visual
 diagnostics, and the nine-case smoke matrix remain required work. No
 experimental use is authorized from this plan yet. The approved specifications

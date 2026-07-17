@@ -5,9 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import hypot, isfinite
 from statistics import median
+from typing import TYPE_CHECKING, Mapping
 
 from thesis_rl.rulebook.v2.geometry.canonical import PRECISION_GRID_M
 from thesis_rl.rulebook.v2.geometry.vertical import VERTICAL_COMPATIBILITY_TOLERANCE_M
+
+if TYPE_CHECKING:
+    from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
 
 
 GEOMETRY_EPSILON_M = 1.0e-2
@@ -58,7 +62,7 @@ class RoutePolyline:
 
     @staticmethod
     def _consolidate_points(
-        points_xyz: tuple[tuple[float, float, float], ...]
+        points_xyz: tuple[tuple[float, float, float], ...],
     ) -> tuple[tuple[float, float, float], ...]:
         if not points_xyz:
             raise ValueError("RoutePolyline requires centerline points")
@@ -90,6 +94,24 @@ class RoutePolyline:
     def length_m(self) -> float:
         return self._segment_starts_m[-1] + self._segment_lengths_m[-1]
 
+    def point_at(self, s_m: float) -> tuple[float, float, float]:
+        """Return the canonical centerline point at clamped XY arc length."""
+
+        if not isfinite(s_m):
+            raise ValueError("Route point arc length must be finite")
+        target = min(max(float(s_m), 0.0), self.length_m)
+        index = min(
+            range(len(self._segment_lengths_m)),
+            key=lambda candidate: abs(
+                target - (self._segment_starts_m[candidate] + self._segment_lengths_m[candidate])
+            ),
+        )
+        start = self._segment_starts_m[index]
+        length = self._segment_lengths_m[index]
+        fraction = min(1.0, max(0.0, (target - start) / length))
+        first, second = self.points_xyz[index], self.points_xyz[index + 1]
+        return tuple(first[axis] + fraction * (second[axis] - first[axis]) for axis in range(3))
+
     def project(
         self,
         point_xy: tuple[float, float],
@@ -116,7 +138,10 @@ class RoutePolyline:
             projected_x = first[0] + fraction * length * tangent[0]
             projected_y = first[1] + fraction * length * tangent[1]
             z_m = first[2] + fraction * (second[2] - first[2])
-            if position_z is not None and abs(position_z - z_m) > VERTICAL_COMPATIBILITY_TOLERANCE_M:
+            if (
+                position_z is not None
+                and abs(position_z - z_m) > VERTICAL_COMPATIBILITY_TOLERANCE_M
+            ):
                 continue
             lateral_distance = (point_xy[0] - projected_x) * -tangent[1] + (
                 point_xy[1] - projected_y
@@ -155,3 +180,37 @@ class RoutePolyline:
                 candidate.segment_index,
             ),
         )
+
+
+def build_assigned_route_polyline(
+    assigned_route_lane_ids: tuple[str, ...],
+    route_lanes: Mapping[str, "RouteLaneRecord"],
+) -> RoutePolyline:
+    """Build the reset-time route from frozen lane IDs and canonical geometry.
+
+    The lane sequence is task metadata, not a runtime trajectory. Missing lanes
+    or non-contiguous geometry fail closed before control.
+    """
+
+    if not assigned_route_lane_ids:
+        raise ValueError("Assigned route lane IDs must be non-empty")
+    if any(not lane_id for lane_id in assigned_route_lane_ids):
+        raise ValueError("Assigned route lane IDs must be non-empty strings")
+    missing = [lane_id for lane_id in assigned_route_lane_ids if lane_id not in route_lanes]
+    if missing:
+        raise ValueError("Assigned route lane is missing: " + ",".join(missing))
+
+    lanes = [route_lanes[lane_id] for lane_id in assigned_route_lane_ids]
+    for previous, following in zip(lanes, lanes[1:]):
+        previous_end = previous.centerline.points_xyz[-1]
+        following_start = following.centerline.points_xyz[0]
+        if (
+            hypot(previous_end[0] - following_start[0], previous_end[1] - following_start[1])
+            > GEOMETRY_EPSILON_M
+            or abs(previous_end[2] - following_start[2]) > VERTICAL_COMPATIBILITY_TOLERANCE_M
+        ):
+            raise ValueError(
+                "Assigned route lane sequence is not contiguous: "
+                f"{previous.lane_id}->{following.lane_id}"
+            )
+    return RoutePolyline.from_lane_centerlines(tuple(lane.centerline.points_xyz for lane in lanes))

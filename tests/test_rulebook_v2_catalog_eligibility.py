@@ -116,7 +116,7 @@ def _write_scenario(
 
 def test_geometry_config_hash_is_canonical_for_the_frozen_defaults() -> None:
     assert (
-        geometry_config_hash() == "f08ef3fb4790d532275974aa14bf08f91b62e9f0b55cc1a05d8d60ec4070eb97"
+        geometry_config_hash() == "71d5cdb8e9a67c7f8b3b790d21687656b8cd95fe35686b6e5773968e679208d6"
     )
 
 
@@ -130,6 +130,8 @@ def test_catalog_eligibility_accepts_static_rulebook_compatible_entry(tmp_path: 
     )
     assert result.rulebook_eligible
     assert result.validation_errors == ()
+    assert result.assigned_route_lane_ids == ("lane",)
+    assert result.assigned_route_source == "pg_sdc_offline_task_annotation"
 
 
 def test_catalog_eligibility_excludes_unmappable_route_without_runtime_fallback(
@@ -144,6 +146,7 @@ def test_catalog_eligibility_excludes_unmappable_route_without_runtime_fallback(
     )
     assert not result.rulebook_eligible
     assert result.validation_errors == ("task_route_lane_association_ambiguous_or_unavailable",)
+    assert result.assigned_route_lane_ids == ()
 
 
 def test_catalog_eligibility_parallel_path_matches_sequential_and_reports_progress(
@@ -226,6 +229,7 @@ def test_catalog_filter_cli_writes_audit_artifact_and_filters_split_input(
             str(calibration_path),
             "--workers",
             "2",
+            "--overwrite",
         ],
     )
     assert filter_catalog_main() == 0
@@ -238,7 +242,20 @@ def test_catalog_filter_cli_writes_audit_artifact_and_filters_split_input(
     assert payload["eligible_records"] == 1
     assert payload["excluded_records"] == 0
     captured = capsys.readouterr()
-    assert "Evaluating 1 catalog entries with 2" in captured.err
+    assert "Evaluating 1 of 1 catalog entries" in captured.err
     assert "worker process(es)" in captured.err
     assert "Rulebook v2 filtering complete:" in captured.err
     assert "eligible=1, excluded=0" in captured.err
+
+    def fail_if_recomputed(*_args, **_kwargs):
+        raise AssertionError("compatible eligibility should be reused")
+
+    monkeypatch.setattr(
+        "thesis_rl.cli.scenarios.filter_rulebook_v2_catalog.evaluate_catalog_entries",
+        fail_if_recomputed,
+    )
+    assert filter_catalog_main() == 0
+    cached_output = capsys.readouterr().err
+    assert "Evaluating 0 of 1" in cached_output
+    assert "reusing" in cached_output
+    assert "compatible" in cached_output

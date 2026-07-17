@@ -63,6 +63,8 @@ class ScenarioRecord:
     validation_warnings: tuple[str, ...]
     rulebook_eligible: bool | None = None
     rulebook_validation_errors: tuple[str, ...] = field(default_factory=tuple)
+    assigned_route_lane_ids: tuple[str, ...] = field(default_factory=tuple)
+    assigned_route_source: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("scenario_uid", "scenario_id", "dataset_version", "primary_arm"):
@@ -92,12 +94,17 @@ class ScenarioRecord:
             raise ValueError("rulebook_eligible must be boolean or null")
         if len(set(self.rulebook_validation_errors)) != len(self.rulebook_validation_errors):
             raise ValueError("rulebook_validation_errors must not contain duplicates")
+        if any(not lane_id for lane_id in self.assigned_route_lane_ids):
+            raise ValueError("assigned_route_lane_ids must contain non-empty lane IDs")
+        if self.assigned_route_lane_ids and not self.assigned_route_source:
+            raise ValueError("assigned_route_source is required when route lane IDs are present")
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["tags"] = list(self.tags)
         payload["validation_warnings"] = list(self.validation_warnings)
         payload["rulebook_validation_errors"] = list(self.rulebook_validation_errors)
+        payload["assigned_route_lane_ids"] = list(self.assigned_route_lane_ids)
         return payload
 
     @classmethod
@@ -106,6 +113,7 @@ class ScenarioRecord:
         data["tags"] = tuple(data.get("tags", ()))
         data["validation_warnings"] = tuple(data.get("validation_warnings", ()))
         data["rulebook_validation_errors"] = tuple(data.get("rulebook_validation_errors") or ())
+        data["assigned_route_lane_ids"] = tuple(data.get("assigned_route_lane_ids") or ())
         return cls(**data)
 
 

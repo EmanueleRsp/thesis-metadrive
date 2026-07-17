@@ -13,6 +13,17 @@ from thesis_rl.rulebook.v2.geometry.continuous_sat import (
     deterministic_convex_decomposition,
     predict_occupancy_interval,
 )
+from thesis_rl.rulebook.v2.geometry.ctrv import (
+    YawRateEstimate,
+    estimate_yaw_rate,
+    predict_actor_occupancy_interval,
+    predict_conflict_zone_occupancy_intervals,
+    predict_rotating_occupancy_interval,
+    predict_vehicle_occupancy_interval,
+    propagate_ctrv_footprint,
+    unwrap_headings,
+    wrap_heading_delta,
+)
 from thesis_rl.rulebook.v2.geometry.conflict_zones import (
     ConflictZoneCandidate,
     CrosswalkZoneCandidate,
@@ -37,7 +48,11 @@ from thesis_rl.rulebook.v2.geometry.lanes import (
     bumper_to_bumper_gap,
     footprint_route_coordinates,
 )
-from thesis_rl.rulebook.v2.geometry.route import RoutePolyline, RouteProjection
+from thesis_rl.rulebook.v2.geometry.route import (
+    RoutePolyline,
+    RouteProjection,
+    build_assigned_route_polyline,
+)
 from thesis_rl.rulebook.v2.geometry.vertical import (
     ElevationAtXY,
     vertically_compatible_at_xy,
@@ -56,6 +71,7 @@ __all__ = [
     "PolylineElevation",
     "RoutePolyline",
     "RouteProjection",
+    "build_assigned_route_polyline",
     "RouteLaneRecord",
     "MovementCorridor",
     "associate_route_lane",
@@ -72,6 +88,15 @@ __all__ = [
     "stable_geometry_id",
     "oriented_bounding_box",
     "predict_occupancy_interval",
+    "YawRateEstimate",
+    "estimate_yaw_rate",
+    "predict_actor_occupancy_interval",
+    "predict_conflict_zone_occupancy_intervals",
+    "predict_rotating_occupancy_interval",
+    "predict_vehicle_occupancy_interval",
+    "propagate_ctrv_footprint",
+    "unwrap_headings",
+    "wrap_heading_delta",
     "route_interval_for_zone",
     "select_first_ahead_or_occupied_zone",
     "swept_front_bumper",

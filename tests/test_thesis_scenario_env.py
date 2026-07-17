@@ -95,6 +95,50 @@ def test_thesis_route_completion_is_bounded_for_metrics() -> None:
     assert thesis_env_module.ThesisScenarioEnv._normalise_route_completion(-0.25) == (0.0, -0.25)
 
 
+def test_assigned_route_metadata_is_published_to_reset_config() -> None:
+    env = object.__new__(thesis_env_module.ThesisScenarioEnv)
+    env.config = {}
+    env.current_scenario_record = SimpleNamespace(
+        assigned_route_lane_ids=("lane-a", "lane-b"),
+        assigned_route_source="pg_sdc_offline_task_annotation",
+    )
+
+    env._publish_assigned_route_metadata()
+
+    assert env.config["assigned_route_lane_ids"] == ("lane-a", "lane-b")
+    assert env.config["assigned_route_source"] == "pg_sdc_offline_task_annotation"
+
+
+def test_missing_assigned_route_fails_closed_before_reset() -> None:
+    env = object.__new__(thesis_env_module.ThesisScenarioEnv)
+    env.config = {"assigned_route_lane_ids": ("stale-lane",)}
+    env.current_scenario_record = SimpleNamespace(assigned_route_lane_ids=())
+
+    with pytest.raises(ValueError, match="missing assigned_route_lane_ids"):
+        env._publish_assigned_route_metadata()
+    assert "assigned_route_lane_ids" not in env.config
+
+
+def test_reset_injects_frozen_route_metadata_without_inspecting_track() -> None:
+    env = SimpleNamespace(
+        current_scenario_record=SimpleNamespace(
+            assigned_route_lane_ids=("lane-a", "lane-b"),
+            assigned_route_source="waymo_sdc_offline_task_annotation",
+        ),
+        engine=SimpleNamespace(
+            data_manager=SimpleNamespace(current_scenario={"metadata": {}, "tracks": "sentinel"})
+        ),
+    )
+
+    thesis_env_module.ThesisScenarioEnv._inject_assigned_route_metadata_into_scenario(env)
+
+    assert env.engine.data_manager.current_scenario["metadata"] == {
+        "assigned_route_lane_ids": ["lane-a", "lane-b"],
+        "assigned_route_source": "waymo_sdc_offline_task_annotation",
+    }
+    assert env.engine.data_manager.current_scenario["tracks"] == "sentinel"
+
+
 def test_thesis_reward_suppresses_native_short_route_bonus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

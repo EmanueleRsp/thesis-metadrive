@@ -16,11 +16,21 @@ from thesis_rl.rulebook.v2.context.map_matching import (
     map_match_sdc_track_to_task_route,
     reachable_lane_ids,
 )
-from thesis_rl.rulebook.v2.context.static_adapter import StaticAdapterResult, normalize_static_records
+from thesis_rl.rulebook.v2.context.task_route import build_task_route_record
+from thesis_rl.rulebook.v2.context.static_adapter import (
+    StaticAdapterResult,
+    normalize_static_records,
+)
 from thesis_rl.rulebook.v2.geometry.controls import derive_control_line
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
-from thesis_rl.rulebook.v2.types import ApproachControl, MapFeatureClass, MapFeatureRecord, MovementKey, TrafficControlRecord
+from thesis_rl.rulebook.v2.types import (
+    ApproachControl,
+    MapFeatureClass,
+    MapFeatureRecord,
+    MovementKey,
+    TrafficControlRecord,
+)
 
 _FEATURE_CLASSES = {
     "CROSSWALK": MapFeatureClass.CROSSWALK,
@@ -49,7 +59,11 @@ def _track_samples(track: Mapping[str, Any]) -> tuple[OfflineTrackSample, ...]:
     valid = np.asarray(state.get("valid", np.ones(len(positions), dtype=bool)), dtype=bool)
     if len(headings) != len(positions) or len(valid) != len(positions):
         raise ValueError("PG SDC track arrays have inconsistent lengths")
-    return tuple(OfflineTrackSample((float(p[0]), float(p[1])), float(p[2]), float(h)) for p, h, ok in zip(positions, headings, valid) if ok)
+    return tuple(
+        OfflineTrackSample((float(p[0]), float(p[1])), float(p[2]), float(h))
+        for p, h, ok in zip(positions, headings, valid)
+        if ok
+    )
 
 
 def _lane_record(lane_id: str, lane: Mapping[str, Any]) -> RouteLaneRecord:
@@ -62,7 +76,9 @@ def _lane_record(lane_id: str, lane: Mapping[str, Any]) -> RouteLaneRecord:
         polygon_points = _array_points(polygon_value)
         polygon = Polygon(tuple((float(x), float(y)) for x, y, _ in polygon_points))
     else:
-        polygon = LineString(tuple((float(x), float(y)) for x, y, _ in points)).buffer(1.75, cap_style="flat", join_style="mitre")
+        polygon = LineString(tuple((float(x), float(y)) for x, y, _ in points)).buffer(
+            1.75, cap_style="flat", join_style="mitre"
+        )
     return RouteLaneRecord(lane_id, polygon, centerline)
 
 
@@ -74,7 +90,9 @@ def _lane_successors(features: Mapping[Any, Any]) -> dict[str, tuple[str, ...]]:
     }
 
 
-def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid: str, adapter_version: str = "pg-v2") -> StaticAdapterResult:
+def build_pg_static_adapter_result(
+    scenario: Mapping[str, Any], *, scenario_uid: str, adapter_version: str = "pg-v2"
+) -> StaticAdapterResult:
     """Convert one procedural ScenarioDescription to canonical static records."""
     features = scenario.get("map_features")
     metadata = scenario.get("metadata")
@@ -86,12 +104,34 @@ def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid:
             lanes[str(feature_id)] = _lane_record(str(feature_id), feature)
     if not lanes:
         raise ValueError("PG scenario has no lane geometry")
-    sdc_id = str(metadata.get("sdc_id", ""))
-    tracks = scenario.get("tracks")
-    if not sdc_id or not isinstance(tracks, Mapping) or sdc_id not in tracks:
-        raise ValueError("PG scenario has no valid SDC track")
     source_hash = hashlib.sha256(json.dumps(sorted(lanes), separators=(",", ":")).encode()).digest()
-    task_route = map_match_sdc_track_to_task_route(scenario_uid=scenario_uid, track=_track_samples(tracks[sdc_id]), route_lanes=lanes, source_geometry_bytes=source_hash, adapter_version=adapter_version)
+    assigned_route = metadata.get("assigned_route_lane_ids")
+    if assigned_route is not None:
+        if not isinstance(assigned_route, (list, tuple)):
+            raise ValueError("PG assigned_route_lane_ids must be a sequence")
+        task_route = build_task_route_record(
+            scenario_uid=scenario_uid,
+            lane_ids=tuple(str(lane_id) for lane_id in assigned_route),
+            provenance="persisted_assigned_route_metadata",
+            adapter_version=adapter_version,
+            source_geometry_bytes=source_hash,
+            route_assignment_source=str(
+                metadata.get("assigned_route_source") or "pg_sdc_offline_task_annotation"
+            ),
+        )
+    else:
+        sdc_id = str(metadata.get("sdc_id", ""))
+        tracks = scenario.get("tracks")
+        if not sdc_id or not isinstance(tracks, Mapping) or sdc_id not in tracks:
+            raise ValueError("PG scenario has no valid SDC track for offline annotation")
+        task_route = map_match_sdc_track_to_task_route(
+            scenario_uid=scenario_uid,
+            track=_track_samples(tracks[sdc_id]),
+            route_lanes=lanes,
+            source_geometry_bytes=source_hash,
+            adapter_version=adapter_version,
+            route_assignment_source="pg_sdc_offline_task_annotation",
+        )
     map_records: list[MapFeatureRecord] = []
     feature_errors: list[str] = []
     for feature_id, feature in features.items():
@@ -111,7 +151,11 @@ def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid:
             if polygonal
             else LineString(tuple((float(x), float(y)) for x, y, _ in points))
         )
-        map_records.append(MapFeatureRecord(str(feature_id), feature_class, geometry, float(np.median(points[:, 2]))))
+        map_records.append(
+            MapFeatureRecord(
+                str(feature_id), feature_class, geometry, float(np.median(points[:, 2]))
+            )
+        )
     controls: list[TrafficControlRecord] = []
     signal_errors: list[str] = []
     for feature_id, feature in features.items():
@@ -129,10 +173,25 @@ def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid:
                 continue
             movement = MovementKey(lane_id, f"control:{feature_id}", lane_id)
             try:
-                line = derive_control_line(control_point_xy=(float(point[0]), float(point[1])), control_point_z=float(point[2]), controlled_lane=lane)
+                line = derive_control_line(
+                    control_point_xy=(float(point[0]), float(point[1])),
+                    control_point_z=float(point[2]),
+                    controlled_lane=lane,
+                )
             except ValueError:
                 continue
-            controls.append(TrafficControlRecord(f"{feature_id}:{lane_id}", ApproachControl.STOP, (lane_id,), movement, line.geometry, line.route_s_m, float(point[2]), ()))
+            controls.append(
+                TrafficControlRecord(
+                    f"{feature_id}:{lane_id}",
+                    ApproachControl.STOP,
+                    (lane_id,),
+                    movement,
+                    line.geometry,
+                    line.route_s_m,
+                    float(point[2]),
+                    (),
+                )
+            )
     relevant_lane_ids = reachable_lane_ids(
         route_lane_ids=task_route.lane_ids,
         lane_successors=_lane_successors(features),
@@ -146,23 +205,49 @@ def build_pg_static_adapter_result(scenario: Mapping[str, Any], *, scenario_uid:
             point_value = dynamic.get("stop_point")
             if point_value is None or lane_id not in lanes:
                 continue
-            states = dynamic.get("state", {}).get("object_state") if isinstance(dynamic.get("state"), Mapping) else None
+            states = (
+                dynamic.get("state", {}).get("object_state")
+                if isinstance(dynamic.get("state"), Mapping)
+                else None
+            )
             if lane_id in relevant_lane_ids:
-                if not isinstance(states, (list, tuple, np.ndarray)) or len(states) != int(scenario.get("length", 0)):
+                if not isinstance(states, (list, tuple, np.ndarray)) or len(states) != int(
+                    scenario.get("length", 0)
+                ):
                     signal_errors.append(f"signal_sequence_invalid:{physical_id}")
                 elif any(str(state) == "LANE_STATE_UNKNOWN" for state in states):
                     signal_errors.append(f"signal_state_unknown:{physical_id}")
             point = _array_points(np.asarray(point_value).reshape(1, -1))[0]
             movement = MovementKey(lane_id, f"control:{physical_id}", lane_id)
             try:
-                line = derive_control_line(control_point_xy=(float(point[0]), float(point[1])), control_point_z=float(point[2]), controlled_lane=lanes[lane_id])
+                line = derive_control_line(
+                    control_point_xy=(float(point[0]), float(point[1])),
+                    control_point_z=float(point[2]),
+                    controlled_lane=lanes[lane_id],
+                )
             except ValueError:
                 continue
-            controls.append(TrafficControlRecord(str(physical_id), ApproachControl.SIGNAL, (lane_id,), movement, line.geometry, line.route_s_m, float(point[2]), (str(physical_id),)))
-    result = normalize_static_records(scenario_uid=scenario_uid, task_route=task_route, route_lanes=tuple(lanes.values()), map_features=tuple(map_records), traffic_controls=tuple(controls), movement_priority_records=())
+            controls.append(
+                TrafficControlRecord(
+                    str(physical_id),
+                    ApproachControl.SIGNAL,
+                    (lane_id,),
+                    movement,
+                    line.geometry,
+                    line.route_s_m,
+                    float(point[2]),
+                    (str(physical_id),),
+                )
+            )
+    result = normalize_static_records(
+        scenario_uid=scenario_uid,
+        task_route=task_route,
+        route_lanes=tuple(lanes.values()),
+        map_features=tuple(map_records),
+        traffic_controls=tuple(controls),
+        movement_priority_records=(),
+    )
     return replace(
         result,
-        validation_errors=tuple(
-            (*result.validation_errors, *feature_errors, *signal_errors)
-        ),
+        validation_errors=tuple((*result.validation_errors, *feature_errors, *signal_errors)),
     )

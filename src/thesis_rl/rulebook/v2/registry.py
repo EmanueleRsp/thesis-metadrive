@@ -39,8 +39,10 @@ class ComponentDefinition:
 
 _COMPONENTS: tuple[ComponentDefinition, ...] = (
     ComponentDefinition(
-        "collision", MacroRule.COLLISION_IMPACT, evaluate_collision_impact,
-        frozenset({"previous_contact_ids"})
+        "collision",
+        MacroRule.COLLISION_IMPACT,
+        evaluate_collision_impact,
+        frozenset({"previous_contact_ids"}),
     ),
     ComponentDefinition("rss", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_rss),
     ComponentDefinition("ttc", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_ttc),
@@ -58,19 +60,29 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
         "signal",
         MacroRule.ROAD_TRAFFIC_COMPLIANCE,
         evaluate_signal_transition,
-        frozenset({
-            "active_signal_group_id", "previous_signal_state", "yellow_must_stop",
-            "previous_signal_delta_m", "resolved_signal_group_ids",
-        }),
+        frozenset(
+            {
+                "active_signal_group_id",
+                "previous_signal_state",
+                "yellow_must_stop",
+                "previous_signal_delta_m",
+                "resolved_signal_group_ids",
+            }
+        ),
     ),
     ComponentDefinition(
         "stop",
         MacroRule.ROAD_TRAFFIC_COMPLIANCE,
         evaluate_stop,
-        frozenset({
-            "active_stop_group_id", "stop_continuous_timer_s", "stop_best_timer_s",
-            "previous_stop_delta_m", "resolved_stop_group_ids",
-        }),
+        frozenset(
+            {
+                "active_stop_group_id",
+                "stop_continuous_timer_s",
+                "stop_best_timer_s",
+                "previous_stop_delta_m",
+                "resolved_stop_group_ids",
+            }
+        ),
     ),
     ComponentDefinition(
         "zone_lifecycle",
@@ -92,8 +104,14 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
         frozenset({"vehicle_yield_illegal_entries", "frozen_actor_movement_keys"}),
     ),
     ComponentDefinition(
-        "progress", MacroRule.ROUTE_PROGRESS, evaluate_progress,
-        frozenset({"previous_route_s_m"})
+        "motion_history",
+        MacroRule.ROAD_TRAFFIC_COMPLIANCE,
+        None,
+        frozenset({"actor_motion_histories", "previous_sim_time_s"}),
+        normative_output=False,
+    ),
+    ComponentDefinition(
+        "progress", MacroRule.ROUTE_PROGRESS, evaluate_progress, frozenset({"previous_route_s_m"})
     ),
 )
 
@@ -163,6 +181,8 @@ class RulebookV2Registry:
             "preexisting_ego_occupancy_zone_ids",
             "frozen_actor_movement_keys",
             "previous_route_s_m",
+            "actor_motion_histories",
+            "previous_sim_time_s",
         }
         if set(owners) != expected_fields:
             raise ValueError(

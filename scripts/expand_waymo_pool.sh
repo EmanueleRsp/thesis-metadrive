@@ -90,12 +90,16 @@ refresh_status() {
   log "status refreshed: eligible=${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required}, deficit=${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
 }
 
-refresh_status
-echo "Waymo eligible pool: ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required} (converted: ${SCENARIONET_WAYMO_POOL_TOTAL}, deficit: ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT})"
-if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
-  echo "Waymo A4_vru target: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU} (deficit: ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0})"
+if is_true "${WAYMO_SKIP_INITIAL_STATUS:-false}"; then
+  log "skipping full converted-pool status scan; caller already verified the deficit"
+else
+  refresh_status
+  echo "Waymo eligible pool: ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required} (converted: ${SCENARIONET_WAYMO_POOL_TOTAL}, deficit: ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT})"
+  if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
+    echo "Waymo A4_vru target: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU} (deficit: ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0})"
+  fi
 fi
-if is_true "$SCENARIONET_WAYMO_POOL_COMPLETE" && ! is_true "$force_one_batch"; then
+if ! is_true "${WAYMO_SKIP_INITIAL_STATUS:-false}" && is_true "$SCENARIONET_WAYMO_POOL_COMPLETE" && ! is_true "$force_one_batch"; then
   echo "Waymo target already satisfied; no download or conversion is needed."
   exit 0
 fi
@@ -188,8 +192,12 @@ while ! is_true "$SCENARIONET_WAYMO_POOL_COMPLETE" || is_true "$force_one_batch"
   fi
 
   new_shards=$((new_shards + selected))
-  refresh_status
-  log "batch ${batch_number} complete: eligible ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required}; remaining deficit ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
+  if is_true "$force_one_batch"; then
+    log "batch ${batch_number} complete; deferring full-pool status to the next catalog cycle"
+  else
+    refresh_status
+    log "batch ${batch_number} complete: eligible ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required}; remaining deficit ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
+  fi
   if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
     log "batch ${batch_number} A4_vru: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU}; remaining A4 deficit ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0}"
   fi

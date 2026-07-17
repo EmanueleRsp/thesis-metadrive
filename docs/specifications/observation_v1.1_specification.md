@@ -12,6 +12,9 @@ approval_date: "2026-07-16"
 approval: "Explicit user approval in this Codex conversation"
 related_adrs:
   - "docs/decisions/ADR-002-semantic-observation-and-encoder-contract.md"
+  - "docs/decisions/ADR-004-assigned-route-metadata-for-pg-and-waymo.md"
+amendments:
+  - "2026-07-17: assigned-route task metadata for PG and Waymo"
 ---
 
 # Sintesi esecutiva
@@ -25,8 +28,10 @@ Decisioni principali:
 
 - setting **single-agent, closed-loop, post-perception / mid-to-end**;
 - percezione corrente ideale, completata da preprocessing deterministico e causale di mappa, route e contesto normativo;
-- la route ego è **map-based** e congelata al reset;
-- non si usa la traiettoria futura registrata dell’SDC come navigation;
+- la route ego è una missione assegnata, costruita da centerline canoniche di
+  mappa e congelata al reset;
+- la traiettoria futura SDC non è mai letta online come navigation; per Waymo
+  può soltanto aver prodotto l’annotazione di missione offline congelata;
 - non si usano route, checkpoint o intenzioni ground-truth degli altri attori;
 - history breve con \(H=5\);
 - tutti gli stati storici di ego e attori vengono riespressi nel frame ego corrente;
@@ -110,6 +115,9 @@ Una feature è ammessa se è ricostruibile online usando soltanto:
 - stati ego precedenti;
 - azioni applicate fino a \(t-1\);
 - route ego assegnata e congelata al reset;
+- route mission metadata frozen before reset; for Waymo only, this offline
+  annotation may be map-matched from the complete SDC trajectory before the
+  episode is made available to the runtime;
 - mappa locale;
 - lane graph e lane markings;
 - oggetti osservati/tracciati fino a \(t\);
@@ -136,7 +144,11 @@ Non devono essere consultate né direttamente né indirettamente:
 - future validity masks;
 - route o checkpoint ground-truth degli altri attori;
 - futura lane scelta dagli altri;
-- futura traiettoria SDC usata come navigation;
+- futura traiettoria SDC usata online come navigation; una route assegnata
+  ottenuta offline e congelata nei metadati è invece ammessa;
+- future SDC samples accessed, indexed, replayed, or compared during reset,
+  `observe()`, transition evaluation, or policy inference; the frozen assigned
+  route metadata is the sole approved exception;
 - future traffic-light phases;
 - futura lane, futura uscita o futura `MovementKey` degli altri attori;
 - precedenza inferita dalla futura traiettoria registrata di un altro attore;
@@ -218,44 +230,34 @@ not a fallback to native navigation or future scenario data.
 
 Sono inoltre ammesse primitive di **causal rule context**, purché prodotte senza consultare il risultato del monitor: associazione lane-control, `MovementKey` corrente, stato di occupazione già avvenuto, onset del giallo, stop/dashed timers e diritto di precedenza esplicitamente derivabile dalla mappa o dal controllo corrente. Queste primitive devono avere un fallback `unknown`/`undefined` e non possono essere retro-riempite usando il futuro del dataset.
 
-# 4. Route ego map-based
+# 4. Assigned ego route and map geometry
 
 ## 4.1 Motivazione
 
-La `TrajectoryNavigation` nativa di `ScenarioEnv` può essere costruita dalla traiettoria completa registrata dell’SDC. Tale informazione può rivelare implicitamente la condotta futura dell’esperto.
-
-La route usata dalla policy e dal rulebook deve quindi essere ricostruita dalla mappa.
+The ego route is a navigation mission known before control begins. Each source
+must persist it as an offline task annotation. Waymo may obtain it by
+map-matching the full SDC trajectory only in offline dataset preparation,
+before the scenario is released to the runtime. PG route-annotation provenance
+must be explicitly recorded. The resulting lane-ID sequence is immutable task
+metadata, not an online future-state feature.
 
 ## 4.2 Costruzione
 
-Al reset:
+Before reset, every scenario must publish a non-empty, contiguous
+`assigned_route_lane_ids` sequence. At reset the runtime validates that each
+lane exists and concatenates its canonical map centerline into a
+`RoutePolyline`; it then freezes the lane sequence and polyline for the full
+episode. The runtime must not read any SDC sample or compare route alternatives.
 
-1. determinare la lane iniziale dell’ego;
-2. determinare la lane di destinazione come parte della definizione del task;
-3. costruire il lane graph;
-4. calcolare il cammino topologico dalla lane iniziale alla lane finale;
-5. minimizzare la lunghezza geometrica totale;
-6. in caso di parità usare un tie-break lessicografico sui lane ID;
-7. concatenare le centerline ottenendo una `RoutePolyline`;
-8. congelare route e lane sequence per l’intero episodio.
-
-The task goal may be represented by the scenario destination only when that
-value is declared immutable task metadata available at reset. It must not be
-obtained by indexing, replaying, or otherwise inspecting the future SDC
-trajectory. Alternative paths must never be compared with the future SDC
-trajectory.
-
-The destination is immutable task metadata available before the episode starts;
-it is not derived from a future SDC sample. The route builder must fail closed
-before control begins when the ego start lane, destination lane, lane graph, or
-topological path cannot be determined. Such a scenario is excluded from the
-configured train, validation, or test pool with a recorded reason. No native
-trajectory-navigation fallback, geometric nearest-route fallback, or future-SDC
-matching fallback is permitted.
+The annotation's provenance is recorded in the dataset and experiment manifest:
+an explicit PG assignment provenance or `waymo_sdc_offline_task_annotation`. It
+is not included in the policy input. A missing, invalid, or non-contiguous assignment
+is a fail-closed scenario-validation error. No native trajectory-navigation,
+geometric nearest-route, or runtime future-SDC fallback is permitted.
 
 ## 4.3 Conseguenze
 
-Dalla route map-based devono derivare:
+Dalla route assegnata e costruita su geometria di mappa devono derivare:
 
 - navigation della baseline LiDAR;
 - route tokens della semantic observation;
@@ -273,7 +275,7 @@ Dalla route map-based devono derivare:
 
 Questa osservazione è la baseline MetaDrive compatta. Mantiene la struttura della built-in `LidarStateObservation`, ma:
 
-- usa route map-based;
+- usa route assegnata e costruita su geometria di mappa;
 - configura esplicitamente i detector;
 - disattiva la navigation degli altri veicoli;
 - applica uno stack temporale;
@@ -293,7 +295,7 @@ observation:
 
   navigation:
     implementation: MapRouteNavigationObservation22
-    source: map_based_route
+    source: assigned_route_metadata_and_map_geometry
     replace_native_scenario_navigation: true
     num_waypoints: 10
     waypoint_spacing_m: 5.0
@@ -332,7 +334,7 @@ observation:
     rng_source: engine.np_random
 ```
 
-La classe non è la `LidarStateObservation` stock configurata soltanto tramite YAML. Deve sostituire la navigation nativa con un adapter custom da 22 dimensioni costruito sulla `RoutePolyline` map-based. La revisione esatta di MetaDrive deve essere registrata nel manifest sperimentale e la dimensione per-frame deve essere verificata con un’asserzione runtime, così modifiche upstream non cambiano silenziosamente lo schema.
+La classe non è la `LidarStateObservation` stock configurata soltanto tramite YAML. Deve sostituire la navigation nativa con un adapter custom da 22 dimensioni costruito sulla `RoutePolyline` della missione assegnata e su geometria di mappa. La revisione esatta di MetaDrive deve essere registrata nel manifest sperimentale e la dimensione per-frame deve essere verificata con un’asserzione runtime, così modifiche upstream non cambiano silenziosamente lo schema.
 
 ## 5.3 Perché attivare entrambi i detector
 
@@ -656,7 +658,7 @@ E_t^{current}\in\mathbb R^3.
 |---|---:|---|
 | Ego length | 1 | Lunghezza del footprint ego |
 | Ego width | 1 | Larghezza del footprint ego |
-| Route completion | 1 | Frazione percorsa della route map-based |
+| Route completion | 1 | Frazione percorsa della route assegnata |
 | **Totale** | **3** |  |
 
 La dimensione del veicolo è necessaria per interpretare clearance e footprint-relative geometry. Route completion è calcolata soltanto sulla route canonica.
@@ -1311,7 +1313,8 @@ The observation builder receives the committed context, not the rulebook result.
 ## 13.1 Anti-leakage
 
 1. Cambiare future tracks degli altri lasciando invariato presente/passato: observation invariata.
-2. Cambiare future SDC trajectory lasciando invariata route map-based: observation invariata.
+2. Cambiare future SDC trajectory after the offline task annotation is frozen:
+   observation invariata.
 3. Cambiare future traffic-light sequence: observation corrente invariata.
 4. Cambiare arm, source e usefulness: observation invariata.
 5. Cambiare reward scalarization: observation invariata.
@@ -1357,7 +1360,7 @@ The observation builder receives the committed context, not the rulebook result.
 6. \(\sigma=0.001\) mantiene valori in observation space.
 7. `dropout_prob=0`.
 8. No nearby-vehicle navigation.
-9. Navigation deriva dalla route map-based custom da 22 dimensioni e sostituisce quella nativa.
+9. Navigation deriva dalla route assegnata custom da 22 dimensioni e sostituisce quella nativa.
 10. Stack ordering corretto.
 11. Rumore nativo MetaDrive nullo per tutti e tre i sensori ray-based.
 12. Il wrapper è l’unico proprietario del rumore e non avviene doppia perturbazione.
@@ -1406,7 +1409,7 @@ observations:
     vertical_compatibility_tolerance_m: 3.0
     future_ground_truth: forbidden
     other_agent_navigation: forbidden
-    route_source: map_based
+    route_source: assigned_route_metadata_and_map_geometry
     output_dtype: float32
     units:
       distance: meter
@@ -1417,11 +1420,10 @@ observations:
       yaw_rate: radian_per_second
 
   map_route:
-    destination_is_task_input: true
-    destination_source: immutable_task_metadata_at_reset
-    use_future_sdc_intermediate_track: false
-    path_cost: geometric_length
-    tie_break: lexicographic_lane_ids
+    route_source: assigned_route_lane_ids
+    pg_route_provenance: explicit_offline_task_annotation
+    waymo_route_provenance: waymo_sdc_offline_task_annotation
+    runtime_future_sdc_access: false
     invalid_route_policy: exclude_scenario_fail_closed
     waypoint_spacing_m: 5.0
     route_tokens: 10
@@ -1579,5 +1581,8 @@ Queste condizioni non modificano la configurazione nominale.
 - Approved by: user
 - Approval evidence: explicit user message in this Codex conversation:
   “approvo”
-- Scope: this document only; encoder v1.0 remains `UNDER_REVIEW` pending a
-  separate explicit approval.
+- Amendment approval evidence: explicit user message in this Codex conversation
+  on `2026-07-17`: “va bene”, approving offline SDC route annotation for both
+  PG and Waymo as recorded in ADR-004.
+- Scope: OBS-V1.1 route-assignment amendment recorded by ADR-004; ENC-V1.0 is
+  governed by its own approval record.

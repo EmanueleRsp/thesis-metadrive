@@ -13,6 +13,7 @@ from typing import Any
 
 import gymnasium as gym
 
+from thesis_rl.contracts.causal_scene_context import CausalSceneContext
 from thesis_rl.rulebook.v2.memory import apply_cache_delta
 from thesis_rl.rulebook.v2.types import (
     MACRO_RULE_ORDER,
@@ -61,6 +62,7 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         self._memory = initial_memory
         self._cache = initial_cache
         self._pre_snapshot: EnvSnapshot | None = None
+        self._causal_scene_context: CausalSceneContext | None = None
 
     @property
     def memory(self) -> RulebookMemory:
@@ -70,11 +72,45 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
     def cache(self) -> EpisodeCache:
         return self._cache
 
+    @property
+    def causal_scene_context(self) -> CausalSceneContext:
+        """Committed observation-safe state for the current control step.
+
+        It never includes the just-evaluated ``RulebookResult`` and is updated
+        only after the memory/cache transaction succeeds.
+        """
+
+        if self._causal_scene_context is None:
+            raise RuntimeError("Causal scene context is unavailable before reset")
+        return self._causal_scene_context
+
+    def _publish_causal_context(self, snapshot: object) -> None:
+        """Publish only canonical snapshots to the owning environment/engine."""
+
+        if not isinstance(snapshot, EnvSnapshot):
+            self._causal_scene_context = None
+            return
+        context = CausalSceneContext(
+            episode_cache=self._cache,
+            snapshot=snapshot,
+            memory=self._memory,
+        )
+        self._causal_scene_context = context
+        # ``BaseObservation`` has access to MetaDrive's engine, while the
+        # environment owns the episode lifecycle. Both references point to the
+        # same immutable committed object and neither carries RulebookResult.
+        owner = self.env.unwrapped
+        setattr(owner, "causal_scene_context", context)
+        engine = getattr(owner, "engine", None)
+        if engine is not None:
+            setattr(engine, "causal_scene_context", context)
+
     def reset(self, **kwargs: Any):
         observation, info = self.env.reset(**kwargs)
         self._memory = self._initial_memory
         self._cache = self._initial_cache
         self._pre_snapshot = self._snapshotter(self.env)
+        self._publish_causal_context(self._pre_snapshot)
         return observation, info
 
     def step(self, action: Any):
@@ -93,6 +129,7 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         self._memory = next_memory
         self._cache = next_cache
         self._pre_snapshot = post_snapshot
+        self._publish_causal_context(post_snapshot)
         info_dict = dict(info) if isinstance(info, Mapping) else {}
         info_dict["rule_reward_vector"] = result.margins
         macro_names = [rule.value for rule in MACRO_RULE_ORDER]

@@ -88,6 +88,7 @@ def map_match_sdc_track_to_task_route(
     route_lanes: Mapping[str, RouteLaneRecord],
     source_geometry_bytes: bytes,
     adapter_version: str,
+    route_assignment_source: str = "offline_task_annotation",
 ) -> TaskRouteRecord:
     """Map-match an offline SDC track and retain only its lane topology."""
 
@@ -131,4 +132,5 @@ def map_match_sdc_track_to_task_route(
         provenance="offline_sdc_map_match",
         adapter_version=adapter_version,
         source_geometry_bytes=source_geometry_bytes,
+        route_assignment_source=route_assignment_source,
     )

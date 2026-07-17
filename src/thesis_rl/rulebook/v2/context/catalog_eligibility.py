@@ -106,6 +106,8 @@ def evaluate_catalog_entry(
     errors = tuple((*result.validation_errors, *route_eligibility.validation_errors))
     return replace(
         route_eligibility,
+        assigned_route_lane_ids=result.task_route.lane_ids,
+        assigned_route_source=result.task_route.route_assignment_source,
         rulebook_eligible=not errors,
         validation_errors=errors,
     )

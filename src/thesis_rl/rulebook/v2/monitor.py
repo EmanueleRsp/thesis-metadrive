@@ -4,17 +4,36 @@ from __future__ import annotations
 
 from thesis_rl.rulebook.v2.aggregation import aggregate_rulebook_result
 from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
-from thesis_rl.rulebook.v2.memory import merge_cache_deltas, merge_memory_deltas
+from thesis_rl.rulebook.v2.memory import (
+    build_motion_history_preview,
+    merge_cache_deltas,
+    merge_memory_deltas,
+)
 from collections.abc import Mapping
 from typing import cast
 
 from thesis_rl.rulebook.v2.registry import DEFAULT_RULEBOOK_V2_REGISTRY, RulebookV2Registry
-from thesis_rl.rulebook.v2.types import CacheDelta, MemoryDelta, RulebookMemory, RuleComponentResult
+from thesis_rl.rulebook.v2.types import (
+    CacheDelta,
+    EnvSnapshot,
+    MemoryDelta,
+    RulebookMemory,
+    RuleComponentResult,
+)
 
 
-def evaluate_monitor_transition(*, memory: RulebookMemory, component_outputs: tuple[tuple[RuleComponentResult, MemoryDelta, CacheDelta], ...],
-                                raw_progress_m: float, progress_margin: float, pending_cache_delta: CacheDelta = CacheDelta(),
-                                progress_output: tuple[RuleComponentResult, MemoryDelta, CacheDelta] | None = None):
+def evaluate_monitor_transition(
+    *,
+    memory: RulebookMemory,
+    component_outputs: tuple[tuple[RuleComponentResult, MemoryDelta, CacheDelta], ...],
+    raw_progress_m: float,
+    progress_margin: float,
+    pending_cache_delta: CacheDelta = CacheDelta(),
+    progress_output: tuple[RuleComponentResult, MemoryDelta, CacheDelta] | None = None,
+    motion_history_delta: MemoryDelta | None = None,
+    post_state: EnvSnapshot | None = None,
+    history_window_s: float = 0.5,
+):
     """Commit all evaluator deltas only after complete result validation."""
     if not isinstance(memory, RulebookMemory):
         raise TypeError("memory must be a RulebookMemory")
@@ -24,10 +43,27 @@ def evaluate_monitor_transition(*, memory: RulebookMemory, component_outputs: tu
         results += (progress_output[0],)
         raw_progress_m = cast(float, progress_output[0].raw["route_delta_m"])
         progress_margin = progress_output[0].cost
-    memory_deltas = tuple(output[1] for output in component_outputs + progress_deltas if output[1].writes)
-    cache_deltas = (pending_cache_delta,) + tuple(output[2] for output in component_outputs + progress_deltas)
     try:
-        result = aggregate_rulebook_result(components=results, raw_progress_m=raw_progress_m, progress_margin=progress_margin)
+        if post_state is not None:
+            _, generated_history_delta = build_motion_history_preview(
+                memory=memory,
+                post_state=post_state,
+                history_window_s=history_window_s,
+            )
+            if motion_history_delta is not None and motion_history_delta.writes:
+                raise ValueError("Motion history must have one central writer")
+            motion_history_delta = generated_history_delta
+        history_deltas = () if motion_history_delta is None else (motion_history_delta,)
+        memory_deltas = tuple(
+            output[1] for output in component_outputs + progress_deltas if output[1].writes
+        )
+        memory_deltas += tuple(delta for delta in history_deltas if delta.writes)
+        cache_deltas = (pending_cache_delta,) + tuple(
+            output[2] for output in component_outputs + progress_deltas
+        )
+        result = aggregate_rulebook_result(
+            components=results, raw_progress_m=raw_progress_m, progress_margin=progress_margin
+        )
         if not result.complete_evaluation:
             raise ValueError("Monitor cannot return incomplete evaluation")
         # Validate both append-only cache and memory ownership before exposing
@@ -49,6 +85,9 @@ def evaluate_registered_transition(
     raw_progress_m: float,
     progress_margin: float,
     pending_cache_delta: CacheDelta = CacheDelta(),
+    motion_history_delta: MemoryDelta | None = None,
+    post_state: EnvSnapshot | None = None,
+    history_window_s: float = 0.5,
     registry: RulebookV2Registry = DEFAULT_RULEBOOK_V2_REGISTRY,
 ):
     """Invoke every normative evaluator through the fixed registry.
@@ -73,8 +112,7 @@ def evaluate_registered_transition(
     if unknown:
         raise ValueError(f"Unknown evaluator inputs: {unknown}")
     outputs = tuple(
-        registry.evaluate(name, **dict(component_inputs[name]))
-        for name in normative_names
+        registry.evaluate(name, **dict(component_inputs[name])) for name in normative_names
     )
     progress_input = component_inputs["progress"]
     progress_output = registry.evaluate("progress", **dict(progress_input))
@@ -85,4 +123,7 @@ def evaluate_registered_transition(
         progress_margin=progress_margin,
         pending_cache_delta=pending_cache_delta,
         progress_output=progress_output,
+        motion_history_delta=motion_history_delta,
+        post_state=post_state,
+        history_window_s=history_window_s,
     )

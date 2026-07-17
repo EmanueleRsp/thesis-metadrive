@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import fields, replace
+from math import isfinite
 from typing import Any, cast
 
 from thesis_rl.rulebook.v2.geometry.canonical import canonical_geometry_wkb
 from thesis_rl.rulebook.v2.registry import DEFAULT_RULEBOOK_V2_REGISTRY
-from thesis_rl.rulebook.v2.types import CacheDelta, EpisodeCache, MemoryDelta, RulebookMemory
+from thesis_rl.rulebook.v2.types import (
+    ActorClass,
+    ActorMotionHistory,
+    ActorMotionSample,
+    CacheDelta,
+    EpisodeCache,
+    MemoryDelta,
+    RulebookMemory,
+)
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.types import EnvSnapshot
 
@@ -57,6 +66,89 @@ def initialize_rulebook_memory(
         previous_contact_ids=reset_snapshot.active_contact_ids,
         preexisting_ego_occupancy_zone_ids=preexisting,
         previous_route_s_m=projection.s_m,
+        actor_motion_histories=tuple(
+            ActorMotionHistory(
+                actor.actor_id,
+                (
+                    ActorMotionSample(
+                        reset_snapshot.sim_time_s,
+                        actor.position_xy,
+                        actor.heading_rad,
+                        actor.velocity_xy,
+                    ),
+                ),
+            )
+            for actor in (reset_snapshot.ego, *reset_snapshot.actors)
+            if actor.actor_class is ActorClass.VEHICLE
+        ),
+        previous_sim_time_s=reset_snapshot.sim_time_s,
+    )
+
+
+def build_motion_history_preview(
+    *,
+    memory: RulebookMemory,
+    post_state: EnvSnapshot,
+    history_window_s: float,
+) -> tuple[tuple[ActorMotionHistory, ...], MemoryDelta]:
+    """Build the immutable causal preview and its sole transactional writer."""
+
+    if not isfinite(history_window_s) or history_window_s <= 0.0:
+        raise ValueError("history_window_s must be finite and positive")
+    if not isfinite(post_state.sim_time_s):
+        raise ValueError("post_state.sim_time_s must be finite")
+    if (
+        memory.previous_sim_time_s is not None
+        and post_state.sim_time_s <= memory.previous_sim_time_s
+    ):
+        raise ValueError("sim_time_s must be strictly increasing")
+    current_actors = (post_state.ego, *post_state.actors)
+    live_vehicles = {
+        actor.actor_id: actor for actor in current_actors if actor.actor_class is ActorClass.VEHICLE
+    }
+    if len(live_vehicles) != sum(
+        actor.actor_class is ActorClass.VEHICLE for actor in current_actors
+    ):
+        raise ValueError("Conflicting live vehicle records for one actor ID")
+    previous = {history.actor_id: history for history in memory.actor_motion_histories}
+    histories: list[ActorMotionHistory] = []
+    for actor_id in sorted(live_vehicles):
+        actor = live_vehicles[actor_id]
+        bounds = actor.footprint.bounds
+        if (
+            actor.footprint.is_empty
+            or not actor.footprint.is_valid
+            or not all(isfinite(value) for value in bounds)
+        ):
+            raise ValueError(f"Invalid finite footprint for actor {actor_id!r}")
+        prior = previous.get(actor_id)
+        if (
+            prior is not None
+            and prior.samples
+            and prior.samples[-1].timestamp_s >= post_state.sim_time_s
+        ):
+            raise ValueError(f"Non-increasing timestamp for actor history {actor_id!r}")
+        samples = () if prior is None else prior.samples
+        samples = tuple(
+            sample
+            for sample in samples
+            if sample.timestamp_s >= post_state.sim_time_s - history_window_s
+        ) + (
+            ActorMotionSample(
+                post_state.sim_time_s,
+                actor.position_xy,
+                actor.heading_rad,
+                actor.velocity_xy,
+            ),
+        )
+        histories.append(ActorMotionHistory(actor_id, samples))
+    result = tuple(histories)
+    return result, MemoryDelta(
+        writer="motion_history",
+        writes=(
+            ("actor_motion_histories", result),
+            ("previous_sim_time_s", post_state.sim_time_s),
+        ),
     )
 
 
@@ -68,9 +160,7 @@ def _memory_owners() -> dict[str, str]:
     return owners
 
 
-def merge_memory_deltas(
-    memory: RulebookMemory, deltas: tuple[MemoryDelta, ...]
-) -> RulebookMemory:
+def merge_memory_deltas(memory: RulebookMemory, deltas: tuple[MemoryDelta, ...]) -> RulebookMemory:
     """Apply at most one complete field write per transition, without mutation."""
 
     known_fields = {field.name for field in fields(RulebookMemory)}
@@ -103,8 +193,7 @@ def merge_cache_deltas(deltas: tuple[CacheDelta, ...]) -> CacheDelta:
                 merged[zone.zone_id] = zone
                 continue
             if (
-                canonical_geometry_wkb(existing.polygon)
-                != canonical_geometry_wkb(zone.polygon)
+                canonical_geometry_wkb(existing.polygon) != canonical_geometry_wkb(zone.polygon)
                 or existing != zone
             ):
                 raise ValueError(f"Conflicting geometries for conflict zone ID: {zone.zone_id}")

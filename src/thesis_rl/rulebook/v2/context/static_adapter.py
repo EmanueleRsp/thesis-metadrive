@@ -9,7 +9,13 @@ from types import MappingProxyType
 
 from thesis_rl.rulebook.v2.geometry.canonical import canonicalize_geometry, stable_geometry_id
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
-from thesis_rl.rulebook.v2.types import MapFeatureRecord, MovementPriorityRecord, TaskRouteRecord, TrafficControlRecord
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline, build_assigned_route_polyline
+from thesis_rl.rulebook.v2.types import (
+    MapFeatureRecord,
+    MovementPriorityRecord,
+    TaskRouteRecord,
+    TrafficControlRecord,
+)
 from thesis_rl.rulebook.v2.types import ActorClass, ActorSnapshot
 
 
@@ -25,6 +31,15 @@ class StaticAdapterResult:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "map_features", MappingProxyType(dict(self.map_features)))
+
+    @property
+    def assigned_route_polyline(self) -> RoutePolyline:
+        """Build the route exclusively from frozen task lane IDs and map lanes."""
+
+        return build_assigned_route_polyline(
+            self.task_route.lane_ids,
+            {lane.lane_id: lane for lane in self.route_lanes},
+        )
 
 
 def validate_reset_contract(
@@ -45,7 +60,8 @@ def validate_reset_contract(
         if ego.footprint.intersection(actor.footprint).area > 1.0e-6:
             errors.append(f"spawn_overlap:{actor.actor_id}")
     unknown = sorted(
-        physical_id for physical_id, state in (signal_states_by_physical_id or {}).items()
+        physical_id
+        for physical_id, state in (signal_states_by_physical_id or {}).items()
         if state in {"UNKNOWN", "LANE_STATE_UNKNOWN"}
     )
     errors.extend(f"signal_state_unknown:{physical_id}" for physical_id in unknown)
@@ -72,6 +88,14 @@ def normalize_static_records(
     missing = [lane_id for lane_id in task_route.lane_ids if lane_id not in route_lane_ids]
     if missing:
         errors.append("task_route_lane_missing:" + ",".join(missing))
+    if not missing:
+        try:
+            build_assigned_route_polyline(
+                task_route.lane_ids,
+                {lane.lane_id: lane for lane in route_lanes},
+            )
+        except ValueError as error:
+            errors.append(f"assigned_route_invalid:{error}")
     normalized_features: dict[str, MapFeatureRecord] = {}
     for feature in map_features:
         if feature.elevation_m is not None and not isfinite(feature.elevation_m):
@@ -107,7 +131,11 @@ def normalize_static_records(
             errors.append(f"invalid_control_line:{control.control_group_id}")
         if not isfinite(control.route_s_m) or not isfinite(control.elevation_m):
             errors.append(f"invalid_control_coordinate:{control.control_group_id}")
-        if not control.controlled_lane_ids or not control.physical_control_ids and control.control_type.value == "signal":
+        if (
+            not control.controlled_lane_ids
+            or not control.physical_control_ids
+            and control.control_type.value == "signal"
+        ):
             errors.append(f"incomplete_control_record:{control.control_group_id}")
     return StaticAdapterResult(
         scenario_uid=scenario_uid,

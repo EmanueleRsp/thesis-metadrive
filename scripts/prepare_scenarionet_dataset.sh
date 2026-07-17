@@ -119,19 +119,29 @@ else
 fi
 
 if ! is_true "${SCENARIONET_SKIP_PG:-false}"; then
-  stage "[2/9] Generating PG (${pg_count} scenarios per profile)"
-  pg_overwrite=()
-  if is_true "$overwrite"; then
-    pg_overwrite+=(--overwrite)
+  pg_database="${data_root}/pg/database"
+  pg_report="${data_root}/pg/pilot/pg_pilot_report.json"
+  if [[ -d "$pg_database" && -f "$pg_report" ]] && ! is_true "${SCENARIONET_PG_OVERWRITE:-false}"; then
+    stage "[2/9] Reusing existing PG seeds (set SCENARIONET_PG_OVERWRITE=true to regenerate)"
+  else
+    stage "[2/9] Generating PG (${pg_count} scenarios per profile)"
+    pg_overwrite=()
+    # Reuse existing deterministic PG seeds across feasibility cycles.  A full
+    # PG regeneration is explicit because it invalidates incremental catalog and
+    # Rulebook caches; set SCENARIONET_PG_OVERWRITE=true when intentionally
+    # replacing the generated scenarios.
+    if is_true "${SCENARIONET_PG_OVERWRITE:-false}"; then
+      pg_overwrite+=(--overwrite)
+    fi
+    docker compose run --rm "$pipeline_service" uv run --no-sync python \
+      -m thesis_rl.cli.scenarios.generate_pg_dataset \
+      --data-root "$data_root" \
+      --repo-root /workspace/thesis-metadrive \
+      --count "$pg_count" \
+      --seed-start "$pg_seed_start" \
+      --workers "$pg_workers" \
+      "${pg_overwrite[@]}"
   fi
-  docker compose run --rm "$pipeline_service" uv run --no-sync python \
-    -m thesis_rl.cli.scenarios.generate_pg_dataset \
-    --data-root "$data_root" \
-    --repo-root /workspace/thesis-metadrive \
-    --count "$pg_count" \
-    --seed-start "$pg_seed_start" \
-    --workers "$pg_workers" \
-    "${pg_overwrite[@]}"
 else
   stage "[2/9] PG generation skipped: SCENARIONET_SKIP_PG=true"
 fi
@@ -223,6 +233,15 @@ for ((cycle=0; ; cycle++)); do
   if ! is_true "$waymo_auto_expand" || is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
     die "split targets are infeasible after Rulebook filtering; automatic Waymo expansion is disabled"
   fi
+  pg_report_path="${data_root}/pg/replenishment_report.json"
+  if [[ -f "$pg_report_path" ]]; then
+    pg_shortfall="$(docker compose run --rm -T "$pipeline_service" uv run --no-sync python -c \
+      'import json,sys; p=sys.argv[1]; d=json.load(open(p, encoding="utf-8")); print(int(d.get("hard_count_shortfall", 0)))' \
+      "$pg_report_path")"
+    if [[ "$pg_shortfall" =~ ^[1-9][0-9]*$ ]]; then
+      die "PG replenishment required before Waymo expansion: ${pg_shortfall} additional runtime-eligible records"
+    fi
+  fi
   if (( cycle >= max_batches )); then
     die "Waymo cap of ${waymo_max_new_shards} new shards reached before post-Rulebook split feasibility"
   fi
@@ -247,7 +266,8 @@ for ((cycle=0; ; cycle++)); do
     WAYMO_MAX_NEW_SHARDS="$remaining_cap" \
     WAYMO_NUM_WORKERS="$waymo_workers" \
     WAYMO_KEEP_RAW_BATCHES="$waymo_keep_raw_batches" \
-    WAYMO_FORCE_ONE_BATCH=true \
+  WAYMO_FORCE_ONE_BATCH=true \
+  WAYMO_SKIP_INITIAL_STATUS=true \
     make waymo-expand
 done
 

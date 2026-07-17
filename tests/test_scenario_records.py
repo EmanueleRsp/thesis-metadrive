@@ -80,6 +80,18 @@ def test_scenario_record_round_trip_preserves_rulebook_eligibility() -> None:
     assert restored.rulebook_validation_errors == ("unresolved route signal",)
 
 
+def test_scenario_record_round_trip_preserves_assigned_route_metadata() -> None:
+    record = _record(
+        assigned_route_lane_ids=("lane-a", "lane-b"),
+        assigned_route_source="pg_sdc_offline_task_annotation",
+    )
+
+    restored = ScenarioRecord.from_dict(record.to_dict())
+
+    assert restored.assigned_route_lane_ids == ("lane-a", "lane-b")
+    assert restored.assigned_route_source == "pg_sdc_offline_task_annotation"
+
+
 @pytest.mark.parametrize(
     "relative_path",
     ["/absolute/scenario.pkl", "../escape.pkl", "pg/../escape.pkl", "pg\\scenario.pkl"],

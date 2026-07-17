@@ -11,7 +11,7 @@ from typing import Sequence
 from thesis_rl.scenarios.arms import ARMS
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 
-WAYMO_POOL_POLICY_VERSION = "waymo_pool_v5"
+WAYMO_POOL_POLICY_VERSION = "waymo_pool_v6"
 
 
 @dataclass(frozen=True)
@@ -113,13 +113,23 @@ def summarize_waymo_pool(
 
 
 def fingerprint_waymo_database(database_path: str | Path) -> str:
-    """Fingerprint candidate files cheaply enough for safe status-cache reuse."""
+    """Fingerprint immutable database entries without walking every scenario file.
+
+    Converted Waymo batches are write-once: expansion creates a new batch
+    directory and refuses to replace an existing one.  Fingerprinting the
+    immediate database entries therefore detects additions/replacements while
+    avoiding the expensive recursive stat of every ``sd_*.pkl`` file.
+    """
 
     root = Path(database_path).expanduser().resolve()
     digest = hashlib.sha256()
     if not root.is_dir():
         return digest.hexdigest()
-    for path in sorted(root.rglob("sd_*.pkl")):
+    paths = sorted(root.iterdir())
+    batches = root / "batches"
+    if batches.is_dir():
+        paths.extend(sorted(batches.iterdir()))
+    for path in paths:
         stat = path.stat()
         digest.update(path.relative_to(root).as_posix().encode("utf-8"))
         digest.update(b"\0")

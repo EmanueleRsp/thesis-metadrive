@@ -101,13 +101,19 @@ class TaskRouteRecord:
     provenance: str
     adapter_version: str
     source_geometry_hash: str
+    route_assignment_source: str = "offline_task_annotation"
 
     def __post_init__(self) -> None:
         if not self.scenario_uid or not self.lane_ids:
             raise ValueError("TaskRouteRecord requires a scenario UID and non-empty lane sequence")
         if any(not lane_id for lane_id in self.lane_ids):
             raise ValueError("TaskRouteRecord lane IDs must be non-empty")
-        if not self.provenance or not self.adapter_version or not self.source_geometry_hash:
+        if (
+            not self.provenance
+            or not self.adapter_version
+            or not self.source_geometry_hash
+            or not self.route_assignment_source
+        ):
             raise ValueError("TaskRouteRecord identity metadata must be non-empty")
 
 
@@ -133,9 +139,8 @@ class ActorSnapshot:
             velocity_x=self.velocity_xy[0],
             velocity_y=self.velocity_xy[1],
         )
-        if (
-            self.configured_speed_cap_mps is not None
-            and not isfinite(self.configured_speed_cap_mps)
+        if self.configured_speed_cap_mps is not None and not isfinite(
+            self.configured_speed_cap_mps
         ):
             raise ValueError("ActorSnapshot configured_speed_cap_mps must be finite when supplied")
 
@@ -207,6 +212,42 @@ class ConflictZoneRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ActorMotionSample:
+    """One causal live kinematic sample retained for CTRV estimation."""
+
+    timestamp_s: float
+    position_xy_m: tuple[float, float]
+    heading_rad: float
+    velocity_xy_mps: tuple[float, float]
+
+    def __post_init__(self) -> None:
+        _require_finite(
+            "ActorMotionSample",
+            timestamp_s=self.timestamp_s,
+            position_x=self.position_xy_m[0],
+            position_y=self.position_xy_m[1],
+            heading_rad=self.heading_rad,
+            velocity_x=self.velocity_xy_mps[0],
+            velocity_y=self.velocity_xy_mps[1],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ActorMotionHistory:
+    """Immutable, ordered causal history for one episodic actor."""
+
+    actor_id: str
+    samples: tuple[ActorMotionSample, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.actor_id:
+            raise ValueError("ActorMotionHistory actor_id must be non-empty")
+        timestamps = tuple(sample.timestamp_s for sample in self.samples)
+        if any(previous >= current for previous, current in zip(timestamps, timestamps[1:])):
+            raise ValueError("ActorMotionHistory timestamps must be strictly increasing")
+
+
+@dataclass(frozen=True, slots=True)
 class RulebookMemory:
     previous_contact_ids: frozenset[str] = frozenset()
     active_dashed_boundary_id: str | None = None
@@ -226,6 +267,8 @@ class RulebookMemory:
     preexisting_ego_occupancy_zone_ids: frozenset[str] = frozenset()
     frozen_actor_movement_keys: tuple[tuple[str, MovementKey], ...] = ()
     previous_route_s_m: float = 0.0
+    actor_motion_histories: tuple[ActorMotionHistory, ...] = ()
+    previous_sim_time_s: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

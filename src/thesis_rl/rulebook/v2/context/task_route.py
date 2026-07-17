@@ -26,6 +26,8 @@ class TaskRouteEligibility:
     calibration_hash: str
     rulebook_eligible: bool
     validation_errors: tuple[str, ...] = ()
+    assigned_route_lane_ids: tuple[str, ...] = ()
+    assigned_route_source: str = "offline_task_annotation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +56,9 @@ class TaskRouteEligibilityIndex:
         try:
             record = self.by_scenario_uid[scenario_uid]
         except KeyError as error:
-            raise KeyError(f"Scenario UID is absent from eligibility index: {scenario_uid!r}") from error
+            raise KeyError(
+                f"Scenario UID is absent from eligibility index: {scenario_uid!r}"
+            ) from error
         if not record.rulebook_eligible:
             raise ValueError(f"Scenario UID is not Rulebook v2 eligible: {scenario_uid!r}")
         return record
@@ -105,6 +109,7 @@ def build_task_route_record(
     provenance: str,
     adapter_version: str = RULEBOOK_V2_ADAPTER_CONTRACT_VERSION,
     source_geometry_bytes: bytes,
+    route_assignment_source: str | None = None,
 ) -> TaskRouteRecord:
     """Build a route record from topology and canonical source geometry bytes."""
 
@@ -115,12 +120,21 @@ def build_task_route_record(
         raise ValueError("TaskRouteRecord lane IDs must be non-empty")
     if not source_geometry_bytes:
         raise ValueError("TaskRouteRecord requires source geometry bytes")
+    if route_assignment_source is None:
+        provenance_lower = provenance.lower()
+        if provenance_lower.startswith("waymo"):
+            route_assignment_source = "waymo_sdc_offline_task_annotation"
+        elif provenance_lower.startswith("pg"):
+            route_assignment_source = "pg_sdc_offline_task_annotation"
+        else:
+            route_assignment_source = "offline_task_annotation"
     return TaskRouteRecord(
         scenario_uid=scenario_uid,
         lane_ids=lanes,
         provenance=provenance,
         adapter_version=adapter_version,
         source_geometry_hash=hashlib.sha256(source_geometry_bytes).hexdigest(),
+        route_assignment_source=route_assignment_source,
     )
 
 
@@ -158,4 +172,6 @@ def validate_task_route(
         calibration_hash=calibration_hash,
         rulebook_eligible=not errors,
         validation_errors=tuple(errors),
+        assigned_route_lane_ids=record.lane_ids,
+        assigned_route_source=record.route_assignment_source,
     )

@@ -13,16 +13,24 @@ from thesis_rl.rulebook.v2 import (
     load_rulebook_v2_config,
 )
 from thesis_rl.rulebook.v2.config import ExecutionConfig, RULEBOOK_V2_VERSION
-from thesis_rl.rulebook.v2.context.task_route import build_task_route_record, validate_task_route, build_task_route_eligibility_index, build_task_route_exclusion_report
+from thesis_rl.rulebook.v2.context.task_route import (
+    build_task_route_record,
+    validate_task_route,
+    build_task_route_eligibility_index,
+    build_task_route_exclusion_report,
+)
 from thesis_rl.rulebook.v2.context.map_matching import (
     OfflineTrackSample,
     TaskRouteMapMatchError,
     map_match_sdc_track_to_task_route,
 )
-from thesis_rl.rulebook.v2.context.static_adapter import normalize_static_records, validate_reset_contract
+from thesis_rl.rulebook.v2.context.static_adapter import (
+    normalize_static_records,
+    validate_reset_contract,
+)
 from thesis_rl.rulebook.v2.context.static_sources import StaticRecordAdapter, StaticRecordSources
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
-from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline, build_assigned_route_polyline
 from shapely.geometry import LineString, Polygon
 from thesis_rl.rulebook.v2.errors import EvaluationFailure
 from thesis_rl.rulebook.v2.registry import (
@@ -69,6 +77,8 @@ def test_task_route_builder_and_eligibility_artifact_use_only_static_topology() 
     )
     assert eligible.rulebook_eligible
     assert eligible.validation_errors == ()
+    assert eligible.assigned_route_lane_ids == ("lane-a", "lane-b")
+    assert eligible.assigned_route_source == "waymo_sdc_offline_task_annotation"
     assert "timestamp" not in eligible.__dataclass_fields__
     ineligible = validate_task_route(
         route,
@@ -83,14 +93,22 @@ def test_task_route_builder_and_eligibility_artifact_use_only_static_topology() 
 
 def test_task_route_eligibility_index_is_deterministic_and_excludes_invalid_records():
     eligible_a = validate_task_route(
-        build_task_route_record(scenario_uid="a", lane_ids=("lane",), provenance="pg", source_geometry_bytes=b"a"),
-        available_lane_ids={"lane": object()}, rulebook_version=RULEBOOK_V2_VERSION,
-        geometry_config_hash="g", calibration_hash="c",
+        build_task_route_record(
+            scenario_uid="a", lane_ids=("lane",), provenance="pg", source_geometry_bytes=b"a"
+        ),
+        available_lane_ids={"lane": object()},
+        rulebook_version=RULEBOOK_V2_VERSION,
+        geometry_config_hash="g",
+        calibration_hash="c",
     )
     eligible_b = validate_task_route(
-        build_task_route_record(scenario_uid="b", lane_ids=("lane",), provenance="pg", source_geometry_bytes=b"b"),
-        available_lane_ids={}, rulebook_version=RULEBOOK_V2_VERSION,
-        geometry_config_hash="g", calibration_hash="c",
+        build_task_route_record(
+            scenario_uid="b", lane_ids=("lane",), provenance="pg", source_geometry_bytes=b"b"
+        ),
+        available_lane_ids={},
+        rulebook_version=RULEBOOK_V2_VERSION,
+        geometry_config_hash="g",
+        calibration_hash="c",
     )
     index = build_task_route_eligibility_index((eligible_b, eligible_a))
     assert tuple(index.by_scenario_uid) == ("a", "b")
@@ -107,12 +125,17 @@ def test_task_route_eligibility_index_is_deterministic_and_excludes_invalid_reco
 def test_task_route_validation_rejects_missing_identity_hashes():
     record = TaskRouteRecord("scenario", ("lane",), "pg", "adapter", "hash")
     result = validate_task_route(
-        record, available_lane_ids={"lane": object()}, rulebook_version="",
-        geometry_config_hash="", calibration_hash="",
+        record,
+        available_lane_ids={"lane": object()},
+        rulebook_version="",
+        geometry_config_hash="",
+        calibration_hash="",
     )
     assert not result.rulebook_eligible
     assert result.validation_errors == (
-        "rulebook_version_missing", "geometry_config_hash_missing", "calibration_hash_missing",
+        "rulebook_version_missing",
+        "geometry_config_hash_missing",
+        "calibration_hash_missing",
     )
 
 
@@ -132,7 +155,40 @@ def test_offline_sdc_map_match_retains_lane_sequence_but_not_track_samples() -> 
         adapter_version="waymo-v1",
     )
     assert record.lane_ids == ("lane-a",)
+    assert record.route_assignment_source == "offline_task_annotation"
     assert not hasattr(record, "track")
+
+
+def test_assigned_route_polyline_uses_only_frozen_lane_ids_and_map_geometry() -> None:
+    first = RouteLaneRecord(
+        "lane-a",
+        Polygon(((0.0, -2.0), (5.0, -2.0), (5.0, 2.0), (0.0, 2.0))),
+        RoutePolyline(((0.0, 0.0, 0.0), (5.0, 0.0, 0.0))),
+    )
+    second = RouteLaneRecord(
+        "lane-b",
+        Polygon(((5.0, -2.0), (10.0, -2.0), (10.0, 2.0), (5.0, 2.0))),
+        RoutePolyline(((5.0, 0.0, 0.0), (10.0, 0.0, 0.0))),
+    )
+    route = build_assigned_route_polyline(("lane-a", "lane-b"), {"lane-a": first, "lane-b": second})
+    assert route.points_xyz == ((0.0, 0.0, 0.0), (5.0, 0.0, 0.0), (10.0, 0.0, 0.0))
+
+
+def test_assigned_route_polyline_fails_closed_for_missing_or_noncontiguous_lanes() -> None:
+    lane_a = RouteLaneRecord(
+        "lane-a",
+        Polygon(((0.0, -2.0), (5.0, -2.0), (5.0, 2.0), (0.0, 2.0))),
+        RoutePolyline(((0.0, 0.0, 0.0), (5.0, 0.0, 0.0))),
+    )
+    lane_c = RouteLaneRecord(
+        "lane-c",
+        Polygon(((8.0, -2.0), (13.0, -2.0), (13.0, 2.0), (8.0, 2.0))),
+        RoutePolyline(((8.0, 0.0, 0.0), (13.0, 0.0, 0.0))),
+    )
+    with pytest.raises(ValueError, match="missing"):
+        build_assigned_route_polyline(("lane-a", "lane-b"), {"lane-a": lane_a})
+    with pytest.raises(ValueError, match="not contiguous"):
+        build_assigned_route_polyline(("lane-a", "lane-c"), {"lane-a": lane_a, "lane-c": lane_c})
 
 
 def test_offline_map_match_resolves_single_sample_on_canonical_lane_boundary() -> None:
@@ -174,9 +230,7 @@ def test_offline_map_match_types_unavailable_lane_as_offline_exclusion() -> None
             source_geometry_bytes=b"map",
             adapter_version="test-v1",
         )
-    assert caught.value.validation_error == (
-        "task_route_lane_association_ambiguous_or_unavailable"
-    )
+    assert caught.value.validation_error == ("task_route_lane_association_ambiguous_or_unavailable")
 
 
 def test_static_adapter_normalizes_geometry_and_reports_missing_route_lanes() -> None:
@@ -206,14 +260,34 @@ def test_static_adapter_normalizes_geometry_and_reports_missing_route_lanes() ->
 def test_static_adapter_rejects_duplicate_controls_and_invalid_elevation():
     route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
     task_route = build_task_route_record(
-        scenario_uid="scenario-1", lane_ids=("lane-a",), provenance="pg", source_geometry_bytes=b"map",
+        scenario_uid="scenario-1",
+        lane_ids=("lane-a",),
+        provenance="pg",
+        source_geometry_bytes=b"map",
     )
     lane = RouteLaneRecord("lane-a", Polygon(((0, -2), (10, -2), (10, 2), (0, 2))), route)
-    feature = MapFeatureRecord("feature", MapFeatureClass.ROAD_BOUNDARY, Polygon(((0, 0), (1, 0), (1, 1), (0, 1))), float("nan"))
-    control = TrafficControlRecord("stop", ApproachControl.STOP, ("lane-a",), MovementKey("a", "n", "e"), LineString(((2, -2), (2, 2))), 2.0, 0.0, ())
+    feature = MapFeatureRecord(
+        "feature",
+        MapFeatureClass.ROAD_BOUNDARY,
+        Polygon(((0, 0), (1, 0), (1, 1), (0, 1))),
+        float("nan"),
+    )
+    control = TrafficControlRecord(
+        "stop",
+        ApproachControl.STOP,
+        ("lane-a",),
+        MovementKey("a", "n", "e"),
+        LineString(((2, -2), (2, 2))),
+        2.0,
+        0.0,
+        (),
+    )
     result = normalize_static_records(
-        scenario_uid="scenario-1", task_route=task_route, route_lanes=(lane,),
-        map_features=(feature,), traffic_controls=(control, control),
+        scenario_uid="scenario-1",
+        task_route=task_route,
+        route_lanes=(lane,),
+        map_features=(feature,),
+        traffic_controls=(control, control),
     )
     assert "invalid_map_feature_elevation:feature" in result.validation_errors
     assert "duplicate_control_group_id:stop" in result.validation_errors
@@ -221,10 +295,15 @@ def test_static_adapter_rejects_duplicate_controls_and_invalid_elevation():
 
 def test_static_record_sources_are_strict_and_normalize_source_neutrally():
     route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
-    task_route = build_task_route_record(scenario_uid="s", lane_ids=("lane",), provenance="pg", source_geometry_bytes=b"m")
+    task_route = build_task_route_record(
+        scenario_uid="s", lane_ids=("lane",), provenance="pg", source_geometry_bytes=b"m"
+    )
     lane = RouteLaneRecord("lane", Polygon(((0, -2), (10, -2), (10, 2), (0, 2))), route)
     sources = StaticRecordSources(
-        lambda _record: task_route, lambda _record: (lane,), lambda _record: (), lambda _record: (),
+        lambda _record: task_route,
+        lambda _record: (lane,),
+        lambda _record: (),
+        lambda _record: (),
     )
     result = StaticRecordAdapter(sources).normalize(object(), scenario_uid="s")
     assert result.validation_errors == ()
@@ -234,10 +313,38 @@ def test_static_record_sources_are_strict_and_normalize_source_neutrally():
 
 def test_reset_contract_rejects_caps_spawn_overlap_and_unknown_signal():
     from thesis_rl.rulebook.v2.geometry.footprint import oriented_bounding_box
-    ego = ActorSnapshot("ego", ActorClass.VEHICLE, (0, 0), 0, 0, (0, 0), oriented_bounding_box(center_xy=(0, 0), heading_rad=0, length_m=4, width_m=2), "lane", None)
-    other = ActorSnapshot("other", ActorClass.VEHICLE, (0, 0), 0, 0, (0, 0), oriented_bounding_box(center_xy=(0, 0), heading_rad=0, length_m=2, width_m=1), "lane", None)
-    errors = validate_reset_contract(ego=ego, actors=(other,), signal_states_by_physical_id={"sig": "UNKNOWN"})
-    assert errors == ("ego_speed_cap_invalid", "vehicle_speed_cap_invalid:other", "spawn_overlap:other", "signal_state_unknown:sig")
+
+    ego = ActorSnapshot(
+        "ego",
+        ActorClass.VEHICLE,
+        (0, 0),
+        0,
+        0,
+        (0, 0),
+        oriented_bounding_box(center_xy=(0, 0), heading_rad=0, length_m=4, width_m=2),
+        "lane",
+        None,
+    )
+    other = ActorSnapshot(
+        "other",
+        ActorClass.VEHICLE,
+        (0, 0),
+        0,
+        0,
+        (0, 0),
+        oriented_bounding_box(center_xy=(0, 0), heading_rad=0, length_m=2, width_m=1),
+        "lane",
+        None,
+    )
+    errors = validate_reset_contract(
+        ego=ego, actors=(other,), signal_states_by_physical_id={"sig": "UNKNOWN"}
+    )
+    assert errors == (
+        "ego_speed_cap_invalid",
+        "vehicle_speed_cap_invalid:other",
+        "spawn_overlap:other",
+        "signal_state_unknown:sig",
+    )
 
 
 def test_v2_config_rejects_nonconformant_execution_or_order() -> None:
@@ -262,7 +369,11 @@ def test_registry_rejects_memory_double_writer() -> None:
 
 
 def test_registry_binds_all_normative_evaluators():
-    normative = [component for component in DEFAULT_RULEBOOK_V2_REGISTRY.components if component.normative_output]
+    normative = [
+        component
+        for component in DEFAULT_RULEBOOK_V2_REGISTRY.components
+        if component.normative_output
+    ]
     assert all(component.evaluator is not None for component in normative)
     assert DEFAULT_RULEBOOK_V2_REGISTRY.components[10].evaluator is None
     with pytest.raises(ValueError, match="infrastructure"):
@@ -284,8 +395,13 @@ def test_shapely_fixture_is_available_for_canonical_contracts() -> None:
 
 def test_result_diagnostics_are_json_serializable() -> None:
     component = RuleComponentResult(
-        "collision", 0.0, {"closing_speed_mps": 0.0}, True, True,
-        ComponentStatus.SATISFIED, {"actors": ()},
+        "collision",
+        0.0,
+        {"closing_speed_mps": 0.0},
+        True,
+        True,
+        ComponentStatus.SATISFIED,
+        {"actors": ()},
     )
     result = RulebookResult(
         (0.0, 0.0, 0.0, 0.1), (0.0, 0.0, 0.0), 0.2, {"collision": component}, True

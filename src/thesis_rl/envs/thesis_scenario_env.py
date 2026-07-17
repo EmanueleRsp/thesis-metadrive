@@ -109,6 +109,7 @@ class ThesisScenarioEnv(ScenarioEnv):
                     split=self.split, runtime_index=int(force_seed)
                 ).record
                 self.current_scenario_record = record
+                self._publish_assigned_route_metadata()
             return int(force_seed)
         if self.scenario_provider is None:
             return None
@@ -128,14 +129,54 @@ class ThesisScenarioEnv(ScenarioEnv):
                 f"scenario provider returned record without runtime_index: {record.scenario_uid}"
             )
         self.current_scenario_record = record
+        self._publish_assigned_route_metadata()
         return int(record.runtime_index)
+
+    def _publish_assigned_route_metadata(self) -> None:
+        """Expose frozen catalog route metadata to reset-time adapters only."""
+
+        record = self.current_scenario_record
+        if record is None:
+            return
+        self.config.pop("assigned_route_lane_ids", None)
+        self.config.pop("assigned_route_source", None)
+        lane_ids = tuple(getattr(record, "assigned_route_lane_ids", ()) or ())
+        if not lane_ids:
+            raise ValueError(
+                "Scenario record is missing assigned_route_lane_ids; "
+                "exclude it before runtime reset"
+            )
+        self.config["assigned_route_lane_ids"] = lane_ids
+        self.config["assigned_route_source"] = getattr(record, "assigned_route_source", None)
 
     def _reset_global_seed(self, force_seed=None):
         provider_seed = self._select_provider_seed(force_seed)
         if provider_seed is not None:
             self.seed(provider_seed)
+            self._inject_assigned_route_metadata_into_scenario()
             return
         super()._reset_global_seed(force_seed)
+        self._inject_assigned_route_metadata_into_scenario()
+
+    def _inject_assigned_route_metadata_into_scenario(self) -> None:
+        """Attach frozen catalog route metadata without reading SDC samples."""
+
+        record = self.current_scenario_record
+        if record is None:
+            return
+        data_manager = getattr(getattr(self, "engine", None), "data_manager", None)
+        if data_manager is None:
+            return
+        scenario = getattr(data_manager, "current_scenario", None)
+        if not isinstance(scenario, dict):
+            return
+        metadata = scenario.setdefault("metadata", {})
+        if not isinstance(metadata, dict):
+            raise ValueError("Scenario metadata must be mutable before route injection")
+        metadata["assigned_route_lane_ids"] = list(
+            getattr(record, "assigned_route_lane_ids", ()) or ()
+        )
+        metadata["assigned_route_source"] = getattr(record, "assigned_route_source", None)
 
     @staticmethod
     def _recompute_terminated(done_info: Mapping[str, Any]) -> bool:
@@ -294,6 +335,8 @@ class ThesisScenarioEnv(ScenarioEnv):
             "arm": record_arm,
             "ego_length": dimensions[0] if dimensions else None,
             "ego_width": dimensions[1] if dimensions else None,
+            "assigned_route_lane_ids": list(getattr(record, "assigned_route_lane_ids", ()) or ()),
+            "assigned_route_source": getattr(record, "assigned_route_source", None),
         }
         expected_id = str(record_scenario_id) if record_scenario_id is not None else None
         loaded_id = str(scenario_id) if scenario_id is not None else None
