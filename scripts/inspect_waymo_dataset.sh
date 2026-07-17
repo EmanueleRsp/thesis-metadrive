@@ -9,9 +9,13 @@ if ! command -v gcloud >/dev/null 2>&1 && [[ -x "$local_gcloud" ]]; then
   PATH="${local_gcloud%/gcloud}:${PATH}"
   export PATH
 fi
-CLOUDSDK_CONFIG="${CLOUDSDK_CONFIG:-${repo_root}/.gcloud-sdk/config}"
-export CLOUDSDK_CONFIG
-mkdir -p "$CLOUDSDK_CONFIG"
+local_cloudsdk_config="${repo_root}/.gcloud-sdk/config"
+if [[ -z "${CLOUDSDK_CONFIG:-}" && -d "$local_cloudsdk_config" ]] \
+  && CLOUDSDK_CONFIG="$local_cloudsdk_config" gcloud auth list \
+    --filter=status:ACTIVE --format='value(account)' 2>/dev/null | grep -q .; then
+  CLOUDSDK_CONFIG="$local_cloudsdk_config"
+  export CLOUDSDK_CONFIG
+fi
 
 if [[ -f .env ]]; then
   set -a

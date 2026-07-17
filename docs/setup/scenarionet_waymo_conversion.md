@@ -33,8 +33,10 @@ make install-gcloud
 L'installer installa solo il client locale. Non esegue il login al posto
 dell'utente: l'autorizzazione Waymo richiede una conferma OAuth interattiva.
 I comandi Waymo del repository usano automaticamente il `gcloud` locale se non
-è disponibile nel `PATH`. Anche la configurazione OAuth viene salvata localmente
-in `.gcloud-sdk/config`, senza usare `~/.config/gcloud`.
+è disponibile nel `PATH`. `make waymo-auth` salva la configurazione OAuth in
+`.gcloud-sdk/config`; gli script Waymo usano quella configurazione locale se
+contiene un account attivo, altrimenti rispettano la configurazione standard di
+`gcloud`.
 
 Se disponi già di un service account autorizzato al dataset, puoi usare
 un'automazione non interattiva indicando in `.env` soltanto il percorso di un

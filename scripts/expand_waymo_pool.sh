@@ -9,9 +9,13 @@ if ! command -v gcloud >/dev/null 2>&1 && [[ -x "$local_gcloud" ]]; then
   PATH="${local_gcloud%/gcloud}:${PATH}"
   export PATH
 fi
-CLOUDSDK_CONFIG="${CLOUDSDK_CONFIG:-${repo_root}/.gcloud-sdk/config}"
-export CLOUDSDK_CONFIG
-mkdir -p "$CLOUDSDK_CONFIG"
+local_cloudsdk_config="${repo_root}/.gcloud-sdk/config"
+if [[ -z "${CLOUDSDK_CONFIG:-}" && -d "$local_cloudsdk_config" ]] \
+  && CLOUDSDK_CONFIG="$local_cloudsdk_config" gcloud auth list \
+    --filter=status:ACTIVE --format='value(account)' 2>/dev/null | grep -q .; then
+  CLOUDSDK_CONFIG="$local_cloudsdk_config"
+  export CLOUDSDK_CONFIG
+fi
 
 waymo_num_workers_override="${WAYMO_NUM_WORKERS-}"
 if [[ -f .env ]]; then
@@ -34,12 +38,20 @@ gcs_uri="${WAYMO_GCS_URI:-gs://waymo_open_dataset_motion_v_1_2_0/uncompressed/sc
 object_pattern="${WAYMO_GCS_OBJECT_PATTERN:-training_20s.tfrecord-*}"
 host_data_dir="${HOST_DATA_DIR:-./data}"
 container_data_dir="${CONTAINER_DATA_DIR:-/workspace/data}"
+case "$host_data_dir" in
+  /*) ;;
+  *) host_data_dir="${repo_root}/${host_data_dir}" ;;
+esac
 host_root="${host_data_dir%/}/scenarionet"
 container_root="${SCENARIONET_DATA_ROOT:-${container_data_dir%/}/scenarionet}"
 host_database="${host_root}/waymo/database"
 container_database="${container_root}/waymo/database"
 state_dir="${host_root}/waymo/acquisition"
 raw_root="${WAYMO_RAW_DATA_PATH:-${host_data_dir%/}/waymo_raw}"
+case "$raw_root" in
+  /*) ;;
+  *) raw_root="${repo_root}/${raw_root}" ;;
+esac
 pipeline_service="${SCENARIONET_PIPELINE_SERVICE:-dataset-pipeline}"
 temporary_files=()
 converter_container=""

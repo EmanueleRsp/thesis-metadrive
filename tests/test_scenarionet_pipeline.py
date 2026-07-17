@@ -62,7 +62,18 @@ def test_pipeline_host_data_root_follows_host_data_dir_mount() -> None:
 
     assert 'host_data_dir="${HOST_DATA_DIR:-${repo_root}/data}"' in script
     assert 'host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${host_data_dir%/}/scenarionet}"' in script
+    assert 'host_data_root="${repo_root}/${host_data_root}"' in script
     assert 'host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${repo_root}/data/scenarionet}"' not in script
+
+
+def test_waymo_scripts_normalize_host_mount_paths() -> None:
+    prepare_waymo = Path("scripts/prepare_waymo.sh").read_text(encoding="utf-8")
+    expand_waymo = Path("scripts/expand_waymo_pool.sh").read_text(encoding="utf-8")
+
+    assert 'host_data_dir="${repo_root}/${host_data_dir}"' in prepare_waymo
+    assert 'raw_dir="${repo_root}/${raw_dir}"' in prepare_waymo
+    assert 'host_data_dir="${repo_root}/${host_data_dir}"' in expand_waymo
+    assert 'raw_root="${repo_root}/${raw_root}"' in expand_waymo
 
 
 def _entry(source: str, index: int) -> ScenarioCatalogEntry:

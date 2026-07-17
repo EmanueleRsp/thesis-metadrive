@@ -9,9 +9,13 @@ if ! command -v gcloud >/dev/null 2>&1 && [[ -x "$local_gcloud" ]]; then
   PATH="${local_gcloud%/gcloud}:${PATH}"
   export PATH
 fi
-CLOUDSDK_CONFIG="${CLOUDSDK_CONFIG:-${repo_root}/.gcloud-sdk/config}"
-export CLOUDSDK_CONFIG
-mkdir -p "$CLOUDSDK_CONFIG"
+local_cloudsdk_config="${repo_root}/.gcloud-sdk/config"
+if [[ -z "${CLOUDSDK_CONFIG:-}" && -d "$local_cloudsdk_config" ]] \
+  && CLOUDSDK_CONFIG="$local_cloudsdk_config" gcloud auth list \
+    --filter=status:ACTIVE --format='value(account)' 2>/dev/null | grep -q .; then
+  CLOUDSDK_CONFIG="$local_cloudsdk_config"
+  export CLOUDSDK_CONFIG
+fi
 
 if [[ -f .env ]]; then
   # .env contains project configuration and, optionally, a path to credentials;
@@ -31,6 +35,14 @@ num_workers="${WAYMO_NUM_WORKERS:-8}"
 overwrite="${WAYMO_OVERWRITE:-false}"
 cleanup_raw="${WAYMO_CLEANUP_RAW_AFTER_CONVERSION:-false}"
 host_data_dir="${HOST_DATA_DIR:-./data}"
+case "$host_data_dir" in
+  /*) ;;
+  *) host_data_dir="${repo_root}/${host_data_dir}" ;;
+esac
+case "$raw_dir" in
+  /*) ;;
+  *) raw_dir="${repo_root}/${raw_dir}" ;;
+esac
 database_dir="${host_data_dir%/}/scenarionet/waymo/database"
 temporary_files=()
 

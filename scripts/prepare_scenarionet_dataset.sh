@@ -83,6 +83,10 @@ case "$host_data_dir" in
   *) host_data_dir="${repo_root}/${host_data_dir}" ;;
 esac
 host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${host_data_dir%/}/scenarionet}"
+case "$host_data_root" in
+  /*) ;;
+  *) host_data_root="${repo_root}/${host_data_root}" ;;
+esac
 catalog_raw="${SCENARIONET_RAW_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_raw.parquet}"
 catalog_rulebook="${SCENARIONET_RULEBOOK_V2_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_rulebook_v2.parquet}"
 catalog_split="${SCENARIONET_SPLIT_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_split.parquet}"
