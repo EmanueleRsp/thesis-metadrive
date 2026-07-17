@@ -122,7 +122,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `REQ-SN-007`–`REQ-SN-009` | `AC-SN-007`–`AC-SN-009` | pg, features, catalog, runtime, validation | `TEST-SN-007`–`TEST-SN-009` | Partial/reconcile |
 | `REQ-SN-010`–`REQ-SN-012` | `AC-SN-010`–`AC-SN-012` | envs, provider, ACL runtime | `TEST-SN-010`–`TEST-SN-012` | Partial/reconcile |
 | `REQ-SN-013`–`REQ-SN-015` | `AC-SN-013`–`AC-SN-015` | runtime wiring, CLIs, docs | `TEST-SN-013`–`TEST-SN-015` | Planned |
-| `REQ-SN-016` | `AC-SN-016`–`AC-SN-018` | `scripts/prepare_scenarionet_dataset.sh`, `src/thesis_rl/cli/scenarios/pipeline_config.py`, `Makefile` | `TEST-SN-016`–`TEST-SN-018` | In progress |
+| `REQ-SN-016` | `AC-SN-016`–`AC-SN-018` | `scripts/prepare_scenarionet_dataset.sh`, `src/thesis_rl/cli/scenarios/pipeline_config.py`, `Makefile` | `TEST-SN-016`–`TEST-SN-018` | Verified |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -190,7 +190,7 @@ external credentials and must not overwrite frozen data.
   Source PG/Waymo overwrite controls remain unchanged. Validation includes
   mocked shell integration regressions, syntax, focused pytest, and a real
   catalog-stage resume; unavailable ShellCheck is recorded below.
-- [ ] M7 — In progress. Close the Rulebook prerequisite gap exposed by the
+- [x] M7 — Completed. Close the Rulebook prerequisite gap exposed by the
   first real stage-4 run: provide the documented canonical ego calibration
   config, use the CPU pipeline image for real braking trials/calibration, and
   bootstrap only missing artifacts before static eligibility filtering.
@@ -466,6 +466,26 @@ reconciliation, then perform the M4 fixture pipeline and smoke validation.
   remains in the audit catalog and is excluded by the existing hard validity
   policy; no quality threshold was relaxed.
 
+### 2026-07-18 — Rulebook calibration prerequisite closure
+
+- The first resumed stage-4 run proved that the documented
+  `rulebook_v2/ego_config.json` and `calibration_b_e.json` artifacts were absent
+  and that `rulebook-v2-init` only created a directory. The former Rulebook
+  targets also depended on the unavailable CUDA `dev` image.
+- Added the documented frozen default ego configuration under
+  `conf/rulebook_v2/ego_calibration.json`. Initialization copies it only when
+  the data-root artifact is absent and never overwrites an existing ego config.
+- Added `rulebook-v2-prepare` and wired missing-artifact preparation into the
+  ScenarioNet preflight. A missing calibration forces a fresh collection of
+  all 40 real trials before calibration, preventing stale trials from being
+  rebound to a new ego-config hash.
+- The real CPU calibration completed with 40 trials, config hash
+  `7ed6b5a0ac48c05d8881d04b334c89691077b7a8a005a6d35c56859e215eee94`,
+  and the normative capped `ego_min_brake_mps2=4.0`. Validation passed.
+- The previously failing real Rulebook catalog filter then completed for all
+  1,750 PG records: 972 eligible and 778 excluded. No eligibility rule or
+  quality threshold was changed.
+
 ## 12. Deviations
 
 No deviations identified.
@@ -484,7 +504,9 @@ No deviations identified.
 | `src/thesis_rl/cli/scenarios/generate_pg_dataset.py`, `src/thesis_rl/scenarios/pg/report.py` | Modified | Profile-specific PG candidate counts for targeted replenishment |
 | `scripts/{prepare_scenarionet_dataset,expand_waymo_pool}.sh` | Modified | Post-Rulebook bounded Waymo acquisition loop and PG report path |
 | `Makefile` | Modified | Run PG replenishment in the CPU pipeline service with YAML-resolved workers |
+| `conf/rulebook_v2/ego_calibration.json` | Added | Frozen canonical source for non-destructive Rulebook ego calibration bootstrap |
 | `docs/setup/scenarionet_waymo_conversion.md` | Modified | Document restart and failure-summary behavior |
+| `docs/setup/validation_commands.md` | Modified | Document automatic real CPU calibration preparation |
 | `src/thesis_rl/cli/scenarios/pipeline_config.py` | Modified | Validate YAML types and ranges before shell orchestration |
 | `src/thesis_rl/scenarios/{features,arms,provider,runtime_database,validation}.py` | Modified/planned reconciliation | Preserved arm taxonomy, strict arm-uniform provider, and runtime behavior |
 | `src/thesis_rl/runtime/wiring/builders.py` | Modified | Aggregates ScenarioNet source×arm runtime matrices across workers |
@@ -544,6 +566,9 @@ No deviations identified.
 | Real stage-3 `build_catalog --overwrite` on the mounted dataset | PASS | 2026-07-18 | Rebuilt the former collision target with 1,750 PG entries; one degenerate-route record remains correctly marked invalid for downstream exclusion |
 | `shellcheck scripts/prepare_scenarionet_dataset.sh` | NOT_RUN | 2026-07-18 | ShellCheck is unavailable on the host and in the CPU container; the `dev` image cannot build on this ARM host because the configured CUDA PyTorch wheel has no matching platform build |
 | Full `make scenarionet-pipeline` with Waymo acquisition | NOT_RUN | 2026-07-18 | Would start long-running external downloads and mutate the user-owned candidate pool; restart behavior was verified with shell integration tests and the real formerly failing catalog stage |
+| `make rulebook-v2-prepare RULEBOOK_V2_DATA_ROOT=/scratch/e.respino/thesis-metadrive/data/scenarionet RULEBOOK_V2_CONTAINER_DATA_ROOT=/workspace/data/scenarionet` | PASS | 2026-07-18 | Collected 40 real MetaDrive trials in the CPU container, calibrated `b_e=4.0 m/s²`, and validated the artifact against config hash `7ed6…ee94` |
+| Real stage-4 `filter_rulebook_v2_catalog --overwrite` on the mounted dataset | PASS | 2026-07-18 | Evaluated 1,750 PG records with 32 workers; 972 eligible and 778 excluded |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py tests/test_rulebook_v2_cli.py tests/test_rulebook_v2_calibration.py tests/test_rulebook_v2_catalog_eligibility.py tests/test_scenario_catalog.py tests/test_scenario_catalog_build.py tests/test_scenario_runtime_database.py` | PASS | 2026-07-18 | 58 passed; includes bootstrap, canonical config, calibration, filtering, restart, catalog, and runtime regressions |
 
 ## 15. Final Reconciliation
 

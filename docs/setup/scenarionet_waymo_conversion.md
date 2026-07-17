@@ -146,6 +146,12 @@ until the configured target of 1,750 eligible scenarios is reached:
 make scenarionet-pipeline
 ```
 
+On a fresh data root the command also prepares the required Rulebook v2 ego
+calibration before catalog filtering. It installs the frozen canonical ego
+configuration non-destructively, collects 40 real CPU MetaDrive braking trials,
+creates the hash-bound calibration artifact, and validates it. Existing valid
+artifacts are reused.
+
 The batch size, worker count and safety cap are versioned under `waymo` in
 `conf/scenarios/pipeline_v1.yaml`. Each batch is converted into a separate
 database below `waymo/database/batches`, so the existing pool is never
