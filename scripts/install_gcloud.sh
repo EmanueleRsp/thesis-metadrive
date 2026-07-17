@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+local_sdk="${GCLOUD_SDK_ROOT:-${repo_root}/.gcloud-sdk/google-cloud-sdk}"
+local_gcloud="${local_sdk}/bin/gcloud"
+
 if command -v gcloud >/dev/null 2>&1; then
   echo "Google Cloud CLI già installato: $(gcloud --version | head -n 1)"
   exit 0
 fi
 
-if command -v apt-get >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
-  echo "Installazione Google Cloud CLI tramite il repository ufficiale APT..."
-  sudo apt-get update
-  sudo apt-get install -y apt-transport-https ca-certificates gnupg curl
-  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-    | sudo gpg --dearmor --yes -o /usr/share/keyrings/cloud.google.gpg
-  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
-    | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list >/dev/null
-  sudo apt-get update
-  sudo apt-get install -y google-cloud-cli
-  gcloud --version
+if [[ -x "$local_gcloud" ]]; then
+  echo "Google Cloud CLI già installato localmente: $local_gcloud"
+  "$local_gcloud" --version | head -n 1
   exit 0
 fi
 
@@ -27,6 +23,30 @@ if command -v brew >/dev/null 2>&1; then
   exit 0
 fi
 
-echo "Impossibile installare automaticamente Google Cloud CLI su questo sistema." >&2
-echo "Consulta: https://cloud.google.com/sdk/docs/install" >&2
-exit 2
+command -v curl >/dev/null 2>&1 || {
+  echo "curl is required to install Google Cloud CLI locally." >&2
+  exit 2
+}
+
+install_parent="$(dirname "$local_sdk")"
+mkdir -p "$install_parent"
+tmp_dir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+
+installer="$tmp_dir/google-cloud-sdk-install.sh"
+echo "Installazione Google Cloud CLI locale in: $local_sdk"
+curl -fsSL https://sdk.cloud.google.com -o "$installer"
+bash "$installer" --disable-prompts --install-dir="$install_parent"
+
+if [[ ! -x "$local_gcloud" ]]; then
+  echo "Google Cloud CLI installation completed, but gcloud was not found at $local_gcloud" >&2
+  exit 2
+fi
+
+"$local_gcloud" --version | head -n 1
+echo
+echo "Local gcloud path: $local_gcloud"
+echo "The repository Waymo scripts automatically use this local installation."

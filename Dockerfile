@@ -22,7 +22,10 @@ WORKDIR /workspace/thesis-metadrive
 # Minimal utilities for interactive dev sessions.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        build-essential \
+        gdal-bin \
         libgl1 \
+        libgdal-dev \
         libglib2.0-0 \
         tmux \
     && rm -rf /var/lib/apt/lists/*

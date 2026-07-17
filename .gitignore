@@ -17,6 +17,7 @@ __pycache__/
 outputs/
 /checkpoints/
 /data/
+/.gcloud-sdk/
 /incoming/*
 !/incoming/README.md
 /.container-home/

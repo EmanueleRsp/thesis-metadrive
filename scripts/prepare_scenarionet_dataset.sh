@@ -77,7 +77,12 @@ done < <(
 )
 
 data_root="${SCENARIONET_DATA_ROOT:-/workspace/data/scenarionet}"
-host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${repo_root}/data/scenarionet}"
+host_data_dir="${HOST_DATA_DIR:-${repo_root}/data}"
+case "$host_data_dir" in
+  /*) ;;
+  *) host_data_dir="${repo_root}/${host_data_dir}" ;;
+esac
+host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${host_data_dir%/}/scenarionet}"
 catalog_raw="${SCENARIONET_RAW_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_raw.parquet}"
 catalog_rulebook="${SCENARIONET_RULEBOOK_V2_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_rulebook_v2.parquet}"
 catalog_split="${SCENARIONET_SPLIT_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_split.parquet}"

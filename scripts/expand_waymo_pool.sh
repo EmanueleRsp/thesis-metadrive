@@ -4,6 +4,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+local_gcloud="${repo_root}/.gcloud-sdk/google-cloud-sdk/bin/gcloud"
+if ! command -v gcloud >/dev/null 2>&1 && [[ -x "$local_gcloud" ]]; then
+  PATH="${local_gcloud%/gcloud}:${PATH}"
+  export PATH
+fi
+CLOUDSDK_CONFIG="${CLOUDSDK_CONFIG:-${repo_root}/.gcloud-sdk/config}"
+export CLOUDSDK_CONFIG
+mkdir -p "$CLOUDSDK_CONFIG"
+
 waymo_num_workers_override="${WAYMO_NUM_WORKERS-}"
 if [[ -f .env ]]; then
   set -a

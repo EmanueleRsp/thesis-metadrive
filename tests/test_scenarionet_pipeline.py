@@ -57,6 +57,14 @@ def test_pipeline_pg_report_parser_handles_composition_failure(tmp_path: Path) -
     )
 
 
+def test_pipeline_host_data_root_follows_host_data_dir_mount() -> None:
+    script = Path("scripts/prepare_scenarionet_dataset.sh").read_text(encoding="utf-8")
+
+    assert 'host_data_dir="${HOST_DATA_DIR:-${repo_root}/data}"' in script
+    assert 'host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${host_data_dir%/}/scenarionet}"' in script
+    assert 'host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${repo_root}/data/scenarionet}"' not in script
+
+
 def _entry(source: str, index: int) -> ScenarioCatalogEntry:
     scenario_id = f"{source}-{index}"
     record = ScenarioRecord(

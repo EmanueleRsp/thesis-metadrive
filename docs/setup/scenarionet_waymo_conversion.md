@@ -22,23 +22,9 @@ leggere il bucket che contiene i TFRecord. Non è una dipendenza Python del
 project. In the normal workflow, no credential needs to be placed in `.env`:
 `gcloud` stores the OAuth login locally.
 
-Installa il [Google Cloud CLI](https://cloud.google.com/sdk/docs/install), poi
-esegui una sola volta:
-
-Su Ubuntu/WSL puoi installarlo con questi comandi, **uno alla volta**. Non
-separare il carattere `|` dalla riga e non eseguire `\` da solo:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y apt-transport-https ca-certificates gnupg curl
-curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor --yes -o /usr/share/keyrings/cloud.google.gpg
-echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list >/dev/null
-sudo apt-get update
-sudo apt-get install -y google-cloud-cli
-gcloud --version
-```
-
-Su Ubuntu/WSL il repository include anche un installer assistito:
+Installa il Google Cloud CLI una sola volta. Il repository include un installer
+locale che non richiede privilegi amministrativi e salva l'SDK sotto
+`.gcloud-sdk/`:
 
 ```bash
 make install-gcloud
@@ -46,6 +32,9 @@ make install-gcloud
 
 L'installer installa solo il client locale. Non esegue il login al posto
 dell'utente: l'autorizzazione Waymo richiede una conferma OAuth interattiva.
+I comandi Waymo del repository usano automaticamente il `gcloud` locale se non
+è disponibile nel `PATH`. Anche la configurazione OAuth viene salvata localmente
+in `.gcloud-sdk/config`, senza usare `~/.config/gcloud`.
 
 Se disponi già di un service account autorizzato al dataset, puoi usare
 un'automazione non interattiva indicando in `.env` soltanto il percorso di un
@@ -86,12 +75,8 @@ circa 82 GB di raw più 78 GB di database convertito. Aggiungendo PG, runtime,
 immagini Docker e temporanei, è prudente avere almeno 200 GB liberi; 250 GB
 offrono un margine più sicuro.
 
-Durante il secondo `apt-get update` devi vedere una riga riferita a
-`packages.cloud.google.com`. Se `google-cloud-cli` non viene trovato, il
-repository non è stato registrato correttamente.
-
-Quando compare il prompt `>` significa che la shell sta aspettando il seguito
-di un comando multilinea: premi `Ctrl+C` e riparti dalla riga completa.
+Se `make install-gcloud` non riesce a scaricare l'installer, verifica la
+connettività verso `https://sdk.cloud.google.com`.
 
 ```bash
 make waymo-auth
