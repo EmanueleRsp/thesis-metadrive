@@ -53,7 +53,7 @@ truncation distinction.
 | `REQ-SN-013` | Record episode/run source×arm statistics and all dataset population, target, selected, and deficit artifacts. | §24 |
 | `REQ-SN-014` | Prevent leakage at the ScenarioNet pipeline boundary; defer the complete observation contract to its own specification. | §§2.1, 27.3, ADR-001 |
 | `REQ-SN-015` | Supply reproducible CLIs, mandatory tests, smoke training, and final artifact reconciliation. | §§25–28 |
-| `REQ-SN-016` | Make the orchestration command restartable after an interrupted stage while preserving explicit overwrite protection for source PG/Waymo data, and report failures with actionable stage context. | §25 |
+| `REQ-SN-016` | Make the orchestration command restartable after an interrupted stage while preserving explicit overwrite protection for source PG/Waymo data, bootstrap and validate required Rulebook calibration artifacts without synthetic values, and report failures with actionable stage context. | §25 |
 
 ## 4. Current Repository Analysis
 
@@ -122,7 +122,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `REQ-SN-007`–`REQ-SN-009` | `AC-SN-007`–`AC-SN-009` | pg, features, catalog, runtime, validation | `TEST-SN-007`–`TEST-SN-009` | Partial/reconcile |
 | `REQ-SN-010`–`REQ-SN-012` | `AC-SN-010`–`AC-SN-012` | envs, provider, ACL runtime | `TEST-SN-010`–`TEST-SN-012` | Partial/reconcile |
 | `REQ-SN-013`–`REQ-SN-015` | `AC-SN-013`–`AC-SN-015` | runtime wiring, CLIs, docs | `TEST-SN-013`–`TEST-SN-015` | Planned |
-| `REQ-SN-016` | `AC-SN-016`–`AC-SN-017` | `scripts/prepare_scenarionet_dataset.sh`, `src/thesis_rl/cli/scenarios/pipeline_config.py`, `Makefile` | `TEST-SN-016`–`TEST-SN-017` | Verified |
+| `REQ-SN-016` | `AC-SN-016`–`AC-SN-018` | `scripts/prepare_scenarionet_dataset.sh`, `src/thesis_rl/cli/scenarios/pipeline_config.py`, `Makefile` | `TEST-SN-016`–`TEST-SN-018` | In progress |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -145,6 +145,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `AC-SN-015` / `TEST-SN-015` | Smoke | Full small-count CLI pipeline | local fixtures | artifacts and random-policy run succeed | `REQ-SN-015` |
 | `AC-SN-016` / `TEST-SN-016` | Shell integration | Restart after derived artifacts were partially written | mocked pipeline commands that reject existing outputs without `--overwrite` | every catalog, Rulebook, split, threshold, and runtime stage receives derived-artifact overwrite; PG source generation remains separately protected | `REQ-SN-016` |
 | `AC-SN-017` / `TEST-SN-017` | Shell integration | Actionable orchestration failure | deterministic mocked stage failure | nonzero exit plus stage, operation, failed command, remediation, and retry command in the terminal summary | `REQ-SN-016` |
+| `AC-SN-018` / `TEST-SN-018` | Shell/real integration | Missing Rulebook prerequisite artifacts | fresh data root without ego config, braking trials, or calibration | install the frozen canonical ego config non-destructively, collect real trials, create and validate the hash-bound calibration in the CPU pipeline service, then continue filtering | `REQ-SN-016` |
 
 Mandatory commands:
 
@@ -189,6 +190,10 @@ external credentials and must not overwrite frozen data.
   Source PG/Waymo overwrite controls remain unchanged. Validation includes
   mocked shell integration regressions, syntax, focused pytest, and a real
   catalog-stage resume; unavailable ShellCheck is recorded below.
+- [ ] M7 — In progress. Close the Rulebook prerequisite gap exposed by the
+  first real stage-4 run: provide the documented canonical ego calibration
+  config, use the CPU pipeline image for real braking trials/calibration, and
+  bootstrap only missing artifacts before static eligibility filtering.
 
 ## 11. Progress And Findings Log
 

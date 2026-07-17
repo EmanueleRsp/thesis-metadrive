@@ -142,6 +142,10 @@ catalog_rulebook="${SCENARIONET_RULEBOOK_V2_CATALOG_PATH:-${data_root}/catalog/s
 catalog_split="${SCENARIONET_SPLIT_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_split.parquet}"
 catalog_final="${SCENARIONET_FINAL_CATALOG_PATH:-${data_root}/catalog/scenario_catalog.parquet}"
 rulebook_eligibility="${SCENARIONET_RULEBOOK_V2_ELIGIBILITY_PATH:-${data_root}/rulebook_v2/catalog_eligibility.json}"
+rulebook_ego_config="${data_root}/rulebook_v2/ego_config.json"
+rulebook_calibration="${data_root}/rulebook_v2/calibration_b_e.json"
+rulebook_ego_config_host="${host_data_root}/rulebook_v2/ego_config.json"
+rulebook_calibration_host="${host_data_root}/rulebook_v2/calibration_b_e.json"
 groups_path="${SCENARIONET_GROUPS_PATH:-${data_root}/splits/scenario_groups.json}"
 split_manifest="${SCENARIONET_SPLIT_MANIFEST_PATH:-${data_root}/splits/split_manifest.yaml}"
 thresholds_path="${SCENARIONET_THRESHOLDS_PATH:-${data_root}/splits/arm_thresholds.json}"
@@ -237,6 +241,21 @@ if ! is_true "$rulebook_v2_enabled"; then
   die "ScenarioNet v1.1 requires rulebook_v2.enabled=true"
 fi
 
+if [[ ! -f "$rulebook_ego_config_host" || ! -f "$rulebook_calibration_host" ]]; then
+  stage \
+    "[preflight] Preparing Rulebook v2 ego calibration artifacts" \
+    "installing the canonical ego config and producing a real braking calibration" \
+    "Inspect the braking-trial or calibration error above. No synthetic calibration values are used."
+  if [[ ! -f "$rulebook_ego_config_host" && -f "$rulebook_calibration_host" ]]; then
+    die \
+      "Rulebook calibration exists without its hash-defining ego config: ${rulebook_calibration_host}" \
+      "Restore the matching ego_config.json or move the orphan calibration aside before retrying."
+  fi
+  RULEBOOK_V2_DATA_ROOT="$host_data_root" \
+    RULEBOOK_V2_CONTAINER_DATA_ROOT="$data_root" \
+    make rulebook-v2-prepare
+fi
+
 split_args=(
   --output "$catalog_split"
   --groups "$groups_path"
@@ -319,8 +338,8 @@ for ((cycle=0; ; cycle++)); do
     --data-root "$data_root" \
     --output-catalog "$catalog_rulebook" \
     --eligibility-output "$rulebook_eligibility" \
-    --ego-config "${data_root}/rulebook_v2/ego_config.json" \
-    --calibration "${data_root}/rulebook_v2/calibration_b_e.json" \
+    --ego-config "$rulebook_ego_config" \
+    --calibration "$rulebook_calibration" \
     --workers "$rulebook_v2_workers" \
     "${derived_overwrite[@]}"
 

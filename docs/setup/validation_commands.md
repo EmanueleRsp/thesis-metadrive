@@ -80,7 +80,9 @@ frenata devono essere raccolte con la configurazione ego effettiva, su strada
 rettilinea e piana, senza traffico. Non inserire valori sintetici: servono 10
 prove valide per ciascuna velocità target `5, 10, 15, 20 m/s`.
 
-Il repository ora contiene già questo file sul host:
+The repository provides the canonical source configuration at
+`conf/rulebook_v2/ego_calibration.json`. `make rulebook-v2-init` installs it
+non-destructively at:
 
 ```text
 data/scenarionet/rulebook_v2/ego_config.json
@@ -122,12 +124,15 @@ contiene:
 La sequenza raccomandata è:
 
 ```bash
-make rulebook-v2-init
-make rulebook-v2-collect-trials
-make rulebook-v2-calibrate
-make rulebook-v2-validate-calibration
+make rulebook-v2-prepare
 make rulebook-v2-pilot
 ```
+
+`rulebook-v2-prepare` uses the CPU-only dataset pipeline container. When the
+calibration is missing it always recollects all 40 real braking trials before
+creating the hash-bound artifact; it never rebinds stale trials or creates a
+synthetic calibration. The full ScenarioNet pipeline invokes this preparation
+automatically only when the required artifacts are missing.
 
 `rulebook-v2-collect-trials` esegue 10 prove per target sulla pista `S` senza
 traffico, applica acceleratore/frenata massimi e misura la decelerazione tra il

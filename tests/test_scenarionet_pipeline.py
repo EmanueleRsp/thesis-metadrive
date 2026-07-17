@@ -63,6 +63,7 @@ def _run_mocked_pipeline(
     split_failures: int = 0,
     config_overrides: dict[str, str] | None = None,
     skip_waymo: bool = True,
+    rulebook_ready: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     test_repo = tmp_path / "repo"
     scripts_dir = test_repo / "scripts"
@@ -91,6 +92,11 @@ def _run_mocked_pipeline(
         + "\n",
         encoding="utf-8",
     )
+    if rulebook_ready:
+        rulebook_dir = host_data_root / "rulebook_v2"
+        rulebook_dir.mkdir()
+        (rulebook_dir / "ego_config.json").write_text("{}\n", encoding="utf-8")
+        (rulebook_dir / "calibration_b_e.json").write_text("{}\n", encoding="utf-8")
 
     command_log = tmp_path / "docker-commands.log"
     make_log = tmp_path / "make-commands.log"
@@ -170,7 +176,12 @@ def _run_mocked_pipeline(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
         "printf '%s max_new_shards=%s\\n' \"$*\" "
-        '"${WAYMO_MAX_NEW_SHARDS:-unset}" >> "$FAKE_MAKE_LOG"\n',
+        '"${WAYMO_MAX_NEW_SHARDS:-unset}" >> "$FAKE_MAKE_LOG"\n'
+        'if [[ " $* " == *" rulebook-v2-prepare "* ]]; then\n'
+        '  mkdir -p "$RULEBOOK_V2_DATA_ROOT/rulebook_v2"\n'
+        "  printf '{}\\n' > \"$RULEBOOK_V2_DATA_ROOT/rulebook_v2/ego_config.json\"\n"
+        "  printf '{}\\n' > \"$RULEBOOK_V2_DATA_ROOT/rulebook_v2/calibration_b_e.json\"\n"
+        "fi\n",
         encoding="utf-8",
     )
     fake_make.chmod(0o755)
@@ -216,6 +227,18 @@ def test_pipeline_failure_prints_actionable_summary(tmp_path: Path) -> None:
     assert "Failed command:" in result.stderr
     assert "Suggested action:" in result.stderr
     assert "Retry command: make scenarionet-pipeline" in result.stderr
+
+
+def test_pipeline_bootstraps_missing_rulebook_artifacts(tmp_path: Path) -> None:
+    result = _run_mocked_pipeline(tmp_path, rulebook_ready=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "[preflight] Preparing Rulebook v2 ego calibration artifacts" in result.stdout
+    make_commands = (tmp_path / "make-commands.log").read_text(encoding="utf-8")
+    assert "rulebook-v2-prepare" in make_commands
+    rulebook_dir = tmp_path / "data" / "scenarionet" / "rulebook_v2"
+    assert (rulebook_dir / "ego_config.json").is_file()
+    assert (rulebook_dir / "calibration_b_e.json").is_file()
 
 
 def test_pg_replenishment_does_not_consume_waymo_batch_cap(tmp_path: Path) -> None:
@@ -336,6 +359,27 @@ def test_pg_replenishment_uses_cpu_pipeline_service_and_resolved_workers() -> No
     assert "docker compose run --rm dataset-pipeline" in target
     assert '--workers "$(SCENARIONET_PG_WORKERS)"' in target
     assert "docker compose run --rm dev" not in target
+
+
+def test_rulebook_prepare_uses_canonical_config_and_cpu_pipeline() -> None:
+    canonical = json.loads(
+        Path("conf/rulebook_v2/ego_calibration.json").read_text(encoding="utf-8")
+    )
+    fixture = json.loads(
+        Path("tests/fixtures/rulebook_v2_calibration_config.json").read_text(encoding="utf-8")
+    )
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+    targets = makefile.split("rulebook-v2-init:", maxsplit=1)[1].split(
+        "rulebook-v2-filter-catalog:", maxsplit=1
+    )[0]
+
+    assert canonical == fixture
+    assert 'if [ ! -f "$(RULEBOOK_V2_EGO_CONFIG)" ]' in targets
+    assert 'cp "$(RULEBOOK_V2_EGO_CONFIG_SOURCE)"' in targets
+    assert 'if [ ! -f "$(RULEBOOK_V2_CALIBRATION)" ]' in targets
+    assert "$(MAKE) rulebook-v2-collect-trials" in targets
+    assert "docker compose run --rm dataset-pipeline" in targets
+    assert "docker compose run --rm dev" not in targets
 
 
 def test_recatalog_never_mutates_source_datasets() -> None:
