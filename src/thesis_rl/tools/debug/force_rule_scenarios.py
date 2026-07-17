@@ -18,8 +18,7 @@ def _find_repo_root(start: Path) -> Path:
         if (candidate / "conf" / "config.yaml").is_file():
             return candidate
     raise FileNotFoundError(
-        "Could not locate repository root containing conf/config.yaml. "
-        f"Start path: {start}"
+        f"Could not locate repository root containing conf/config.yaml. Start path: {start}"
     )
 
 
@@ -121,8 +120,12 @@ def _extract_rule_snapshot(label: str, info: dict[str, Any]) -> dict[str, Any]:
         "label": label,
         "rule_components": dict(info.get("rule_components", {})),
         "rule_input_available": dict(info.get("rule_input_available", {})),
-        "ego_position": info.get("ego_state", {}).get("position") if isinstance(info.get("ego_state"), dict) else None,
-        "neighbors_count": len(info.get("neighbors", [])) if isinstance(info.get("neighbors"), list) else 0,
+        "ego_position": info.get("ego_state", {}).get("position")
+        if isinstance(info.get("ego_state"), dict)
+        else None,
+        "neighbors_count": len(info.get("neighbors", []))
+        if isinstance(info.get("neighbors"), list)
+        else 0,
     }
 
 
@@ -137,7 +140,9 @@ def _step_zero(env: Any):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", type=str, default=default_output_path_str("forced_rule_scenarios.json"))
+    parser.add_argument(
+        "--out", type=str, default=default_output_path_str("forced_rule_scenarios.json")
+    )
     parser.add_argument("--traffic-density", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--map", dest="map_id", type=int, default=5)

@@ -15,6 +15,7 @@ defaults:
   - agent/adapter: identity            # Action adapter in `conf/agent/adapter/*`
 
   - reward: monitor_only    # native | monitor_only | scalar_reward
+  - scalarization: default  # SCAL-V1.0 formula and immutable run parameters
   - curriculum: disabled    # disabled | stages | stages_scenarionet | scenario_acl | scenario_acl_scenarionet
   
   - video: default          # Video/replay pipeline settings in `conf/video/*`
@@ -25,7 +26,8 @@ defaults:
 seed: 42
 device: auto
 
-# Explicit selector.  v1 remains the default and retains the existing runtime path.
+# Explicit selector. v1 remains the repository runtime default; v2 selection is
+# owned by the Rulebook implementation and can feed the scalarizer downstream.
 rulebook:
   version: v1  # v1 | v2
 

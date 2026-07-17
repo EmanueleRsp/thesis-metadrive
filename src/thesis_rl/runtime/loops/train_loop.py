@@ -10,6 +10,7 @@ import pickle
 from dataclasses import asdict
 import random
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.agent.agent import Agent
 from thesis_rl.agent.planners.core.utils import count_envs
+from thesis_rl.contracts.reward_semantics import build_reward_semantics_identity
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.manager import CurriculumManager
 from thesis_rl.curriculum.scenario_acl import (
@@ -61,6 +63,7 @@ from thesis_rl.runtime.execution.seeding import (
     set_global_seed,
     train_episode_seed_from_env_overrides,
 )
+from thesis_rl.sb3_extensions.replay import resolve_transition_replay_config
 
 
 CHECKPOINT_INDEX_FIELDS = [
@@ -174,6 +177,65 @@ def _save_training_state(path: Path, payload: dict[str, Any]) -> None:
     OmegaConf.save(config=OmegaConf.create(payload), f=str(path))
 
 
+def _save_json_atomically(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+        )
+        with temporary_path.open("rb") as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _validate_checkpoint_pair(
+    pair_path: Path,
+    *,
+    checkpoint_name: str,
+    replay_path: Path,
+    training_timestep: int | None = None,
+) -> dict[str, Any]:
+    """Validate the model/replay/manifest identity before replay loading."""
+    if not pair_path.is_file():
+        raise ValueError(
+            "Replay continuation requires a checkpoint pair manifest; "
+            f"missing {pair_path}. Use model-only transfer initialization instead."
+        )
+    try:
+        payload = json.loads(pair_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read checkpoint pair manifest: {pair_path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Checkpoint pair manifest must be an object: {pair_path}")
+    if not str(payload.get("checkpoint_id", "")):
+        raise ValueError(f"Checkpoint pair manifest has no checkpoint_id: {pair_path}")
+    expected_model_name = f"{checkpoint_name}.zip"
+    if payload.get("model_path") != expected_model_name:
+        raise ValueError(
+            "Checkpoint pair model identity mismatch: "
+            f"manifest={payload.get('model_path')!r}, expected={expected_model_name!r}."
+        )
+    if payload.get("replay_path") != replay_path.name:
+        raise ValueError(
+            "Checkpoint pair replay identity mismatch: "
+            f"manifest={payload.get('replay_path')!r}, expected={replay_path.name!r}."
+        )
+    if not replay_path.is_file():
+        raise ValueError(f"Checkpoint pair replay artifact is missing: {replay_path}")
+    if training_timestep is not None and int(payload.get("training_timestep", -1)) != int(
+        training_timestep
+    ):
+        raise ValueError(
+            "Checkpoint pair training timestep mismatch: "
+            f"manifest={payload.get('training_timestep')!r}, expected={training_timestep!r}."
+        )
+    return payload
+
+
 def _load_training_state(path: Path) -> dict[str, Any]:
     loaded = OmegaConf.load(path)
     return dict(OmegaConf.to_container(loaded, resolve=True))
@@ -183,6 +245,20 @@ def _save_replay_buffer_if_available(planner: Any, path: Path) -> bool:
     if not hasattr(planner, "save_replay_buffer"):
         return False
     return bool(planner.save_replay_buffer(str(path)))
+
+
+def _save_replay_buffer_atomically(planner: Any, path: Path) -> bool:
+    """Save a replay artifact through a temporary file and atomic replacement."""
+    temporary_path = path.with_name(f".{path.name}.tmp")
+    temporary_path.unlink(missing_ok=True)
+    try:
+        saved = _save_replay_buffer_if_available(planner, temporary_path)
+        if not saved or not temporary_path.is_file():
+            raise RuntimeError(f"Replay-buffer saver did not create {temporary_path}.")
+        os.replace(temporary_path, path)
+        return True
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def _load_replay_buffer_if_available(planner: Any, path: Path) -> bool:
@@ -403,7 +479,10 @@ def run_training(cfg: DictConfig) -> None:
         checkpoints_best_dir / "best_thresholded_lexicographic_rulebook"
     )
     latest_replay_buffer_path = checkpoints_dir / "latest_replay_buffer.pkl"
+    final_replay_buffer_path = checkpoints_dir / "final_replay_buffer.pkl"
+    final_checkpoint_pair_path = checkpoints_dir / "final_checkpoint_pair.json"
     latest_training_state_path = checkpoints_dir / "latest_training_state.yaml"
+    latest_checkpoint_pair_path = checkpoints_dir / "latest_checkpoint_pair.json"
     latest_rng_state_path = checkpoints_dir / "latest_rng_state.pkl"
     train_log_path = logs_dir / "train.log"
     eval_log_path = logs_dir / "eval.log"
@@ -460,11 +539,19 @@ def run_training(cfg: DictConfig) -> None:
     )
 
     total_timesteps = int(cfg.experiment.total_timesteps)
+    planner_algorithm_name = str(cfg.agent.planner.algorithm.name)
+    transition_replay_config = resolve_transition_replay_config(
+        cfg.agent.planner.algorithm.get("transition_replay"),
+        algorithm_name=planner_algorithm_name,
+        total_timesteps=total_timesteps,
+        legacy_save_replay_buffer=bool(cfg.checkpoint.get("save_replay_buffer", False)),
+    )
     current_global_step = 0
     chunk_id = 0
     eval_id = 0
     current_stage_name = "baseline"
     current_stage_index = 0
+    beta_progress_env_steps = 0
 
     try:
         run_seed = int(cfg.seed)
@@ -480,7 +567,12 @@ def run_training(cfg: DictConfig) -> None:
         resume_checkpoint_name = str(resume_cfg.get("checkpoint_name", "latest"))
         resume_checkpoint_stem = resume_run_dir / "checkpoints" / resume_checkpoint_name
         resume_checkpoint_zip = resume_checkpoint_stem.with_suffix(".zip")
-        resume_replay_buffer_path = resume_run_dir / "checkpoints" / "latest_replay_buffer.pkl"
+        resume_replay_buffer_path = (
+            resume_run_dir / "checkpoints" / f"{resume_checkpoint_name}_replay_buffer.pkl"
+        )
+        resume_checkpoint_pair_path = (
+            resume_run_dir / "checkpoints" / f"{resume_checkpoint_name}_checkpoint_pair.json"
+        )
         resume_training_state_path = resume_run_dir / "checkpoints" / "latest_training_state.yaml"
         resume_rng_state_path = resume_run_dir / "checkpoints" / "latest_rng_state.pkl"
         resume_state: dict[str, Any] | None = None
@@ -595,6 +687,7 @@ def run_training(cfg: DictConfig) -> None:
         agent = Agent(
             preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg
         )
+        agent.set_checkpoint_identity(build_reward_semantics_identity(cfg))
 
         def _make_eval_agent(checkpoint_stem: Path, eval_env: Any) -> tuple[Agent, str]:
             checkpoint_zip = f"{checkpoint_stem}.zip"
@@ -619,7 +712,15 @@ def run_training(cfg: DictConfig) -> None:
 
         if resume_enabled:
             agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
-            if bool(cfg.checkpoint.get("save_replay_buffer", False)):
+            if transition_replay_config.persistence_enabled:
+                _validate_checkpoint_pair(
+                    resume_checkpoint_pair_path,
+                    checkpoint_name=resume_checkpoint_name,
+                    replay_path=resume_replay_buffer_path,
+                    training_timestep=int(resume_state.get("global_steps_done", 0))
+                    if resume_state is not None
+                    else None,
+                )
                 _load_replay_buffer_if_available(planner, resume_replay_buffer_path)
                 _validate_replay_buffer_n_envs(planner)
             if bool(resume_cfg.get("restore_rng_state", True)):
@@ -630,6 +731,8 @@ def run_training(cfg: DictConfig) -> None:
                 resume_global_steps_done = int(resume_state.get("global_steps_done", 0))
                 resume_chunk_id = int(resume_state.get("chunk_id", 0))
                 resume_eval_id = int(resume_state.get("eval_id", 0))
+                if transition_replay_config.persistence_enabled:
+                    beta_progress_env_steps = int(resume_state.get("beta_progress_env_steps", 0))
 
         # Training and evaluation params
         log_interval = int(cfg.experiment.get("log_interval", 1000))
@@ -846,8 +949,6 @@ def run_training(cfg: DictConfig) -> None:
 
             if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
                 agent.save(latest_checkpoint_stem)
-                if bool(cfg.checkpoint.get("save_replay_buffer", False)):
-                    _save_replay_buffer_if_available(planner, latest_replay_buffer_path)
                 curriculum_state_payload = (
                     curriculum_manager.state_dict()
                     if curriculum_manager is not None
@@ -870,6 +971,7 @@ def run_training(cfg: DictConfig) -> None:
                     },
                     "seed": int(run_seed),
                     "updated_at": datetime.now().isoformat(timespec="seconds"),
+                    "beta_progress_env_steps": int(beta_progress_env_steps),
                 }
                 _save_training_state(latest_training_state_path, latest_state_payload)
                 if bool(cfg.checkpoint.get("save_rng_state", True)):
@@ -1001,6 +1103,7 @@ def run_training(cfg: DictConfig) -> None:
                 ),
             )
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
+            beta_progress_env_steps += actual_chunk_steps
             remaining = max(0, remaining - actual_chunk_steps)
             current_global_step = min(total_timesteps, total_timesteps - remaining)
             steps_end = current_global_step
@@ -1598,6 +1701,23 @@ def run_training(cfg: DictConfig) -> None:
                 "checkpoint.save_final must be true: final evaluation requires final checkpoint."
             )
         agent.save(final_checkpoint_stem)
+        if transition_replay_config.persistence_enabled:
+            _save_replay_buffer_atomically(planner, final_replay_buffer_path)
+        _save_json_atomically(
+            final_checkpoint_pair_path,
+            {
+                "checkpoint_id": uuid.uuid4().hex,
+                "training_timestep": int(total_timesteps),
+                "replay_segment_id": 0,
+                "beta_progress_env_steps": int(beta_progress_env_steps),
+                "model_path": final_checkpoint_stem.with_suffix(".zip").name,
+                "replay_path": (
+                    final_replay_buffer_path.name
+                    if transition_replay_config.persistence_enabled
+                    else None
+                ),
+            },
+        )
         final_adapter_ckpt_path = agent.adapter_checkpoint_path(final_checkpoint_stem)
         _append_checkpoint_index_row(
             checkpoint_index_path,
@@ -2066,8 +2186,19 @@ def run_training(cfg: DictConfig) -> None:
         )
         try:
             agent.save(latest_checkpoint_stem)
-            if bool(cfg.checkpoint.get("save_replay_buffer", False)):
-                _save_replay_buffer_if_available(planner, latest_replay_buffer_path)
+            if transition_replay_config.persistence_enabled:
+                _save_replay_buffer_atomically(planner, latest_replay_buffer_path)
+                _save_json_atomically(
+                    latest_checkpoint_pair_path,
+                    {
+                        "checkpoint_id": uuid.uuid4().hex,
+                        "training_timestep": int(current_global_step),
+                        "replay_segment_id": 0,
+                        "beta_progress_env_steps": int(beta_progress_env_steps),
+                        "model_path": latest_checkpoint_stem.with_suffix(".zip").name,
+                        "replay_path": latest_replay_buffer_path.name,
+                    },
+                )
             curriculum_state_payload = (
                 curriculum_manager.state_dict()
                 if curriculum_manager is not None

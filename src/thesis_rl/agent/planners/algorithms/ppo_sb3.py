@@ -7,11 +7,13 @@ import numpy as np
 import torch
 
 from thesis_rl.agent.types import Transition
+from thesis_rl.agent.transition_boundary import normalize_vector_transition_boundary
 from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
 from thesis_rl.agent.planners.core.lifecycle import PpoLifecycle
 from thesis_rl.agent.planners.core.utils import normalize_checkpoint_path, to_plain_dict
 from thesis_rl.sb3_extensions import (
     build_sb3_specs_from_configs,
+    resolve_transition_replay_config,
 )
 
 if TYPE_CHECKING:
@@ -27,6 +29,7 @@ def _require_sb3_ppo():
             "Run `uv sync` to install project dependencies."
         ) from exc
     return PPO
+
 
 class Sb3PpoPlannerBackend(BasePlannerBackend):
     lifecycle_cls = PpoLifecycle
@@ -66,6 +69,10 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         PPO = _require_sb3_ppo()
 
         planner_cfg = to_plain_dict(cfg_planner)
+        resolve_transition_replay_config(
+            planner_cfg.get("transition_replay"),
+            algorithm_name="ppo_sb3",
+        )
         policy_spec, algorithm_spec = build_sb3_specs_from_configs(
             "ppo_sb3",
             planner_cfg,
@@ -164,7 +171,9 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
 
         env_actions = raw_actions
         if self.model.policy.squash_output:
-            env_actions = np.asarray(self.model.policy.unscale_action(raw_actions), dtype=np.float32)
+            env_actions = np.asarray(
+                self.model.policy.unscale_action(raw_actions), dtype=np.float32
+            )
         else:
             env_actions = np.clip(
                 raw_actions,
@@ -226,10 +235,14 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         if self._last_values is None or self._last_log_probs is None:
             raise RuntimeError("PPO transition observed before action evaluation cache is set.")
 
+        transition_info = dict(transition.info)
+        transition_info["TimeLimit.truncated"] = bool(
+            transition.truncated and not transition.terminated
+        )
         rewards = self._bootstrap_timeout_rewards(
             rewards=np.asarray([transition.scalar_reward], dtype=np.float32),
             dones=np.asarray([transition.terminated or transition.truncated], dtype=bool),
-            infos=[dict(transition.info) | {"terminal_observation": transition.terminal_observation}],
+            infos=[transition_info | {"terminal_observation": transition.terminal_observation}],
         )
         obs = np.expand_dims(np.asarray(transition.observation, dtype=np.float32), axis=0)
         actions = np.expand_dims(np.asarray(transition.buffer_action, dtype=np.float32), axis=0)
@@ -259,13 +272,24 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         dones: np.ndarray,
         next_observations: np.ndarray,
         infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        terminated: np.ndarray | None = None,
+        truncated: np.ndarray | None = None,
     ) -> None:
         if self._last_values is None or self._last_log_probs is None:
-            raise RuntimeError("PPO batch transition observed before action evaluation cache is set.")
+            raise RuntimeError(
+                "PPO batch transition observed before action evaluation cache is set."
+            )
 
         obs_batch = np.asarray(observations, dtype=np.float32)
         action_batch = np.asarray(buffer_actions, dtype=np.float32)
-        done_batch = np.asarray(dones, dtype=bool)
+        terminated_batch, truncated_batch, resolved_next_obs = normalize_vector_transition_boundary(
+            dones=dones,
+            infos=infos,
+            next_observations=next_observations,
+            terminated=terminated,
+            truncated=truncated,
+        )
+        done_batch = terminated_batch | truncated_batch
         adjusted_rewards = self._bootstrap_timeout_rewards(
             rewards=np.asarray(rewards, dtype=np.float32),
             dones=done_batch,
@@ -282,7 +306,7 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
             log_prob=self._last_log_probs,
         )
         self.model._last_episode_starts = done_batch.copy()
-        self._last_next_obs = np.asarray(next_observations, dtype=np.float32)
+        self._last_next_obs = resolved_next_obs
         collected = int(obs_batch.shape[0])
         self.model.num_timesteps += collected
         self.collected_transitions += collected
@@ -322,9 +346,7 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         self.model.rollout_buffer.reset()
 
         logger_values = self.model.logger.name_to_value
-        self.last_actor_loss = float(
-            logger_values.get("train/policy_gradient_loss", float("nan"))
-        )
+        self.last_actor_loss = float(logger_values.get("train/policy_gradient_loss", float("nan")))
         self.last_critic_loss = float(logger_values.get("train/value_loss", float("nan")))
         self.last_learning_rate = float(logger_values.get("train/learning_rate", float("nan")))
         update_delta = int(getattr(self.model, "_n_updates", 0)) - prev_updates

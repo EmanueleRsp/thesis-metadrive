@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from thesis_rl.agent.types import Transition
+from thesis_rl.agent.transition_boundary import normalize_vector_transition_boundary
 from thesis_rl.agent.planners.decoders.factory import build_decoder
 from thesis_rl.agent.planners.core.action_noise import build_action_noise
 from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
@@ -54,12 +55,20 @@ class Td3PlannerBackend(BasePlannerBackend):
         self.action_high = np.asarray(action_space.high, dtype=np.float32)
         self._validate_network_config()
 
-        enc_actor = build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(self.device)
+        enc_actor = build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(
+            self.device
+        )
         share_encoder = bool(self.cfg_planner.get("share_encoder", False))
-        enc_critic = enc_actor if share_encoder else build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(self.device)
+        enc_critic = (
+            enc_actor
+            if share_encoder
+            else build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(self.device)
+        )
 
         decoder_cfg = dict(self.cfg_decoder)
-        actor_decoder = build_decoder(cfg_decoder=decoder_cfg, input_dim=int(enc_actor.output_dim)).to(self.device)
+        actor_decoder = build_decoder(
+            cfg_decoder=decoder_cfg, input_dim=int(enc_actor.output_dim)
+        ).to(self.device)
         critic_decoder_1 = build_decoder(
             cfg_decoder=decoder_cfg,
             input_dim=int(enc_critic.output_dim) + self.action_dim,
@@ -70,16 +79,24 @@ class Td3PlannerBackend(BasePlannerBackend):
         ).to(self.device)
 
         self.actor = DeterministicActor(enc_actor, actor_decoder, self.action_dim).to(self.device)
-        self.critic = TwinQCritic(enc_critic, critic_decoder_1, critic_decoder_2, self.action_dim).to(self.device)
+        self.critic = TwinQCritic(
+            enc_critic, critic_decoder_1, critic_decoder_2, self.action_dim
+        ).to(self.device)
         self.actor_target = DeterministicActor(
             build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(self.device),
-            build_decoder(cfg_decoder=decoder_cfg, input_dim=int(enc_actor.output_dim)).to(self.device),
+            build_decoder(cfg_decoder=decoder_cfg, input_dim=int(enc_actor.output_dim)).to(
+                self.device
+            ),
             self.action_dim,
         ).to(self.device)
         self.critic_target = TwinQCritic(
             build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(self.device),
-            build_decoder(cfg_decoder=decoder_cfg, input_dim=int(enc_critic.output_dim) + self.action_dim).to(self.device),
-            build_decoder(cfg_decoder=decoder_cfg, input_dim=int(enc_critic.output_dim) + self.action_dim).to(self.device),
+            build_decoder(
+                cfg_decoder=decoder_cfg, input_dim=int(enc_critic.output_dim) + self.action_dim
+            ).to(self.device),
+            build_decoder(
+                cfg_decoder=decoder_cfg, input_dim=int(enc_critic.output_dim) + self.action_dim
+            ).to(self.device),
             self.action_dim,
         ).to(self.device)
         self.actor_target.load_state_dict(self.actor.state_dict())
@@ -215,11 +232,25 @@ class Td3PlannerBackend(BasePlannerBackend):
         cfg_obs: Any | None = None,
     ) -> "Td3PlannerBackend":
         payload = torch.load(str(normalize_checkpoint_path(checkpoint_path)), map_location="cpu")
-        resolved_planner = cfg_planner if cfg_planner is not None else payload.get("cfg_planner", {})
-        resolved_encoder = cfg_encoder if cfg_encoder is not None else payload.get("cfg_encoder", {})
-        resolved_decoder = cfg_decoder if cfg_decoder is not None else payload.get("cfg_decoder", {})
+        resolved_planner = (
+            cfg_planner if cfg_planner is not None else payload.get("cfg_planner", {})
+        )
+        resolved_encoder = (
+            cfg_encoder if cfg_encoder is not None else payload.get("cfg_encoder", {})
+        )
+        resolved_decoder = (
+            cfg_decoder if cfg_decoder is not None else payload.get("cfg_decoder", {})
+        )
         resolved_obs = cfg_obs if cfg_obs is not None else payload.get("cfg_obs", {})
-        backend = cls(env, resolved_planner, resolved_encoder, resolved_decoder, resolved_obs, device=device, seed=None)
+        backend = cls(
+            env,
+            resolved_planner,
+            resolved_encoder,
+            resolved_decoder,
+            resolved_obs,
+            device=device,
+            seed=None,
+        )
         backend._load_payload(payload)
         return backend
 
@@ -241,7 +272,10 @@ class Td3PlannerBackend(BasePlannerBackend):
             "critic_target": self.critic_target.state_dict(),
             "actor_opt": self.actor_opt.state_dict(),
             "critic_opt": self.critic_opt.state_dict(),
-            "train_state": {"total_steps": self.state.total_steps, "update_steps": self.state.update_steps},
+            "train_state": {
+                "total_steps": self.state.total_steps,
+                "update_steps": self.state.update_steps,
+            },
             "cfg_planner": dict(self.cfg_planner),
             "cfg_encoder": dict(self.cfg_encoder),
             "cfg_decoder": dict(self.cfg_decoder),
@@ -283,7 +317,9 @@ class Td3PlannerBackend(BasePlannerBackend):
             return action_batch[0]
         return self._apply_action_noise(action_batch)[0]
 
-    def act_train_batch(self, observations: np.ndarray, deterministic: bool = False) -> tuple[np.ndarray, np.ndarray]:
+    def act_train_batch(
+        self, observations: np.ndarray, deterministic: bool = False
+    ) -> tuple[np.ndarray, np.ndarray]:
         if not deterministic and self.state.total_steps < self.learning_starts:
             action_batch = self._sample_random_actions(int(observations.shape[0]))
             return action_batch, action_batch
@@ -297,7 +333,7 @@ class Td3PlannerBackend(BasePlannerBackend):
         return np.asarray(env_action, dtype=np.float32)
 
     def observe_transition(self, transition: Transition) -> None:
-        is_timeout = self._is_timeout(transition.info) or bool(transition.truncated)
+        is_timeout = bool(transition.truncated and not transition.terminated)
         done = bool(transition.terminated or transition.truncated)
         self.replay_buffer.add(
             obs=np.asarray(transition.observation, dtype=np.float32),
@@ -321,16 +357,20 @@ class Td3PlannerBackend(BasePlannerBackend):
         dones: np.ndarray,
         next_observations: np.ndarray,
         infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        terminated: np.ndarray | None = None,
+        truncated: np.ndarray | None = None,
     ) -> None:
-        resolved_next_observations = np.asarray(next_observations, dtype=np.float32).copy()
-        stored_dones = np.asarray(dones, dtype=bool).copy()
-        timeouts = np.zeros_like(stored_dones, dtype=bool)
-        for idx, info in enumerate(infos):
-            if self._is_timeout(info):
-                timeouts[idx] = True
-            terminal_observation = info.get("terminal_observation") if isinstance(info, dict) else None
-            if terminal_observation is not None:
-                resolved_next_observations[idx] = np.asarray(terminal_observation, dtype=np.float32)
+        terminated_batch, truncated_batch, resolved_next_observations = (
+            normalize_vector_transition_boundary(
+                dones=dones,
+                infos=infos,
+                next_observations=next_observations,
+                terminated=terminated,
+                truncated=truncated,
+            )
+        )
+        stored_dones = terminated_batch | truncated_batch
+        timeouts = truncated_batch & ~terminated_batch
         self.replay_buffer.add_batch(
             obs=observations,
             actions=buffer_actions,
@@ -346,7 +386,7 @@ class Td3PlannerBackend(BasePlannerBackend):
             replay_size=int(self.replay_buffer.size),
             actions=np.asarray(buffer_actions, dtype=np.float32),
             rewards=np.asarray(rewards, dtype=np.float32),
-            dones=stored_dones * (~timeouts),
+            dones=terminated_batch,
             infos=infos,
             warmup_active=bool(self.state.total_steps <= self.learning_starts),
         )
@@ -416,8 +456,12 @@ class Td3PlannerBackend(BasePlannerBackend):
                     "batch_reward_std": float(rewards.std(unbiased=False).detach().cpu().item()),
                     "batch_done_rate": float(dones.mean().detach().cpu().item()),
                     "batch_action_abs_mean": float(actions.abs().mean().detach().cpu().item()),
-                    "policy_action_abs_mean": float(policy_actions.abs().mean().detach().cpu().item()),
-                    "target_action_abs_mean": float(next_actions.abs().mean().detach().cpu().item()),
+                    "policy_action_abs_mean": float(
+                        policy_actions.abs().mean().detach().cpu().item()
+                    ),
+                    "target_action_abs_mean": float(
+                        next_actions.abs().mean().detach().cpu().item()
+                    ),
                     "q_target_mean": float(q_target.mean().detach().cpu().item()),
                     "q1_mean": float(q1.mean().detach().cpu().item()),
                     "q2_mean": float(q2.mean().detach().cpu().item()),
@@ -440,7 +484,9 @@ class Td3PlannerBackend(BasePlannerBackend):
         }
 
     def end_training(self) -> None:
-        self.debug_logger.close(total_steps=int(self.state.total_steps), replay_size=int(self.replay_buffer.size))
+        self.debug_logger.close(
+            total_steps=int(self.state.total_steps), replay_size=int(self.replay_buffer.size)
+        )
 
     def on_episode_end(self, indices: list[int] | np.ndarray | None = None) -> None:
         if self.action_noise is not None:

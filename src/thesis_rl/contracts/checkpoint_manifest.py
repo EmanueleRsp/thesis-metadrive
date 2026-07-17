@@ -13,7 +13,7 @@ class CheckpointCompatibilityError(ValueError):
     """Raised when a checkpoint cannot be used by the current contract."""
 
 
-CHECKPOINT_MANIFEST_VERSION = "1"
+CHECKPOINT_MANIFEST_VERSION = "2"
 CHECKPOINT_MANIFEST_FIELDS = (
     "observation_schema_version",
     "observation_schema_fingerprint",
@@ -31,6 +31,27 @@ CHECKPOINT_MANIFEST_FIELDS = (
     "sb3_commit",
     "git_commit",
     "seed",
+    "rulebook_implementation_family",
+    "rulebook_specification_id",
+    "rulebook_version",
+    "rulebook_margin_schema_id",
+    "scalarization_specification_id",
+    "scalarization_version",
+    "scalarization_mode",
+    "scalarization_config_digest",
+    "native_environment_reward_weight",
+    "scalarization_vector_schema_id",
+    "scalarization_priority_base",
+    "scalarization_sigmoid_sharpness",
+    "scalarization_numerical_tolerance",
+    "scalarization_native_environment_reward_weight",
+    "legacy_vector_schema_id",
+    "legacy_rule_scales",
+    "legacy_scale_source_path",
+    "legacy_scale_source_sha256",
+    "legacy_scale_source_commit",
+    "legacy_rule_scales_digest",
+    "legacy_scale_source_digest",
 )
 
 
@@ -54,6 +75,27 @@ class CheckpointManifest:
     sb3_commit: str
     git_commit: str
     seed: int
+    rulebook_implementation_family: str = "not-applicable"
+    rulebook_specification_id: str = "not-applicable"
+    rulebook_version: str = "not-applicable"
+    rulebook_margin_schema_id: str = "not-applicable"
+    scalarization_specification_id: str = "not-applicable"
+    scalarization_version: str = "not-applicable"
+    scalarization_mode: str = "not-applicable"
+    scalarization_config_digest: str = "not-applicable"
+    native_environment_reward_weight: float | None = None
+    scalarization_vector_schema_id: str = "not-applicable"
+    scalarization_priority_base: float | None = None
+    scalarization_sigmoid_sharpness: float | None = None
+    scalarization_numerical_tolerance: float | None = None
+    scalarization_native_environment_reward_weight: float | None = None
+    legacy_vector_schema_id: str | None = None
+    legacy_rule_scales: tuple[float, ...] | None = None
+    legacy_scale_source_path: str | None = None
+    legacy_scale_source_sha256: str | None = None
+    legacy_scale_source_commit: str | None = None
+    legacy_rule_scales_digest: str | None = None
+    legacy_scale_source_digest: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a deep-copied mapping suitable for canonical JSON encoding."""
@@ -76,6 +118,31 @@ class CheckpointManifest:
             "sb3_commit": self.sb3_commit,
             "git_commit": self.git_commit,
             "seed": self.seed,
+            "rulebook_implementation_family": self.rulebook_implementation_family,
+            "rulebook_specification_id": self.rulebook_specification_id,
+            "rulebook_version": self.rulebook_version,
+            "rulebook_margin_schema_id": self.rulebook_margin_schema_id,
+            "scalarization_specification_id": self.scalarization_specification_id,
+            "scalarization_version": self.scalarization_version,
+            "scalarization_mode": self.scalarization_mode,
+            "scalarization_config_digest": self.scalarization_config_digest,
+            "native_environment_reward_weight": self.native_environment_reward_weight,
+            "scalarization_vector_schema_id": self.scalarization_vector_schema_id,
+            "scalarization_priority_base": self.scalarization_priority_base,
+            "scalarization_sigmoid_sharpness": self.scalarization_sigmoid_sharpness,
+            "scalarization_numerical_tolerance": self.scalarization_numerical_tolerance,
+            "scalarization_native_environment_reward_weight": (
+                self.scalarization_native_environment_reward_weight
+            ),
+            "legacy_vector_schema_id": self.legacy_vector_schema_id,
+            "legacy_rule_scales": (
+                None if self.legacy_rule_scales is None else list(self.legacy_rule_scales)
+            ),
+            "legacy_scale_source_path": self.legacy_scale_source_path,
+            "legacy_scale_source_sha256": self.legacy_scale_source_sha256,
+            "legacy_scale_source_commit": self.legacy_scale_source_commit,
+            "legacy_rule_scales_digest": self.legacy_rule_scales_digest,
+            "legacy_scale_source_digest": self.legacy_scale_source_digest,
         }
         return deepcopy(payload)
 
@@ -122,6 +189,75 @@ class CheckpointManifest:
                 sb3_commit=str(payload["sb3_commit"]),
                 git_commit=str(payload["git_commit"]),
                 seed=int(payload["seed"]),
+                rulebook_implementation_family=str(payload["rulebook_implementation_family"]),
+                rulebook_specification_id=str(payload["rulebook_specification_id"]),
+                rulebook_version=str(payload["rulebook_version"]),
+                rulebook_margin_schema_id=str(payload["rulebook_margin_schema_id"]),
+                scalarization_specification_id=str(payload["scalarization_specification_id"]),
+                scalarization_version=str(payload["scalarization_version"]),
+                scalarization_mode=str(payload["scalarization_mode"]),
+                scalarization_config_digest=str(payload["scalarization_config_digest"]),
+                native_environment_reward_weight=(
+                    None
+                    if payload["native_environment_reward_weight"] is None
+                    else float(payload["native_environment_reward_weight"])
+                ),
+                scalarization_vector_schema_id=str(payload["scalarization_vector_schema_id"]),
+                scalarization_priority_base=(
+                    None
+                    if payload["scalarization_priority_base"] is None
+                    else float(payload["scalarization_priority_base"])
+                ),
+                scalarization_sigmoid_sharpness=(
+                    None
+                    if payload["scalarization_sigmoid_sharpness"] is None
+                    else float(payload["scalarization_sigmoid_sharpness"])
+                ),
+                scalarization_numerical_tolerance=(
+                    None
+                    if payload["scalarization_numerical_tolerance"] is None
+                    else float(payload["scalarization_numerical_tolerance"])
+                ),
+                scalarization_native_environment_reward_weight=(
+                    None
+                    if payload["scalarization_native_environment_reward_weight"] is None
+                    else float(payload["scalarization_native_environment_reward_weight"])
+                ),
+                legacy_vector_schema_id=(
+                    None
+                    if payload["legacy_vector_schema_id"] is None
+                    else str(payload["legacy_vector_schema_id"])
+                ),
+                legacy_rule_scales=(
+                    None
+                    if payload["legacy_rule_scales"] is None
+                    else tuple(float(value) for value in payload["legacy_rule_scales"])
+                ),
+                legacy_scale_source_path=(
+                    None
+                    if payload["legacy_scale_source_path"] is None
+                    else str(payload["legacy_scale_source_path"])
+                ),
+                legacy_scale_source_sha256=(
+                    None
+                    if payload["legacy_scale_source_sha256"] is None
+                    else str(payload["legacy_scale_source_sha256"])
+                ),
+                legacy_scale_source_commit=(
+                    None
+                    if payload["legacy_scale_source_commit"] is None
+                    else str(payload["legacy_scale_source_commit"])
+                ),
+                legacy_rule_scales_digest=(
+                    None
+                    if payload["legacy_rule_scales_digest"] is None
+                    else str(payload["legacy_rule_scales_digest"])
+                ),
+                legacy_scale_source_digest=(
+                    None
+                    if payload["legacy_scale_source_digest"] is None
+                    else str(payload["legacy_scale_source_digest"])
+                ),
             )
         except (TypeError, ValueError) as exc:
             raise CheckpointCompatibilityError(
@@ -148,6 +284,27 @@ def build_checkpoint_manifest(
     observation_schema_version: str | None = None,
     observation_schema_fingerprint: str | None = None,
     encoder_architecture_version: str = "1.0-final",
+    rulebook_implementation_family: str = "not-applicable",
+    rulebook_specification_id: str = "not-applicable",
+    rulebook_version: str = "not-applicable",
+    rulebook_margin_schema_id: str = "not-applicable",
+    scalarization_specification_id: str = "not-applicable",
+    scalarization_version: str = "not-applicable",
+    scalarization_mode: str = "not-applicable",
+    scalarization_config_digest: str = "not-applicable",
+    scalarization_vector_schema_id: str = "not-applicable",
+    scalarization_priority_base: float | None = None,
+    scalarization_sigmoid_sharpness: float | None = None,
+    scalarization_numerical_tolerance: float | None = None,
+    scalarization_native_environment_reward_weight: float | None = None,
+    native_environment_reward_weight: float | None = None,
+    legacy_vector_schema_id: str | None = None,
+    legacy_rule_scales: tuple[float, ...] | None = None,
+    legacy_scale_source_path: str | None = None,
+    legacy_scale_source_sha256: str | None = None,
+    legacy_scale_source_commit: str | None = None,
+    legacy_rule_scales_digest: str | None = None,
+    legacy_scale_source_digest: str | None = None,
 ) -> CheckpointManifest:
     """Build a manifest and infer the approved semantic schema identity."""
 
@@ -189,6 +346,60 @@ def build_checkpoint_manifest(
         sb3_commit=str(sb3_commit),
         git_commit=str(git_commit),
         seed=int(seed),
+        rulebook_implementation_family=str(rulebook_implementation_family),
+        rulebook_specification_id=str(rulebook_specification_id),
+        rulebook_version=str(rulebook_version),
+        rulebook_margin_schema_id=str(rulebook_margin_schema_id),
+        scalarization_specification_id=str(scalarization_specification_id),
+        scalarization_version=str(scalarization_version),
+        scalarization_mode=str(scalarization_mode),
+        scalarization_config_digest=str(scalarization_config_digest),
+        native_environment_reward_weight=(
+            scalarization_native_environment_reward_weight
+            if native_environment_reward_weight is None
+            else native_environment_reward_weight
+        ),
+        scalarization_vector_schema_id=str(scalarization_vector_schema_id),
+        scalarization_priority_base=(
+            None if scalarization_priority_base is None else float(scalarization_priority_base)
+        ),
+        scalarization_sigmoid_sharpness=(
+            None
+            if scalarization_sigmoid_sharpness is None
+            else float(scalarization_sigmoid_sharpness)
+        ),
+        scalarization_numerical_tolerance=(
+            None
+            if scalarization_numerical_tolerance is None
+            else float(scalarization_numerical_tolerance)
+        ),
+        scalarization_native_environment_reward_weight=(
+            None
+            if (
+                scalarization_native_environment_reward_weight is None
+                and native_environment_reward_weight is None
+            )
+            else float(
+                scalarization_native_environment_reward_weight
+                if native_environment_reward_weight is None
+                else native_environment_reward_weight
+            )
+        ),
+        legacy_vector_schema_id=legacy_vector_schema_id,
+        legacy_rule_scales=(
+            None
+            if legacy_rule_scales is None
+            else tuple(float(value) for value in legacy_rule_scales)
+        ),
+        legacy_scale_source_path=legacy_scale_source_path,
+        legacy_scale_source_sha256=legacy_scale_source_sha256,
+        legacy_scale_source_commit=legacy_scale_source_commit,
+        legacy_rule_scales_digest=legacy_rule_scales_digest,
+        legacy_scale_source_digest=(
+            legacy_scale_source_sha256
+            if legacy_scale_source_digest is None
+            else legacy_scale_source_digest
+        ),
     )
 
 

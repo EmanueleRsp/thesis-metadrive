@@ -1,6 +1,15 @@
 from __future__ import annotations
 
 from thesis_rl.scenarios.pg.replenishment import plan_profile_counts
+from thesis_rl.scenarios.pg.report import _resolve_profile_counts
+
+
+def test_profile_override_disables_unspecified_profiles() -> None:
+    counts = _resolve_profile_counts(350, {"P5_complex_mixed": 1750})
+
+    assert counts["P5_complex_mixed"] == 1750
+    assert sum(counts.values()) == 1750
+    assert all(counts[profile] == 0 for profile in counts if profile != "P5_complex_mixed")
 
 
 def test_targeted_replenishment_uses_profiles_for_missing_complex_arms() -> None:

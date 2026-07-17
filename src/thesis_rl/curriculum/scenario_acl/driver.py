@@ -14,6 +14,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.agent.agent import Agent
 from thesis_rl.agent.planners.core.utils import count_envs
+from thesis_rl.contracts.reward_semantics import build_reward_semantics_identity
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.scenario_acl.arms import (
     ScenarioArm,
@@ -98,21 +99,11 @@ def _summarize_episode_acl_outcomes(
         }
     )
     return {
-        "generate_count": sum(
-            1 for outcome in outcomes if not _is_replay_iteration(outcome.spec)
-        ),
-        "replay_count": sum(
-            1 for outcome in outcomes if _is_replay_iteration(outcome.spec)
-        ),
+        "generate_count": sum(1 for outcome in outcomes if not _is_replay_iteration(outcome.spec)),
+        "replay_count": sum(1 for outcome in outcomes if _is_replay_iteration(outcome.spec)),
         "modes": modes,
         "arms": arms,
-        "mode": (
-            modes[0]
-            if len(modes) == 1
-            else "mixed"
-            if modes
-            else "none"
-        ),
+        "mode": (modes[0] if len(modes) == 1 else "mixed" if modes else "none"),
     }
 
 
@@ -131,7 +122,9 @@ def _selection_source_override(spec: IterationSpec) -> str | None:
     probabilities = provider.get("source_probability")
     if not isinstance(probabilities, dict):
         return None
-    selected = [str(source) for source, probability in probabilities.items() if float(probability) == 1.0]
+    selected = [
+        str(source) for source, probability in probabilities.items() if float(probability) == 1.0
+    ]
     return selected[0] if len(selected) == 1 else None
 
 
@@ -322,9 +315,7 @@ def _update_replay_record(
     record.last_seen_step = int(episode_id)
     record.metrics_summary = _metrics_summary(
         metrics,
-        generator_config_id=str(
-            record.scenario_arm or record.generator_arm or record.source
-        ),
+        generator_config_id=str(record.scenario_arm or record.generator_arm or record.source),
     )
     return record
 
@@ -349,10 +340,22 @@ def _load_scenario_acl_resume_state(
 ) -> tuple[ScenarioBuffer, ScenarioArmBandit, int, int, int, int, list[float]]:
     resume_cfg = cfg.checkpoint.get("resume", {})
     if not bool(resume_cfg.get("enabled", False)):
-        return ScenarioBuffer(capacity=int(scenario_cfg.buffer_capacity)), ScenarioArmBandit(scenario_cfg.mab), 0, 0, 0, 0, []
+        return (
+            ScenarioBuffer(capacity=int(scenario_cfg.buffer_capacity)),
+            ScenarioArmBandit(scenario_cfg.mab),
+            0,
+            0,
+            0,
+            0,
+            [],
+        )
 
     configured_run_dir = resume_cfg.get("run_dir")
-    resume_run_dir = Path(str(configured_run_dir)) if configured_run_dir not in (None, "", "null") else artifact_paths["root"].parents[1]
+    resume_run_dir = (
+        Path(str(configured_run_dir))
+        if configured_run_dir not in (None, "", "null")
+        else artifact_paths["root"].parents[1]
+    )
     resume_root = resume_run_dir / "artifacts" / "curriculum"
     state_path = resume_root / "scenario_acl_state.json"
     buffer_path = resume_root / "scenario_buffer.json"
@@ -397,10 +400,7 @@ def _choose_iteration_spec(
 ) -> IterationSpec:
     effective_episode_id = int(episode_id if episode_id is not None else (chunk_id or 0))
     scenario_cfg = curriculum_cfg.scenario_acl
-    can_exploit = (
-        scenario_cfg.use_replay
-        and len(buffer) >= int(scenario_cfg.warmup_buffer_size)
-    )
+    can_exploit = scenario_cfg.use_replay and len(buffer) >= int(scenario_cfg.warmup_buffer_size)
 
     if can_exploit and rng.random() < float(scenario_cfg.exploit_probability):
         selection = buffer.sample_replay(
@@ -507,12 +507,20 @@ def run_scenario_acl_training(
     resume_cfg = cfg.checkpoint.get("resume", {})
     resume_enabled = bool(resume_cfg.get("enabled", False))
     resume_run_dir_cfg = resume_cfg.get("run_dir")
-    resume_run_dir = Path(str(resume_run_dir_cfg)) if resume_run_dir_cfg not in (None, "", "null") else paths.run_dir
-    resume_checkpoint_stem = resume_run_dir / "checkpoints" / str(resume_cfg.get("checkpoint_name", "latest"))
+    resume_run_dir = (
+        Path(str(resume_run_dir_cfg))
+        if resume_run_dir_cfg not in (None, "", "null")
+        else paths.run_dir
+    )
+    resume_checkpoint_stem = (
+        resume_run_dir / "checkpoints" / str(resume_cfg.get("checkpoint_name", "latest"))
+    )
     resume_checkpoint_zip = resume_checkpoint_stem.with_suffix(".zip")
     if resume_enabled:
         if not resume_checkpoint_zip.exists():
-            raise FileNotFoundError(f"Scenario ACL resume checkpoint is missing: {resume_checkpoint_zip}")
+            raise FileNotFoundError(
+                f"Scenario ACL resume checkpoint is missing: {resume_checkpoint_zip}"
+            )
         planner = load_planner(cfg, checkpoint_path=str(resume_checkpoint_zip), env=env)
     else:
         planner = build_planner(cfg, env, seed=run_seed)
@@ -522,7 +530,10 @@ def run_scenario_acl_training(
         if hasattr(cfg, "agent")
         else 0.1
     )
-    agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg)
+    agent = Agent(
+        preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg
+    )
+    agent.set_checkpoint_identity(build_reward_semantics_identity(cfg))
     if resume_enabled:
         agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
 
@@ -585,20 +596,15 @@ def run_scenario_acl_training(
                     episode_id=current_episode_id + 1,
                 )
                 if not _is_replay_iteration(spec):
-                    excluded_uids = {
-                        str(record.scenario_id) for record in buffer.records()
-                    }
+                    excluded_uids = {str(record.scenario_id) for record in buffer.records()}
                     provider = getattr(base_env, "scenario_provider", None)
                     has_candidate = getattr(provider, "has_candidate", None)
                     source = _selection_source_override(spec)
-                    if (
-                        callable(has_candidate)
-                        and not has_candidate(
-                            split=str(base_env.split),
-                            source=source,
-                            arm=spec.arm_name,
-                            excluded_scenario_uids=excluded_uids,
-                        )
+                    if callable(has_candidate) and not has_candidate(
+                        split=str(base_env.split),
+                        source=source,
+                        arm=spec.arm_name,
+                        excluded_scenario_uids=excluded_uids,
                     ):
                         if not len(buffer):
                             raise RuntimeError(
@@ -697,9 +703,7 @@ def run_scenario_acl_training(
                         bandit.update(
                             arm_index=spec.arm_index,
                             normalized_usefulness=normalized_episode_usefulness,
-                            selection_probability=float(
-                                spec.arm_probabilities[spec.arm_index]
-                            ),
+                            selection_probability=float(spec.arm_probabilities[spec.arm_index]),
                         )
                     selection["usefulness"] = episode_usefulness
                     selection["usefulness_norm"] = normalized_episode_usefulness
@@ -752,9 +756,7 @@ def run_scenario_acl_training(
                     episode_id=current_episode_id,
                     episode_index=episode_index,
                     origin=selection.get("origin"),
-                    arm_name=_short_arm_name(
-                        getattr(record, "primary_arm", selection.get("arm"))
-                    ),
+                    arm_name=_short_arm_name(getattr(record, "primary_arm", selection.get("arm"))),
                     source=getattr(record, "source", None),
                     selection_probability=selection.get("selection_probability"),
                     usefulness=episode_usefulness,
@@ -771,16 +773,12 @@ def run_scenario_acl_training(
                     )
                 )
 
-            def episode_context(
-                training_env: Any, _info: dict[str, Any]
-            ) -> dict[str, Any] | None:
+            def episode_context(training_env: Any, _info: dict[str, Any]) -> dict[str, Any] | None:
                 base_env = _base_env(training_env)
                 record = getattr(base_env, "current_scenario_record", None)
                 selection = getattr(base_env, "_acl_episode_selection", {})
                 return {
-                    "arm": _short_arm_name(
-                        getattr(record, "primary_arm", selection.get("arm"))
-                    ),
+                    "arm": _short_arm_name(getattr(record, "primary_arm", selection.get("arm"))),
                     "source": getattr(record, "source", None),
                     "origin": (
                         f"{selection.get('origin')} |"
@@ -788,9 +786,7 @@ def run_scenario_acl_training(
                         else selection.get("origin")
                     ),
                     "U": _format_optional_float(selection.get("usefulness")),
-                    "U_norm": _format_optional_float(
-                        selection.get("usefulness_norm")
-                    ),
+                    "U_norm": _format_optional_float(selection.get("usefulness_norm")),
                 }
 
             def mab_monitor_rows() -> list[tuple[str, str]]:
@@ -868,7 +864,9 @@ def run_scenario_acl_training(
                     "elapsed_seconds": float(chunk_summary.get("elapsed_seconds", 0.0)),
                     "train_reset_seed_first": chunk_summary.get("train_reset_seed_first"),
                     "train_reset_seed_last": chunk_summary.get("train_reset_seed_last"),
-                    "train_reset_seed_unique_count": chunk_summary.get("train_reset_seed_unique_count"),
+                    "train_reset_seed_unique_count": chunk_summary.get(
+                        "train_reset_seed_unique_count"
+                    ),
                 },
             )
 
@@ -892,7 +890,9 @@ def run_scenario_acl_training(
             agent.save(eval_snapshot_stem)
             eval_agent = Agent(
                 preprocessor=preprocessor,
-                planner=load_planner(cfg, checkpoint_path=f"{eval_snapshot_stem}.zip", env=eval_env),
+                planner=load_planner(
+                    cfg, checkpoint_path=f"{eval_snapshot_stem}.zip", env=eval_env
+                ),
                 adapter=adapter,
                 ema_alpha=ema_alpha_cfg,
             )
@@ -922,8 +922,7 @@ def run_scenario_acl_training(
             episode_feedback = [
                 (float(outcome.learning_potential), float(outcome.usefulness_norm))
                 for outcome in episode_outcomes
-                if outcome.learning_potential is not None
-                and outcome.usefulness_norm is not None
+                if outcome.learning_potential is not None and outcome.usefulness_norm is not None
             ]
             if episode_feedback:
                 learning_potential = float(np.mean([item[0] for item in episode_feedback]))
@@ -950,9 +949,7 @@ def run_scenario_acl_training(
                     "eval_type": "intermediate",
                     "scenario_set": f"validation_{_WAYMO_STRATIFIED_SET}",
                     "chunk_id": current_chunk_id,
-                    "stage": (
-                        chunk_stage
-                    ),
+                    "stage": (chunk_stage),
                     "stage_index": -1,
                     "acl_chunk_mode": chunk_mode,
                     "acl_episode_modes": ",".join(episode_modes),
@@ -970,7 +967,9 @@ def run_scenario_acl_training(
                     "std_scalar_rule_reward": eval_metrics.get("std_scalar_rule_reward"),
                     "mean_hybrid_reward": eval_metrics.get("mean_hybrid_reward"),
                     "std_hybrid_reward": eval_metrics.get("std_hybrid_reward"),
-                    "mean_rule_saturation_max": float(eval_metrics.get("mean_rule_saturation_max", 0.0)),
+                    "mean_rule_saturation_max": float(
+                        eval_metrics.get("mean_rule_saturation_max", 0.0)
+                    ),
                     "collision_rate": float(eval_metrics.get("collision_rate", 0.0)),
                     "collision_rate_std": float(eval_metrics.get("collision_rate_std", 0.0)),
                     "out_of_road_rate": float(eval_metrics.get("out_of_road_rate", 0.0)),
@@ -984,7 +983,9 @@ def run_scenario_acl_training(
                     "max_error_value": float(eval_metrics.get("max_error_value", 0.0)),
                     "counterexample_rate": float(eval_metrics.get("counterexample_rate", 0.0)),
                     "violated_rules_ratio": float(eval_metrics.get("violated_rules_ratio", 0.0)),
-                    "unique_violation_patterns": int(eval_metrics.get("unique_violation_patterns", 0)),
+                    "unique_violation_patterns": int(
+                        eval_metrics.get("unique_violation_patterns", 0)
+                    ),
                     "promoted": False,
                     "next_stage": chunk_stage,
                 },
@@ -1210,18 +1211,12 @@ def run_scenario_acl_training(
                 "success_rate": float(final_metrics.get("success_rate", 0.0)),
                 "success_rate_std": float(final_metrics.get("success_rate_std", 0.0)),
                 "route_completion": float(final_metrics.get("route_completion", 0.0)),
-                "top_rule_violation_rate": float(
-                    final_metrics.get("top_rule_violation_rate", 0.0)
-                ),
+                "top_rule_violation_rate": float(final_metrics.get("top_rule_violation_rate", 0.0)),
                 "avg_error_value": float(final_metrics.get("avg_error_value", 0.0)),
                 "max_error_value": float(final_metrics.get("max_error_value", 0.0)),
                 "counterexample_rate": float(final_metrics.get("counterexample_rate", 0.0)),
-                "violated_rules_ratio": float(
-                    final_metrics.get("violated_rules_ratio", 0.0)
-                ),
-                "unique_violation_patterns": int(
-                    final_metrics.get("unique_violation_patterns", 0)
-                ),
+                "violated_rules_ratio": float(final_metrics.get("violated_rules_ratio", 0.0)),
+                "unique_violation_patterns": int(final_metrics.get("unique_violation_patterns", 0)),
                 "checkpoint_path": str(
                     paths.final_checkpoint_stem.with_suffix(".zip").relative_to(paths.run_dir)
                 ),

@@ -26,6 +26,10 @@ from thesis_rl.sb3_extensions.checkpointing import (
     resolve_latest_generation,
     sha256_file,
 )
+from thesis_rl.sb3_extensions.replay import (
+    TransitionReplayConfig,
+    resolve_transition_replay_config,
+)
 
 __all__ = [
     "build_algorithm_spec",
@@ -44,4 +48,6 @@ __all__ = [
     "resolve_explicit_generation",
     "resolve_latest_generation",
     "sha256_file",
+    "TransitionReplayConfig",
+    "resolve_transition_replay_config",
 ]

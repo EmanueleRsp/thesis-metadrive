@@ -1,0 +1,13 @@
+# Approved Rulebook scalarization baseline.
+specification_id: SCAL-V1.0
+version: "1.0"
+mode: bounded_satisfaction_rank
+vector_schema_id: rulebook_v2_macro_v4
+priority_base: 2.01
+numerical_tolerance: 1.0e-8
+native_environment_reward_weight: 0.0
+sigmoid:
+  sharpness: 30.0
+legacy:
+  vector_schema_id: null
+  rule_scales: null

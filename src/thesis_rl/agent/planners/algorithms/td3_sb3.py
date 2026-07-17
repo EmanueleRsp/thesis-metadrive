@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from thesis_rl.agent.types import Transition
+from thesis_rl.agent.transition_boundary import normalize_vector_transition_boundary
 from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
 from thesis_rl.agent.planners.core.utils import normalize_checkpoint_path, to_plain_dict
 from thesis_rl.agent.planners.core.lifecycle import Td3Lifecycle
 from thesis_rl.sb3_extensions import (
     build_sb3_specs_from_configs,
+    resolve_transition_replay_config,
 )
 
 if TYPE_CHECKING:
@@ -167,11 +169,33 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
             obs_cfg=to_plain_dict(cfg_obs),
         )
         model_kwargs = algorithm_spec.merged_algorithm_kwargs()
+        transition_replay = resolve_transition_replay_config(
+            planner_cfg.get("transition_replay"),
+            algorithm_name="td3_sb3",
+        )
         replay_buffer_kwargs = (
             dict(algorithm_spec.replay_buffer_kwargs)
             if algorithm_spec.replay_buffer_kwargs
             else None
         )
+        replay_buffer_class = algorithm_spec.replay_buffer_class
+        if transition_replay.prioritized:
+            from thesis_rl.sb3_extensions.replay.prioritized import PrioritizedNStepReplayBuffer
+
+            replay_buffer_class = PrioritizedNStepReplayBuffer
+            per_raw = dict(planner_cfg.get("transition_replay", {}).get("per", {}))
+            per_cfg = {
+                key: per_raw[key]
+                for key in ("alpha", "beta_initial", "beta_final", "beta_anneal_steps", "epsilon")
+                if key in per_raw
+            }
+            replay_buffer_kwargs = {
+                **(replay_buffer_kwargs or {}),
+                **per_cfg,
+                "n_steps": transition_replay.n_steps,
+                "gamma": float(planner_cfg.get("gamma", 0.99)),
+                "seed": seed,
+            }
 
         model = TD3(
             policy=policy_spec.policy,
@@ -183,10 +207,12 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
             gradient_steps=cls._resolve_gradient_steps(env, planner_cfg),
             learning_rate=float(planner_cfg.get("learning_rate", 3e-4)),
             gamma=float(planner_cfg.get("gamma", 0.99)),
+            n_steps=transition_replay.n_steps if transition_replay.enabled else 1,
+            optimize_memory_usage=transition_replay.optimize_memory_usage,
             tau=float(planner_cfg.get("tau", 0.005)),
             action_noise=cls._build_action_noise(env, planner_cfg),
             policy_kwargs=policy_spec.policy_kwargs,
-            replay_buffer_class=algorithm_spec.replay_buffer_class,
+            replay_buffer_class=replay_buffer_class,
             replay_buffer_kwargs=replay_buffer_kwargs,
             verbose=int(planner_cfg.get("verbose", 0)),
             device=device,
@@ -352,22 +378,27 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         dones: np.ndarray,
         next_observations: np.ndarray,
         infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        terminated: np.ndarray | None = None,
+        truncated: np.ndarray | None = None,
     ) -> None:
         obs_batch = np.asarray(observations, dtype=np.float32)
-        next_obs_batch = np.asarray(next_observations, dtype=np.float32).copy()
+        terminated_batch, truncated_batch, next_obs_batch = normalize_vector_transition_boundary(
+            dones=dones,
+            infos=infos,
+            next_observations=next_observations,
+            terminated=terminated,
+            truncated=truncated,
+        )
         action_batch = np.asarray(buffer_actions, dtype=np.float32)
         reward_batch = np.asarray(rewards, dtype=np.float32)
-        done_batch = np.asarray(dones, dtype=np.float32)
+        done_batch = np.asarray(terminated_batch | truncated_batch, dtype=np.float32)
         replay_infos: list[dict[str, Any]] = []
 
         for idx, info in enumerate(infos):
             replay_info = dict(info)
-            if "TimeLimit.truncated" in replay_info:
-                replay_info["TimeLimit.truncated"] = bool(replay_info["TimeLimit.truncated"])
-            else:
-                replay_info["TimeLimit.truncated"] = bool(
-                    done_batch[idx] and replay_info.get("terminal_observation") is not None
-                )
+            replay_info["TimeLimit.truncated"] = bool(
+                truncated_batch[idx] and not terminated_batch[idx]
+            )
             terminal_observation = replay_info.get("terminal_observation")
             if bool(done_batch[idx]) and terminal_observation is not None:
                 terminal_obs = np.asarray(terminal_observation, dtype=np.float32)
@@ -411,6 +442,11 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
             self.model._current_progress_remaining = max(
                 1.0 - (global_step / float(global_total_timesteps)),
                 0.0,
+            )
+
+        if hasattr(self.replay_buffer, "set_beta_progress"):
+            self.replay_buffer.set_beta_progress(
+                int(global_steps_done) + int(self.collected_transitions)
             )
 
         grad_steps = int(self.model.gradient_steps)

@@ -13,13 +13,17 @@ UpdateMetrics = dict[str, float | int]
 class PlannerBackendProtocol(Protocol):
     n_envs: int
 
-    def begin_training(self, chunk_timesteps: int, global_total_timesteps: int | None, global_steps_done: int) -> None: ...
+    def begin_training(
+        self, chunk_timesteps: int, global_total_timesteps: int | None, global_steps_done: int
+    ) -> None: ...
 
     def end_training(self) -> None: ...
 
     def act_train(self, observation: np.ndarray, deterministic: bool = False) -> np.ndarray: ...
 
-    def act_train_batch(self, observations: np.ndarray, deterministic: bool = False) -> tuple[np.ndarray, np.ndarray]: ...
+    def act_train_batch(
+        self, observations: np.ndarray, deterministic: bool = False
+    ) -> tuple[np.ndarray, np.ndarray]: ...
 
     def observe_transition(self, transition: Transition) -> None: ...
 
@@ -31,6 +35,8 @@ class PlannerBackendProtocol(Protocol):
         dones: np.ndarray,
         next_observations: np.ndarray,
         infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        terminated: np.ndarray | None = None,
+        truncated: np.ndarray | None = None,
     ) -> None: ...
 
     def maybe_update(

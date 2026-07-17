@@ -13,20 +13,24 @@ from omegaconf import DictConfig, OmegaConf
 
 def get_git_commit() -> str:
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
+        return (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
+        )
     except Exception:
         return "unknown"
 
 
 def get_git_branch() -> str:
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         return "unknown"
 
@@ -40,9 +44,7 @@ def _cfg_get(cfg: DictConfig, key: str, default=None):
 def _snapshot_scenarionet_artifacts(cfg: DictConfig, artifacts_dir: Path) -> dict[str, str]:
     """Copy small dataset-definition artifacts and return their run-relative paths."""
 
-    data_root = Path(
-        os.environ.get("SCENARIONET_DATA_ROOT", "data/scenarionet")
-    ).expanduser()
+    data_root = Path(os.environ.get("SCENARIONET_DATA_ROOT", "data/scenarionet")).expanduser()
     candidates: dict[str, Path] = {
         "dataset_manifest": data_root / "manifest.yaml",
         "split_manifest": data_root / "splits" / "split_manifest.yaml",
@@ -72,6 +74,17 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
     artifacts_dir = Path(artifacts_dir)
     metadata_path = artifacts_dir / "run_metadata.yaml"
 
+    selected_scalarization = OmegaConf.select(cfg, "scalarization")
+    scalarization_cfg = (
+        OmegaConf.to_container(selected_scalarization, resolve=True)
+        if selected_scalarization is not None
+        else {}
+    )
+    if not isinstance(scalarization_cfg, dict):
+        scalarization_cfg = {}
+    legacy_cfg = scalarization_cfg.get("legacy", {})
+    if not isinstance(legacy_cfg, dict):
+        legacy_cfg = {}
     metadata = {
         "name": _cfg_get(cfg, "name"),
         "algorithm": _cfg_get(cfg, "planner.name", default="unknown"),
@@ -80,6 +93,39 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
         "reward_type": _cfg_get(cfg, "reward.type", default="unknown"),
         "reward_behavior": _cfg_get(cfg, "reward.behavior", default="unknown"),
         "rulebook_config": _cfg_get(cfg, "reward.rulebook_config", default="none"),
+        "rulebook": {
+            "implementation_family": _cfg_get(cfg, "rulebook.implementation_family", default="v1"),
+            "specification_id": _cfg_get(
+                cfg, "rulebook.specification_id", default="not-applicable"
+            ),
+            "version": _cfg_get(cfg, "rulebook.version", default="not-applicable"),
+        },
+        "scalarization": {
+            "specification_id": scalarization_cfg.get("specification_id", "not-applicable"),
+            "version": scalarization_cfg.get("version", "not-applicable"),
+            "mode": scalarization_cfg.get("mode", "not-applicable"),
+            "vector_schema_id": scalarization_cfg.get("vector_schema_id"),
+            "priority_base": scalarization_cfg.get("priority_base"),
+            "sigmoid_sharpness": (
+                scalarization_cfg.get("sigmoid_sharpness")
+                or (scalarization_cfg.get("sigmoid") or {}).get("sharpness")
+            ),
+            "numerical_tolerance": scalarization_cfg.get("numerical_tolerance"),
+            "native_environment_reward_weight": scalarization_cfg.get(
+                "native_environment_reward_weight"
+            ),
+            "legacy": {
+                "vector_schema_id": legacy_cfg.get("vector_schema_id"),
+                "rule_scales": legacy_cfg.get("rule_scales"),
+                "source_path": legacy_cfg.get("source_path"),
+                "source_sha256": legacy_cfg.get("source_sha256"),
+                "source_commit": legacy_cfg.get("source_commit"),
+            },
+            "conditional_extensions": {
+                "n_step": _cfg_get(cfg, "scalarization.extensions.n_step", default=None),
+                "per": _cfg_get(cfg, "scalarization.extensions.per", default=None),
+            },
+        },
         "curriculum_name": _cfg_get(cfg, "curriculum.name", default="unknown"),
         "experiment_group": _cfg_get(cfg, "analysis.experiment_group"),
         "include_in_comparison": bool(_cfg_get(cfg, "analysis.include_in_comparison", True)),
@@ -102,9 +148,7 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
             "split": _cfg_get(cfg, "env.split", default="train"),
             "catalog_path": _cfg_get(cfg, "env.catalog_path"),
             "global_seed": _cfg_get(cfg, "env.global_seed", default=0),
-            "provider": OmegaConf.to_container(
-                OmegaConf.select(cfg, "env.provider"), resolve=True
-            ),
+            "provider": OmegaConf.to_container(OmegaConf.select(cfg, "env.provider"), resolve=True),
         }
 
     artifacts_dir.mkdir(parents=True, exist_ok=True)

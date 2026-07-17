@@ -65,10 +65,16 @@ class _DelegatingLifecycle:
         )
 
     def act(self, observation: np.ndarray, deterministic: bool = False) -> np.ndarray:
-        return self.backend.act_train(np.asarray(observation, dtype=np.float32), deterministic=deterministic)
+        return self.backend.act_train(
+            np.asarray(observation, dtype=np.float32), deterministic=deterministic
+        )
 
-    def act_batch(self, observations: np.ndarray, deterministic: bool = False) -> tuple[np.ndarray, np.ndarray]:
-        return self.backend.act_train_batch(np.asarray(observations, dtype=np.float32), deterministic=deterministic)
+    def act_batch(
+        self, observations: np.ndarray, deterministic: bool = False
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return self.backend.act_train_batch(
+            np.asarray(observations, dtype=np.float32), deterministic=deterministic
+        )
 
     def observe_transition(self, transition: Transition) -> None:
         self.backend.observe_transition(transition)
@@ -81,6 +87,8 @@ class _DelegatingLifecycle:
         dones: np.ndarray,
         next_observations: np.ndarray,
         infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        terminated: np.ndarray | None = None,
+        truncated: np.ndarray | None = None,
     ) -> None:
         self.backend.observe_transition_batch(
             observations=np.asarray(observations, dtype=np.float32),
@@ -89,6 +97,8 @@ class _DelegatingLifecycle:
             dones=np.asarray(dones, dtype=bool),
             next_observations=np.asarray(next_observations, dtype=np.float32),
             infos=infos,
+            terminated=None if terminated is None else np.asarray(terminated, dtype=bool),
+            truncated=None if truncated is None else np.asarray(truncated, dtype=bool),
         )
 
     def maybe_update(self, collected_steps: int = 1) -> None:

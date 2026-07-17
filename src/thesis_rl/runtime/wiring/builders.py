@@ -19,7 +19,12 @@ from thesis_rl.envs.wrappers import RuleRewardWrapper
 from thesis_rl.rulebook.v2.wrapper import RulebookV2MonitorWrapper
 from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
 from thesis_rl.agent.preprocessors.identity import IdentityPreprocessor
+from thesis_rl.contracts.reward_semantics import (
+    assert_reward_semantics_compatible,
+    build_reward_semantics_identity,
+)
 from thesis_rl.reward.managers.hybrid_rulebook_manager import HybridRulebookRewardManager
+from thesis_rl.reward.scalarization import RulebookScalarizer, ScalarizationConfig
 from thesis_rl.runtime.execution.deterministic_subproc_vec_env import DeterministicSubprocVecEnv
 
 if TYPE_CHECKING:
@@ -263,6 +268,10 @@ def build_planner(cfg: DictConfig, env: Any, seed: int | None = None) -> "BasePl
 def load_planner(cfg: DictConfig, checkpoint_path: str, env: Any) -> "BasePlanner":
     from thesis_rl.agent.planners.factory import load_planner_backend
 
+    assert_reward_semantics_compatible(
+        checkpoint_path,
+        build_reward_semantics_identity(cfg),
+    )
     return load_planner_backend(
         planner_name=str(cfg.agent.planner.algorithm.name),
         checkpoint_path=checkpoint_path,
@@ -281,7 +290,15 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
     # canonical snapshot/cache factories, otherwise silently falling back to
     # v1 would violate the fail-fast contract.
     rulebook_version = str(cfg.get("rulebook", {}).get("version", "v1")).lower()
-    if rulebook_version in {"v2", "4.6-final-implementation-complete"}:
+    if rulebook_version in {
+        "v2",
+        "v4.6",
+        "v4.7",
+        "4.6",
+        "4.7",
+        "4.6-final-implementation-complete",
+        "4.7-final-implementation-complete",
+    }:
         adapter = getattr(env, "rulebook_v2_adapter", None)
         if adapter is None:
             adapter = getattr(getattr(env, "unwrapped", None), "rulebook_v2_adapter", None)
@@ -290,12 +307,25 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
                 "Rulebook v2 requires env.rulebook_v2_adapter with snapshotter, "
                 "transition_evaluator, initial_memory and initial_cache"
             )
+        scalarizer = None
+        if str(cfg.reward.behavior).lower() == "scalar_reward":
+            scalarization_cfg = cfg.get("scalarization")
+            if scalarization_cfg is None:
+                raise ValueError(
+                    "scalar_reward with Rulebook v2 requires a `scalarization` configuration."
+                )
+            scalarizer = RulebookScalarizer(
+                ScalarizationConfig.from_mapping(
+                    OmegaConf.to_container(scalarization_cfg, resolve=True)
+                )
+            )
         return RulebookV2MonitorWrapper(
             env,
             snapshotter=adapter.snapshotter,
             transition_evaluator=adapter.transition_evaluator,
             initial_memory=adapter.initial_memory,
             initial_cache=adapter.initial_cache,
+            scalarizer=scalarizer,
         )
     mode = str(cfg.reward.behavior).lower()
     if mode == "off":

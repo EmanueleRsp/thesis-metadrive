@@ -24,3 +24,25 @@ monitor_ema_alpha: 0.1
 policy_kwargs:
   net_arch: [256, 256]
   share_features_extractor: false
+transition_replay:
+  enabled: true
+  n_steps: 3
+  prioritized: false
+  optimize_memory_usage: false
+  store_reward_vector: false
+  persistence:
+    enabled: false
+    trigger: final_or_manual
+    periodic_frequency_steps: null
+    keep_last: 1
+  per:
+    alpha: 0.6
+    beta_initial: 0.4
+    beta_final: 1.0
+    beta_anneal_steps: ${experiment.total_timesteps}
+    epsilon: 1.0e-6
+    priority_aggregation: mean_abs_twin_td
+    new_transition_priority: current_max
+    duplicate_update_reduction: max
+    sampling: proportional_stratified
+    tree_dtype: float64

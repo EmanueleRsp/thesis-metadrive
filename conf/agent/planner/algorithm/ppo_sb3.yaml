@@ -25,3 +25,5 @@ policy_kwargs:
     vf: [64, 64]
   share_features_extractor: true
   ortho_init: false
+transition_replay:
+  enabled: false

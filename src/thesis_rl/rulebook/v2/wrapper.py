@@ -14,6 +14,7 @@ from typing import Any
 import gymnasium as gym
 
 from thesis_rl.contracts.causal_scene_context import CausalSceneContext
+from thesis_rl.reward.scalarization import RulebookScalarizer, ScalarizationResult
 from thesis_rl.rulebook.v2.memory import apply_cache_delta
 from thesis_rl.rulebook.v2.types import (
     MACRO_RULE_ORDER,
@@ -43,7 +44,7 @@ class RulebookV2Adapter:
 
 
 class RulebookV2MonitorWrapper(gym.Wrapper):
-    """Attach the v2 rule vector while preserving the native Gym reward."""
+    """Attach v2 diagnostics and optionally replace the native Gym reward."""
 
     def __init__(
         self,
@@ -53,12 +54,14 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         transition_evaluator: TransitionEvaluator,
         initial_memory: RulebookMemory,
         initial_cache: EpisodeCache,
+        scalarizer: RulebookScalarizer | None = None,
     ) -> None:
         super().__init__(env)
         self._snapshotter = snapshotter
         self._transition_evaluator = transition_evaluator
         self._initial_memory = initial_memory
         self._initial_cache = initial_cache
+        self._scalarizer = scalarizer
         self._memory = initial_memory
         self._cache = initial_cache
         self._pre_snapshot: EnvSnapshot | None = None
@@ -128,6 +131,11 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
             cache=self._cache,
         )
         next_cache = apply_cache_delta(self._cache, cache_delta)
+        scalarization_result: ScalarizationResult | None = None
+        if self._scalarizer is not None:
+            if not result.complete_evaluation:
+                raise RuntimeError("Rulebook v2 scalarization requires complete_evaluation=True.")
+            scalarization_result = self._scalarizer(result.margins)
         # Commit only after evaluator and cache validation complete.
         self._memory = next_memory
         self._cache = next_cache
@@ -137,6 +145,8 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         if callable(refresh):
             observation = refresh(observation)
         info_dict = dict(info) if isinstance(info, Mapping) else {}
+        native_reward = float(reward)
+        info_dict["env_reward"] = native_reward
         info_dict["rule_reward_vector"] = result.margins
         macro_names = [rule.value for rule in MACRO_RULE_ORDER]
         info_dict["rule_metadata"] = {
@@ -151,4 +161,9 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
             name: component.to_dict() for name, component in result.components.items()
         }
         info_dict["rulebook"] = result.to_dict()
+        if scalarization_result is not None:
+            reward = scalarization_result.reward
+            info_dict["scalar_reward"] = scalarization_result.reward
+            info_dict["selected_reward"] = scalarization_result.reward
+            info_dict["scalarization"] = scalarization_result.to_dict()
         return observation, reward, terminated, truncated, info_dict

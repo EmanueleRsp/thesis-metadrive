@@ -407,6 +407,11 @@ external credentials and must not overwrite frozen data.
 - The user approved doubling the Waymo cap from 128 to 256 new shards. The
   single YAML source, expansion default, ADR-010, and v1.1 specification now
   resolve the amended cap while retaining 64-shard batches and 16 workers.
+- The first targeted PG run exposed a progress-accounting defect: unspecified
+  profiles retained the default 350 count, while the progress total counted
+  only the explicit profile map. Profile overrides now zero unspecified
+  profiles, and the regression suite verifies that a P5-only plan generates
+  exactly 1,750 tasks.
 - `docker compose run --rm dev uv run --no-sync ruff check
   src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py
   src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py`
@@ -484,7 +489,7 @@ No deviations identified.
 | `docker compose run --rm -T dev uv run --no-sync python -m thesis_rl.cli.scenarios.pipeline_config --config conf/scenarios/pipeline_v1.yaml` | PASS | 2026-07-17 | Resolved Waymo batch 64, cap 256, 16 workers, and PG composition replenishment limit 2 |
 | `docker compose run --rm -T dev uv run --no-sync ruff format --check tests/test_scenarionet_pipeline.py && ruff check tests/test_scenarionet_pipeline.py && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-17 | 20 passed; regression covers PG report parsing for compositional split failure |
 | `bash -n scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && shellcheck scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && git diff --check` | PASS | 2026-07-17 | Validates the corrected PG report parser and orchestration shell syntax |
-| `docker compose run --rm -T dev uv run --no-sync ruff format src/thesis_rl/scenarios/pg/report.py src/thesis_rl/scenarios/pg/replenishment.py src/thesis_rl/cli/scenarios/generate_pg_dataset.py src/thesis_rl/cli/scenarios/plan_pg_replenishment.py tests/test_pg_replenishment.py && ruff check ... && python -m pytest -q tests/test_pg_replenishment.py tests/test_scenarionet_pipeline.py` | PASS | 2026-07-17 | 23 passed; validates profile-count overrides and targeted allocation by global source×arm deficits |
+| `docker compose run --rm -T dev uv run --no-sync ruff format src/thesis_rl/scenarios/pg/report.py src/thesis_rl/scenarios/pg/replenishment.py src/thesis_rl/cli/scenarios/generate_pg_dataset.py src/thesis_rl/cli/scenarios/plan_pg_replenishment.py tests/test_pg_replenishment.py && ruff check ... && python -m pytest -q tests/test_pg_replenishment.py tests/test_scenarionet_pipeline.py` | PASS | 2026-07-17 | 24 passed; validates profile-count overrides, exact targeted task totals, and global source×arm deficits |
 | Read-only targeted-plan simulation on the current catalog | PASS | 2026-07-17 | Waymo A4 and PG A5 are the remaining global composition gaps; the planner assigns the 1,750-candidate budget to `P5_complex_mixed`, while A4 remains Waymo-only |
 | `docker compose run --rm -T dev uv run --no-sync python -m thesis_rl.cli.scenarios.pipeline_config --config conf/scenarios/pipeline_v1.yaml` | PASS | 2026-07-17 | Resolves targeted PG budget 1,750 and two-cycle bound |
 | `bash -n scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && shellcheck scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && git diff --check` | PASS | 2026-07-17 | Batch-throughput amendment and host/container guard fixes pass shell and whitespace validation |

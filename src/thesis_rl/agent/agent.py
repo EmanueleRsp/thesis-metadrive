@@ -4,7 +4,7 @@ import logging
 import time
 import math
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,9 @@ from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
 from thesis_rl.agent.planners.interfaces.planner import BasePlanner
 from thesis_rl.agent.adapters.interfaces.base import BaseAdapter
 from thesis_rl.agent.types import Transition
+from thesis_rl.agent.transition_boundary import normalize_vector_transition_boundary
 from thesis_rl.contracts.checkpoint_manifest import CheckpointManifest
+from thesis_rl.contracts.reward_semantics import write_reward_semantics_sidecar
 from thesis_rl.sb3_extensions.checkpointing import (
     CheckpointGeneration,
     publish_checkpoint_generation,
@@ -58,12 +60,21 @@ class Agent:
         planner: BasePlanner,
         adapter: BaseAdapter,
         ema_alpha: float | None = None,
+        checkpoint_identity: Mapping[str, Any] | None = None,
     ) -> None:
         self.preprocessor = preprocessor
         self.planner = planner
         self.adapter = adapter
         # EMA alpha for loss smoothing; default 0.1 if not provided
         self.ema_alpha = float(ema_alpha) if ema_alpha is not None else 0.1
+        self.checkpoint_identity = (
+            None if checkpoint_identity is None else dict(checkpoint_identity)
+        )
+
+    def set_checkpoint_identity(self, identity: Mapping[str, Any] | None) -> None:
+        """Set the immutable reward identity written beside runtime checkpoints."""
+
+        self.checkpoint_identity = None if identity is None else dict(identity)
 
     def train(
         self,
@@ -743,9 +754,45 @@ class Agent:
                     rewards = np.asarray(rewards, dtype=np.float32)
                     dones = np.asarray(dones, dtype=bool)
                     for info in infos:
-                        terminal_observation = info.get("terminal_observation")
+                        terminal_observation = info.get("final_observation")
+                        if terminal_observation is None:
+                            terminal_observation = info.get("terminal_observation")
                         if terminal_observation is not None:
-                            info["terminal_observation"] = self.preprocessor(terminal_observation)
+                            processed_final_observation = self.preprocessor(terminal_observation)
+                            info["final_observation"] = processed_final_observation
+                            info["terminal_observation"] = processed_final_observation
+
+                    terminated, truncated, final_observations = (
+                        normalize_vector_transition_boundary(
+                            dones=dones,
+                            infos=infos,
+                            next_observations=np.asarray(next_obs),
+                            terminated=np.asarray(
+                                [
+                                    bool(
+                                        info.get(
+                                            "terminated",
+                                            done and not info.get("TimeLimit.truncated", False),
+                                        )
+                                    )
+                                    for info, done in zip(infos, dones, strict=True)
+                                ],
+                                dtype=bool,
+                            ),
+                            truncated=np.asarray(
+                                [
+                                    bool(
+                                        info.get(
+                                            "truncated",
+                                            done and info.get("TimeLimit.truncated", False),
+                                        )
+                                    )
+                                    for info, done in zip(infos, dones, strict=True)
+                                ],
+                                dtype=bool,
+                            ),
+                        )
+                    )
 
                     episode_len += 1
                     episode_scalar_reward += rewards.astype(np.float64)
@@ -777,6 +824,11 @@ class Agent:
                         )
 
                     next_processed_obs = _preprocess_batch(np.asarray(next_obs))
+                    for idx, info in enumerate(infos):
+                        if dones[idx]:
+                            info["final_observation"] = self.preprocessor(final_observations[idx])
+                            info["terminal_observation"] = info["final_observation"]
+                            next_processed_obs[idx] = info["final_observation"]
                     lifecycle.observe_transition_batch(
                         observations=processed_obs,
                         buffer_actions=buffer_actions,
@@ -784,6 +836,8 @@ class Agent:
                         dones=dones,
                         next_observations=next_processed_obs,
                         infos=infos,
+                        terminated=terminated,
+                        truncated=truncated,
                     )
                     lifecycle.maybe_update()
                     self.adapter.maybe_update()
@@ -1466,6 +1520,8 @@ class Agent:
         if bool(getattr(self.adapter, "requires_training", False)):
             adapter_ckpt = self.adapter_checkpoint_path(checkpoint_path)
             self.adapter.save(str(adapter_ckpt))
+        if self.checkpoint_identity is not None:
+            write_reward_semantics_sidecar(checkpoint_path, self.checkpoint_identity)
 
     def save_generation(
         self,
@@ -1489,6 +1545,11 @@ class Agent:
         if bool(getattr(self.adapter, "requires_training", False)):
             adapter_path = generation.generation_dir / "adapter.pt"
             self.adapter.save(str(adapter_path))
+        if self.checkpoint_identity is not None:
+            write_reward_semantics_sidecar(
+                generation.model_path,
+                self.checkpoint_identity,
+            )
         return generation
 
     def load_adapter(self, checkpoint_path: str | Path, strict: bool = True) -> None:

@@ -47,6 +47,29 @@ class _PGTask:
     exporter_commit: str | None
 
 
+def _resolve_profile_counts(
+    count_per_profile: int, profile_counts: Mapping[str, int] | None
+) -> dict[str, int]:
+    if count_per_profile < 1:
+        raise ValueError("count_per_profile must be positive")
+    configured_counts = (
+        {profile.name: count_per_profile for profile in PG_PROFILES}
+        if profile_counts is None
+        else {profile.name: 0 for profile in PG_PROFILES}
+    )
+    if profile_counts is not None:
+        unknown = sorted(set(profile_counts).difference(configured_counts))
+        if unknown:
+            raise ValueError(f"unknown PG profiles: {unknown}")
+        for profile, count in profile_counts.items():
+            if not isinstance(count, int) or count < 0:
+                raise ValueError(f"profile count must be a non-negative integer: {profile}")
+            configured_counts[profile] = count
+    if sum(configured_counts.values()) < 1:
+        raise ValueError("at least one PG profile count must be positive")
+    return configured_counts
+
+
 def _run_pg_task(
     task: _PGTask,
 ) -> tuple[_PGTask, PGGenerationResult | None, dict[str, Any] | None]:
@@ -90,22 +113,10 @@ def run_pg_pilot(
     progress_callback: PGProgressCallback | None = None,
     profile_counts: Mapping[str, int] | None = None,
 ) -> tuple[PGPilotReport, tuple[PGGenerationResult, ...]]:
-    if count_per_profile < 1:
-        raise ValueError("count_per_profile must be positive")
     if workers < 1:
         raise ValueError("workers must be positive")
-    configured_counts = {profile.name: count_per_profile for profile in PG_PROFILES}
-    if profile_counts is not None:
-        unknown = sorted(set(profile_counts).difference(configured_counts))
-        if unknown:
-            raise ValueError(f"unknown PG profiles: {unknown}")
-        for profile, count in profile_counts.items():
-            if not isinstance(count, int) or count < 0:
-                raise ValueError(f"profile count must be a non-negative integer: {profile}")
-            configured_counts[profile] = count
+    configured_counts = _resolve_profile_counts(count_per_profile, profile_counts)
     requested = sum(configured_counts.values())
-    if requested < 1:
-        raise ValueError("at least one PG profile count must be positive")
 
     results: list[PGGenerationResult] = []
     failures: list[dict[str, Any]] = []

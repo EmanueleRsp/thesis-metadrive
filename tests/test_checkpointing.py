@@ -77,6 +77,36 @@ def test_checkpoint_compatibility_rejects_legacy_shape_before_loader(tmp_path: P
     assert not loader_called
 
 
+def test_checkpoint_compatibility_rejects_scalarization_identity_change() -> None:
+    manifest = _manifest()
+    changed = build_checkpoint_manifest(
+        observation_type="semantic_v2",
+        flat_dim=2541,
+        raw_token_count=122,
+        encoder_type="latent_query_v2",
+        encoder_config={"output_dim": 256, "depth": 4},
+        features_dim=256,
+        share_features_extractor=False,
+        ppo_ortho_init=None,
+        algorithm="td3_sb3",
+        sb3_version="2.9.0",
+        sb3_commit="sb3-commit",
+        git_commit="project-commit",
+        seed=42,
+        scalarization_specification_id="SCAL-V1.0",
+        scalarization_version="1.0",
+        scalarization_mode="bounded_satisfaction_rank",
+        scalarization_vector_schema_id="rulebook_v2_macro_v4",
+        scalarization_priority_base=2.01,
+        scalarization_numerical_tolerance=1.0e-8,
+        scalarization_native_environment_reward_weight=0.0,
+    )
+    with pytest.raises(CheckpointCompatibilityError, match="scalarization_specification_id"):
+        from thesis_rl.contracts.checkpoint_manifest import assert_checkpoint_compatible
+
+        assert_checkpoint_compatible(manifest, changed)
+
+
 def test_stale_or_torn_latest_pointer_is_rejected(tmp_path: Path) -> None:
     manifest = _manifest()
     publish_checkpoint_generation(tmp_path, "latest", _save_model, manifest)

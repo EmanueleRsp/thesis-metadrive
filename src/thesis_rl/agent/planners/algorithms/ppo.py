@@ -11,6 +11,7 @@ from torch import nn
 from torch.distributions import Normal
 
 from thesis_rl.agent.types import Transition
+from thesis_rl.agent.transition_boundary import normalize_vector_transition_boundary
 from thesis_rl.agent.planners.decoders.factory import build_decoder
 from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
 from thesis_rl.agent.planners.core.utils import (
@@ -53,32 +54,55 @@ class PpoPlannerBackend(BasePlannerBackend):
         self.action_dim = int(np.prod(action_space.shape))
         self.action_low = np.asarray(action_space.low, dtype=np.float32)
         self.action_high = np.asarray(action_space.high, dtype=np.float32)
-        self.action_low_t = torch.as_tensor(self.action_low, dtype=torch.float32, device=self.device)
-        self.action_high_t = torch.as_tensor(self.action_high, dtype=torch.float32, device=self.device)
+        self.action_low_t = torch.as_tensor(
+            self.action_low, dtype=torch.float32, device=self.device
+        )
+        self.action_high_t = torch.as_tensor(
+            self.action_high, dtype=torch.float32, device=self.device
+        )
 
         share_encoder = bool(self.cfg_planner.get("share_encoder", True))
-        enc_actor = build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(self.device)
-        enc_value = enc_actor if share_encoder else build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(self.device)
+        enc_actor = build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(
+            self.device
+        )
+        enc_value = (
+            enc_actor
+            if share_encoder
+            else build_encoder_for_env(self.cfg_encoder, self.cfg_obs, self.obs_dim).to(self.device)
+        )
 
         decoder_cfg = dict(self.cfg_decoder)
-        self.actor_decoder = build_decoder(cfg_decoder=decoder_cfg, input_dim=int(enc_actor.output_dim)).to(self.device)
-        self.value_decoder = build_decoder(cfg_decoder=decoder_cfg, input_dim=int(enc_value.output_dim)).to(self.device)
+        self.actor_decoder = build_decoder(
+            cfg_decoder=decoder_cfg, input_dim=int(enc_actor.output_dim)
+        ).to(self.device)
+        self.value_decoder = build_decoder(
+            cfg_decoder=decoder_cfg, input_dim=int(enc_value.output_dim)
+        ).to(self.device)
         self.actor_encoder = enc_actor
         self.value_encoder = enc_value
 
         hidden_actor = int(self.actor_decoder.output_dim)
         self.mu_head = nn.Linear(hidden_actor, self.action_dim).to(self.device)
         log_std_init = float(self.cfg_planner.get("log_std_init", 0.0))
-        self.log_std = nn.Parameter(torch.full((self.action_dim,), log_std_init, device=self.device))
+        self.log_std = nn.Parameter(
+            torch.full((self.action_dim,), log_std_init, device=self.device)
+        )
 
         hidden_value = int(self.value_decoder.output_dim)
         self.value_head = nn.Linear(hidden_value, 1).to(self.device)
 
-        params = list(self.actor_encoder.parameters()) + list(self.actor_decoder.parameters()) + list(self.mu_head.parameters()) + [self.log_std]
+        params = (
+            list(self.actor_encoder.parameters())
+            + list(self.actor_decoder.parameters())
+            + list(self.mu_head.parameters())
+            + [self.log_std]
+        )
         if not share_encoder:
             params += list(self.value_encoder.parameters())
         params += list(self.value_decoder.parameters()) + list(self.value_head.parameters())
-        optimizer_kwargs: dict[str, float] = {"lr": float(self.cfg_planner.get("learning_rate", 3e-4))}
+        optimizer_kwargs: dict[str, float] = {
+            "lr": float(self.cfg_planner.get("learning_rate", 3e-4))
+        }
         if self._uses_sb3_policy_setup():
             optimizer_kwargs["eps"] = float(self.cfg_planner.get("optimizer_eps", 1e-5))
             self._apply_sb3_parameter_initialization()
@@ -92,9 +116,7 @@ class PpoPlannerBackend(BasePlannerBackend):
         self.clip_range = float(self.cfg_planner.get("clip_range", 0.2))
         clip_range_vf_cfg = self.cfg_planner.get("clip_range_vf", None)
         self.clip_range_vf = (
-            None
-            if clip_range_vf_cfg in (None, "none", "null")
-            else float(clip_range_vf_cfg)
+            None if clip_range_vf_cfg in (None, "none", "null") else float(clip_range_vf_cfg)
         )
         self.ent_coef = float(self.cfg_planner.get("ent_coef", 0.0))
         self.vf_coef = float(self.cfg_planner.get("vf_coef", 0.5))
@@ -147,11 +169,25 @@ class PpoPlannerBackend(BasePlannerBackend):
         cfg_obs: Any | None = None,
     ) -> "PpoPlannerBackend":
         payload = torch.load(str(normalize_checkpoint_path(checkpoint_path)), map_location="cpu")
-        resolved_planner = cfg_planner if cfg_planner is not None else payload.get("cfg_planner", {})
-        resolved_encoder = cfg_encoder if cfg_encoder is not None else payload.get("cfg_encoder", {})
-        resolved_decoder = cfg_decoder if cfg_decoder is not None else payload.get("cfg_decoder", {})
+        resolved_planner = (
+            cfg_planner if cfg_planner is not None else payload.get("cfg_planner", {})
+        )
+        resolved_encoder = (
+            cfg_encoder if cfg_encoder is not None else payload.get("cfg_encoder", {})
+        )
+        resolved_decoder = (
+            cfg_decoder if cfg_decoder is not None else payload.get("cfg_decoder", {})
+        )
         resolved_obs = cfg_obs if cfg_obs is not None else payload.get("cfg_obs", {})
-        backend = cls(env, resolved_planner, resolved_encoder, resolved_decoder, resolved_obs, device=device, seed=None)
+        backend = cls(
+            env,
+            resolved_planner,
+            resolved_encoder,
+            resolved_decoder,
+            resolved_obs,
+            device=device,
+            seed=None,
+        )
         backend._load_payload(payload)
         return backend
 
@@ -172,7 +208,9 @@ class PpoPlannerBackend(BasePlannerBackend):
         self.value_decoder.load_state_dict(payload["value_decoder"])
         self.mu_head.load_state_dict(payload["mu_head"])
         self.value_head.load_state_dict(payload["value_head"])
-        self.log_std.data.copy_(torch.as_tensor(payload.get("log_std", self.log_std.detach().cpu()), device=self.device))
+        self.log_std.data.copy_(
+            torch.as_tensor(payload.get("log_std", self.log_std.detach().cpu()), device=self.device)
+        )
         self.optimizer.load_state_dict(payload["optimizer"])
         self.state = TrainState(**dict(payload.get("train_state", {})))
 
@@ -185,7 +223,10 @@ class PpoPlannerBackend(BasePlannerBackend):
                 "algorithm": "ppo",
                 "log_std": self.log_std.detach().cpu(),
                 "optimizer": self.optimizer.state_dict(),
-                "train_state": {"total_steps": self.state.total_steps, "update_steps": self.state.update_steps},
+                "train_state": {
+                    "total_steps": self.state.total_steps,
+                    "update_steps": self.state.update_steps,
+                },
                 "cfg_planner": dict(self.cfg_planner),
                 "cfg_encoder": dict(self.cfg_encoder),
                 "cfg_decoder": dict(self.cfg_decoder),
@@ -261,9 +302,7 @@ class PpoPlannerBackend(BasePlannerBackend):
         if self.n_epochs <= 0:
             raise ValueError("`n_epochs` must be positive for PPO.")
         if self.normalize_advantage and self.batch_size <= 1:
-            raise ValueError(
-                "`batch_size` must be greater than 1 when `normalize_advantage=true`."
-            )
+            raise ValueError("`batch_size` must be greater than 1 when `normalize_advantage=true`.")
         rollout_size = max(self.n_envs, 1) * self.n_steps
         if self.normalize_advantage and rollout_size <= 1:
             raise ValueError(
@@ -294,7 +333,9 @@ class PpoPlannerBackend(BasePlannerBackend):
         h = self.value_decoder(z)
         return self.value_head(h)
 
-    def _sample_action(self, obs_t: torch.Tensor, deterministic: bool) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _sample_action(
+        self, obs_t: torch.Tensor, deterministic: bool
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, log_std = self._policy_params(obs_t)
         std = torch.exp(log_std)
         normal = Normal(mu, std)
@@ -307,7 +348,9 @@ class PpoPlannerBackend(BasePlannerBackend):
         entropy = normal.entropy().sum(dim=-1, keepdim=True)
         return action, raw_action, log_prob, entropy
 
-    def _evaluate_action(self, obs_t: torch.Tensor, actions_t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _evaluate_action(
+        self, obs_t: torch.Tensor, actions_t: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, log_std = self._policy_params(obs_t)
         std = torch.exp(log_std)
         normal = Normal(mu, std)
@@ -339,7 +382,9 @@ class PpoPlannerBackend(BasePlannerBackend):
         obs = to_batch_obs(np.asarray(observation, dtype=np.float32))
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
         with torch.no_grad():
-            action_t, _raw_action_t, _log_prob, _entropy = self._sample_action(obs_t, deterministic=deterministic)
+            action_t, _raw_action_t, _log_prob, _entropy = self._sample_action(
+                obs_t, deterministic=deterministic
+            )
         action_np = action_t.cpu().numpy()
         action_np = np.clip(action_np, self.action_low, self.action_high).astype(np.float32)
         if np.asarray(observation).ndim == 1:
@@ -350,7 +395,9 @@ class PpoPlannerBackend(BasePlannerBackend):
         obs = to_batch_obs(observation)
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
         with torch.no_grad():
-            actions_t, raw_actions_t, log_prob_t, _entropy_t = self._sample_action(obs_t, deterministic=deterministic)
+            actions_t, raw_actions_t, log_prob_t, _entropy_t = self._sample_action(
+                obs_t, deterministic=deterministic
+            )
             values_t = self._value(obs_t)
         self._last_values = values_t.squeeze(-1).cpu().numpy()
         self._last_log_probs = log_prob_t.squeeze(-1).cpu().numpy()
@@ -358,10 +405,16 @@ class PpoPlannerBackend(BasePlannerBackend):
         actions = np.asarray(actions_t.cpu().numpy(), dtype=np.float32)
         return actions[0]
 
-    def act_train_batch(self, observations: np.ndarray, deterministic: bool = False) -> tuple[np.ndarray, np.ndarray]:
-        obs_t = torch.as_tensor(np.asarray(observations, dtype=np.float32), dtype=torch.float32, device=self.device)
+    def act_train_batch(
+        self, observations: np.ndarray, deterministic: bool = False
+    ) -> tuple[np.ndarray, np.ndarray]:
+        obs_t = torch.as_tensor(
+            np.asarray(observations, dtype=np.float32), dtype=torch.float32, device=self.device
+        )
         with torch.no_grad():
-            actions_t, raw_actions_t, log_prob_t, _entropy_t = self._sample_action(obs_t, deterministic=deterministic)
+            actions_t, raw_actions_t, log_prob_t, _entropy_t = self._sample_action(
+                obs_t, deterministic=deterministic
+            )
             values_t = self._value(obs_t)
         self._last_values = values_t.squeeze(-1).cpu().numpy()
         self._last_log_probs = log_prob_t.squeeze(-1).cpu().numpy()
@@ -382,11 +435,15 @@ class PpoPlannerBackend(BasePlannerBackend):
             raise RuntimeError("PPO transition observed before action evaluation cache is set.")
         obs = np.expand_dims(np.asarray(transition.observation, dtype=np.float32), axis=0)
         action = np.expand_dims(np.asarray(transition.buffer_action, dtype=np.float32), axis=0)
+        transition_info = dict(transition.info)
+        transition_info["TimeLimit.truncated"] = bool(
+            transition.truncated and not transition.terminated
+        )
         reward = np.asarray(
             [
                 self._timeout_bootstrap_reward(
                     float(transition.scalar_reward),
-                    transition.info,
+                    transition_info,
                     transition.terminal_observation,
                 )
             ],
@@ -402,7 +459,9 @@ class PpoPlannerBackend(BasePlannerBackend):
             log_probs=np.asarray(self._last_log_probs, dtype=np.float32),
         )
         self._last_next_obs = np.asarray(transition.next_observation, dtype=np.float32)[None, :]
-        self._last_dones = np.asarray([float(transition.terminated or transition.truncated)], dtype=np.float32)
+        self._last_dones = np.asarray(
+            [float(transition.terminated or transition.truncated)], dtype=np.float32
+        )
         self._current_episode_starts = done
         self.state.total_steps += 1
 
@@ -414,15 +473,28 @@ class PpoPlannerBackend(BasePlannerBackend):
         dones: np.ndarray,
         next_observations: np.ndarray,
         infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        terminated: np.ndarray | None = None,
+        truncated: np.ndarray | None = None,
     ) -> None:
         if self._last_values is None or self._last_log_probs is None:
-            raise RuntimeError("PPO batch transition observed before action evaluation cache is set.")
+            raise RuntimeError(
+                "PPO batch transition observed before action evaluation cache is set."
+            )
+        terminated_batch, truncated_batch, resolved_next_observations = (
+            normalize_vector_transition_boundary(
+                dones=dones,
+                infos=infos,
+                next_observations=next_observations,
+                terminated=terminated,
+                truncated=truncated,
+            )
+        )
         adjusted_rewards = np.asarray(rewards, dtype=np.float32).copy()
         for idx, info in enumerate(infos):
-            terminal_observation = info.get("terminal_observation") if isinstance(info, dict) else None
+            terminal_observation = info.get("final_observation") if isinstance(info, dict) else None
             adjusted_rewards[idx] = self._timeout_bootstrap_reward(
                 float(adjusted_rewards[idx]),
-                info if isinstance(info, dict) else None,
+                info if bool(truncated_batch[idx] and not terminated_batch[idx]) else None,
                 terminal_observation,
             )
         self.rollout.add(
@@ -433,9 +505,11 @@ class PpoPlannerBackend(BasePlannerBackend):
             values=np.asarray(self._last_values, dtype=np.float32),
             log_probs=np.asarray(self._last_log_probs, dtype=np.float32),
         )
-        self._last_next_obs = np.asarray(next_observations, dtype=np.float32)
-        self._last_dones = np.asarray(dones, dtype=np.float32)
-        self._current_episode_starts = np.asarray(dones, dtype=np.float32)
+        self._last_next_obs = resolved_next_observations
+        self._last_dones = np.asarray(terminated_batch, dtype=np.float32)
+        self._current_episode_starts = np.asarray(
+            terminated_batch | truncated_batch, dtype=np.float32
+        )
         self.state.total_steps += int(observations.shape[0])
 
     def maybe_update(
@@ -458,7 +532,9 @@ class PpoPlannerBackend(BasePlannerBackend):
             )
             last_values = last_values_t.squeeze(-1).cpu().numpy()
 
-        self.rollout.compute_returns_and_advantages(last_values=last_values, last_dones=self._last_dones)
+        self.rollout.compute_returns_and_advantages(
+            last_values=last_values, last_dones=self._last_dones
+        )
 
         actor_losses: list[float] = []
         critic_losses: list[float] = []
@@ -468,7 +544,9 @@ class PpoPlannerBackend(BasePlannerBackend):
         continue_training = True
 
         for _ in range(max(self.n_epochs, 1)):
-            for batch in self.rollout.iter_minibatches(batch_size=self.batch_size, device=self.device):
+            for batch in self.rollout.iter_minibatches(
+                batch_size=self.batch_size, device=self.device
+            ):
                 adv = batch.advantages
                 if self.normalize_advantage and len(adv) > 1:
                     adv = (adv - adv.mean()) / (adv.std() + 1e-8)
@@ -478,7 +556,9 @@ class PpoPlannerBackend(BasePlannerBackend):
                 surr1 = ratio * adv
                 surr2 = torch.clamp(ratio, 1.0 - self.clip_range, 1.0 + self.clip_range) * adv
                 actor_loss = -torch.min(surr1, surr2).mean()
-                clip_fraction = torch.mean((torch.abs(ratio - 1.0) > self.clip_range).float()).cpu().item()
+                clip_fraction = (
+                    torch.mean((torch.abs(ratio - 1.0) > self.clip_range).float()).cpu().item()
+                )
                 clip_fractions.append(float(clip_fraction))
 
                 value_pred = values.squeeze(-1)
@@ -503,7 +583,9 @@ class PpoPlannerBackend(BasePlannerBackend):
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 if self.max_grad_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(self.optimizer.param_groups[0]["params"], self.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.optimizer.param_groups[0]["params"], self.max_grad_norm
+                    )
                 self.optimizer.step()
                 optimizer_steps += 1
 
