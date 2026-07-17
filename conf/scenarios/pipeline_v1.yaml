@@ -3,7 +3,7 @@ pipeline_version: scenarionet_pipeline_v2
 # Scientific/data policy defaults. Host paths and credentials stay in .env.
 waymo:
   auto_expand: true
-  batch_shards: 64
+  batch_shards: 128
   max_new_shards: 1000
   workers: 32
   keep_raw_batches: false

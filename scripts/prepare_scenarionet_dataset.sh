@@ -368,7 +368,32 @@ for ((cycle=0; ; cycle++)); do
       "$pg_report_container_path")"
     IFS=$'\t' read -r pg_shortfall pg_selection_error <<<"$pg_report_values"
     if [[ "$pg_shortfall" =~ ^[1-9][0-9]*$ ]]; then
-      die "PG replenishment required before Waymo expansion: ${pg_shortfall} additional runtime-eligible records"
+      if (( pg_composition_replenishments >= pg_max_composition_replenishments )); then
+        die \
+          "PG replenishment limit reached with ${pg_shortfall} additional runtime-eligible records still required" \
+          "Increase pg.max_composition_replenishment_blocks only after reviewing PG yield and the replenishment reports."
+      fi
+      pg_profile_counts="$(docker compose run --rm -T "$pipeline_service" uv run --no-sync python \
+        -m thesis_rl.cli.scenarios.plan_pg_replenishment \
+        --report "$pg_report_container_path" \
+        --budget "$pg_replenishment_candidate_budget")"
+      if [[ "$pg_profile_counts" == "{}" ]]; then
+        die \
+          "PG runtime shortfall has no profile allocation: ${pg_shortfall} additional records required" \
+          "Inspect pg/replenishment_report.json and the frozen profile-to-arm yield matrix."
+      fi
+      stage \
+        "[2/9] Replenishing PG after runtime-count infeasibility" \
+        "generating a bounded PG replenishment block before Waymo acquisition" \
+        "Inspect the PG replenishment worker error and report above; existing source scenarios remain preserved."
+      replenishment_seed_start="$(next_pg_replenishment_seed)"
+      pg_composition_replenishments=$((pg_composition_replenishments + 1))
+      echo "PG runtime-count replenishment ${pg_composition_replenishments}/${pg_max_composition_replenishments}: shortfall=${pg_shortfall}, budget=${pg_replenishment_candidate_budget}, profiles=${pg_profile_counts}, seed=${replenishment_seed_start}"
+      SCENARIONET_PG_REPLENISH_COUNT="$pg_count" \
+        SCENARIONET_PG_REPLENISH_SEED_START="$replenishment_seed_start" \
+        SCENARIONET_PG_PROFILE_COUNTS="$pg_profile_counts" \
+        make scenarionet-pg-replenish
+      continue
     fi
     if [[ "$pg_selection_error" == runtime\ split\ target\ mismatch\ for\ pg/* ]] \
       && (( pg_composition_replenishments < pg_max_composition_replenishments )); then

@@ -64,6 +64,7 @@ def _run_mocked_pipeline(
     config_overrides: dict[str, str] | None = None,
     skip_waymo: bool = True,
     rulebook_ready: bool = True,
+    pg_shortfall: int = 0,
 ) -> subprocess.CompletedProcess[str]:
     test_repo = tmp_path / "repo"
     scripts_dir = test_repo / "scripts"
@@ -110,6 +111,7 @@ def _run_mocked_pipeline(
                 f"FAKE_MAKE_LOG={make_log}",
                 f"FAKE_SPLIT_STATE={split_state}",
                 f"MOCK_SPLIT_FAILURES={split_failures}",
+                f"MOCK_PG_SHORTFALL={pg_shortfall}",
             )
         )
         + "\n",
@@ -132,7 +134,7 @@ def _run_mocked_pipeline(
         "  exit 0\n"
         "fi\n"
         'if [[ " $* " == *" python -c "* ]]; then\n'
-        "  printf '%s\\t%s\\n' '0' "
+        "  printf '%s\\t%s\\n' \"${MOCK_PG_SHORTFALL:-0}\" "
         "'runtime split target mismatch for pg/train: requested 1, selected 0'\n"
         "  exit 0\n"
         "fi\n"
@@ -239,6 +241,21 @@ def test_pipeline_bootstraps_missing_rulebook_artifacts(tmp_path: Path) -> None:
     rulebook_dir = tmp_path / "data" / "scenarionet" / "rulebook_v2"
     assert (rulebook_dir / "ego_config.json").is_file()
     assert (rulebook_dir / "calibration_b_e.json").is_file()
+
+
+def test_pipeline_replenishes_pg_hard_shortfall_before_waymo(tmp_path: Path) -> None:
+    result = _run_mocked_pipeline(
+        tmp_path,
+        split_failures=1,
+        skip_waymo=False,
+        pg_shortfall=779,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "PG runtime-count replenishment 1/1" in result.stdout
+    make_commands = (tmp_path / "make-commands.log").read_text(encoding="utf-8")
+    assert "scenarionet-pg-replenish" in make_commands
+    assert "waymo-expand" not in make_commands
 
 
 def test_pg_replenishment_does_not_consume_waymo_batch_cap(tmp_path: Path) -> None:
