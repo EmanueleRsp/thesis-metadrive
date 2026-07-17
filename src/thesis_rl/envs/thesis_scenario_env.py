@@ -179,6 +179,27 @@ class ThesisScenarioEnv(ScenarioEnv):
         metadata["assigned_route_source"] = getattr(record, "assigned_route_source", None)
 
     @staticmethod
+    def _build_static_adapter_result(scenario: Mapping[str, Any], record: Any) -> Any:
+        source = str(getattr(record, "source", "")).lower()
+        if source == "pg":
+            from thesis_rl.rulebook.v2.context.pg_static_adapter import (
+                build_pg_static_adapter_result,
+            )
+
+            return build_pg_static_adapter_result(
+                scenario, scenario_uid=str(getattr(record, "scenario_uid"))
+            )
+        elif source == "waymo":
+            from thesis_rl.rulebook.v2.context.waymo_static_adapter import (
+                build_waymo_static_adapter_result,
+            )
+
+            return build_waymo_static_adapter_result(
+                scenario, scenario_uid=str(getattr(record, "scenario_uid"))
+            )
+        raise ValueError(f"Unsupported scenario source for causal route: {source!r}")
+
+    @staticmethod
     def _build_causal_frame_builder(
         scenario: Mapping[str, Any], record: Any, config: Mapping[str, Any]
     ) -> Any:
@@ -189,25 +210,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         from thesis_rl.envs.observations.causal_lidar import CausalLidarFrameBuilder
         from thesis_rl.envs.observations.ray_noise import RayNoiseWrapper
 
-        source = str(getattr(record, "source", "")).lower()
-        if source == "pg":
-            from thesis_rl.rulebook.v2.context.pg_static_adapter import (
-                build_pg_static_adapter_result,
-            )
-
-            static_result = build_pg_static_adapter_result(
-                scenario, scenario_uid=str(getattr(record, "scenario_uid"))
-            )
-        elif source == "waymo":
-            from thesis_rl.rulebook.v2.context.waymo_static_adapter import (
-                build_waymo_static_adapter_result,
-            )
-
-            static_result = build_waymo_static_adapter_result(
-                scenario, scenario_uid=str(getattr(record, "scenario_uid"))
-            )
-        else:
-            raise ValueError(f"Unsupported scenario source for causal route: {source!r}")
+        static_result = ThesisScenarioEnv._build_static_adapter_result(scenario, record)
         route = static_result.assigned_route_polyline
         navigation = MapRouteNavigationObservation22(
             AssignedRouteWaypointAdapter(route, num_waypoints=10, spacing_m=5.0)
@@ -232,7 +235,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         if record is None:
             return
         observations = getattr(getattr(self, "agent_manager", None), "observations", {})
-        setters = [
+        frame_setters = [
             setter
             for setter in (
                 getattr(observation, "set_frame_builder", None)
@@ -240,19 +243,86 @@ class ThesisScenarioEnv(ScenarioEnv):
             )
             if callable(setter)
         ]
-        if not setters:
+        batch_setters = [
+            setter
+            for setter in (
+                getattr(observation, "set_batch_builder", None)
+                for observation in observations.values()
+            )
+            if callable(setter)
+        ]
+        if not frame_setters and not batch_setters:
             return
         engine = getattr(self, "engine", None)
         data_manager = getattr(engine, "data_manager", None)
         scenario = getattr(data_manager, "current_scenario", None)
         if not isinstance(scenario, Mapping):
             raise RuntimeError("Causal observation requires the loaded scenario mapping")
-        builder = self._build_causal_frame_builder(scenario, record, self.config)
-        for setter in setters:
-            setter(builder)
+        if frame_setters:
+            builder = self._build_causal_frame_builder(scenario, record, self.config)
+            for setter in frame_setters:
+                setter(builder)
+        self._causal_semantic_builders = []
+        if batch_setters:
+            from thesis_rl.envs.observations.causal_semantic import CausalSemanticBatchBuilder
+
+            static_result = self._build_static_adapter_result(scenario, record)
+            semantic_builder = CausalSemanticBatchBuilder(
+                route=static_result.assigned_route_polyline,
+                route_lanes=static_result.route_lanes,
+                context_provider=lambda: self.causal_scene_context,
+                history_length=5,
+                control_timestep_s=0.1,
+                dynamic_radius_m=50.0,
+                static_radius_m=50.0,
+                control_radius_m=80.0,
+                prediction_horizon_s=3.0,
+                vertical_tolerance_m=3.0,
+            )
+            self._causal_semantic_builders.append(semantic_builder)
+            for setter in batch_setters:
+                setter(semantic_builder)
+
+    def _prepare_initial_causal_context(self) -> None:
+        """Publish the reset context before MetaDrive requests observation."""
+
+        adapter = getattr(self, "rulebook_v2_adapter", None)
+        if adapter is None:
+            return
+        snapshot = adapter.snapshotter(self)
+        from thesis_rl.contracts.causal_scene_context import CausalSceneContext
+
+        context = CausalSceneContext(adapter.initial_cache, snapshot, adapter.initial_memory)
+        self.causal_scene_context = context
+        for builder in getattr(self, "_causal_semantic_builders", ()):
+            builder.reset()
+            builder.commit_context(context)
+
+    def _on_causal_context_committed(self, context: object) -> None:
+        for builder in getattr(self, "_causal_semantic_builders", ()):
+            builder.commit_context(context)
+
+    def _refresh_causal_observation(self, previous_observation: object) -> object:
+        """Rebuild only observation payloads after the causal commit boundary."""
+
+        observations = getattr(getattr(self, "agent_manager", None), "observations", {})
+        agents = getattr(self, "agents", {})
+        if not observations or not agents:
+            return previous_observation
+        rebuilt = {}
+        for vehicle_id, vehicle in agents.items():
+            observation = observations.get(vehicle_id)
+            if observation is not None and callable(
+                getattr(observation, "set_batch_builder", None)
+            ):
+                rebuilt[vehicle_id] = observation.observe(vehicle)
+        if not rebuilt:
+            return previous_observation
+        return rebuilt if getattr(self, "is_multi_agent", False) else next(iter(rebuilt.values()))
 
     def _get_reset_return(self, reset_info):
         self._install_causal_observation_builder()
+        self._prepare_initial_causal_context()
         return super()._get_reset_return(reset_info)
 
     @staticmethod

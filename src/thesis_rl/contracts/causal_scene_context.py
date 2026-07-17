@@ -37,3 +37,15 @@ class CausalSceneContext:
     @property
     def traffic_controls(self):
         return self.episode_cache.traffic_control_catalog
+
+    @property
+    def route_lanes(self):
+        """Return canonical lane geometry, never a simulator route object."""
+
+        return self.episode_cache.route_lanes
+
+    @property
+    def route_polyline(self):
+        """Return the frozen canonical route geometry for this episode."""
+
+        return self.episode_cache.route_polyline

@@ -104,6 +104,9 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         engine = getattr(owner, "engine", None)
         if engine is not None:
             setattr(engine, "causal_scene_context", context)
+        on_commit = getattr(owner, "_on_causal_context_committed", None)
+        if callable(on_commit):
+            on_commit(context)
 
     def reset(self, **kwargs: Any):
         observation, info = self.env.reset(**kwargs)
@@ -130,6 +133,9 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         self._cache = next_cache
         self._pre_snapshot = post_snapshot
         self._publish_causal_context(post_snapshot)
+        refresh = getattr(self.env.unwrapped, "_refresh_causal_observation", None)
+        if callable(refresh):
+            observation = refresh(observation)
         info_dict = dict(info) if isinstance(info, Mapping) else {}
         info_dict["rule_reward_vector"] = result.margins
         macro_names = [rule.value for rule in MACRO_RULE_ORDER]

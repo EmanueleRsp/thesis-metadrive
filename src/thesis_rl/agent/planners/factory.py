@@ -12,6 +12,8 @@ from thesis_rl.agent.planners.algorithms import (
     Sb3Td3PlannerBackend,
     Td3PlannerBackend,
 )
+from thesis_rl.contracts.checkpoint_manifest import CheckpointManifest
+from thesis_rl.sb3_extensions.checkpointing import CheckpointGeneration, load_checkpoint_generation
 
 
 def build_planner_backend(
@@ -164,3 +166,44 @@ def load_planner_backend(
             device=device,
         )
     raise ValueError(f"Unsupported planner backend: {planner_name}")
+
+
+def load_planner_backend_generation(
+    planner_name: str,
+    checkpoint_root: str,
+    expected_manifest: CheckpointManifest,
+    env: Any,
+    cfg_planner: Any,
+    cfg_encoder: Any | None = None,
+    cfg_decoder: Any | None = None,
+    cfg_obs: Any | None = None,
+    device: str = "auto",
+    generation_dir: str | None = None,
+) -> tuple[BasePlanner, CheckpointGeneration]:
+    """Validate a checkpoint generation before invoking the backend loader."""
+
+    planner: BasePlanner | None = None
+
+    def _load_model(model_path):
+        nonlocal planner
+        planner = load_planner_backend(
+            planner_name=planner_name,
+            checkpoint_path=str(model_path),
+            env=env,
+            cfg_planner=cfg_planner,
+            cfg_encoder=cfg_encoder,
+            cfg_decoder=cfg_decoder,
+            cfg_obs=cfg_obs,
+            device=device,
+        )
+        return planner
+
+    _, generation = load_checkpoint_generation(
+        checkpoint_root=checkpoint_root,
+        expected_manifest=expected_manifest,
+        model_loader=_load_model,
+        generation_dir=generation_dir,
+    )
+    if planner is None:  # pragma: no cover - callback contract guard
+        raise RuntimeError("Checkpoint loader returned without constructing a planner.")
+    return planner, generation

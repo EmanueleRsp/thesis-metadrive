@@ -115,6 +115,13 @@ def compute_pg_replenishment_report(
     runtime_entries = [
         entry for entry in rulebook_entries if entry.features.signal_reliability in allowed
     ]
+    all_runtime_entries = [
+        entry
+        for entry in entries
+        if entry.record.validation_status in {"valid", "warning"}
+        and entry.record.rulebook_eligible is True
+        and entry.features.signal_reliability in allowed
+    ]
     selected_pg = [entry for entry in selected_entries if entry.record.source == "pg"]
     requested_by_split = {split: int(targets["pg"][split]) for split in targets["pg"]}
     selected_by_split = {
@@ -141,6 +148,18 @@ def compute_pg_replenishment_report(
         "runtime_eligible_by_arm": dict(
             sorted(Counter(entry.record.primary_arm for entry in runtime_entries).items())
         ),
+        "runtime_eligible_by_source_arm": {
+            source: dict(
+                sorted(
+                    Counter(
+                        entry.record.primary_arm
+                        for entry in all_runtime_entries
+                        if entry.record.source == source
+                    ).items()
+                )
+            )
+            for source in ("pg", "waymo")
+        },
         "selection_completed": selection_error is None,
         "selected_by_split": selected_by_split,
         "selected_by_split_arm": {

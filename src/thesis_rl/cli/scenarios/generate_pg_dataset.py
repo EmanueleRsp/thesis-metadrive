@@ -30,14 +30,31 @@ def main() -> int:
         default=1,
         help="Number of isolated MetaDrive generation processes.",
     )
+    parser.add_argument(
+        "--profile-counts-json",
+        help="Optional JSON object overriding counts per PG profile.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     if not args.data_root:
         raise SystemExit("--data-root or SCENARIONET_DATA_ROOT is required")
+    profile_counts = None
+    if args.profile_counts_json:
+        try:
+            parsed_profile_counts = json.loads(args.profile_counts_json)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"invalid --profile-counts-json: {exc}") from exc
+        if not isinstance(parsed_profile_counts, dict):
+            raise SystemExit("--profile-counts-json must be a JSON object")
+        profile_counts = parsed_profile_counts
 
     inventory = collect_local_api_inventory(Path(args.repo_root))
     git = cast(dict[str, Any], inventory["git"])
-    total = len(PG_PROFILES) * int(args.count)
+    total = (
+        sum(profile_counts.values())
+        if profile_counts is not None
+        else len(PG_PROFILES) * int(args.count)
+    )
     failed = 0
     progress = make_progress()
     task_id = progress.add_task("Generating PG scenarios", total=total)
@@ -68,6 +85,7 @@ def main() -> int:
             generator_commit=git["metadrive"]["commit"],
             exporter_commit=git["metadrive"]["commit"],
             progress_callback=on_progress,
+            profile_counts=profile_counts,
         )
     report_path = (
         write_json_report(

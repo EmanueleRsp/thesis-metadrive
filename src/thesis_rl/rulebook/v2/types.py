@@ -11,9 +11,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
 from types import MappingProxyType
-from typing import Mapping, TypeAlias, cast
+from typing import TYPE_CHECKING, Mapping, TypeAlias, cast
 
 from shapely.geometry.base import BaseGeometry
+
+if TYPE_CHECKING:
+    from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
+    from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 
 
 JSONScalar: TypeAlias = str | int | float | bool | None
@@ -294,6 +298,8 @@ class EpisodeCache:
     )
     traffic_control_catalog: tuple[TrafficControlRecord, ...] = ()
     movement_priority_records: tuple[MovementPriorityRecord, ...] = ()
+    route_lanes: tuple["RouteLaneRecord", ...] = ()
+    route_polyline: "RoutePolyline | None" = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "conflict_zones", freeze_mapping(self.conflict_zones))

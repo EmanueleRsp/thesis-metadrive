@@ -41,6 +41,7 @@ class _Env(gym.Env):
 
     def __init__(self) -> None:
         self.step_index = 0
+        self.committed_steps: list[int] = []
 
     def reset(self, *, seed=None, options=None):
         del seed, options
@@ -51,6 +52,13 @@ class _Env(gym.Env):
         del action
         self.step_index += 1
         return np.zeros(1, dtype=np.float32), 0.0, False, False, {}
+
+    def _on_causal_context_committed(self, context) -> None:
+        self.committed_steps.append(context.snapshot.step_index)
+
+    def _refresh_causal_observation(self, previous_observation):
+        del previous_observation
+        return np.asarray([self.step_index], dtype=np.float32)
 
 
 def _snapshot(env: _Env) -> EnvSnapshot:
@@ -101,3 +109,34 @@ def test_wrapper_publishes_committed_context_without_rulebook_result() -> None:
     assert context.snapshot.step_index == 1
     assert wrapper.unwrapped.causal_scene_context is context
     assert not hasattr(context, "result")
+
+
+def test_wrapper_refreshes_observation_after_memory_context_commit() -> None:
+    cache = EpisodeCache("scenario", TaskRouteRecord("scenario", ("lane-0",), "task", "v1", "hash"))
+
+    def evaluate(**kwargs):
+        return (
+            RulebookResult(
+                margins=(0.0, 0.0, 0.0, 0.0),
+                costs=(0.0, 0.0, 0.0),
+                raw_progress_m=0.0,
+                components={},
+                complete_evaluation=True,
+            ),
+            kwargs["memory"],
+            CacheDelta(),
+        )
+
+    environment = _Env()
+    wrapper = RulebookV2MonitorWrapper(
+        environment,
+        snapshotter=_snapshot,
+        transition_evaluator=evaluate,
+        initial_memory=RulebookMemory(),
+        initial_cache=cache,
+    )
+    wrapper.reset()
+    observation, *_ = wrapper.step(np.zeros(1, dtype=np.float32))
+
+    assert environment.committed_steps == [0, 1]
+    assert np.array_equal(observation, np.asarray([1], dtype=np.float32))

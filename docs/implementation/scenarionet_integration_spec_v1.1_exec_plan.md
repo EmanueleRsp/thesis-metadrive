@@ -6,9 +6,9 @@
 - Authoritative specification: `docs/specifications/scenarionet_integration_spec_v1.1.md`, ID `SCENARIONET-INTEGRATION`, version `1.1`, `APPROVED`
 - Status: `IN_PROGRESS`
 - Created: `2026-07-16`
-- Last updated: `2026-07-16`
+- Last updated: `2026-07-17`
 - Branch: current working branch
-- Related ADRs: `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`
+- Related ADRs: `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`, `docs/decisions/ADR-007-waymo-batch-throughput.md`, `docs/decisions/ADR-008-pg-compositional-replenishment.md`, `docs/decisions/ADR-009-pg-targeted-replenishment.md`, `docs/decisions/ADR-010-waymo-cap-expansion.md`
 - Owner: thesis repository maintainer
 
 ## 2. Objective And Scope
@@ -43,7 +43,7 @@ truncation distinction.
 | `REQ-SN-003` | Maintain candidate, eligible, and selected populations; select deterministic, no-leakage grouped splits. | §6.1–§6.6 |
 | `REQ-SN-004` | Group Waymo by verified log/segment; otherwise use original scenario ID and retain TFRecord source only as provenance. | §6.1, ADR-001 |
 | `REQ-SN-005` | Require validity, hard quality, allowed signal reliability, and `rulebook_eligible=true` in runtime pools. | §§6.5, 17.3–17.5 |
-| `REQ-SN-006` | Acquire only unseen Waymo shards in deterministic batches of 16, stop at feasibility or 128 new shards, and report deficits. | §6.7, ADR-001 |
+| `REQ-SN-006` | Acquire only unseen Waymo shards in deterministic batches of 64, stop at feasibility or 256 new shards, and report deficits. | §6.7, ADR-001, ADR-007, ADR-010 |
 | `REQ-SN-007` | Generate and validate PG offline with native blocks, disjoint seeds, and pilot diagnostics. | §§9–11 |
 | `REQ-SN-008` | Extract specified features, calculate train-only Q40/Q75, and retain the existing A0–A5 taxonomy unchanged. | §§12–16 |
 | `REQ-SN-009` | Build runtime views and validate ScenarioNet plus thesis reset/rollout behavior. | §§4, 17 |
@@ -88,7 +88,7 @@ truncation distinction.
 | `DEC-SN-002` | specification clarification | Runtime Rulebook eligibility | retain partial records / require eligibility | Require `rulebook_eligible=true` | Dataset population and safety | Approved; ADR-001 |
 | `DEC-SN-003` | specification clarification | Semantic arm contract | new arm taxonomy / preserve existing six | Preserve existing A0–A5; ACL `K=6` | Catalog, ACL, tests | Approved; ADR-001 |
 | `DEC-SN-004` | specification clarification | Episode tail | 0 / 50 / later pilot choice | Fixed `+50` | Truncation and bootstrap | Approved; ADR-001 |
-| `DEC-SN-005` | specification clarification | Waymo cap | unbounded / configured cap | batch 16, 128 new shards | Reproducibility and cost | Approved; ADR-001 |
+| `DEC-SN-005` | specification clarification | Waymo cap and throughput | unbounded / configured cap | batch 64, 256 new shards | Reproducibility and cost | Approved; ADR-001, ADR-007, ADR-010 |
 
 No unresolved approval gate exists. Selector decomposition and implementation
 algorithm are private details only if every hard invariant is validated.
@@ -131,7 +131,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `AC-SN-003` / `TEST-SN-003` | Unit | Group and seed isolation | Waymo and PG groups | no cross-split overlap | `REQ-SN-003`–`004` |
 | `AC-SN-004` / `TEST-SN-004` | Unit | TFRecord provenance | converter-like metadata | scenario ID grouping absent real log/segment | `REQ-SN-004` |
 | `AC-SN-005` / `TEST-SN-005` | Unit | Final eligibility | invalid/partial/Rulebook-ineligible fixtures | runtime excludes; audit retains causes | `REQ-SN-005` |
-| `AC-SN-006` / `TEST-SN-006` | Unit | Bounded acquisition | unseen shard inventory | deterministic 16-shard batches; failure at 128 | `REQ-SN-006` |
+| `AC-SN-006` / `TEST-SN-006` | Unit | Bounded acquisition | unseen shard inventory | deterministic 64-shard batches; failure at 128 | `REQ-SN-006` |
 | `AC-SN-007` / `TEST-SN-007` | Unit | PG seed/profile handling | native-profile fixture | reproducible, diagnostic classification | `REQ-SN-007` |
 | `AC-SN-008` / `TEST-SN-008` | Unit | Existing arm formula | exact boundary fixtures | unchanged A0–A5 labels and priority | `REQ-SN-008` |
 | `AC-SN-009` / `TEST-SN-009` | Integration | Runtime database mapping | Waymo/PG fixture views | loaded ID matches selected UID | `REQ-SN-009` |
@@ -160,10 +160,26 @@ external credentials and must not overwrite frozen data.
 ## 10. Milestones
 
 - [x] M1 — Completed. Reconciled record/manifest/report eligibility schema and audit population accounting, including record-level Rulebook provenance, strict pre-freeze split validation, and canonical YAML manifests. Depends on `DEC-SN-001`–`005`; validates the available portions of `TEST-SN-001`–`006`.
-- [x] M2 — Completed. Implemented strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. The selector enforces per-split source and arm capacity, uses exhaustive exact search for small grouped fixtures (≤18 groups), and uses a deterministic transportation-based constructive solver for the normal large singleton-group population. The shell pipeline repeats catalog → Rulebook → split feasibility and acquires at most one forced 16-shard batch per cycle under the cumulative 128-shard cap. `build_splits` now writes a PG replenishment report on both success and selection failure, separating a true filtered-PG count shortage from joint Waymo/group infeasibility. Validates the implemented portions of `TEST-SN-002`–`008`.
+- [x] M2 — Completed. Implemented strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. The selector enforces per-split source and arm capacity, uses exhaustive exact search for small grouped fixtures (≤18 groups), and uses a deterministic transportation-based constructive solver for the normal large singleton-group population. The shell pipeline repeats catalog → Rulebook → split feasibility and acquires at most one forced configured batch (now 64 shards) per cycle under the cumulative 256-shard cap. `build_splits` now writes a PG replenishment report on both success and selection failure, separating a true filtered-PG count shortage from joint Waymo/group infeasibility. Validates the implemented portions of `TEST-SN-002`–`008`.
 - [x] M3 — Completed implementation reconciliation for runtime views, providers, ACL six-arm interface, environment behavior, and logging. The environment factory rejects an audit or legacy catalog containing any valid/warning record without `rulebook_eligible=true`; provider construction and runtime mapping use only this checked population. The provider layer supports strict uniform-by-arm sampling with explicit one-sided source-cell fallback and carries sampling metadata into reset and terminal-step info. Runtime aggregation records reset/step/episode matrices by `source × arm`, and evaluation CSVs persist ScenarioNet identity, sampling, and completion fields. The real runtime-database/vector smoke remains M4 because it requires a prepared external fixture. Validates the implemented portions of `TEST-SN-009`–`014`.
-- [ ] M4 — In progress. The user-approved 16-worker Rulebook rebuild completed and published 5,179 eligible records, but only 1,647 are PG while the final target requires 1,750. Final split construction therefore requires an approved PG replenishment decision. The vectorized smoke now collects and reaches its intended stale-runtime-fixture skip after the import-cycle fix. Documentation reconciliation and non-mutating final audit remain pending. Validates `TEST-SN-015` and mandatory checks.
-- [ ] M5 — In progress. Introduce correctness-preserving incremental feasibility cycles: reuse deterministic PG seeds unless explicit PG overwrite is requested; skip duplicate full Waymo status scans when the caller already validated the catalog deficit; cache Rulebook eligibility by scenario UID, payload fingerprint, geometry hash, and calibration hash; and provide the approved complete-profile PG replenishment target at seed start `5920000`. Preserve the full merged audit and split contract. Validate full-vs-incremental equivalence and cache invalidation before marking complete.
+- [ ] M4 — In progress. The latest reconciled catalog contains 28,483 records and
+  8,398 Rulebook-eligible records. Strict split construction now reaches the
+  PG composition boundary (`pg/train=550` versus 1,000), while the PG report
+  shows no raw runtime-count shortfall; the former Waymo acquisition cap of 128
+  new shards has also been reached. The controller now plans at most 1,750 targeted
+  PG candidates per cycle from the reported arm deficits; the current report
+  has no remaining PG arm deficit, so no further PG is generated. The vectorized smoke still reaches its
+  intended stale-runtime-fixture skip after the import-cycle fix.
+  Documentation reconciliation and non-mutating final audit remain pending.
+  Validates `TEST-SN-015` and mandatory checks.
+- [ ] M5 — In progress. Complete correctness-preserving incremental feasibility
+  validation: reuse deterministic PG seeds unless explicit PG overwrite is
+  requested; skip duplicate full Waymo status scans when the caller already
+  validated the catalog deficit; cache Rulebook eligibility by scenario UID,
+  payload fingerprint, geometry hash, and calibration hash; and exercise the
+  configured bound of two targeted profile replenishment cycles with disjoint
+  seed bases. Preserve the full merged audit and split contract. Validate
+  full-vs-incremental equivalence and cache invalidation before marking complete.
 
 ## 11. Progress And Findings Log
 
@@ -322,6 +338,75 @@ external credentials and must not overwrite frozen data.
   scan was skipped. The path now initializes incomplete/unknown state explicitly
   and passes shell syntax, ShellCheck, and whitespace validation. The failed
   retry stopped before downloading a shard.
+- The next retry reused all 13,098 Rulebook results, then acquired and converted
+  the first 16 unseen Waymo shards (`00163`–`00178`) successfully. Its log
+  revealed two follow-up defects: `.env` overwrote the pipeline's configured
+  16 converter workers with 8, and the deferred A4 status was printed as a
+  fabricated `0/584`. The expansion script now preserves an explicit worker
+  override and reports deferred A4 status without inventing a measurement.
+- The same retry exposed a host/container path bug in the PG-shortfall guard:
+  the host shell checked `/workspace/data/...` directly, so it missed the
+  current report (`hard_count_shortfall=770`) and expanded Waymo unnecessarily.
+  The guard now checks the host-mounted report and passes the container path
+  only to the JSON reader; a resumed cycle will stop before further Waymo
+  acquisition while the PG shortfall remains.
+  The approved acquisition policy is now 64 shards per cycle under ADR-007;
+  the cumulative cap is now 256 new shards under ADR-010, and post-Rulebook
+  feasibility checks remain unchanged.
+- Validation after this correction: `bash -n scripts/expand_waymo_pool.sh`,
+  `shellcheck scripts/expand_waymo_pool.sh`, and `git diff --check` pass.
+- The user approved the throughput amendment on 2026-07-17. The single YAML
+  source now resolves `batch_shards=64`, `max_new_shards=256`, and
+  `waymo.workers=16`; ADR-007 and the authoritative v1.1 specification record
+  the amendment. The read-only `pipeline_config` container check passed.
+- The first 64-shard retry exposed a state-reconciliation defect: forced
+  one-batch conversion deferred the status scan without recording the selected
+  shard names, so the next cycle reprocessed `00163`–`00178` inside
+  `batch_00163_00226`. The expansion script now reconstructs shard state from
+  finalized batch directory ranges and records every successful batch. The
+  Waymo loader deterministically retains the first record for an already
+  reprocessed UID and emits a runtime warning, allowing the existing pool to
+  be reconciled without deleting user data. Focused catalog/loader validation
+  passes (7 tests), plus shell syntax, ShellCheck, and whitespace checks.
+- The post-reconciliation catalog reports 1,315 Rulebook/runtime-eligible
+  Waymo records of 1,750 required, with a total deficit of 435. The explicit
+  A4_vru lower-bound check is the dominant constraint at 202/584 (deficit
+  382); PG replenishment is now sufficient (`hard_count_shortfall=0`). The
+  remaining bounded Waymo cycles must therefore be allowed to complete before
+  judging feasibility; no filter or quota relaxation is permitted.
+- A preliminary exclusion breakdown from the failed pre-deduplication catalog
+  indicates that the rigid route/Rulebook boundary is a material bottleneck:
+  9,557 records fail task-route association, 2,646 fail assigned-route
+  continuity, 1,450 fail signal-state checks, and 1,199 fail map geometry.
+  These counts include the known reprocessed-batch duplicates and must be
+  recomputed on the reconciled catalog. The observation vector shape itself is
+  not a catalog eligibility predicate; the route metadata and Rulebook checks
+  are the direct causes. No relaxation is approved; a post-reconciliation
+  sensitivity audit is required before proposing any behavioral change.
+- The completed 64-shard Waymo cycle moved the failure boundary: the subsequent
+  split attempt no longer failed on `waymo/train=845`, but on
+  `pg/train=550`. The run reached the configured 128-shard Waymo cap, while
+  the PG report still showed no raw runtime-count shortfall; this is therefore
+  a strict PG source/arm/group selection infeasibility, not a reversal of the
+  earlier Waymo count. The existing duplicate-batch warning (1,139 UIDs) was
+  handled by the deterministic loader and did not abort catalog construction.
+- The PG report now includes source/arm/split diagnostics on selection failure.
+  The controller triggers up to the configured number of targeted PG cycles
+  (currently `2`) when the failure explicitly targets a PG split and the raw PG
+  runtime-count shortfall is zero. Each cycle has a maximum candidate budget of
+  `1,750`, allocated by the observed profile-to-arm yield matrix and the arm
+  deficits in the replenishment report; if no PG arm deficit remains, it does
+  not generate more PG and proceeds to the normal bounded stop/acquisition
+  decision. Each next seed base is disjoint and the full feasibility cycle is
+  rebuilt.
+- The first resumed run reached this intended branch but exposed an inline
+  Python f-string escaping error while reading pg/replenishment_report.json.
+  The parser now uses a format string valid under the container's Python
+  version, and a regression test executes the exact extracted command against
+  a PG composition-failure report.
+- The user approved doubling the Waymo cap from 128 to 256 new shards. The
+  single YAML source, expansion default, ADR-010, and v1.1 specification now
+  resolve the amended cap while retaining 64-shard batches and 16 workers.
 - `docker compose run --rm dev uv run --no-sync ruff check
   src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py
   src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py`
@@ -351,6 +436,8 @@ No deviations identified.
 | `docs/project_index.md` | Modified | Authority and ExecPlan registry |
 | `src/thesis_rl/scenarios/{records,catalog,pipeline,splits,manifests,reports,waymo_pool}.py` | Modified/planned modification | Eligibility, split, audit, manifest, scalable singleton-group selection, and PG replenishment-report contract |
 | `src/thesis_rl/cli/scenarios/build_splits.py` | Modified | Strict split CLI and PG replenishment artifact on success/failure |
+| `src/thesis_rl/cli/scenarios/plan_pg_replenishment.py`, `src/thesis_rl/scenarios/pg/replenishment.py` | Added | Deterministic targeted profile allocation from reported PG arm deficits |
+| `src/thesis_rl/cli/scenarios/generate_pg_dataset.py`, `src/thesis_rl/scenarios/pg/report.py` | Modified | Profile-specific PG candidate counts for targeted replenishment |
 | `scripts/{prepare_scenarionet_dataset,expand_waymo_pool}.sh` | Modified | Post-Rulebook bounded Waymo acquisition loop and PG report path |
 | `src/thesis_rl/scenarios/{features,arms,provider,runtime_database,validation}.py` | Modified/planned reconciliation | Preserved arm taxonomy, strict arm-uniform provider, and runtime behavior |
 | `src/thesis_rl/runtime/wiring/builders.py` | Modified | Aggregates ScenarioNet source×arm runtime matrices across workers |
@@ -387,11 +474,20 @@ No deviations identified.
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py src/thesis_rl/cli/scenarios/build_splits.py && ruff check src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-16 | 19 passed; verifies the scalable singleton-group solver and the PG replenishment report |
 | `bash -n setup.sh scripts/*.sh && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py src/thesis_rl/cli/scenarios/build_splits.py src/thesis_rl/cli/scenarios/build_catalog.py tests/test_scenarionet_pipeline.py tests/test_scenario_catalog_build.py && ruff check ... && python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py && git diff --check` | PASS | 2026-07-16 | 157 passed, 2 expected skips requiring an external prepared ScenarioNet runtime dataset; six focused files formatted, lint and shell/whitespace checks passed |
 | `bash -n setup.sh scripts/*.sh && shellcheck setup.sh scripts/*.sh && git diff --check` | PASS | 2026-07-16 | Shell syntax, ShellCheck, and whitespace validation pass after preserving dynamic configuration export semantics |
+| `bash -n scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && shellcheck scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && git diff --check` | PASS | 2026-07-17 | Bounded PG compositional replenishment trigger and batch-state reconciliation pass shell/whitespace validation |
 | `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/scenarios/reports.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-16 | 19 passed after making joint selection-failure reporting explicitly distinct from a completed PG selection |
+| `docker compose run --rm -T dev uv run --no-sync ruff format --check src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-17 | 19 passed after adding source/arm/split diagnostics for PG composition failures |
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/scenarios/provider.py src/thesis_rl/scenarios/__init__.py src/thesis_rl/envs/factory.py src/thesis_rl/envs/thesis_scenario_env.py src/thesis_rl/runtime/wiring/builders.py tests/test_scenario_provider.py tests/test_thesis_scenario_env.py && ruff check ... && python -m pytest -q tests/test_scenario_provider.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 28 passed; verifies arm-uniform source-cell behavior and source×arm aggregation |
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/agent/agent.py src/thesis_rl/runtime/loops/eval_loop.py src/thesis_rl/runtime/loops/train_loop.py tests/test_agent_pipeline.py && ruff check ... && python -m pytest -q tests/test_agent_pipeline.py tests/test_eval_artifacts.py tests/test_scenario_provider.py tests/test_thesis_scenario_env.py` | PASS | 2026-07-16 | 40 passed; verifies per-episode ScenarioNet metadata propagation and CSV-compatible evaluation metrics |
 | `bash -n setup.sh scripts/*.sh && shellcheck setup.sh scripts/*.sh && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/scenarios/provider.py src/thesis_rl/scenarios/__init__.py src/thesis_rl/envs/factory.py src/thesis_rl/envs/thesis_scenario_env.py src/thesis_rl/runtime/wiring/builders.py src/thesis_rl/agent/agent.py src/thesis_rl/runtime/loops/eval_loop.py src/thesis_rl/runtime/loops/train_loop.py tests/test_scenario_provider.py tests/test_thesis_scenario_env.py tests/test_agent_pipeline.py && ruff check ... && python -m pytest -q tests/test_scenario_*.py tests/test_scenarionet_*.py tests/test_thesis_scenario_env.py tests/test_agent_pipeline.py tests/test_eval_artifacts.py && git diff --check` | PASS | 2026-07-16 | 171 passed, 2 expected skips requiring an external prepared ScenarioNet runtime dataset; formatting, lint, shell, and whitespace checks passed |
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q -rs tests/test_scenarionet_vectorized_integration.py` | SKIP | 2026-07-16 | 2 skips: local runtime fixture catalog has valid records without `rulebook_eligible=true`; M4 smoke needs an approved fixture rebuild/replacement |
+| `docker compose run --rm -T dev uv run --no-sync python -m thesis_rl.cli.scenarios.pipeline_config --config conf/scenarios/pipeline_v1.yaml` | PASS | 2026-07-17 | Resolved Waymo batch 64, cap 256, 16 workers, and PG composition replenishment limit 2 |
+| `docker compose run --rm -T dev uv run --no-sync ruff format --check tests/test_scenarionet_pipeline.py && ruff check tests/test_scenarionet_pipeline.py && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-17 | 20 passed; regression covers PG report parsing for compositional split failure |
+| `bash -n scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && shellcheck scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && git diff --check` | PASS | 2026-07-17 | Validates the corrected PG report parser and orchestration shell syntax |
+| `docker compose run --rm -T dev uv run --no-sync ruff format src/thesis_rl/scenarios/pg/report.py src/thesis_rl/scenarios/pg/replenishment.py src/thesis_rl/cli/scenarios/generate_pg_dataset.py src/thesis_rl/cli/scenarios/plan_pg_replenishment.py tests/test_pg_replenishment.py && ruff check ... && python -m pytest -q tests/test_pg_replenishment.py tests/test_scenarionet_pipeline.py` | PASS | 2026-07-17 | 23 passed; validates profile-count overrides and targeted allocation by global source×arm deficits |
+| Read-only targeted-plan simulation on the current catalog | PASS | 2026-07-17 | Waymo A4 and PG A5 are the remaining global composition gaps; the planner assigns the 1,750-candidate budget to `P5_complex_mixed`, while A4 remains Waymo-only |
+| `docker compose run --rm -T dev uv run --no-sync python -m thesis_rl.cli.scenarios.pipeline_config --config conf/scenarios/pipeline_v1.yaml` | PASS | 2026-07-17 | Resolves targeted PG budget 1,750 and two-cycle bound |
+| `bash -n scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && shellcheck scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && git diff --check` | PASS | 2026-07-17 | Batch-throughput amendment and host/container guard fixes pass shell and whitespace validation |
 | Focused pytest command | NOT_RUN | 2026-07-16 | Host environment lacks `uv` and `python`; run in provisioned container |
 | Full real-data acquisition | NOT_RUN | 2026-07-16 | Requires credentials and can mutate dataset artifacts |
 

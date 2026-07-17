@@ -47,6 +47,19 @@ is_true() {
   esac
 }
 
+next_pg_replenishment_seed() {
+  local max_seed block_index
+  max_seed="$(find "${host_data_root}/pg/database" -type f -name 'sd_*.pkl' -printf '%f\n' 2>/dev/null \
+    | sed -n 's/.*PGMap-\([0-9][0-9]*\)\.pkl/\1/p' \
+    | sort -n | tail -n 1)"
+  if [[ -z "$max_seed" ]]; then
+    echo 5920000
+    return
+  fi
+  block_index=$((max_seed / 1000000 + 1))
+  echo $((block_index * 1000000 + 920000))
+}
+
 pipeline_config="${SCENARIONET_PIPELINE_CONFIG:-/workspace/thesis-metadrive/conf/scenarios/pipeline_v1.yaml}"
 pipeline_service="${SCENARIONET_PIPELINE_SERVICE:-dataset-pipeline}"
 echo "Resolving pipeline configuration (single YAML source): $pipeline_config"
@@ -76,6 +89,8 @@ thresholds_path="${SCENARIONET_THRESHOLDS_PATH:-${data_root}/splits/arm_threshol
 pg_count="${SCENARIONET_PG_COUNT:?pipeline YAML must define pg.count_per_profile}"
 pg_seed_start="${SCENARIONET_PG_SEED_START:?pipeline YAML must define pg.seed_start}"
 pg_workers="${SCENARIONET_PG_WORKERS:?pipeline YAML must define pg.workers}"
+pg_max_composition_replenishments="${SCENARIONET_PG_MAX_COMPOSITION_REPLENISHMENT_BLOCKS:?pipeline YAML must define pg.max_composition_replenishment_blocks}"
+pg_replenishment_candidate_budget="${SCENARIONET_PG_REPLENISHMENT_CANDIDATE_BUDGET:?pipeline YAML must define pg.replenishment_candidate_budget}"
 split_seed="${SCENARIONET_SPLIT_SEED:?pipeline YAML must define split.seed}"
 overwrite="${SCENARIONET_OVERWRITE:-false}"
 auto_split="${SCENARIONET_AUTO_SPLIT:?pipeline YAML must define split.auto}"
@@ -100,6 +115,8 @@ waymo_required_a4_vru="${SCENARIONET_WAYMO_REQUIRED_A4_VRU:?pipeline YAML must d
 echo "Resolved pipeline parameters:"
 echo "  PG: ${pg_count} scenarios/profile, seed=${pg_seed_start}"
 echo "  PG workers: ${pg_workers}"
+echo "  PG composition replenishment blocks: ${pg_max_composition_replenishments}"
+echo "  PG targeted replenishment budget: ${pg_replenishment_candidate_budget} candidates/cycle"
 echo "  Waymo targets: train=${waymo_train_target}, validation=${waymo_validation_target}, test=${waymo_test_target}"
 echo "  PG targets: train=${pg_train_target}, validation=${pg_validation_target}, test=${pg_test_target}"
 echo "  Waymo required A4_vru: ${waymo_required_a4_vru}"
@@ -189,6 +206,11 @@ else
 fi
 
 max_batches=$(( (waymo_max_new_shards + waymo_batch_shards - 1) / waymo_batch_shards ))
+[[ "$pg_max_composition_replenishments" =~ ^[0-9]+$ ]] || die \
+  "PG composition replenishment block limit must be a non-negative integer: ${pg_max_composition_replenishments}"
+[[ "$pg_replenishment_candidate_budget" =~ ^[1-9][0-9]*$ ]] || die \
+  "PG replenishment candidate budget must be a positive integer: ${pg_replenishment_candidate_budget}"
+pg_composition_replenishments=0
 catalog_args=()
 if is_true "$waymo_auto_expand"; then
   catalog_args+=(--allow-empty-waymo)
@@ -235,13 +257,35 @@ for ((cycle=0; ; cycle++)); do
   if ! is_true "$waymo_auto_expand" || is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
     die "split targets are infeasible after Rulebook filtering; automatic Waymo expansion is disabled"
   fi
-  pg_report_path="${data_root}/pg/replenishment_report.json"
-  if [[ -f "$pg_report_path" ]]; then
-    pg_shortfall="$(docker compose run --rm -T "$pipeline_service" uv run --no-sync python -c \
-      'import json,sys; p=sys.argv[1]; d=json.load(open(p, encoding="utf-8")); print(int(d.get("hard_count_shortfall", 0)))' \
-      "$pg_report_path")"
+  pg_report_host_path="${host_data_root}/pg/replenishment_report.json"
+  pg_report_container_path="${data_root}/pg/replenishment_report.json"
+  if [[ -f "$pg_report_host_path" ]]; then
+    pg_report_values="$(docker compose run --rm -T "$pipeline_service" uv run --no-sync python -c \
+      'import json,sys; p=sys.argv[1]; d=json.load(open(p, encoding="utf-8")); print("{}\t{}".format(int(d.get("hard_count_shortfall", 0)), d.get("selection_error") or ""))' \
+      "$pg_report_container_path")"
+    IFS=$'\t' read -r pg_shortfall pg_selection_error <<<"$pg_report_values"
     if [[ "$pg_shortfall" =~ ^[1-9][0-9]*$ ]]; then
       die "PG replenishment required before Waymo expansion: ${pg_shortfall} additional runtime-eligible records"
+    fi
+    if [[ "$pg_selection_error" == runtime\ split\ target\ mismatch\ for\ pg/* ]] \
+      && (( pg_composition_replenishments < pg_max_composition_replenishments )); then
+      pg_profile_counts="$(docker compose run --rm -T "$pipeline_service" uv run --no-sync python \
+        -m thesis_rl.cli.scenarios.plan_pg_replenishment \
+        --report "$pg_report_container_path" \
+        --budget "$pg_replenishment_candidate_budget")"
+      if [[ "$pg_profile_counts" == "{}" ]]; then
+        echo "PG composition report has no arm-level deficit suitable for targeted replenishment"
+      else
+        stage "[2/9] Replenishing PG after compositional split infeasibility"
+        replenishment_seed_start="$(next_pg_replenishment_seed)"
+        pg_composition_replenishments=$((pg_composition_replenishments + 1))
+        echo "PG targeted compositional replenishment ${pg_composition_replenishments}/${pg_max_composition_replenishments}: budget=${pg_replenishment_candidate_budget}, profiles=${pg_profile_counts}, seed=${replenishment_seed_start}"
+        SCENARIONET_PG_REPLENISH_COUNT="$pg_count" \
+          SCENARIONET_PG_REPLENISH_SEED_START="$replenishment_seed_start" \
+          SCENARIONET_PG_PROFILE_COUNTS="$pg_profile_counts" \
+          make scenarionet-pg-replenish
+        continue
+      fi
     fi
   fi
   if (( cycle >= max_batches )); then

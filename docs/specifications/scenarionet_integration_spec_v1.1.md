@@ -9,7 +9,7 @@
 - **Date:** `2026-07-16`
 - **Supersedes:** `scenarionet_integration_v1_specification.md`, version `1`
 - **Related specifications:** Automatic Curriculum Learning specification; Rulebook specification; Semantic Observation specification
-- **Related ADRs:** `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`
+- **Related ADRs:** `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`, `docs/decisions/ADR-005-incremental-scenarionet-replenishment.md`, `docs/decisions/ADR-007-waymo-batch-throughput.md`, `docs/decisions/ADR-008-pg-compositional-replenishment.md`, `docs/decisions/ADR-009-pg-targeted-replenishment.md`
 - **Authoritative:** `YES`
 - **Scope:** integration of real Waymo/ScenarioNet scenarios and MetaDrive procedural scenarios into a unified training and evaluation pipeline
 - **Main planned training budget:** `1_500_000` environment steps
@@ -26,6 +26,9 @@
   specifica ScenarioNet Integration v1.1.”
 - **Approved scope:** the complete v1.1 specification, including the recorded
   review decisions in the following section.
+- **Amendment date:** `2026-07-17`
+- **Amendment evidence:** explicit user approval to proceed with 64 Waymo shards
+  per acquisition cycle after the throughput trade-off was presented.
 
 ### Decisioni di revisione confermate
 
@@ -39,7 +42,9 @@
   `rulebook_eligible=true`; il catalogo audit conserva separatamente gli
   scenari esclusi.
 - `extra_steps_after_scenario` è congelato a `50` per tutte le sorgenti.
-- L'acquisizione Waymo usa batch di 16 shard e un cap di 128 nuovi shard.
+- L'acquisizione Waymo usa batch di 64 shard e un cap di 256 nuovi shard; il
+  dettaglio del throughput è emendato da ADR-007, mentre il cap e tutti i
+  criteri di eleggibilità restano invariati.
 - Il requisito causale di questa specifica copre la pipeline ScenarioNet; il
   contratto completo dell'osservazione semantica resta alla relativa specifica.
 
@@ -588,8 +593,8 @@ selection_report:
 
 waymo_acquisition:
   ordering_seed: 0
-  batch_size_shards: 16
-  max_new_shards: 128
+  batch_size_shards: 64
+  max_new_shards: 256
   processed_shards: []
   stop_reason: null
 
@@ -672,8 +677,8 @@ Il cap `max_new_shards` è obbligatorio e si applica agli shard mai processati
 aggiunti dalla preparazione corrente. I valori congelati per la v1.1 sono:
 
 ```yaml
-batch_size_shards: 16
-max_new_shards: 128
+batch_size_shards: 64
+max_new_shards: 256
 ```
 
 Al raggiungimento del cap la pipeline deve
@@ -2570,7 +2575,7 @@ no quality or reliability filter is relaxed to fill a quota
 same seed and eligible pool produce identical splits
 deficit reports match requested minus selected counts
 Waymo acquisition processes only unseen shards
-Waymo acquisition stops when hard targets are feasible or at max_new_shards=128
+Waymo acquisition stops when hard targets are feasible or at max_new_shards=256
 Waymo shard choice is independent of agent evaluation results
 optional Waymo-natural test is group-disjoint from all primary splits
 ```
@@ -2737,8 +2742,8 @@ dataset:
   waymo_acquisition:
     incremental: true
     deterministic_unseen_shards_only: true
-    batch_size_shards: 16
-    max_new_shards: 128
+    batch_size_shards: 64
+    max_new_shards: 256
     stop_when_hard_targets_feasible: true
     allow_agent_performance_based_mining: false
     retain_unselected_eligible_in_audit_pool: true

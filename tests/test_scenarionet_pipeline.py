@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+import re
+import subprocess
+import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +24,37 @@ from thesis_rl.scenarios.pipeline import (
 )
 from thesis_rl.scenarios.reports import compute_pg_replenishment_report
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
+
+
+def test_pipeline_pg_report_parser_handles_composition_failure(tmp_path: Path) -> None:
+    script = Path("scripts/prepare_scenarionet_dataset.sh").read_text(encoding="utf-8")
+    match = re.search(
+        r"\n\s+'(import json,sys; p=sys\.argv\[1\].*?)'\s+\\\n",
+        script,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+
+    report = tmp_path / "replenishment_report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "hard_count_shortfall": 0,
+                "selection_error": "runtime split target mismatch for pg/train: requested 1000, selected 550",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", match.group(1), str(report)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.rstrip("\n") == (
+        "0\truntime split target mismatch for pg/train: requested 1000, selected 550"
+    )
 
 
 def _entry(source: str, index: int) -> ScenarioCatalogEntry:

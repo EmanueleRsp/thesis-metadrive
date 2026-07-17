@@ -26,6 +26,11 @@ from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
 from thesis_rl.agent.planners.interfaces.planner import BasePlanner
 from thesis_rl.agent.adapters.interfaces.base import BaseAdapter
 from thesis_rl.agent.types import Transition
+from thesis_rl.contracts.checkpoint_manifest import CheckpointManifest
+from thesis_rl.sb3_extensions.checkpointing import (
+    CheckpointGeneration,
+    publish_checkpoint_generation,
+)
 
 
 class _LiveEventLogHandler(logging.Handler):
@@ -1461,6 +1466,30 @@ class Agent:
         if bool(getattr(self.adapter, "requires_training", False)):
             adapter_ckpt = self.adapter_checkpoint_path(checkpoint_path)
             self.adapter.save(str(adapter_ckpt))
+
+    def save_generation(
+        self,
+        checkpoint_root: str | Path,
+        checkpoint_name: str,
+        manifest: CheckpointManifest,
+    ) -> CheckpointGeneration:
+        """Publish planner state as an immutable, manifest-validated generation.
+
+        The explicit method keeps historical ``save(.zip)`` behavior available
+        for legacy experiments while giving approved v1.1 runs a fail-closed
+        checkpoint contract.
+        """
+
+        generation = publish_checkpoint_generation(
+            checkpoint_root=checkpoint_root,
+            checkpoint_name=checkpoint_name,
+            save_model=lambda model_path: self.planner.save(model_path),
+            manifest=manifest,
+        )
+        if bool(getattr(self.adapter, "requires_training", False)):
+            adapter_path = generation.generation_dir / "adapter.pt"
+            self.adapter.save(str(adapter_path))
+        return generation
 
     def load_adapter(self, checkpoint_path: str | Path, strict: bool = True) -> None:
         """Load adapter state derived from planner checkpoint path.

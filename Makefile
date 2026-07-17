@@ -15,6 +15,7 @@ RULEBOOK_V2_ELIGIBILITY ?= $(RULEBOOK_V2_DATA_ROOT)/rulebook_v2/catalog_eligibil
 RULEBOOK_V2_WORKERS ?= 16
 SCENARIONET_PG_REPLENISH_COUNT ?= 350
 SCENARIONET_PG_REPLENISH_SEED_START ?= 5920000
+SCENARIONET_PG_PROFILE_COUNTS ?=
 RULEBOOK_V2_EGO_CONFIG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/ego_config.json
 RULEBOOK_V2_TRIALS_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/braking_trials.json
 RULEBOOK_V2_CALIBRATION_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/calibration_b_e.json
@@ -149,6 +150,7 @@ scenarionet-pg-replenish:
 		--seed-start "$(SCENARIONET_PG_REPLENISH_SEED_START)" \
 		--workers 16 \
 		--report-output "/workspace/data/scenarionet/pg/replenishment/pg_pilot_report_$(SCENARIONET_PG_REPLENISH_SEED_START).json" \
+		$(if $(strip $(SCENARIONET_PG_PROFILE_COUNTS)),--profile-counts-json '$(SCENARIONET_PG_PROFILE_COUNTS)',) \
 		--overwrite
 
 scenarionet-recatalog:

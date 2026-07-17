@@ -4,17 +4,21 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+waymo_num_workers_override="${WAYMO_NUM_WORKERS-}"
 if [[ -f .env ]]; then
   set -a
   # shellcheck disable=SC1091
   source ./.env
   set +a
 fi
+if [[ -n "$waymo_num_workers_override" ]]; then
+  WAYMO_NUM_WORKERS="$waymo_num_workers_override"
+fi
 
 required="${WAYMO_REQUIRED_ELIGIBLE:?WAYMO_REQUIRED_ELIGIBLE is required}"
-batch_size="${WAYMO_BATCH_SHARDS:-8}"
-max_new_shards="${WAYMO_MAX_NEW_SHARDS:-128}"
-num_workers="${WAYMO_NUM_WORKERS:-8}"
+batch_size="${WAYMO_BATCH_SHARDS:-64}"
+max_new_shards="${WAYMO_MAX_NEW_SHARDS:-256}"
+num_workers="${WAYMO_NUM_WORKERS:-16}"
 keep_raw="${WAYMO_KEEP_RAW_BATCHES:-false}"
 force_one_batch="${WAYMO_FORCE_ONE_BATCH:-false}"
 gcs_uri="${WAYMO_GCS_URI:-gs://waymo_open_dataset_motion_v_1_2_0/uncompressed/scenario/training_20s}"
@@ -112,9 +116,29 @@ active_account="$(gcloud auth list --filter=status:ACTIVE --format='value(accoun
 remote_list="$(mktemp)"
 candidate_list="$(mktemp)"
 batch_list="$(mktemp)"
-temporary_files=("$remote_list" "$candidate_list" "$batch_list")
+reconciled_state="$(mktemp)"
+temporary_files=("$remote_list" "$candidate_list" "$batch_list" "$reconciled_state")
 gcloud storage ls "${gcs_uri%/}/${object_pattern}" | awk '/^gs:\/\// {print}' | sort > "$remote_list"
 log "loaded remote shard inventory from ${gcs_uri%/}/${object_pattern}"
+if [[ -f "$state_dir/converted_shards.txt" ]]; then
+  cp "$state_dir/converted_shards.txt" "$reconciled_state"
+else
+  : > "$reconciled_state"
+fi
+shopt -s nullglob
+for batch_path in "$host_database"/batches/batch_*_*; do
+  [[ -d "$batch_path" ]] || continue
+  batch_name="${batch_path##*/}"
+  if [[ "$batch_name" =~ ^batch_([0-9]{5})_([0-9]{5})$ ]]; then
+    first_index=$((10#${BASH_REMATCH[1]}))
+    last_index=$((10#${BASH_REMATCH[2]}))
+    for ((shard_index = first_index; shard_index <= last_index; shard_index++)); do
+      printf 'training_20s.tfrecord-%05d-of-01000\n' "$shard_index" >> "$reconciled_state"
+    done
+  fi
+done
+shopt -u nullglob
+sort -u "$reconciled_state" > "$state_dir/converted_shards.txt"
 awk '
   NR == FNR { used[$1] = 1; next }
   {
@@ -194,6 +218,8 @@ while ! is_true "$pool_complete" || is_true "$force_one_batch"; do
   fi
 
   new_shards=$((new_shards + selected))
+  cat "$batch_list" >> "$state_dir/converted_shards.txt"
+  sort -u "$state_dir/converted_shards.txt" -o "$state_dir/converted_shards.txt"
   if is_true "$force_one_batch"; then
     log "batch ${batch_number} complete; deferring full-pool status to the next catalog cycle"
   else
@@ -202,8 +228,10 @@ while ! is_true "$pool_complete" || is_true "$force_one_batch"; do
     eligible_deficit="${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT:-unknown}"
     log "batch ${batch_number} complete: eligible ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required}; remaining deficit ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
   fi
-  if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
+  if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]] && ! is_true "$force_one_batch"; then
     log "batch ${batch_number} A4_vru: ${SCENARIONET_WAYMO_ELIGIBLE_A4_VRU:-0}/${WAYMO_REQUIRED_ARM_A4_VRU}; remaining A4 deficit ${SCENARIONET_WAYMO_DEFICIT_A4_VRU:-0}"
+  elif [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then
+    log "batch ${batch_number} A4_vru status deferred to the next catalog cycle"
   fi
   if is_true "$force_one_batch"; then
     log "forced one-batch expansion complete"

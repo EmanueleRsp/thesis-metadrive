@@ -24,6 +24,14 @@ _CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "SCENARIONET_PG_COUNT": ("pg", "count_per_profile"),
     "SCENARIONET_PG_SEED_START": ("pg", "seed_start"),
     "SCENARIONET_PG_WORKERS": ("pg", "workers"),
+    "SCENARIONET_PG_MAX_COMPOSITION_REPLENISHMENT_BLOCKS": (
+        "pg",
+        "max_composition_replenishment_blocks",
+    ),
+    "SCENARIONET_PG_REPLENISHMENT_CANDIDATE_BUDGET": (
+        "pg",
+        "replenishment_candidate_budget",
+    ),
     "SCENARIONET_RULEBOOK_V2_ENABLED": ("rulebook_v2", "enabled"),
     "SCENARIONET_RULEBOOK_V2_WORKERS": ("rulebook_v2", "workers"),
     "SCENARIONET_SPLIT_SEED": ("split", "seed"),

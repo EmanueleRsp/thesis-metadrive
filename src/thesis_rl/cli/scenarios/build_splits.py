@@ -176,13 +176,20 @@ def main() -> int:
                     seed=int(args.split_seed),
                 )
             except ValueError as exc:
+                replenishment_report = compute_pg_replenishment_report(
+                    catalog.entries,
+                    targets=targets,
+                    allowed_signal_reliabilities=signal_policy["pg"],
+                    selection_error=str(exc),
+                )
+                replenishment_report["selection_diagnostics"] = arm_source_balance_diagnostics(
+                    (),
+                    targets,
+                    available_entries=runtime_eligible_entries,
+                    seed=int(args.split_seed),
+                )
                 write_json_report(
-                    compute_pg_replenishment_report(
-                        catalog.entries,
-                        targets=targets,
-                        allowed_signal_reliabilities=signal_policy["pg"],
-                        selection_error=str(exc),
-                    ),
+                    replenishment_report,
                     pg_replenishment_path,
                     overwrite=True,
                 )

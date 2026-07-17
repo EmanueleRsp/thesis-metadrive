@@ -18,6 +18,14 @@ from thesis_rl.sb3_extensions.builders import (
     validate_sb3_bridge_configs,
 )
 from thesis_rl.sb3_extensions.specs import Sb3AlgorithmSpec, Sb3PolicySpec
+from thesis_rl.sb3_extensions.checkpointing import (
+    CheckpointGeneration,
+    load_checkpoint_generation,
+    publish_checkpoint_generation,
+    resolve_explicit_generation,
+    resolve_latest_generation,
+    sha256_file,
+)
 
 __all__ = [
     "build_algorithm_spec",
@@ -30,4 +38,10 @@ __all__ = [
     "Sb3PolicySpec",
     "uses_explicit_custom_sb3_policy",
     "validate_sb3_bridge_configs",
+    "CheckpointGeneration",
+    "load_checkpoint_generation",
+    "publish_checkpoint_generation",
+    "resolve_explicit_generation",
+    "resolve_latest_generation",
+    "sha256_file",
 ]

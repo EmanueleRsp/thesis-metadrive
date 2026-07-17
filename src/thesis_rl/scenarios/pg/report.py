@@ -7,7 +7,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from thesis_rl.scenarios.arms import assign_primary_arm
 from thesis_rl.scenarios.pg.generator import PGGenerationResult, generate_pg_scenario
@@ -88,16 +88,30 @@ def run_pg_pilot(
     exporter_commit: str | None = None,
     workers: int = 1,
     progress_callback: PGProgressCallback | None = None,
+    profile_counts: Mapping[str, int] | None = None,
 ) -> tuple[PGPilotReport, tuple[PGGenerationResult, ...]]:
     if count_per_profile < 1:
         raise ValueError("count_per_profile must be positive")
     if workers < 1:
         raise ValueError("workers must be positive")
+    configured_counts = {profile.name: count_per_profile for profile in PG_PROFILES}
+    if profile_counts is not None:
+        unknown = sorted(set(profile_counts).difference(configured_counts))
+        if unknown:
+            raise ValueError(f"unknown PG profiles: {unknown}")
+        for profile, count in profile_counts.items():
+            if not isinstance(count, int) or count < 0:
+                raise ValueError(f"profile count must be a non-negative integer: {profile}")
+            configured_counts[profile] = count
+    requested = sum(configured_counts.values())
+    if requested < 1:
+        raise ValueError("at least one PG profile count must be positive")
+
     results: list[PGGenerationResult] = []
     failures: list[dict[str, Any]] = []
     matrix: dict[str, Counter[str]] = defaultdict(Counter)
     profile_stride = 1_000_000
-    requested = len(PG_PROFILES) * count_per_profile
+    profile_indices = {profile.name: index for index, profile in enumerate(PG_PROFILES)}
     tasks = [
         _PGTask(
             profile=profile.name,
@@ -107,8 +121,9 @@ def run_pg_pilot(
             generator_commit=generator_commit,
             exporter_commit=exporter_commit,
         )
-        for profile_index, profile in enumerate(PG_PROFILES)
-        for offset in range(count_per_profile)
+        for profile in PG_PROFILES
+        for offset in range(configured_counts[profile.name])
+        for profile_index in (profile_indices[profile.name],)
     ]
 
     def consume(

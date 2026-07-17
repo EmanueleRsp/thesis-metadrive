@@ -7,6 +7,8 @@ route_tokens: 10
 dynamic_tokens: 16
 dynamic_conflict_reserved_slots: 8
 dynamic_context_reserved_slots: 8
+allow_conflict_preemption_of_context: true
+persistence_subordinate_to_current_ranking: true
 static_tokens: 8
 traffic_control_tokens: 8
 interaction_tokens: 8
@@ -17,3 +19,6 @@ control_radius_m: 80.0
 interaction_prediction_horizon_s: 3.0
 
 disable_lidar_sensors: true
+future_ground_truth: forbidden
+other_agent_navigation: forbidden
+future_disambiguation: forbidden

@@ -90,6 +90,21 @@ def test_waymo_loader_parallel_matches_serial() -> None:
     assert parallel_groups == serial_groups
 
 
+def test_waymo_loader_deduplicates_reprocessed_batch_uid(tmp_path: Path) -> None:
+    source = next(Path("third_party/metadrive/metadrive/assets/waymo").glob("sd_*.pkl"))
+    database = tmp_path / "waymo" / "database"
+    for batch_name in ("batch_00163_00178", "batch_00163_00226"):
+        target = database / "batches" / batch_name / f"{batch_name}_0"
+        target.mkdir(parents=True)
+        shutil.copy2(source, target / source.name)
+
+    with pytest.warns(RuntimeWarning, match="duplicate converted Waymo scenario UID"):
+        entries, groups = load_converted_waymo_entries(database, data_root=tmp_path)
+
+    assert len(entries) == 1
+    assert len(groups) == 1
+
+
 def test_pg_loader_parallel_matches_serial_and_preserves_seed_window(tmp_path: Path) -> None:
     database = _write_pg_database(tmp_path, seeds=(1, 2, 3))
     kwargs = {

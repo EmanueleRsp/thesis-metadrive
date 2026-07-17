@@ -3,8 +3,8 @@ pipeline_version: scenarionet_pipeline_v2
 # Scientific/data policy defaults. Host paths and credentials stay in .env.
 waymo:
   auto_expand: true
-  batch_shards: 16
-  max_new_shards: 128
+  batch_shards: 64
+  max_new_shards: 256
   workers: 16
   keep_raw_batches: false
   required_arms:
@@ -16,6 +16,8 @@ pg:
   count_per_profile: 350
   seed_start: 920000
   workers: 16
+  max_composition_replenishment_blocks: 2
+  replenishment_candidate_budget: 1750
 
 # The final ScenarioNet splits are Rulebook v2 pools: static Rulebook
 # eligibility is evaluated before split assignment and recorded separately.

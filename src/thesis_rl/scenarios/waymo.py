@@ -5,6 +5,7 @@ import pickle
 import subprocess
 import sys
 import importlib.util
+import warnings
 from collections import deque
 from pathlib import Path
 from typing import Any, Sequence
@@ -189,8 +190,23 @@ def load_converted_waymo_entries(
         workers=workers,
         progress_callback=progress_callback,
     )
-    entries = tuple(entry for entry, _group_id in loaded)
-    groups = {entry.record.scenario_uid: group_id for entry, group_id in loaded}
+    deduplicated: dict[str, tuple[ScenarioCatalogEntry, str]] = {}
+    duplicate_uids: list[str] = []
+    for entry, group_id in loaded:
+        uid = entry.record.scenario_uid
+        if uid in deduplicated:
+            duplicate_uids.append(uid)
+            continue
+        deduplicated[uid] = (entry, group_id)
+    if duplicate_uids:
+        warnings.warn(
+            "duplicate converted Waymo scenario UID(s) encountered across acquisition "
+            f"batches; retaining the first deterministic path: {len(set(duplicate_uids))}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    entries = tuple(entry for entry, _group_id in deduplicated.values())
+    groups = {uid: group_id for uid, (_entry, group_id) in deduplicated.items()}
     assert_waymo_training_20s([entry.record for entry in entries])
     return entries, groups
 

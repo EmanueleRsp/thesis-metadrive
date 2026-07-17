@@ -130,15 +130,15 @@ variant is introduced by this plan.
 |---|---|---|---|---|
 | `OBS-REQ-001` | `AC-OBS-001` | `rulebook/v2/context/map_matching.py`, `rulebook/v2/context/pg_static_adapter.py`, `rulebook/v2/context/waymo_static_adapter.py`, `rulebook/v2/geometry/route.py`, `rulebook/v2/context/static_adapter.py`, route metadata in `scenarios/records.py`, `filter_rulebook_v2_catalog.py`, and `thesis_scenario_env.py` | `tests/test_rulebook_v2_contracts.py`, `tests/test_rulebook_v2_catalog_eligibility.py`, `tests/test_rulebook_v2_pg_adapter.py`, `tests/test_rulebook_v2_waymo_adapter.py`, `tests/test_scenario_records.py`, `tests/test_thesis_scenario_env.py` | Partial: offline assignment persistence, metadata-only adapter consumption, fail-closed polyline construction, and reset publication implemented; custom runtime navigation replacement remains pending. |
 | `OBS-REQ-002` | `AC-OBS-002` | `envs/observations/assigned_route.py`, `envs/observations/ray_noise.py`, `envs/observations/causal_lidar.py`, `envs/observations/stacked_lidar.py`, `thesis_scenario_env.py`, map navigation | `tests/test_assigned_route_observation.py`, `tests/test_ray_noise.py`, `tests/test_causal_lidar.py`, `tests/test_stacked_lidar_observation.py`, `tests/test_thesis_scenario_env.py`, `TEST-OBS-003`--`TEST-OBS-005` | Partial: causal 22D navigation, single-owner ray-noise, exact 308D frame builder, strict five-frame stack, and pre-first-observation installation implemented; full live sensor smoke validation remains pending. |
-| `OBS-REQ-003` | `AC-OBS-003` | `src/thesis_rl/contracts/observation_schema.py`, `src/thesis_rl/envs/observations/semantic_state_v2.py`, `src/thesis_rl/envs/factory.py` | `tests/test_observation_schema_v11.py`, `tests/test_semantic_state_v2.py` | Partial: schema-owned strict v2 flat adapter now emits/validates `2541`; environment-owned causal batch construction and live installation remain pending. |
-| `OBS-REQ-004` | `AC-OBS-004` | selection/history/context utilities | `TEST-OBS-009`--`TEST-OBS-012` | Planned |
-| `OBS-REQ-005` | `AC-OBS-005` | `src/thesis_rl/contracts/causal_scene_context.py`, `src/thesis_rl/rulebook/v2/wrapper.py` | `tests/test_causal_scene_context.py`, `tests/test_rulebook_v2_causal_context.py` | Partial: immutable boundary and post-commit Rulebook wrapper publication implemented; environment observation lifecycle wiring remains pending. |
-| `OBS-REQ-006` | `AC-OBS-006` | route provenance in catalog records and scenario metadata | `tests/test_scenario_records.py`, `tests/test_rulebook_v2_catalog_eligibility.py` | Partial: route provenance is persisted/logged; full experiment manifest and visual evidence remain pending. |
+| `OBS-REQ-003` | `AC-OBS-003` | `src/thesis_rl/contracts/observation_schema.py`, `src/thesis_rl/envs/observations/semantic_state_v2.py`, `src/thesis_rl/envs/observations/causal_semantic.py`, `src/thesis_rl/envs/factory.py` | `tests/test_observation_schema_v11.py`, `tests/test_semantic_state_v2.py`, `tests/test_causal_semantic_batch.py` | Partial: schema-owned strict v2 adapter and structured batch builder emit/validate the `2541` contract; full live sensor/runtime validation remains pending. |
+| `OBS-REQ-004` | `AC-OBS-004` | `src/thesis_rl/envs/observations/causal_semantic.py` | `tests/test_causal_semantic_batch.py` (`TEST-OBS-009`--`TEST-OBS-012`) | In progress: causal cache/history, ranking, persistent slots, CPA, padding, transforms, and ambiguity handling are being implemented; live validation remains pending. |
+| `OBS-REQ-005` | `AC-OBS-005` | `src/thesis_rl/contracts/causal_scene_context.py`, `src/thesis_rl/rulebook/v2/wrapper.py`, `src/thesis_rl/envs/thesis_scenario_env.py` | `tests/test_causal_scene_context.py`, `tests/test_rulebook_v2_causal_context.py` (`TEST-OBS-013`), `tests/test_causal_semantic_batch.py` (`TEST-OBS-014`) | Partial: committed context publication, reset installation, and post-commit refresh are focused-tested; live Rulebook-v2/semantic integration remains pending. |
+| `OBS-REQ-006` | `AC-OBS-006` | route provenance in catalog records and `causal_semantic.py` diagnostics | `tests/test_scenario_records.py`, `tests/test_rulebook_v2_catalog_eligibility.py`, `tests/test_causal_semantic_batch.py` | Partial: route provenance and builder diagnostics are implemented; full experiment manifest and visual evidence remain pending. |
 | `ENC-REQ-001` | `AC-ENC-001` | `src/thesis_rl/agent/planners/encoders/base.py`, `mlp_encoder.py` | `tests/test_encoders_v10.py` | Implemented and focused-verified. |
 | `ENC-REQ-002` | `AC-ENC-002` | `lq_encoder.py`, `contracts/observation_schema.py` | `tests/test_encoders_v10.py`, `tests/test_observation_schema_v11.py` | Implemented and focused-verified. |
 | `ENC-REQ-003` | `AC-ENC-003` | `sb3_extensions/features_extractors.py`, `builders.py` | `tests/test_sb3_extensions.py`, `tests/test_sb3_direct_backends.py` | Partial: strict flat bridge and sharing flags verified; complete optimizer/target routing matrix remains pending. |
-| `ENC-REQ-004` | `AC-ENC-004` | checkpointing | `TEST-ENC-012`--`TEST-ENC-014` | Planned |
-| `ENC-REQ-005` | `AC-ENC-005` | presets and smoke driver | `TEST-ENC-015` | Planned |
+| `ENC-REQ-004` | `AC-ENC-004` | `src/thesis_rl/contracts/checkpoint_manifest.py`, `src/thesis_rl/sb3_extensions/checkpointing.py`, `src/thesis_rl/agent/agent.py`, `src/thesis_rl/agent/planners/factory.py` | `tests/test_checkpointing.py`, `tests/test_planner_lifecycle.py` | Partial: immutable generation publication, atomic pointer, digest validation, fail-fast manifest comparison, and explicit Agent/factory APIs are implemented and unit-tested; runtime callers still use legacy `.zip` paths until manifest construction is wired. |
+| `ENC-REQ-005` | `AC-ENC-005` | presets and smoke driver | `TEST-ENC-015` | Not verified: the existing LiDAR TD3 smoke is green; SAC/PPO LiDAR and all semantic MLP/LQ cases remain to be executed. |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -207,10 +207,11 @@ completion gate because its baseline is not clean.
 
 ## 10. Milestones
 
-- [ ] **M1 — Schema and causal route/context.** The unique schema, immutable
+- [x] **M1 — Schema and causal route/context.** The unique schema, immutable
   observation-safe context boundary, map-based route construction, and reset
   route publication are implemented and focused-tested. Environment-owned
-  transition commit lifecycle remains pending.
+  transition commit lifecycle is wired and focused-tested; live semantic
+  observation validation remains in M2/M5.
 - [ ] **M2 — Observation implementations.** Stacked LiDAR, route/noise wiring,
   and the strict semantic v1.1 flat adapter/config/tests are implemented.
   The environment-owned semantic batch builder and live semantic installation
@@ -219,7 +220,9 @@ completion gate because its baseline is not clean.
   tokenization, and focused tests are implemented. Full acceptance coverage and
   end-to-end backend routing remain pending.
 - [ ] **M4 — SB3 and checkpoints.** Integrate extractor ownership, policy
-  kwargs, checkpoint generations, and integration tests. Depends on M3.
+  kwargs, checkpoint generations, and integration tests. The generation
+  contract and explicit save/load APIs are implemented; runtime manifest
+  construction and caller migration remain. Depends on M3.
 - [ ] **M5 — End-to-end verification.** Run mandatory regressions, quality
   checks, visual diagnostic set, and smoke matrix; reconcile all requirements.
   Depends on M2 and M4.
@@ -264,6 +267,11 @@ completion gate because its baseline is not clean.
 - `2026-07-17`: User approved `DEC-007/A`: existing PG and Waymo adapters use
   the same offline SDC map-matching route annotation; runtime will consume only
   the persisted lane sequence and canonical map geometry.
+- `2026-07-17`: Implemented `CheckpointManifest`, immutable checkpoint
+  generation publication, atomic `latest.json`, SHA-256 verification, and
+  fail-fast compatibility comparison before the backend loader. `Agent` and
+  planner factory expose explicit generation APIs; legacy `.zip` saves remain
+  unchanged and are not implicitly migrated.
 - `2026-07-17`: Added `route_assignment_source`, `assigned_route_lane_ids`,
   catalog persistence, eligibility JSON propagation, and reset metadata
   publication. PG and Waymo now emit distinct provenance values from the same
@@ -322,6 +330,15 @@ completion gate because its baseline is not clean.
   `conf/obs/semantic_v2.yaml`; the legacy `semantic_state` selector remains
   unchanged for compatibility until the complete environment-owned causal
   batch builder is available.
+- `2026-07-17`: Implemented the causal semantic batch-builder path in a
+  separate module. It consumes only committed context, stores observed
+  actor/ego history without backfill, applies deterministic ranking and slot
+  persistence, computes causal CPA/occupancy features, and rejects missing
+  live ego control fields instead of silently zero-filling them.
+- `2026-07-17`: Wired semantic builders before the first reset observation and
+  added a post-commit refresh hook so a wrapped transition returns an
+  observation built from committed causal memory. Checkpoint generations,
+  full smoke matrix, and visual PG/Waymo validation remain pending.
 
 ## Validation log
 
@@ -372,17 +389,24 @@ No deviations identified.
 |---|---|---|
 | `src/thesis_rl/contracts/observation_schema.py` | Planned addition | Single v1.1 schema and fingerprint |
 | `src/thesis_rl/contracts/encoder_contract.py` | Planned addition | Shared encoder validation/version contract |
-| `src/thesis_rl/contracts/checkpoint_manifest.py` | Planned addition | Compatibility and generation manifest types |
+| `src/thesis_rl/contracts/checkpoint_manifest.py` | Added | Compatibility and generation manifest types |
 | `src/thesis_rl/envs/observations/semantic_state.py` or successor | Compatibility-preserved legacy implementation | Legacy semantic observation retained until v1.1 causal builder is complete |
 | `src/thesis_rl/envs/observations/semantic_state_v2.py` | Added | Strict schema-owned semantic v1.1 flat adapter |
+| `src/thesis_rl/envs/observations/causal_semantic.py` | Added | Causal structured semantic batch builder, history, ranking, slots, CPA, and diagnostics |
 | `conf/obs/semantic_v2.yaml` | Added | Explicit v1.1 semantic configuration selector |
 | `tests/test_semantic_state_v2.py` | Added | v1.1 adapter shape, mask, padding, and factory acceptance tests |
+| `tests/test_causal_semantic_batch.py` | Added | Causal history, slot persistence/preemption, CPA, interactions, transforms, padding, and fail-closed tests |
+| `tests/test_rulebook_v2_causal_context.py` | Modified | Post-commit observation refresh timing regression |
 | `src/thesis_rl/envs/observations/stacked_lidar_state.py` | Planned addition | Map-route stacked LiDAR observation |
-| `src/thesis_rl/envs/` context/environment wiring | Planned modification | Causal context lifecycle and route installation |
+| `src/thesis_rl/envs/` context/environment wiring | Modified | Causal context lifecycle, semantic builder installation, and post-commit observation refresh |
+| `src/thesis_rl/contracts/causal_scene_context.py` | Modified | Expose frozen canonical route/lane geometry to observation-safe consumers |
+| `src/thesis_rl/rulebook/v2/types.py` | Modified | Carry optional canonical route geometry in the episode cache |
+| `src/thesis_rl/rulebook/v2/wrapper.py` | Modified | Notify semantic builders after commit and refresh `obs[t+1]` |
 | `src/thesis_rl/agent/planners/encoders/` | Planned modification | MLP/LQ v1.0 implementation |
 | `src/thesis_rl/sb3_extensions/features_extractors.py` | Planned modification | Strict flat bridge and config-built extractor |
 | `src/thesis_rl/sb3_extensions/builders.py` | Planned modification | Algorithm ownership policy kwargs |
-| `src/thesis_rl/sb3_extensions/checkpointing.py` | Planned addition | Atomic generation save/load |
+| `src/thesis_rl/sb3_extensions/checkpointing.py` | Added | Atomic generation save/load and digest validation |
+| `tests/test_checkpointing.py` | Added | Generation round-trip, compatibility rejection, stale pointer, and incomplete generation tests |
 | `conf/obs/` and `conf/agent/planner/` | Planned modification | Frozen observation/encoder configurations |
 | `tests/test_semantic_state_observation.py` and new focused tests | Planned modification/addition | Mandatory observation/encoder regression matrix |
 | `docs/implementation/semantic_observation_encoder_v1_exec_plan.md` | Current file | Living traceability and validation record |
@@ -403,17 +427,34 @@ No deviations identified.
 | `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/envs/observations/semantic_state_v2.py tests/test_semantic_state_v2.py && docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_semantic_state_v2.py tests/test_observation_schema_v11.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/observations/semantic_state_v2.py src/thesis_rl/envs/observations/__init__.py src/thesis_rl/envs/factory.py tests/test_semantic_state_v2.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/observations/semantic_state_v2.py src/thesis_rl/envs/observations/__init__.py src/thesis_rl/envs/factory.py tests/test_semantic_state_v2.py && git diff --check` | `PASS` | `2026-07-17` | 9 passed; Ruff clean; 4 files formatted; no whitespace errors. |
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_semantic_state_v2.py tests/test_observation_schema_v11.py tests/test_encoders_v10.py tests/test_semantic_state_observation.py tests/test_scenarionet_causal.py tests/test_thesis_scenario_env.py` | `PASS` | `2026-07-17` | 42 passed in 3.09s; new strict adapter and legacy compatibility regressions pass together. |
 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/factory.py src/thesis_rl/envs/observations/semantic_state_v2.py tests/test_semantic_state_v2.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/factory.py src/thesis_rl/envs/observations/semantic_state_v2.py tests/test_semantic_state_v2.py && git diff --check` | `PASS` | `2026-07-17` | Ruff clean, 3 files formatted, no whitespace errors. |
+| `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/observations/causal_semantic.py src/thesis_rl/envs/observations/__init__.py src/thesis_rl/envs/thesis_scenario_env.py src/thesis_rl/rulebook/v2/types.py src/thesis_rl/contracts/causal_scene_context.py src/thesis_rl/rulebook/v2/wrapper.py tests/test_causal_semantic_batch.py tests/test_rulebook_v2_causal_context.py` | `PASS` | `2026-07-17` | All focused Ruff checks passed. |
+| `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/contracts/checkpoint_manifest.py src/thesis_rl/contracts/__init__.py src/thesis_rl/sb3_extensions/checkpointing.py src/thesis_rl/sb3_extensions/__init__.py tests/test_checkpointing.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/contracts/checkpoint_manifest.py src/thesis_rl/contracts/__init__.py src/thesis_rl/sb3_extensions/checkpointing.py src/thesis_rl/sb3_extensions/__init__.py tests/test_checkpointing.py` | `PASS` | `2026-07-17` | New checkpoint manifest/publication paths are formatted and Ruff-clean. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_checkpointing.py` | `PASS` | `2026-07-17` | 4 passed: round-trip, legacy-shape rejection before loader, stale pointer, and incomplete generation. |
+| `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/agent/agent.py src/thesis_rl/agent/planners/factory.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/agent/agent.py src/thesis_rl/agent/planners/factory.py src/thesis_rl/contracts/checkpoint_manifest.py src/thesis_rl/sb3_extensions/checkpointing.py tests/test_checkpointing.py && docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_checkpointing.py tests/test_planner_lifecycle.py` | `PASS` | `2026-07-17` | 10 passed; explicit Agent/factory generation API integration remains legacy-caller opt-in. |
+| `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/agent/agent.py src/thesis_rl/agent/planners/factory.py src/thesis_rl/contracts/__init__.py src/thesis_rl/contracts/checkpoint_manifest.py src/thesis_rl/contracts/causal_scene_context.py src/thesis_rl/envs/observations/__init__.py src/thesis_rl/envs/observations/causal_semantic.py src/thesis_rl/envs/thesis_scenario_env.py src/thesis_rl/rulebook/v2/types.py src/thesis_rl/rulebook/v2/wrapper.py src/thesis_rl/sb3_extensions/__init__.py src/thesis_rl/sb3_extensions/checkpointing.py tests/test_checkpointing.py tests/test_causal_semantic_batch.py tests/test_rulebook_v2_causal_context.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/agent/agent.py src/thesis_rl/agent/planners/factory.py src/thesis_rl/contracts/__init__.py src/thesis_rl/contracts/checkpoint_manifest.py src/thesis_rl/contracts/causal_scene_context.py src/thesis_rl/envs/observations/__init__.py src/thesis_rl/envs/observations/causal_semantic.py src/thesis_rl/envs/thesis_scenario_env.py src/thesis_rl/rulebook/v2/types.py src/thesis_rl/rulebook/v2/wrapper.py src/thesis_rl/sb3_extensions/__init__.py src/thesis_rl/sb3_extensions/checkpointing.py tests/test_checkpointing.py tests/test_causal_semantic_batch.py tests/test_rulebook_v2_causal_context.py && docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_checkpointing.py tests/test_causal_semantic_batch.py tests/test_rulebook_v2_causal_context.py tests/test_causal_scene_context.py tests/test_observation_schema_v11.py tests/test_semantic_state_v2.py tests/test_semantic_state_observation.py tests/test_thesis_scenario_env.py tests/test_scenarionet_causal.py tests/test_rulebook_v2_wrapper.py tests/test_encoders_v10.py tests/test_sb3_extensions.py tests/test_sb3_direct_backends.py` | `PASS` | `2026-07-17` | 79 passed; Ruff clean and 15 modified Python files already formatted. |
+| `docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train agent/planner/algorithm=sac_sb3` | `PASS` | `2026-07-17` | SAC/LiDAR identity smoke completed 2,000 steps, two intermediate evaluations, final evaluation, save/load and inference. |
+| `docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train agent/planner/algorithm=ppo_sb3` | `PASS` | `2026-07-17` | PPO/LiDAR identity smoke completed 2,000 steps, two intermediate evaluations, final evaluation, save/load and inference. |
+| `docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.train --config-name config env=scenarionet obs=semantic_v2 run_profile=smoke agent/planner/algorithm=td3_sb3 agent/planner/encoder=mlp experiment.total_timesteps=20 experiment.eval_interval=20 experiment.eval_episodes=1 experiment.final_eval_episodes=1` | `FAIL/BLOCKED` | `2026-07-17` | Fails before environment creation because ScenarioNet vectorization requires an explicit catalog. |
+| `docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.train --config-name config env=scenarionet env.catalog_path=/workspace/data/scenarionet/catalog/scenario_catalog_rulebook_v2.parquet obs=semantic_v2 run_profile=smoke agent/planner/algorithm=td3_sb3 agent/planner/encoder=mlp experiment.total_timesteps=20 experiment.eval_interval=20 experiment.eval_episodes=1 experiment.final_eval_episodes=1` | `FAIL/BLOCKED` | `2026-07-17` | Fail-closed catalog/runtime mismatch: runtime/train contains PGMap-192000x files while the selected catalog also requests other PG records; no data rewrite or fallback performed. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_causal_semantic_batch.py tests/test_rulebook_v2_causal_context.py tests/test_causal_scene_context.py tests/test_observation_schema_v11.py tests/test_semantic_state_v2.py tests/test_semantic_state_observation.py tests/test_thesis_scenario_env.py tests/test_scenarionet_causal.py tests/test_rulebook_v2_wrapper.py` | `PASS` | `2026-07-17` | 51 passed in 3.04s. |
+| `make smoke` | `PASS` | `2026-07-17` | TD3/LiDAR baseline completed 2,000 training steps, two intermediate evaluations, and final evaluation; semantic nine-case matrix remains pending. |
+| `git diff --check` | `PASS` | `2026-07-17` | No whitespace errors in the final worktree diff. |
 
 ## 15. Final Reconciliation
 
-`OBS-REQ-003`, `OBS-REQ-005`, and `ENC-REQ-003` are `PARTIAL`; `ENC-REQ-001`
-and `ENC-REQ-002` are `IMPLEMENTED` and focused-`VERIFIED`. `OBS-REQ-003` now
-has a strict schema-owned `(2541,)` runtime adapter and focused tests, but its
-causal batch builder and live environment installation are still pending. All remaining
-requirements remain `NOT_IMPLEMENTED` or `NOT_VERIFIED`. In particular,
-full sensor smoke validation, the semantic runtime observation,
-causal transition commit wiring, checkpoint generation publication/load, visual
-diagnostics, and the nine-case smoke matrix remain required work. No
+`OBS-REQ-003`, `OBS-REQ-004`, `OBS-REQ-005`, and `ENC-REQ-003` are `PARTIAL`;
+`ENC-REQ-001` and `ENC-REQ-002` are `IMPLEMENTED` and focused-`VERIFIED`;
+`ENC-REQ-004` is `PARTIAL`: its generation/manifest primitives and explicit
+pre-loader validation are focused-verified, but the training/evaluation
+callers still use the historical `.zip` path until manifest construction and
+generation selection are wired end-to-end.
+`OBS-REQ-003` now has a strict schema-owned `(2541,)` runtime adapter, a
+causal structured batch builder, and focused tests. Reset installation and
+post-commit refresh are wired and lifecycle-tested, while live Rulebook-v2
+integration remains unverified. All remaining requirements remain
+`NOT_IMPLEMENTED` or `NOT_VERIFIED`. In particular, end-to-end checkpoint
+caller migration, visual diagnostics, and the nine-case semantic smoke matrix
+remain required work. No
 experimental use is authorized from this plan yet. The approved specifications
 and ADR-002 remain authoritative; this ExecPlan records partial implementation
 only and does not alter them.
