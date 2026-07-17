@@ -150,18 +150,18 @@ scenarionet-pipeline:
 	bash scripts/prepare_scenarionet_dataset.sh
 
 scenarionet-pg-replenish:
-	docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.scenarios.generate_pg_dataset \
+	docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.generate_pg_dataset \
 		--data-root /workspace/data/scenarionet \
 		--repo-root /workspace/thesis-metadrive \
 		--count "$(SCENARIONET_PG_REPLENISH_COUNT)" \
 		--seed-start "$(SCENARIONET_PG_REPLENISH_SEED_START)" \
-		--workers 16 \
+		--workers "$(SCENARIONET_PG_WORKERS)" \
 		--report-output "/workspace/data/scenarionet/pg/replenishment/pg_pilot_report_$(SCENARIONET_PG_REPLENISH_SEED_START).json" \
 		$(if $(strip $(SCENARIONET_PG_PROFILE_COUNTS)),--profile-counts-json '$(SCENARIONET_PG_PROFILE_COUNTS)',) \
 		--overwrite
 
 scenarionet-recatalog:
-	SCENARIONET_SKIP_PG=true SCENARIONET_OVERWRITE=true bash scripts/prepare_scenarionet_dataset.sh
+	SCENARIONET_SKIP_PG=true SCENARIONET_SKIP_WAYMO=true bash scripts/prepare_scenarionet_dataset.sh
 
 up:
 	docker compose up -d

@@ -1,27 +1,64 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 started_at="$(date +%s)"
 current_stage="startup"
+current_operation="initializing the ScenarioNet dataset pipeline"
+current_hint="Inspect the detailed error immediately above this summary."
+failed_command=""
+failed_line=""
+failure_reason=""
+
+on_error() {
+  local status=$?
+  failed_line="$1"
+  failed_command="$2"
+  return "$status"
+}
 
 on_exit() {
-  status=$?
+  local status=$?
+  local elapsed
+  trap - ERR EXIT
   elapsed=$(( $(date +%s) - started_at ))
   if [[ "$status" -eq 0 ]]; then
     echo
     echo "ScenarioNet pipeline completed successfully in ${elapsed}s."
   else
     echo >&2
-    echo "ScenarioNet pipeline stopped in stage '${current_stage}' after ${elapsed}s (exit ${status})." >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "ScenarioNet pipeline failure" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "Stage: ${current_stage}" >&2
+    echo "Operation: ${current_operation}" >&2
+    if [[ -n "$failure_reason" ]]; then
+      echo "Reason: ${failure_reason}" >&2
+    fi
+    if [[ -n "$failed_command" ]]; then
+      echo "Failed command: ${failed_command}" >&2
+    fi
+    if [[ -n "$failed_line" ]]; then
+      echo "Script line: ${failed_line}" >&2
+    fi
+    echo "Exit code: ${status}" >&2
+    echo "Elapsed time: ${elapsed}s" >&2
+    echo "Suggested action: ${current_hint}" >&2
+    echo "Retry command: make scenarionet-pipeline" >&2
   fi
 }
+trap 'on_error "${LINENO}" "${BASH_COMMAND}"' ERR
 trap on_exit EXIT
 
 stage() {
   current_stage="$1"
+  current_operation="${2:-$1}"
+  current_hint="${3:-Inspect the detailed error immediately above this summary.}"
+  failed_command=""
+  failed_line=""
+  failure_reason=""
   echo
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "$current_stage"
@@ -36,7 +73,11 @@ if [[ -f .env ]]; then
 fi
 
 die() {
-  echo "scenarionet-pipeline: $*" >&2
+  failure_reason="$1"
+  if [[ $# -ge 2 ]]; then
+    current_hint="$2"
+  fi
+  echo "scenarionet-pipeline: ${failure_reason}" >&2
   exit 2
 }
 
@@ -63,18 +104,27 @@ next_pg_replenishment_seed() {
 pipeline_config="${SCENARIONET_PIPELINE_CONFIG:-/workspace/thesis-metadrive/conf/scenarios/pipeline_v1.yaml}"
 pipeline_service="${SCENARIONET_PIPELINE_SERVICE:-dataset-pipeline}"
 echo "Resolving pipeline configuration (single YAML source): $pipeline_config"
-stage "[0/9] Preparing the CPU-only dataset pipeline container"
+stage \
+  "[0/9] Preparing the CPU-only dataset pipeline container" \
+  "building the CPU-only dataset image and resolving pipeline configuration" \
+  "Inspect the Docker build error above; verify submodules and Docker availability, then retry."
 docker compose --progress quiet build "$pipeline_service"
+if pipeline_values="$(docker compose run --rm -T "$pipeline_service" uv run --no-sync python \
+  -m thesis_rl.cli.scenarios.pipeline_config --config "$pipeline_config")"; then
+  :
+else
+  resolver_status=$?
+  failed_command="docker compose run --rm -T ${pipeline_service} ... pipeline_config --config ${pipeline_config}"
+  failed_line="$LINENO"
+  exit "$resolver_status"
+fi
 while IFS=$'\t' read -r key value; do
   [[ -n "$key" ]] || continue
   printf -v "$key" '%s' "$value"
   # shellcheck disable=SC2163
   # Export the dynamically named configuration key.
   export "$key"
-done < <(
-  docker compose run --rm -T "$pipeline_service" uv run --no-sync python \
-    -m thesis_rl.cli.scenarios.pipeline_config --config "$pipeline_config"
-)
+done <<<"$pipeline_values"
 
 data_root="${SCENARIONET_DATA_ROOT:-/workspace/data/scenarionet}"
 host_data_dir="${HOST_DATA_DIR:-${repo_root}/data}"
@@ -101,7 +151,6 @@ pg_workers="${SCENARIONET_PG_WORKERS:?pipeline YAML must define pg.workers}"
 pg_max_composition_replenishments="${SCENARIONET_PG_MAX_COMPOSITION_REPLENISHMENT_BLOCKS:?pipeline YAML must define pg.max_composition_replenishment_blocks}"
 pg_replenishment_candidate_budget="${SCENARIONET_PG_REPLENISHMENT_CANDIDATE_BUDGET:?pipeline YAML must define pg.replenishment_candidate_budget}"
 split_seed="${SCENARIONET_SPLIT_SEED:?pipeline YAML must define split.seed}"
-overwrite="${SCENARIONET_OVERWRITE:-false}"
 auto_split="${SCENARIONET_AUTO_SPLIT:?pipeline YAML must define split.auto}"
 rulebook_v2_enabled="${SCENARIONET_RULEBOOK_V2_ENABLED:?pipeline YAML must define rulebook_v2.enabled}"
 rulebook_v2_workers="${SCENARIONET_RULEBOOK_V2_WORKERS:?pipeline YAML must define rulebook_v2.workers}"
@@ -138,7 +187,10 @@ if ! is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
   if is_true "$waymo_auto_expand"; then
     stage "[1/9] Deferring Waymo expansion until post-Rulebook feasibility"
   else
-    stage "[1/9] Downloading/converting Waymo training_20s"
+    stage \
+      "[1/9] Downloading/converting Waymo training_20s" \
+      "acquiring and converting the configured Waymo training_20s shards" \
+      "Verify gcloud authentication, bucket access, free disk space, and the Waymo conversion log above."
     make waymo-pipeline
   fi
 else
@@ -151,7 +203,10 @@ if ! is_true "${SCENARIONET_SKIP_PG:-false}"; then
   if [[ -d "$pg_database" && -f "$pg_report" ]] && ! is_true "${SCENARIONET_PG_OVERWRITE:-false}"; then
     stage "[2/9] Reusing existing PG seeds (set SCENARIONET_PG_OVERWRITE=true to regenerate)"
   else
-    stage "[2/9] Generating PG (${pg_count} scenarios per profile)"
+    stage \
+      "[2/9] Generating PG (${pg_count} scenarios per profile)" \
+      "generating the deterministic PG source scenarios" \
+      "Inspect the first PG worker error above. Existing PG data is protected; use SCENARIONET_PG_OVERWRITE=true only for intentional regeneration."
     pg_overwrite=()
     # Reuse existing deterministic PG seeds across feasibility cycles.  A full
     # PG regeneration is explicit because it invalidates incremental catalog and
@@ -173,10 +228,10 @@ else
   stage "[2/9] PG generation skipped: SCENARIONET_SKIP_PG=true"
 fi
 
-catalog_overwrite=()
-if is_true "$overwrite"; then
-  catalog_overwrite+=(--overwrite)
-fi
+# These files are deterministic products of the source databases and pipeline
+# configuration. Refresh them on every feasibility pass so an interrupted run
+# can resume. PG and Waymo source overwrite policies remain separate and explicit.
+derived_overwrite=(--overwrite)
 
 if ! is_true "$rulebook_v2_enabled"; then
   die "ScenarioNet v1.1 requires rulebook_v2.enabled=true"
@@ -214,22 +269,33 @@ else
   )
 fi
 
+current_operation="validating the resolved feasibility and replenishment bounds"
+current_hint="Fix the reported value in the pipeline YAML, then retry."
+[[ "$waymo_batch_shards" =~ ^[1-9][0-9]*$ ]] || die \
+  "Waymo batch size must be a positive integer: ${waymo_batch_shards}" \
+  "Fix waymo.batch_shards in ${pipeline_config}, then retry."
+[[ "$waymo_max_new_shards" =~ ^[0-9]+$ ]] || die \
+  "Waymo new-shard cap must be a non-negative integer: ${waymo_max_new_shards}" \
+  "Fix waymo.max_new_shards in ${pipeline_config}, then retry."
 max_batches=$(( (waymo_max_new_shards + waymo_batch_shards - 1) / waymo_batch_shards ))
 [[ "$pg_max_composition_replenishments" =~ ^[0-9]+$ ]] || die \
   "PG composition replenishment block limit must be a non-negative integer: ${pg_max_composition_replenishments}"
 [[ "$pg_replenishment_candidate_budget" =~ ^[1-9][0-9]*$ ]] || die \
   "PG replenishment candidate budget must be a positive integer: ${pg_replenishment_candidate_budget}"
+failed_command=""
+failed_line=""
+failure_reason=""
 pg_composition_replenishments=0
+waymo_batches_acquired=0
 catalog_args=()
 if is_true "$waymo_auto_expand"; then
   catalog_args+=(--allow-empty-waymo)
 fi
 for ((cycle=0; ; cycle++)); do
-  cycle_overwrite=("${catalog_overwrite[@]}")
-  if (( cycle > 0 )); then
-    cycle_overwrite=(--overwrite)
-  fi
-  stage "[3/9] Building catalog and groups (feasibility cycle $((cycle + 1)))"
+  stage \
+    "[3/9] Building catalog and groups (feasibility cycle $((cycle + 1)))" \
+    "rebuilding the unified candidate catalog and group mapping" \
+    "Inspect the catalog loader error above and verify the PG/Waymo database paths and file permissions. Partial derived artifacts are refreshed automatically on retry."
   docker compose run --rm "$pipeline_service" uv run --no-sync python \
     -m thesis_rl.cli.scenarios.build_catalog \
     --data-root "$data_root" \
@@ -241,9 +307,12 @@ for ((cycle=0; ; cycle++)); do
     --output "$catalog_raw" \
     --groups-output "$groups_path" \
     "${catalog_args[@]}" \
-    "${cycle_overwrite[@]}"
+    "${derived_overwrite[@]}"
 
-  stage "[4/9] Filtering the catalog with Rulebook v2 static eligibility"
+  stage \
+    "[4/9] Filtering the catalog with Rulebook v2 static eligibility" \
+    "evaluating and persisting Rulebook v2 catalog eligibility" \
+    "Inspect the eligibility error above and verify the ego geometry and calibration artifacts. Retry reuses valid cached eligibility records."
   docker compose run --rm "$pipeline_service" uv run --no-sync python \
     -m thesis_rl.cli.scenarios.filter_rulebook_v2_catalog \
     --catalog "$catalog_raw" \
@@ -253,16 +322,22 @@ for ((cycle=0; ; cycle++)); do
     --ego-config "${data_root}/rulebook_v2/ego_config.json" \
     --calibration "${data_root}/rulebook_v2/calibration_b_e.json" \
     --workers "$rulebook_v2_workers" \
-    "${cycle_overwrite[@]}"
+    "${derived_overwrite[@]}"
 
-  stage "[5/9] Building leakage-free train/validation/test splits"
+  stage \
+    "[5/9] Building leakage-free train/validation/test splits" \
+    "selecting the leakage-free balanced train/validation/test population" \
+    "Inspect split_report.json and pg/replenishment_report.json for source, arm, group, or eligibility deficits."
   if docker compose run --rm "$pipeline_service" uv run --no-sync python \
     -m thesis_rl.cli.scenarios.build_splits \
     --catalog "$catalog_rulebook" \
     "${split_args[@]}" \
-    "${cycle_overwrite[@]}"; then
+    "${derived_overwrite[@]}"; then
     break
   fi
+  failed_command=""
+  failed_line=""
+  echo "Split feasibility check did not pass; inspecting the generated deficit reports."
   if ! is_true "$waymo_auto_expand" || is_true "${SCENARIONET_SKIP_WAYMO:-false}"; then
     die "split targets are infeasible after Rulebook filtering; automatic Waymo expansion is disabled"
   fi
@@ -285,7 +360,10 @@ for ((cycle=0; ; cycle++)); do
       if [[ "$pg_profile_counts" == "{}" ]]; then
         echo "PG composition report has no arm-level deficit suitable for targeted replenishment"
       else
-        stage "[2/9] Replenishing PG after compositional split infeasibility"
+        stage \
+          "[2/9] Replenishing PG after compositional split infeasibility" \
+          "generating a bounded targeted PG replenishment block" \
+          "Inspect the PG replenishment worker error and report above; existing source scenarios remain preserved."
         replenishment_seed_start="$(next_pg_replenishment_seed)"
         pg_composition_replenishments=$((pg_composition_replenishments + 1))
         echo "PG targeted compositional replenishment ${pg_composition_replenishments}/${pg_max_composition_replenishments}: budget=${pg_replenishment_candidate_budget}, profiles=${pg_profile_counts}, seed=${replenishment_seed_start}"
@@ -297,7 +375,7 @@ for ((cycle=0; ; cycle++)); do
       fi
     fi
   fi
-  if (( cycle >= max_batches )); then
+  if (( waymo_batches_acquired >= max_batches )); then
     die "Waymo cap of ${waymo_max_new_shards} new shards reached before post-Rulebook split feasibility"
   fi
   status_output="$(docker compose run --rm -T "$pipeline_service" uv run --no-sync python \
@@ -313,40 +391,53 @@ for ((cycle=0; ; cycle++)); do
   if ! grep -q $'^SCENARIONET_WAYMO_POOL_COMPLETE\tfalse$' <<<"$status_output"; then
     die "split targets remain infeasible although Waymo post-Rulebook coverage is sufficient; inspect split_report.json for PG/group constraints"
   fi
-  remaining_cap=$((waymo_max_new_shards - cycle * waymo_batch_shards))
-  stage "[1/9] Acquiring one additional Waymo batch after post-Rulebook deficit"
+  remaining_cap=$((waymo_max_new_shards - waymo_batches_acquired * waymo_batch_shards))
+  stage \
+    "[1/9] Acquiring one additional Waymo batch after post-Rulebook deficit" \
+    "acquiring one bounded Waymo replenishment batch" \
+    "Verify gcloud authentication, bucket access, free disk space, and the Waymo conversion report above."
   WAYMO_REQUIRED_ELIGIBLE="$((waymo_train_target + waymo_validation_target + waymo_test_target))" \
     WAYMO_REQUIRED_ARM_A4_VRU="$waymo_required_a4_vru" \
     WAYMO_BATCH_SHARDS="$waymo_batch_shards" \
     WAYMO_MAX_NEW_SHARDS="$remaining_cap" \
     WAYMO_NUM_WORKERS="$waymo_workers" \
     WAYMO_KEEP_RAW_BATCHES="$waymo_keep_raw_batches" \
-  WAYMO_FORCE_ONE_BATCH=true \
-  WAYMO_SKIP_INITIAL_STATUS=true \
+    WAYMO_FORCE_ONE_BATCH=true \
+    WAYMO_SKIP_INITIAL_STATUS=true \
     make waymo-expand
+  waymo_batches_acquired=$((waymo_batches_acquired + 1))
 done
 
-stage "[6/9] Computing train-only thresholds and assigning arms"
+stage \
+  "[6/9] Computing train-only thresholds and assigning arms" \
+  "computing train-only thresholds and writing the final assigned catalog" \
+  "Inspect the threshold error above and verify that the selected train split is non-empty and contains finite feature values."
 docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.compute_arm_thresholds \
   --catalog "$catalog_split" \
   --output-catalog "$catalog_final" \
   --thresholds "$thresholds_path" \
   --balance-seed "$split_seed" \
-  "${catalog_overwrite[@]}"
+  "${derived_overwrite[@]}"
 
 stage "[7/9] Split arm balance already frozen by balanced_arm_source"
 
-stage "[8/9] Building train/validation/test runtime views"
+stage \
+  "[8/9] Building train/validation/test runtime views" \
+  "building ScenarioNet runtime mappings for all three splits" \
+  "Inspect the runtime mapping error above and verify that every selected catalog file still exists under the configured data root."
 docker compose run --rm "$pipeline_service" uv run --no-sync python \
   -m thesis_rl.cli.scenarios.build_runtime_databases \
   --catalog "$catalog_final" \
   --data-root "$data_root" \
   --runtime-root "${data_root}/runtime" \
   --output-catalog "$catalog_final" \
-  "${catalog_overwrite[@]}"
+  "${derived_overwrite[@]}"
 
-stage "[9/9] Validating mappings and running official ScenarioNet checks"
+stage \
+  "[9/9] Validating mappings and running official ScenarioNet checks" \
+  "validating runtime mappings, simulation loading, and split overlap" \
+  "Inspect the failing split/check above and its validation error directory; repair the reported scenarios, then retry."
 for split in train validation test; do
   runtime_path="${data_root}/runtime/${split}"
   docker compose run --rm "$pipeline_service" uv run --no-sync python \

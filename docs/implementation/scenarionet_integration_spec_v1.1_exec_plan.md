@@ -6,7 +6,7 @@
 - Authoritative specification: `docs/specifications/scenarionet_integration_spec_v1.1.md`, ID `SCENARIONET-INTEGRATION`, version `1.1`, `APPROVED`
 - Status: `IN_PROGRESS`
 - Created: `2026-07-16`
-- Last updated: `2026-07-17`
+- Last updated: `2026-07-18`
 - Branch: current working branch
 - Related ADRs: `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`, `docs/decisions/ADR-007-waymo-batch-throughput.md`, `docs/decisions/ADR-008-pg-compositional-replenishment.md`, `docs/decisions/ADR-009-pg-targeted-replenishment.md`, `docs/decisions/ADR-010-waymo-cap-expansion.md`
 - Owner: thesis repository maintainer
@@ -53,6 +53,7 @@ truncation distinction.
 | `REQ-SN-013` | Record episode/run source×arm statistics and all dataset population, target, selected, and deficit artifacts. | §24 |
 | `REQ-SN-014` | Prevent leakage at the ScenarioNet pipeline boundary; defer the complete observation contract to its own specification. | §§2.1, 27.3, ADR-001 |
 | `REQ-SN-015` | Supply reproducible CLIs, mandatory tests, smoke training, and final artifact reconciliation. | §§25–28 |
+| `REQ-SN-016` | Make the orchestration command restartable after an interrupted stage while preserving explicit overwrite protection for source PG/Waymo data, and report failures with actionable stage context. | §25 |
 
 ## 4. Current Repository Analysis
 
@@ -121,6 +122,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `REQ-SN-007`–`REQ-SN-009` | `AC-SN-007`–`AC-SN-009` | pg, features, catalog, runtime, validation | `TEST-SN-007`–`TEST-SN-009` | Partial/reconcile |
 | `REQ-SN-010`–`REQ-SN-012` | `AC-SN-010`–`AC-SN-012` | envs, provider, ACL runtime | `TEST-SN-010`–`TEST-SN-012` | Partial/reconcile |
 | `REQ-SN-013`–`REQ-SN-015` | `AC-SN-013`–`AC-SN-015` | runtime wiring, CLIs, docs | `TEST-SN-013`–`TEST-SN-015` | Planned |
+| `REQ-SN-016` | `AC-SN-016`–`AC-SN-017` | `scripts/prepare_scenarionet_dataset.sh`, `src/thesis_rl/cli/scenarios/pipeline_config.py`, `Makefile` | `TEST-SN-016`–`TEST-SN-017` | Verified |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -141,6 +143,8 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `AC-SN-013` / `TEST-SN-013` | Unit | Logging/report schema | episode and split fixtures | all source×arm and deficit keys present | `REQ-SN-013` |
 | `AC-SN-014` / `TEST-SN-014` | Unit | Pipeline leakage boundary | forbidden future/config metadata | rejected/not forwarded to policy | `REQ-SN-014` |
 | `AC-SN-015` / `TEST-SN-015` | Smoke | Full small-count CLI pipeline | local fixtures | artifacts and random-policy run succeed | `REQ-SN-015` |
+| `AC-SN-016` / `TEST-SN-016` | Shell integration | Restart after derived artifacts were partially written | mocked pipeline commands that reject existing outputs without `--overwrite` | every catalog, Rulebook, split, threshold, and runtime stage receives derived-artifact overwrite; PG source generation remains separately protected | `REQ-SN-016` |
+| `AC-SN-017` / `TEST-SN-017` | Shell integration | Actionable orchestration failure | deterministic mocked stage failure | nonzero exit plus stage, operation, failed command, remediation, and retry command in the terminal summary | `REQ-SN-016` |
 
 Mandatory commands:
 
@@ -180,6 +184,11 @@ external credentials and must not overwrite frozen data.
   configured bound of two targeted profile replenishment cycles with disjoint
   seed bases. Preserve the full merged audit and split contract. Validate
   full-vs-incremental equivalence and cache invalidation before marking complete.
+- [x] M6 — Completed. Make the top-level dataset command safely restartable
+  after partial derived outputs and add actionable terminal failure summaries.
+  Source PG/Waymo overwrite controls remain unchanged. Validation includes
+  mocked shell integration regressions, syntax, focused pytest, and a real
+  catalog-stage resume; unavailable ShellCheck is recorded below.
 
 ## 11. Progress And Findings Log
 
@@ -427,6 +436,31 @@ external credentials and must not overwrite frozen data.
 Next step: resume the already-started M3 runtime/provider/environment/logging
 reconciliation, then perform the M4 fixture pipeline and smoke validation.
 
+### 2026-07-18 — Restartability and error-reporting audit
+
+- Reproduced the first-cycle catalog collision against the user-owned partial
+  dataset. The root cause was that only feasibility cycles after cycle zero
+  received `--overwrite`, although catalog, eligibility, split, threshold, and
+  runtime files are deterministic derived artifacts.
+- The top-level pipeline now refreshes all derived outputs on every cycle while
+  retaining separate explicit overwrite protection for PG and Waymo source
+  scenarios. A real stage-3 run rebuilt 1,750 PG catalog entries successfully.
+- Added a terminal failure summary with stage, operation, failed command, line,
+  exit code, remediation hint, and retry command while preserving the detailed
+  underlying error above it.
+- Corrected the Waymo cap counter so PG-only replenishment cycles no longer
+  consume a Waymo batch slot. Added pre-arithmetic bounds checks and typed YAML
+  validation with argparse errors instead of tracebacks.
+- Moved PG replenishment from the unavailable `dev` image to the existing CPU
+  `dataset-pipeline` service and replaced the hard-coded 16 workers with the
+  YAML-resolved worker count.
+- Corrected `scenarionet-recatalog` to skip both PG and Waymo source mutation;
+  it now matches its documented derived-artifact-only behavior.
+- The real rebuilt catalog contains one expected invalid PG record,
+  `pg:scenarionet_v1:PGMap-1920069`, due to a 0.007 m degenerate SDC route. It
+  remains in the audit catalog and is excluded by the existing hard validity
+  policy; no quality threshold was relaxed.
+
 ## 12. Deviations
 
 No deviations identified.
@@ -444,13 +478,16 @@ No deviations identified.
 | `src/thesis_rl/cli/scenarios/plan_pg_replenishment.py`, `src/thesis_rl/scenarios/pg/replenishment.py` | Added | Deterministic targeted profile allocation from reported PG arm deficits |
 | `src/thesis_rl/cli/scenarios/generate_pg_dataset.py`, `src/thesis_rl/scenarios/pg/report.py` | Modified | Profile-specific PG candidate counts for targeted replenishment |
 | `scripts/{prepare_scenarionet_dataset,expand_waymo_pool}.sh` | Modified | Post-Rulebook bounded Waymo acquisition loop and PG report path |
+| `Makefile` | Modified | Run PG replenishment in the CPU pipeline service with YAML-resolved workers |
+| `docs/setup/scenarionet_waymo_conversion.md` | Modified | Document restart and failure-summary behavior |
+| `src/thesis_rl/cli/scenarios/pipeline_config.py` | Modified | Validate YAML types and ranges before shell orchestration |
 | `src/thesis_rl/scenarios/{features,arms,provider,runtime_database,validation}.py` | Modified/planned reconciliation | Preserved arm taxonomy, strict arm-uniform provider, and runtime behavior |
 | `src/thesis_rl/runtime/wiring/builders.py` | Modified | Aggregates ScenarioNet source×arm runtime matrices across workers |
 | `src/thesis_rl/envs/{factory,thesis_scenario_env}.py` | Modified/planned reconciliation | Strict provider construction, sampling metadata, episode contract, and source×arm counters |
 | `src/thesis_rl/agent/agent.py`, `src/thesis_rl/runtime/loops/{train_loop,eval_loop}.py` | Modified | Preserve and persist per-episode ScenarioNet identity, sampling, and completion metadata |
 | `src/thesis_rl/envs/{thesis_scenario_env,scene_context,scenario_env_factory}.py` | Planned verification/modification | Environment contract |
 | `conf/scenarios/pipeline_v1.yaml`, `conf/env/scenarionet.yaml`, `conf/curriculum/scenario_acl_scenarionet.yaml` | Modified/planned modification | Frozen v1.1 policy and documented strict provider modes |
-| `tests/test_scenario_*.py`, `tests/test_thesis_scenario_env.py`, `tests/test_scenarionet_*.py` | Planned additions | Mandatory acceptance matrix |
+| `tests/test_scenarionet_pipeline.py` | Modified | Restart, failure UX, cap accounting, config validation, and CPU replenishment regressions |
 
 ## 14. Validation Results
 
@@ -495,6 +532,13 @@ No deviations identified.
 | `bash -n scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && shellcheck scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && git diff --check` | PASS | 2026-07-17 | Batch-throughput amendment and host/container guard fixes pass shell and whitespace validation |
 | Focused pytest command | NOT_RUN | 2026-07-16 | Host environment lacks `uv` and `python`; run in provisioned container |
 | Full real-data acquisition | NOT_RUN | 2026-07-16 | Requires credentials and can mutate dataset artifacts |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py tests/test_scenario_catalog.py tests/test_scenario_catalog_build.py tests/test_scenario_runtime_database.py tests/test_rulebook_v2_catalog_eligibility.py` | PASS | 2026-07-18 | 48 passed; covers restart overwrite, actionable failures, independent PG/Waymo counters, source-safe recatalog, config validation, catalog, Rulebook, and runtime regressions |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format --check src/thesis_rl/cli/scenarios/pipeline_config.py tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | Both modified Python files are formatted; focused Ruff check also passed |
+| `bash -n scripts/prepare_scenarionet_dataset.sh` and `git diff --check` | PASS | 2026-07-18 | Shell syntax and patch whitespace are valid |
+| `make config` | PASS | 2026-07-18 | Docker Compose configuration is valid |
+| Real stage-3 `build_catalog --overwrite` on the mounted dataset | PASS | 2026-07-18 | Rebuilt the former collision target with 1,750 PG entries; one degenerate-route record remains correctly marked invalid for downstream exclusion |
+| `shellcheck scripts/prepare_scenarionet_dataset.sh` | NOT_RUN | 2026-07-18 | ShellCheck is unavailable on the host and in the CPU container; the `dev` image cannot build on this ARM host because the configured CUDA PyTorch wheel has no matching platform build |
+| Full `make scenarionet-pipeline` with Waymo acquisition | NOT_RUN | 2026-07-18 | Would start long-running external downloads and mutate the user-owned candidate pool; restart behavior was verified with shell integration tests and the real formerly failing catalog stage |
 
 ## 15. Final Reconciliation
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -8,7 +9,9 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import yaml
 
+from thesis_rl.cli.scenarios.pipeline_config import _validate_payload
 from thesis_rl.envs.factory import _runtime_rulebook_records
 from thesis_rl.scenarios.catalog import ScenarioCatalog, ScenarioCatalogEntry
 from thesis_rl.scenarios.pipeline import (
@@ -24,6 +27,249 @@ from thesis_rl.scenarios.pipeline import (
 )
 from thesis_rl.scenarios.reports import compute_pg_replenishment_report
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
+
+
+_PIPELINE_CONFIG_VALUES = {
+    "SCENARIONET_PG_COUNT": "1",
+    "SCENARIONET_PG_SEED_START": "920000",
+    "SCENARIONET_PG_WORKERS": "1",
+    "SCENARIONET_PG_MAX_COMPOSITION_REPLENISHMENT_BLOCKS": "1",
+    "SCENARIONET_PG_REPLENISHMENT_CANDIDATE_BUDGET": "1",
+    "SCENARIONET_SPLIT_SEED": "0",
+    "SCENARIONET_AUTO_SPLIT": "true",
+    "SCENARIONET_RULEBOOK_V2_ENABLED": "true",
+    "SCENARIONET_RULEBOOK_V2_WORKERS": "1",
+    "SCENARIONET_WAYMO_TRAIN_TARGET": "1",
+    "SCENARIONET_WAYMO_VALIDATION_TARGET": "1",
+    "SCENARIONET_WAYMO_TEST_TARGET": "1",
+    "SCENARIONET_PG_TRAIN_TARGET": "1",
+    "SCENARIONET_PG_VALIDATION_TARGET": "1",
+    "SCENARIONET_PG_TEST_TARGET": "1",
+    "SCENARIONET_CHECK_WORKERS": "1",
+    "SCENARIONET_RUN_SIMULATION_CHECK": "false",
+    "SCENARIONET_WAYMO_AUTO_EXPAND": "true",
+    "SCENARIONET_WAYMO_BATCH_SHARDS": "1",
+    "SCENARIONET_WAYMO_MAX_NEW_SHARDS": "1",
+    "SCENARIONET_WAYMO_WORKERS": "1",
+    "SCENARIONET_WAYMO_KEEP_RAW_BATCHES": "false",
+    "SCENARIONET_WAYMO_REQUIRED_A4_VRU": "0",
+}
+
+
+def _run_mocked_pipeline(
+    tmp_path: Path,
+    *,
+    fail_module: str | None = None,
+    split_failures: int = 0,
+    config_overrides: dict[str, str] | None = None,
+    skip_waymo: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    test_repo = tmp_path / "repo"
+    scripts_dir = test_repo / "scripts"
+    scripts_dir.mkdir(parents=True)
+    pipeline_script = scripts_dir / "prepare_scenarionet_dataset.sh"
+    pipeline_script.write_text(
+        Path("scripts/prepare_scenarionet_dataset.sh").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    host_data_root = tmp_path / "data" / "scenarionet"
+    (host_data_root / "pg" / "database").mkdir(parents=True)
+    pilot = host_data_root / "pg" / "pilot" / "pg_pilot_report.json"
+    pilot.parent.mkdir(parents=True)
+    pilot.write_text("{}\n", encoding="utf-8")
+    replenishment_report = host_data_root / "pg" / "replenishment_report.json"
+    replenishment_report.write_text(
+        json.dumps(
+            {
+                "hard_count_shortfall": 0,
+                "selection_error": (
+                    "runtime split target mismatch for pg/train: requested 1, selected 0"
+                ),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    command_log = tmp_path / "docker-commands.log"
+    make_log = tmp_path / "make-commands.log"
+    split_state = tmp_path / "split-state"
+    (test_repo / ".env").write_text(
+        "\n".join(
+            (
+                f"SCENARIONET_SKIP_WAYMO={'true' if skip_waymo else 'false'}",
+                f"SCENARIONET_HOST_DATA_ROOT={host_data_root}",
+                f"FAKE_DOCKER_LOG={command_log}",
+                f"FAKE_MAKE_LOG={make_log}",
+                f"FAKE_SPLIT_STATE={split_state}",
+                f"MOCK_SPLIT_FAILURES={split_failures}",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    config_values = _PIPELINE_CONFIG_VALUES | (config_overrides or {})
+    config_output = "".join(
+        f"printf '%s\\t%s\\n' '{key}' '{value}'\n" for key, value in config_values.items()
+    )
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'printf \'%s\\n\' "$*" >> "$FAKE_DOCKER_LOG"\n'
+        'if [[ " $* " == *" thesis_rl.cli.scenarios.pipeline_config "* ]]; then\n'
+        f"{config_output}"
+        "  exit 0\n"
+        "fi\n"
+        'if [[ " $* " == *" python -c "* ]]; then\n'
+        "  printf '%s\\t%s\\n' '0' "
+        "'runtime split target mismatch for pg/train: requested 1, selected 0'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [[ " $* " == *" thesis_rl.cli.scenarios.plan_pg_replenishment "* ]]; then\n'
+        "  printf '%s\\n' '{\"P5_complex_mixed\": 1}'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [[ " $* " == *" thesis_rl.cli.scenarios.waymo_pool_status "* ]]; then\n'
+        "  printf '%s\\t%s\\n' 'SCENARIONET_WAYMO_POOL_COMPLETE' 'false'\n"
+        "  exit 0\n"
+        "fi\n"
+        "for module in build_catalog filter_rulebook_v2_catalog build_splits "
+        "compute_arm_thresholds build_runtime_databases; do\n"
+        '  if [[ " $* " == *" thesis_rl.cli.scenarios.${module} "* ]]; then\n'
+        '    if [[ "${FAIL_PIPELINE_MODULE:-}" == "$module" ]]; then\n'
+        '      echo "synthetic ${module} failure" >&2\n'
+        "      exit 17\n"
+        "    fi\n"
+        '    if [[ "$module" == build_splits && "${MOCK_SPLIT_FAILURES:-0}" -gt 0 ]]; then\n'
+        "      split_attempt=0\n"
+        '      [[ ! -f "$FAKE_SPLIT_STATE" ]] || split_attempt=$(<"$FAKE_SPLIT_STATE")\n'
+        "      split_attempt=$((split_attempt + 1))\n"
+        '      printf \'%s\\n\' "$split_attempt" > "$FAKE_SPLIT_STATE"\n'
+        "      if (( split_attempt <= MOCK_SPLIT_FAILURES )); then\n"
+        '        echo "synthetic split infeasibility" >&2\n'
+        "        exit 23\n"
+        "      fi\n"
+        "    fi\n"
+        '    if [[ " $* " != *" --overwrite "* ]]; then\n'
+        '      echo "refusing to overwrite existing ${module} artifact" >&2\n'
+        "      exit 18\n"
+        "    fi\n"
+        "  fi\n"
+        "done\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    fake_make = fake_bin / "make"
+    fake_make.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf '%s max_new_shards=%s\\n' \"$*\" "
+        '"${WAYMO_MAX_NEW_SHARDS:-unset}" >> "$FAKE_MAKE_LOG"\n',
+        encoding="utf-8",
+    )
+    fake_make.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    if fail_module is not None:
+        env["FAIL_PIPELINE_MODULE"] = fail_module
+    return subprocess.run(
+        ["bash", str(pipeline_script)],
+        cwd=test_repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_pipeline_restart_overwrites_only_derived_stage_outputs(tmp_path: Path) -> None:
+    result = _run_mocked_pipeline(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    commands = (tmp_path / "docker-commands.log").read_text(encoding="utf-8").splitlines()
+    for module in (
+        "build_catalog",
+        "filter_rulebook_v2_catalog",
+        "build_splits",
+        "compute_arm_thresholds",
+        "build_runtime_databases",
+    ):
+        invocation = next(line for line in commands if f"thesis_rl.cli.scenarios.{module}" in line)
+        assert "--overwrite" in invocation
+    assert not any("thesis_rl.cli.scenarios.generate_pg_dataset" in line for line in commands)
+
+
+def test_pipeline_failure_prints_actionable_summary(tmp_path: Path) -> None:
+    result = _run_mocked_pipeline(tmp_path, fail_module="build_catalog")
+
+    assert result.returncode == 17
+    assert "ScenarioNet pipeline failure" in result.stderr
+    assert "Stage: [3/9] Building catalog and groups" in result.stderr
+    assert "Operation: rebuilding the unified candidate catalog and group mapping" in result.stderr
+    assert "Failed command:" in result.stderr
+    assert "Suggested action:" in result.stderr
+    assert "Retry command: make scenarionet-pipeline" in result.stderr
+
+
+def test_pg_replenishment_does_not_consume_waymo_batch_cap(tmp_path: Path) -> None:
+    result = _run_mocked_pipeline(
+        tmp_path,
+        split_failures=2,
+        config_overrides={"SCENARIONET_WAYMO_MAX_NEW_SHARDS": "4"},
+        skip_waymo=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    make_commands = (tmp_path / "make-commands.log").read_text(encoding="utf-8")
+    assert "scenarionet-pg-replenish" in make_commands
+    assert "waymo-expand max_new_shards=4" in make_commands
+
+
+def test_pipeline_rejects_zero_waymo_batch_size_before_arithmetic(tmp_path: Path) -> None:
+    result = _run_mocked_pipeline(
+        tmp_path,
+        config_overrides={"SCENARIONET_WAYMO_BATCH_SHARDS": "0"},
+    )
+
+    assert result.returncode == 2
+    assert "Reason: Waymo batch size must be a positive integer: 0" in result.stderr
+    assert "Operation: validating the resolved feasibility" in result.stderr
+    assert "division by 0" not in result.stderr
+
+
+def test_pipeline_config_rejects_invalid_types_and_ranges(tmp_path: Path) -> None:
+    payload = yaml.safe_load(Path("conf/scenarios/pipeline_v1.yaml").read_text(encoding="utf-8"))
+    payload["waymo"]["batch_shards"] = 0
+    with pytest.raises(ValueError, match=r"waymo\.batch_shards must be a positive integer"):
+        _validate_payload(payload)
+
+    payload = yaml.safe_load(Path("conf/scenarios/pipeline_v1.yaml").read_text(encoding="utf-8"))
+    payload["checks"]["simulation"] = "true"
+    invalid_config = tmp_path / "invalid_pipeline.yaml"
+    invalid_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "thesis_rl.cli.scenarios.pipeline_config",
+            "--config",
+            str(invalid_config),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "error: checks.simulation must be a boolean" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_pipeline_pg_report_parser_handles_composition_failure(tmp_path: Path) -> None:
@@ -61,9 +307,14 @@ def test_pipeline_host_data_root_follows_host_data_dir_mount() -> None:
     script = Path("scripts/prepare_scenarionet_dataset.sh").read_text(encoding="utf-8")
 
     assert 'host_data_dir="${HOST_DATA_DIR:-${repo_root}/data}"' in script
-    assert 'host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${host_data_dir%/}/scenarionet}"' in script
+    assert (
+        'host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${host_data_dir%/}/scenarionet}"' in script
+    )
     assert 'host_data_root="${repo_root}/${host_data_root}"' in script
-    assert 'host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${repo_root}/data/scenarionet}"' not in script
+    assert (
+        'host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${repo_root}/data/scenarionet}"'
+        not in script
+    )
 
 
 def test_waymo_scripts_normalize_host_mount_paths() -> None:
@@ -74,6 +325,26 @@ def test_waymo_scripts_normalize_host_mount_paths() -> None:
     assert 'raw_dir="${repo_root}/${raw_dir}"' in prepare_waymo
     assert 'host_data_dir="${repo_root}/${host_data_dir}"' in expand_waymo
     assert 'raw_root="${repo_root}/${raw_root}"' in expand_waymo
+
+
+def test_pg_replenishment_uses_cpu_pipeline_service_and_resolved_workers() -> None:
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+    target = makefile.split("scenarionet-pg-replenish:", maxsplit=1)[1].split(
+        "scenarionet-recatalog:", maxsplit=1
+    )[0]
+
+    assert "docker compose run --rm dataset-pipeline" in target
+    assert '--workers "$(SCENARIONET_PG_WORKERS)"' in target
+    assert "docker compose run --rm dev" not in target
+
+
+def test_recatalog_never_mutates_source_datasets() -> None:
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+    target = makefile.split("scenarionet-recatalog:", maxsplit=1)[1].split("\n\n", maxsplit=1)[0]
+
+    assert "SCENARIONET_SKIP_PG=true" in target
+    assert "SCENARIONET_SKIP_WAYMO=true" in target
+    assert "SCENARIONET_OVERWRITE" not in target
 
 
 def _entry(source: str, index: int) -> ScenarioCatalogEntry:

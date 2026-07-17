@@ -46,6 +46,37 @@ _CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "SCENARIONET_CHECK_WORKERS": ("checks", "workers"),
 }
 
+_BOOLEAN_PATHS = (
+    ("waymo", "auto_expand"),
+    ("waymo", "keep_raw_batches"),
+    ("rulebook_v2", "enabled"),
+    ("split", "auto"),
+    ("checks", "simulation"),
+)
+
+_POSITIVE_INTEGER_PATHS = (
+    ("waymo", "batch_shards"),
+    ("waymo", "workers"),
+    ("pg", "count_per_profile"),
+    ("pg", "workers"),
+    ("pg", "replenishment_candidate_budget"),
+    ("rulebook_v2", "workers"),
+    ("checks", "workers"),
+)
+
+_NON_NEGATIVE_INTEGER_PATHS = (
+    ("waymo", "max_new_shards"),
+    ("waymo", "required_arms", "A4_vru"),
+    ("pg", "seed_start"),
+    ("pg", "max_composition_replenishment_blocks"),
+    ("split", "seed"),
+    *(
+        ("split", "targets", source, split)
+        for source in ("waymo", "pg")
+        for split in ("train", "validation", "test")
+    ),
+)
+
 
 def _lookup(payload: dict[str, Any], path: tuple[str, ...]) -> Any:
     value: Any = payload
@@ -62,13 +93,32 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
+def _validate_payload(payload: dict[str, Any]) -> None:
+    for path in _BOOLEAN_PATHS:
+        value = _lookup(payload, path)
+        if not isinstance(value, bool):
+            raise ValueError(f"{'.'.join(path)} must be a boolean, got {value!r}")
+    for path in _POSITIVE_INTEGER_PATHS:
+        value = _lookup(payload, path)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{'.'.join(path)} must be a positive integer, got {value!r}")
+    for path in _NON_NEGATIVE_INTEGER_PATHS:
+        value = _lookup(payload, path)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{'.'.join(path)} must be a non-negative integer, got {value!r}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
-    payload = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"pipeline config must be a mapping: {args.config}")
+    try:
+        payload = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"pipeline config must be a mapping: {args.config}")
+        _validate_payload(payload)
+    except (KeyError, OSError, UnicodeError, ValueError, yaml.YAMLError) as exc:
+        parser.error(str(exc))
     for env_name, path in _CONFIG_PATHS.items():
         value = _lookup(payload, path)
         print(f"{env_name}\t{_format_value(value)}")

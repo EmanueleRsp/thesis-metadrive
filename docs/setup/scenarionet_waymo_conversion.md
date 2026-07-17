@@ -269,6 +269,16 @@ Dopo aver autenticato `gcloud`, il comando consigliato è:
 make scenarionet-pipeline
 ```
 
+An interrupted pipeline can be restarted with the same command. Catalog,
+Rulebook eligibility, split, threshold, and runtime artifacts are deterministic
+derived outputs and are refreshed automatically on every feasibility pass.
+Waymo and PG source scenarios keep their separate explicit overwrite controls,
+so restarting the command does not regenerate or replace source data.
+
+When a stage fails, the terminal keeps the detailed tool error and appends a
+compact summary with the stage, operation, failed command, remediation hint,
+exit code, and retry command.
+
 Se Waymo e PG sono già preparati e occorre soltanto ricostruire catalogo,
 split, soglie e runtime (per esempio dopo una modifica alla classificazione),
 usare:
