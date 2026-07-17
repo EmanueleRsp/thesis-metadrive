@@ -13,8 +13,11 @@ from gymnasium import spaces
 try:
     from stable_baselines3.common.vec_env.base_vec_env import VecEnv as Sb3VecEnv
 except ModuleNotFoundError:  # pragma: no cover
+
     class Sb3VecEnv:  # type: ignore[no-redef]
-        def __init__(self, num_envs: int, observation_space: spaces.Space, action_space: spaces.Space):
+        def __init__(
+            self, num_envs: int, observation_space: spaces.Space, action_space: spaces.Space
+        ):
             self.num_envs = int(num_envs)
             self.observation_space = observation_space
             self.action_space = action_space
@@ -27,6 +30,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
         def _reset_options(self) -> None:
             self._options = [None for _ in range(self.num_envs)]
+
 
 VecEnvIndices = Union[None, int, Sequence[int], np.ndarray]
 VecEnvObs = Union[np.ndarray, dict[str, np.ndarray], tuple[np.ndarray, ...]]
@@ -111,7 +115,9 @@ def _worker(
                                 if last_reset_seed is None:
                                     auto_reset_seed = int(start)
                                 else:
-                                    auto_reset_seed = _normalize_seed_to_window(last_reset_seed, start, count)
+                                    auto_reset_seed = _normalize_seed_to_window(
+                                        last_reset_seed, start, count
+                                    )
                             auto_reset_seed = _next_seed_in_window(auto_reset_seed, start, count)
                             observation, reset_info = env.reset(seed=auto_reset_seed)
                     else:
@@ -141,8 +147,8 @@ def _worker(
                 base_env = getattr(env, "unwrapped", env)
                 method = getattr(base_env, data[0], None)
                 if not callable(method):
-                    method = getattr(env, data[0])
-                remote.send(method(*data[1], **data[2]))
+                    method = getattr(env, data[0], None)
+                remote.send(method(*data[1], **data[2]) if callable(method) else None)
             elif cmd == "get_attr":
                 remote.send(getattr(env, data))
             elif cmd == "set_attr":
@@ -270,13 +276,17 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         for remote in target_remotes:
             remote.recv()
 
-    def env_method(self, method_name: str, *method_args, indices: VecEnvIndices = None, **method_kwargs) -> List[Any]:
+    def env_method(
+        self, method_name: str, *method_args, indices: VecEnvIndices = None, **method_kwargs
+    ) -> List[Any]:
         target_remotes = self._get_target_remotes(indices)
         for remote in target_remotes:
             remote.send(("env_method", (method_name, method_args, method_kwargs)))
         return [remote.recv() for remote in target_remotes]
 
-    def env_is_wrapped(self, wrapper_class: Type[gym.Wrapper], indices: VecEnvIndices = None) -> List[bool]:
+    def env_is_wrapped(
+        self, wrapper_class: Type[gym.Wrapper], indices: VecEnvIndices = None
+    ) -> List[bool]:
         target_remotes = self._get_target_remotes(indices)
         for remote in target_remotes:
             remote.send(("is_wrapped", wrapper_class))
@@ -298,16 +308,22 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         return [self.remotes[i] for i in self._get_indices(indices)]
 
 
-def _flatten_obs(obs: Union[List[VecEnvObs], Tuple[VecEnvObs, ...]], space: spaces.Space) -> VecEnvObs:
+def _flatten_obs(
+    obs: Union[List[VecEnvObs], Tuple[VecEnvObs, ...]], space: spaces.Space
+) -> VecEnvObs:
     assert isinstance(obs, (list, tuple)), "expected list or tuple of observations per environment"
     assert len(obs) > 0, "need observations from at least one environment"
 
     if isinstance(space, spaces.Dict):
         assert isinstance(space.spaces, OrderedDict), "Dict space must have ordered subspaces"
-        assert isinstance(obs[0], dict), "non-dict observation for environment with Dict observation space"
+        assert isinstance(obs[0], dict), (
+            "non-dict observation for environment with Dict observation space"
+        )
         return OrderedDict([(k, np.stack([o[k] for o in obs])) for k in space.spaces.keys()])
     if isinstance(space, spaces.Tuple):
-        assert isinstance(obs[0], tuple), "non-tuple observation for environment with Tuple observation space"
+        assert isinstance(obs[0], tuple), (
+            "non-tuple observation for environment with Tuple observation space"
+        )
         obs_len = len(space.spaces)
         return tuple(np.stack([o[i] for o in obs]) for i in range(obs_len))
     return np.stack(obs)

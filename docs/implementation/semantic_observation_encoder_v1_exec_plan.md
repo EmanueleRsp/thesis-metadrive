@@ -6,7 +6,7 @@
 - Feature: semantic observation v1.1 and encoder v1.0 reconciliation
 - Status: `IN_PROGRESS`
 - Created: `2026-07-16`
-- Last updated: `2026-07-16`
+- Last updated: `2026-07-17`
 - Branch: `scenarionet-implementation` at `52e1794`
 - Owner: thesis repository maintainer
 - Authoritative specifications:
@@ -129,8 +129,8 @@ variant is introduced by this plan.
 | Requirement | Acceptance criteria | Implementation | Tests | Status |
 |---|---|---|---|---|
 | `OBS-REQ-001` | `AC-OBS-001` | `rulebook/v2/context/map_matching.py`, `rulebook/v2/context/pg_static_adapter.py`, `rulebook/v2/context/waymo_static_adapter.py`, `rulebook/v2/geometry/route.py`, `rulebook/v2/context/static_adapter.py`, route metadata in `scenarios/records.py`, `filter_rulebook_v2_catalog.py`, and `thesis_scenario_env.py` | `tests/test_rulebook_v2_contracts.py`, `tests/test_rulebook_v2_catalog_eligibility.py`, `tests/test_rulebook_v2_pg_adapter.py`, `tests/test_rulebook_v2_waymo_adapter.py`, `tests/test_scenario_records.py`, `tests/test_thesis_scenario_env.py` | Partial: offline assignment persistence, metadata-only adapter consumption, fail-closed polyline construction, and reset publication implemented; custom runtime navigation replacement remains pending. |
-| `OBS-REQ-002` | `AC-OBS-002` | `envs/observations/assigned_route.py`, stacked LiDAR observation, map navigation, noise wrapper | `tests/test_assigned_route_observation.py`, `TEST-OBS-003`--`TEST-OBS-005` | Partial: causal fixed-spacing waypoint primitive implemented; full `StackedLidarStateObservation` and detector/noise wiring remain pending. |
-| `OBS-REQ-003` | `AC-OBS-003` | `src/thesis_rl/contracts/observation_schema.py` | `tests/test_observation_schema_v11.py` | Partial: the unique schema is implemented and verified; the runtime builder remains pending. |
+| `OBS-REQ-002` | `AC-OBS-002` | `envs/observations/assigned_route.py`, `envs/observations/ray_noise.py`, `envs/observations/causal_lidar.py`, `envs/observations/stacked_lidar.py`, `thesis_scenario_env.py`, map navigation | `tests/test_assigned_route_observation.py`, `tests/test_ray_noise.py`, `tests/test_causal_lidar.py`, `tests/test_stacked_lidar_observation.py`, `tests/test_thesis_scenario_env.py`, `TEST-OBS-003`--`TEST-OBS-005` | Partial: causal 22D navigation, single-owner ray-noise, exact 308D frame builder, strict five-frame stack, and pre-first-observation installation implemented; full live sensor smoke validation remains pending. |
+| `OBS-REQ-003` | `AC-OBS-003` | `src/thesis_rl/contracts/observation_schema.py`, `src/thesis_rl/envs/observations/semantic_state_v2.py`, `src/thesis_rl/envs/factory.py` | `tests/test_observation_schema_v11.py`, `tests/test_semantic_state_v2.py` | Partial: schema-owned strict v2 flat adapter now emits/validates `2541`; environment-owned causal batch construction and live installation remain pending. |
 | `OBS-REQ-004` | `AC-OBS-004` | selection/history/context utilities | `TEST-OBS-009`--`TEST-OBS-012` | Planned |
 | `OBS-REQ-005` | `AC-OBS-005` | `src/thesis_rl/contracts/causal_scene_context.py`, `src/thesis_rl/rulebook/v2/wrapper.py` | `tests/test_causal_scene_context.py`, `tests/test_rulebook_v2_causal_context.py` | Partial: immutable boundary and post-commit Rulebook wrapper publication implemented; environment observation lifecycle wiring remains pending. |
 | `OBS-REQ-006` | `AC-OBS-006` | route provenance in catalog records and scenario metadata | `tests/test_scenario_records.py`, `tests/test_rulebook_v2_catalog_eligibility.py` | Partial: route provenance is persisted/logged; full experiment manifest and visual evidence remain pending. |
@@ -207,12 +207,14 @@ completion gate because its baseline is not clean.
 
 ## 10. Milestones
 
-- [ ] **M1 — Schema and causal route/context.** The unique schema and immutable
-  observation-safe context boundary are implemented and focused-tested. Map-based
-  route construction and environment-owned commit lifecycle remain pending.
-- [ ] **M2 — Observation implementations.** Implement semantic v1.1 and
-  stacked LiDAR observations, config, masks, noise, and regression tests.
-  Depends on M1.
+- [ ] **M1 — Schema and causal route/context.** The unique schema, immutable
+  observation-safe context boundary, map-based route construction, and reset
+  route publication are implemented and focused-tested. Environment-owned
+  transition commit lifecycle remains pending.
+- [ ] **M2 — Observation implementations.** Stacked LiDAR, route/noise wiring,
+  and the strict semantic v1.1 flat adapter/config/tests are implemented.
+  The environment-owned semantic batch builder and live semantic installation
+  remain pending. Depends on M1.
 - [ ] **M3 — Encoder contract.** The v1.0 MLP/LQ core, validation, schema-driven
   tokenization, and focused tests are implemented. Full acceptance coverage and
   end-to-end backend routing remain pending.
@@ -286,6 +288,40 @@ completion gate because its baseline is not clean.
   for fixed-spacing local waypoints from the frozen route. Runtime attachment
   to the full MetaDrive LiDAR wrapper and semantic token field mapping remain
   pending.
+- `2026-07-17`: Added `RayNoiseWrapper` with seeded-RNG perturbation,
+  normalized clipping, zero-dropout core defaults, and native-noise rejection
+  for all three ray sensor groups.
+- `2026-07-17`: Added strict `StackedLidarStateObservation` with a 308D frame
+  contract, five-frame oldest-to-current stacking, deterministic first-frame
+  fill, and explicit failure when causal frame wiring is absent. The factory
+  now recognizes the `stacked_lidar_state` observation type; the production
+  frame builder and sensor attachment remain pending.
+- `2026-07-17`: Added `conf/obs/stacked_lidar_state.yaml` with the frozen
+  navigation, detector, and ray-noise ownership settings from OBS-V1.1.
+- `2026-07-17`: Added `CausalLidarFrameBuilder`, assembling the exact 6+22+12+
+  12+16+240 frame and rejecting missing sensor blocks, native noise, shape
+  drift, and out-of-range values. Attaching it to the live MetaDrive
+  observation instance remains pending.
+- `2026-07-17`: `ThesisScenarioEnv._get_reset_return` now installs the causal
+  frame builder on observation instances that expose `set_frame_builder` before
+  MetaDrive collects the first observation. The installation is metadata-only
+  for route assignment and leaves the SDC track untouched.
+- `2026-07-17`: The environment factory now freezes the stacked-LiDAR sensor
+  dimensions and disables native noise for LiDAR, SideDetector, and
+  LaneLineDetector before environment construction.
+- `2026-07-17`: The smoke preset now selects the coherent TD3/LiDAR/identity
+  baseline instead of combining TD3 with the semantic-only LQ encoder. The
+  vector worker also returns `None` for optional methods absent from generic
+  MetaDrive environments, preventing non-ScenarioNet smoke workers from
+  terminating during runtime-stat collection.
+- `2026-07-17`: Added `SemanticStateObservationV2`, a strict schema-owned
+  adapter with the exact `(2541,)` space, structured
+  `SemanticObservationBatch` input, binary-mask/zero-padding validation,
+  finite bounded output checks, and fail-closed behavior when no causal batch
+  builder is installed. Added an explicit `semantic_v2` factory selector and
+  `conf/obs/semantic_v2.yaml`; the legacy `semantic_state` selector remains
+  unchanged for compatibility until the complete environment-owned causal
+  batch builder is available.
 
 ## Validation log
 
@@ -298,7 +334,21 @@ completion gate because its baseline is not clean.
 | 2026-07-17 | `docker compose run --rm dev uv run --no-sync pytest -q tests/test_assigned_route_observation.py tests/test_rulebook_v2_contracts.py` | PASS — 22 passed in 1.97s. |
 | 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/rulebook/v2/geometry/route.py src/thesis_rl/envs/observations/assigned_route.py src/thesis_rl/envs/observations/__init__.py tests/test_assigned_route_observation.py` | PASS — all checks passed. |
 | 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/rulebook/v2/geometry/route.py src/thesis_rl/envs/observations/assigned_route.py src/thesis_rl/envs/observations/__init__.py tests/test_assigned_route_observation.py` | PASS — all files formatted after focused formatting. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_assigned_route_observation.py tests/test_causal_lidar.py` | PASS — 5 passed in 2.83s. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/observations/causal_lidar.py src/thesis_rl/envs/observations/assigned_route.py tests/test_causal_lidar.py` | PASS — all checks passed. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/observations/causal_lidar.py src/thesis_rl/envs/observations/assigned_route.py tests/test_causal_lidar.py` | PASS — all files formatted after focused formatting. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_thesis_scenario_env.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/thesis_scenario_env.py tests/test_thesis_scenario_env.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/thesis_scenario_env.py tests/test_thesis_scenario_env.py` | PASS — 22 passed, Ruff clean, 2 files already formatted. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scenarionet_causal.py tests/test_thesis_scenario_env.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/factory.py src/thesis_rl/envs/thesis_scenario_env.py tests/test_scenarionet_causal.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/factory.py src/thesis_rl/envs/thesis_scenario_env.py tests/test_scenarionet_causal.py` | PASS — 25 passed, Ruff clean, 3 files already formatted. |
+| 2026-07-17 | `make smoke` | PASS — TD3 baseline completed 2,000 training steps, two intermediate evaluations, and final evaluation. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_sb3_extensions.py tests/test_deterministic_subproc_vec_env.py tests/test_thesis_scenario_env.py` | PASS — 35 passed in 3.04s. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/sb3_extensions/builders.py src/thesis_rl/runtime/execution/deterministic_subproc_vec_env.py tests/test_sb3_extensions.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/sb3_extensions/builders.py src/thesis_rl/runtime/execution/deterministic_subproc_vec_env.py tests/test_sb3_extensions.py && git diff --check` | PASS — Ruff clean, 3 files formatted, no whitespace errors. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_causal_lidar.py tests/test_stacked_lidar_observation.py tests/test_assigned_route_observation.py tests/test_ray_noise.py tests/test_scenarionet_causal.py tests/test_thesis_scenario_env.py && git diff --check` | PASS — 35 passed in 3.46s; no whitespace errors. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_causal_lidar.py tests/test_stacked_lidar_observation.py tests/test_assigned_route_observation.py tests/test_ray_noise.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/observations/causal_lidar.py src/thesis_rl/envs/observations/stacked_lidar.py src/thesis_rl/envs/observations/assigned_route.py tests/test_causal_lidar.py tests/test_stacked_lidar_observation.py tests/test_assigned_route_observation.py tests/test_ray_noise.py && git diff --check` | PASS — 10 passed in 3.33s; Ruff clean; no whitespace errors. |
 | 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_assigned_route_observation.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/observations/assigned_route.py src/thesis_rl/envs/observations/__init__.py tests/test_assigned_route_observation.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/observations/assigned_route.py src/thesis_rl/envs/observations/__init__.py tests/test_assigned_route_observation.py` | PASS — 3 passed, Ruff clean, 3 files formatted. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_ray_noise.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/observations/ray_noise.py src/thesis_rl/envs/observations/__init__.py tests/test_ray_noise.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/observations/ray_noise.py src/thesis_rl/envs/observations/__init__.py tests/test_ray_noise.py` | PASS — 3 passed, Ruff clean, 3 files already formatted. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_stacked_lidar_observation.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/observations/stacked_lidar.py src/thesis_rl/envs/observations/__init__.py src/thesis_rl/envs/factory.py tests/test_stacked_lidar_observation.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/observations/stacked_lidar.py src/thesis_rl/envs/observations/__init__.py src/thesis_rl/envs/factory.py tests/test_stacked_lidar_observation.py` | PASS — 2 passed, Ruff clean, files formatted after focused formatting. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_stacked_lidar_observation.py tests/test_assigned_route_observation.py tests/test_ray_noise.py && git diff --check` | PASS — 8 passed in 2.55s; no whitespace errors. |
+| 2026-07-17 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_assigned_route_observation.py tests/test_ray_noise.py tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py tests/test_thesis_scenario_env.py && git diff --check` | PASS — 35 passed in 6.52s; no whitespace errors. |
 | 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/rulebook/v2/context/pg_static_adapter.py src/thesis_rl/rulebook/v2/context/waymo_static_adapter.py tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py` | PASS — all checks passed. |
 | 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/rulebook/v2/context/pg_static_adapter.py src/thesis_rl/rulebook/v2/context/waymo_static_adapter.py tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py` | PASS — all files formatted after focused formatting. |
 | 2026-07-17 | `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/thesis_scenario_env.py src/thesis_rl/rulebook/v2/context/pg_static_adapter.py src/thesis_rl/rulebook/v2/context/waymo_static_adapter.py tests/test_thesis_scenario_env.py tests/test_rulebook_v2_pg_adapter.py tests/test_rulebook_v2_waymo_adapter.py` | PASS — all checks passed. |
@@ -323,7 +373,10 @@ No deviations identified.
 | `src/thesis_rl/contracts/observation_schema.py` | Planned addition | Single v1.1 schema and fingerprint |
 | `src/thesis_rl/contracts/encoder_contract.py` | Planned addition | Shared encoder validation/version contract |
 | `src/thesis_rl/contracts/checkpoint_manifest.py` | Planned addition | Compatibility and generation manifest types |
-| `src/thesis_rl/envs/observations/semantic_state.py` or successor | Planned modification | Semantic v1.1 observation |
+| `src/thesis_rl/envs/observations/semantic_state.py` or successor | Compatibility-preserved legacy implementation | Legacy semantic observation retained until v1.1 causal builder is complete |
+| `src/thesis_rl/envs/observations/semantic_state_v2.py` | Added | Strict schema-owned semantic v1.1 flat adapter |
+| `conf/obs/semantic_v2.yaml` | Added | Explicit v1.1 semantic configuration selector |
+| `tests/test_semantic_state_v2.py` | Added | v1.1 adapter shape, mask, padding, and factory acceptance tests |
 | `src/thesis_rl/envs/observations/stacked_lidar_state.py` | Planned addition | Map-route stacked LiDAR observation |
 | `src/thesis_rl/envs/` context/environment wiring | Planned modification | Causal context lifecycle and route installation |
 | `src/thesis_rl/agent/planners/encoders/` | Planned modification | MLP/LQ v1.0 implementation |
@@ -346,14 +399,19 @@ No deviations identified.
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_causal_context.py tests/test_causal_scene_context.py tests/test_rulebook_v2_wrapper.py` | `PASS` | `2026-07-16` | 5 passed in 1.90s after the causal-context publication change. |
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_catalog_eligibility.py tests/test_scenario_records.py tests/test_scenario_catalog.py tests/test_thesis_scenario_env.py tests/test_rulebook_v2_contracts.py` | `PASS` | `2026-07-17` | 55 passed in 5.11s. |
 | `git diff --check` | `PASS` | `2026-07-16` | Final focused diff has no whitespace errors. |
-| `make smoke` | `NOT_RUN` | `2026-07-16` | Not applicable yet: M2 and M4 are incomplete, so the nine-combination smoke matrix cannot satisfy the approved contract. |
+| `make smoke` | `PASS` | `2026-07-17` | TD3/LiDAR identity baseline completed 2,000 training steps, two intermediate evaluations, and final evaluation. The full nine-combination matrix remains pending until semantic runtime wiring is complete. |
+| `docker compose run --rm dev uv run --no-sync ruff format src/thesis_rl/envs/observations/semantic_state_v2.py tests/test_semantic_state_v2.py && docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_semantic_state_v2.py tests/test_observation_schema_v11.py && docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/observations/semantic_state_v2.py src/thesis_rl/envs/observations/__init__.py src/thesis_rl/envs/factory.py tests/test_semantic_state_v2.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/observations/semantic_state_v2.py src/thesis_rl/envs/observations/__init__.py src/thesis_rl/envs/factory.py tests/test_semantic_state_v2.py && git diff --check` | `PASS` | `2026-07-17` | 9 passed; Ruff clean; 4 files formatted; no whitespace errors. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_semantic_state_v2.py tests/test_observation_schema_v11.py tests/test_encoders_v10.py tests/test_semantic_state_observation.py tests/test_scenarionet_causal.py tests/test_thesis_scenario_env.py` | `PASS` | `2026-07-17` | 42 passed in 3.09s; new strict adapter and legacy compatibility regressions pass together. |
+| `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/envs/factory.py src/thesis_rl/envs/observations/semantic_state_v2.py tests/test_semantic_state_v2.py && docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/envs/factory.py src/thesis_rl/envs/observations/semantic_state_v2.py tests/test_semantic_state_v2.py && git diff --check` | `PASS` | `2026-07-17` | Ruff clean, 3 files formatted, no whitespace errors. |
 
 ## 15. Final Reconciliation
 
 `OBS-REQ-003`, `OBS-REQ-005`, and `ENC-REQ-003` are `PARTIAL`; `ENC-REQ-001`
-and `ENC-REQ-002` are `IMPLEMENTED` and focused-`VERIFIED`. All remaining
+and `ENC-REQ-002` are `IMPLEMENTED` and focused-`VERIFIED`. `OBS-REQ-003` now
+has a strict schema-owned `(2541,)` runtime adapter and focused tests, but its
+causal batch builder and live environment installation are still pending. All remaining
 requirements remain `NOT_IMPLEMENTED` or `NOT_VERIFIED`. In particular,
-assigned-route runtime consumption, the semantic and LiDAR runtime observations,
+full sensor smoke validation, the semantic runtime observation,
 causal transition commit wiring, checkpoint generation publication/load, visual
 diagnostics, and the nine-case smoke matrix remain required work. No
 experimental use is authorized from this plan yet. The approved specifications

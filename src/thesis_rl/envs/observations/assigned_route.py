@@ -51,17 +51,23 @@ class MapRouteNavigationObservation22:
 
     waypoint_adapter: AssignedRouteWaypointAdapter
     lateral_scale_m: float = 4.0
+    waypoint_scale_m: float = 50.0
 
     OUTPUT_DIM = 22
 
     def __post_init__(self) -> None:
         if self.waypoint_adapter.num_waypoints != 10:
             raise ValueError("MapRouteNavigationObservation22 requires ten waypoints")
-        if not isfinite(self.lateral_scale_m) or self.lateral_scale_m <= 0.0:
-            raise ValueError("Route lateral scale must be positive and finite")
+        if (
+            not isfinite(self.lateral_scale_m)
+            or self.lateral_scale_m <= 0.0
+            or not isfinite(self.waypoint_scale_m)
+            or self.waypoint_scale_m <= 0.0
+        ):
+            raise ValueError("Route scales must be positive and finite")
 
     def observe(self, vehicle: object) -> np.ndarray:
-        waypoints = self.waypoint_adapter.observe(vehicle)
+        waypoints = self.waypoint_adapter.observe(vehicle) / self.waypoint_scale_m
         position = np.asarray(getattr(vehicle, "position"), dtype=float).reshape(-1)
         projection = self.waypoint_adapter.route.project(
             (float(position[0]), float(position[1])),

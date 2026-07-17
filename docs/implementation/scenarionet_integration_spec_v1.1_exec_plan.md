@@ -163,7 +163,7 @@ external credentials and must not overwrite frozen data.
 - [x] M2 — Completed. Implemented strict grouped `balanced_arm_source` selection and bounded acquisition/PG replenishment interfaces. The selector enforces per-split source and arm capacity, uses exhaustive exact search for small grouped fixtures (≤18 groups), and uses a deterministic transportation-based constructive solver for the normal large singleton-group population. The shell pipeline repeats catalog → Rulebook → split feasibility and acquires at most one forced 16-shard batch per cycle under the cumulative 128-shard cap. `build_splits` now writes a PG replenishment report on both success and selection failure, separating a true filtered-PG count shortage from joint Waymo/group infeasibility. Validates the implemented portions of `TEST-SN-002`–`008`.
 - [x] M3 — Completed implementation reconciliation for runtime views, providers, ACL six-arm interface, environment behavior, and logging. The environment factory rejects an audit or legacy catalog containing any valid/warning record without `rulebook_eligible=true`; provider construction and runtime mapping use only this checked population. The provider layer supports strict uniform-by-arm sampling with explicit one-sided source-cell fallback and carries sampling metadata into reset and terminal-step info. Runtime aggregation records reset/step/episode matrices by `source × arm`, and evaluation CSVs persist ScenarioNet identity, sampling, and completion fields. The real runtime-database/vector smoke remains M4 because it requires a prepared external fixture. Validates the implemented portions of `TEST-SN-009`–`014`.
 - [ ] M4 — In progress. The user-approved 16-worker Rulebook rebuild completed and published 5,179 eligible records, but only 1,647 are PG while the final target requires 1,750. Final split construction therefore requires an approved PG replenishment decision. The vectorized smoke now collects and reaches its intended stale-runtime-fixture skip after the import-cycle fix. Documentation reconciliation and non-mutating final audit remain pending. Validates `TEST-SN-015` and mandatory checks.
-- [ ] M5 — In progress. Introduce correctness-preserving incremental feasibility cycles: reuse deterministic PG seeds unless explicit PG overwrite is requested; skip duplicate full Waymo status scans when the caller already validated the catalog deficit; and cache Rulebook eligibility by scenario UID, payload fingerprint, geometry hash, and calibration hash while preserving the full merged audit and split contract. Validate full-vs-incremental equivalence and cache invalidation before marking complete.
+- [ ] M5 — In progress. Introduce correctness-preserving incremental feasibility cycles: reuse deterministic PG seeds unless explicit PG overwrite is requested; skip duplicate full Waymo status scans when the caller already validated the catalog deficit; cache Rulebook eligibility by scenario UID, payload fingerprint, geometry hash, and calibration hash; and provide the approved complete-profile PG replenishment target at seed start `5920000`. Preserve the full merged audit and split contract. Validate full-vs-incremental equivalence and cache invalidation before marking complete.
 
 ## 11. Progress And Findings Log
 
@@ -309,6 +309,19 @@ external credentials and must not overwrite frozen data.
   unrelated external download when the PG pool is the blocking source.
 - Focused incremental validation passed: shell syntax, Ruff format/lint, and
   14 Rulebook eligibility/Waymo pool tests.
+- The user approved ADR-005: replenish PG with one complete 350-candidates-per-
+  profile block at seed start `5920000`, persist a separate replenishment report,
+  and retain strict source/split eligibility. `make scenarionet-pg-replenish`
+  now exposes this bounded operation with 16 workers; focused report-output and
+  incremental tests pass (15 tests in the combined focused run). The catalog
+  builder now has an explicit all-PG mode so replenishment seed windows are
+  included without changing the legacy filtered-window default; the broader
+  focused validation passes 21 tests.
+- The first pipeline retry after enabling reuse exposed an unbound state
+  variable in the forced one-batch Waymo path when the redundant initial status
+  scan was skipped. The path now initializes incomplete/unknown state explicitly
+  and passes shell syntax, ShellCheck, and whitespace validation. The failed
+  retry stopped before downloading a shard.
 - `docker compose run --rm dev uv run --no-sync ruff check
   src/thesis_rl/scenarios/pipeline.py src/thesis_rl/scenarios/reports.py
   src/thesis_rl/cli/scenarios/build_splits.py tests/test_scenarionet_pipeline.py`

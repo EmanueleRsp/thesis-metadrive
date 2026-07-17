@@ -9,6 +9,7 @@ from typing import Any, cast
 from thesis_rl.scenarios.bootstrap import collect_local_api_inventory
 from thesis_rl.scenarios.pg.profiles import PG_PROFILES
 from thesis_rl.scenarios.pg.report import run_pg_pilot, write_pg_pilot_report
+from thesis_rl.scenarios.reports import write_json_report
 from thesis_rl.cli.scenarios.ui import make_progress, print_key_value_table, print_panel
 
 
@@ -18,6 +19,11 @@ def main() -> int:
     parser.add_argument("--repo-root", default=".")
     parser.add_argument("--count", type=int, default=20, help="Scenarios per profile.")
     parser.add_argument("--seed-start", type=int, default=0)
+    parser.add_argument(
+        "--report-output",
+        type=Path,
+        help="Optional separate JSON report path; the default is the canonical PG pilot report.",
+    )
     parser.add_argument(
         "--workers",
         type=int,
@@ -63,7 +69,13 @@ def main() -> int:
             exporter_commit=git["metadrive"]["commit"],
             progress_callback=on_progress,
         )
-    report_path = write_pg_pilot_report(report, args.data_root, overwrite=args.overwrite)
+    report_path = (
+        write_json_report(
+            report.to_dict(), args.report_output.expanduser().resolve(), overwrite=args.overwrite
+        )
+        if args.report_output is not None
+        else write_pg_pilot_report(report, args.data_root, overwrite=args.overwrite)
+    )
     style = "green" if report.failed == 0 else "red"
     print_panel(
         "PG generation completed"

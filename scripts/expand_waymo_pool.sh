@@ -143,9 +143,11 @@ log "persistent Waymo converter container is ready"
 
 new_shards=0
 batch_number=0
-while ! is_true "$SCENARIONET_WAYMO_POOL_COMPLETE" || is_true "$force_one_batch"; do
+pool_complete="${SCENARIONET_WAYMO_POOL_COMPLETE:-false}"
+eligible_deficit="${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT:-unknown}"
+while ! is_true "$pool_complete" || is_true "$force_one_batch"; do
   (( new_shards < max_new_shards )) || die \
-    "safety cap reached with ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT} eligible scenarios still missing"
+    "safety cap reached with ${eligible_deficit} eligible scenarios still missing"
   remaining_cap=$((max_new_shards - new_shards))
   current_batch_size="$batch_size"
   (( current_batch_size <= remaining_cap )) || current_batch_size="$remaining_cap"
@@ -153,7 +155,7 @@ while ! is_true "$SCENARIONET_WAYMO_POOL_COMPLETE" || is_true "$force_one_batch"
     'NR >= start && NR < start + count' "$candidate_list" > "$batch_list"
   selected="$(awk 'NF {count++} END {print count+0}' "$batch_list")"
   (( selected > 0 )) || die \
-    "no unseen remote shards remain; eligible deficit is ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
+    "no unseen remote shards remain; eligible deficit is ${eligible_deficit}"
 
   first_name="$(awk 'NR == 1 {print; exit}' "$batch_list")"
   first_name="${first_name##*/}"
@@ -196,6 +198,8 @@ while ! is_true "$SCENARIONET_WAYMO_POOL_COMPLETE" || is_true "$force_one_batch"
     log "batch ${batch_number} complete; deferring full-pool status to the next catalog cycle"
   else
     refresh_status
+    pool_complete="${SCENARIONET_WAYMO_POOL_COMPLETE:-false}"
+    eligible_deficit="${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT:-unknown}"
     log "batch ${batch_number} complete: eligible ${SCENARIONET_WAYMO_ELIGIBLE_COUNT}/${required}; remaining deficit ${SCENARIONET_WAYMO_ELIGIBLE_DEFICIT}"
   fi
   if [[ -n "${WAYMO_REQUIRED_ARM_A4_VRU:-}" ]]; then

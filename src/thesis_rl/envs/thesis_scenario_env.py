@@ -179,6 +179,83 @@ class ThesisScenarioEnv(ScenarioEnv):
         metadata["assigned_route_source"] = getattr(record, "assigned_route_source", None)
 
     @staticmethod
+    def _build_causal_frame_builder(
+        scenario: Mapping[str, Any], record: Any, config: Mapping[str, Any]
+    ) -> Any:
+        from thesis_rl.envs.observations.assigned_route import (
+            AssignedRouteWaypointAdapter,
+            MapRouteNavigationObservation22,
+        )
+        from thesis_rl.envs.observations.causal_lidar import CausalLidarFrameBuilder
+        from thesis_rl.envs.observations.ray_noise import RayNoiseWrapper
+
+        source = str(getattr(record, "source", "")).lower()
+        if source == "pg":
+            from thesis_rl.rulebook.v2.context.pg_static_adapter import (
+                build_pg_static_adapter_result,
+            )
+
+            static_result = build_pg_static_adapter_result(
+                scenario, scenario_uid=str(getattr(record, "scenario_uid"))
+            )
+        elif source == "waymo":
+            from thesis_rl.rulebook.v2.context.waymo_static_adapter import (
+                build_waymo_static_adapter_result,
+            )
+
+            static_result = build_waymo_static_adapter_result(
+                scenario, scenario_uid=str(getattr(record, "scenario_uid"))
+            )
+        else:
+            raise ValueError(f"Unsupported scenario source for causal route: {source!r}")
+        route = static_result.assigned_route_polyline
+        navigation = MapRouteNavigationObservation22(
+            AssignedRouteWaypointAdapter(route, num_waypoints=10, spacing_m=5.0)
+        )
+        observation_cfg = config.get("observation", {})
+        if not isinstance(observation_cfg, Mapping):
+            observation_cfg = {}
+        ray_cfg = observation_cfg.get("ray_noise_wrapper", {})
+        if not isinstance(ray_cfg, Mapping):
+            ray_cfg = {}
+        return CausalLidarFrameBuilder(
+            navigation,
+            RayNoiseWrapper(
+                sigma_normalized=float(ray_cfg.get("sigma_normalized", 0.001)),
+                dropout_prob=float(ray_cfg.get("dropout_prob", 0.0)),
+                enabled=bool(ray_cfg.get("enabled", True)),
+            ),
+        )
+
+    def _install_causal_observation_builder(self) -> None:
+        record = self.current_scenario_record
+        if record is None:
+            return
+        observations = getattr(getattr(self, "agent_manager", None), "observations", {})
+        setters = [
+            setter
+            for setter in (
+                getattr(observation, "set_frame_builder", None)
+                for observation in observations.values()
+            )
+            if callable(setter)
+        ]
+        if not setters:
+            return
+        engine = getattr(self, "engine", None)
+        data_manager = getattr(engine, "data_manager", None)
+        scenario = getattr(data_manager, "current_scenario", None)
+        if not isinstance(scenario, Mapping):
+            raise RuntimeError("Causal observation requires the loaded scenario mapping")
+        builder = self._build_causal_frame_builder(scenario, record, self.config)
+        for setter in setters:
+            setter(builder)
+
+    def _get_reset_return(self, reset_info):
+        self._install_causal_observation_builder()
+        return super()._get_reset_return(reset_info)
+
+    @staticmethod
     def _recompute_terminated(done_info: Mapping[str, Any]) -> bool:
         return any(
             bool(done_info.get(key, False))

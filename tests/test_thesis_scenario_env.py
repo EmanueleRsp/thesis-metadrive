@@ -139,6 +139,72 @@ def test_reset_injects_frozen_route_metadata_without_inspecting_track() -> None:
     assert env.engine.data_manager.current_scenario["tracks"] == "sentinel"
 
 
+def test_causal_builder_is_built_from_persisted_route_metadata() -> None:
+    scenario = {
+        "metadata": {
+            "sdc_id": "ego",
+            "assigned_route_lane_ids": ["lane-a"],
+            "assigned_route_source": "waymo_sdc_offline_task_annotation",
+        },
+        "tracks": {
+            "ego": {
+                "state": {
+                    "position": [[1000.0, 1000.0, 0.0]],
+                    "heading": [3.14],
+                    "valid": [True],
+                }
+            }
+        },
+        "map_features": {
+            "lane-a": {
+                "type": "LANE_SURFACE_STREET",
+                "polyline": [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
+                "width": [3.5, 3.5],
+            }
+        },
+    }
+    record = SimpleNamespace(source="waymo", scenario_uid="builder-route")
+
+    builder = thesis_env_module.ThesisScenarioEnv._build_causal_frame_builder(scenario, record, {})
+
+    assert builder.route_navigation.OUTPUT_DIM == 22
+    assert builder.route_navigation.waypoint_adapter.route.length_m == 100.0
+
+
+def test_causal_builder_is_installed_only_on_observations_that_request_it() -> None:
+    observation = SimpleNamespace(builder=None)
+    observation.set_frame_builder = lambda builder: setattr(observation, "builder", builder)
+    env = SimpleNamespace(
+        current_scenario_record=SimpleNamespace(source="waymo", scenario_uid="builder-route"),
+        config={},
+        agent_manager=SimpleNamespace(observations={"agent": observation}),
+        engine=SimpleNamespace(
+            data_manager=SimpleNamespace(
+                current_scenario={
+                    "metadata": {
+                        "assigned_route_lane_ids": ["lane-a"],
+                        "assigned_route_source": "waymo_sdc_offline_task_annotation",
+                    },
+                    "map_features": {
+                        "lane-a": {
+                            "type": "LANE_SURFACE_STREET",
+                            "polyline": [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
+                            "width": [3.5, 3.5],
+                        }
+                    },
+                }
+            )
+        ),
+    )
+    env._build_causal_frame_builder = (
+        thesis_env_module.ThesisScenarioEnv._build_causal_frame_builder
+    )
+
+    thesis_env_module.ThesisScenarioEnv._install_causal_observation_builder(env)
+
+    assert observation.builder is not None
+
+
 def test_thesis_reward_suppresses_native_short_route_bonus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

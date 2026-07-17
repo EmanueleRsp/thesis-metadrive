@@ -43,8 +43,46 @@ def _configure_agent_observation(
     """Mutate env_cfg to install a selected observation class/config."""
     obs_type = str(observation_cfg.get("type", "lidar_state")).strip().lower()
 
+    if obs_type in {
+        "stacked_lidar",
+        "stacked_lidar_state",
+        "stackedlidarstateobservation",
+    }:
+        from thesis_rl.envs.observations.stacked_lidar import StackedLidarStateObservation
+
+        env_cfg["agent_observation"] = StackedLidarStateObservation
+        vehicle_cfg = env_cfg.setdefault("vehicle_config", {})
+        lidar_cfg = vehicle_cfg.setdefault("lidar", {})
+        lidar_cfg.update(
+            {
+                "num_lasers": 240,
+                "distance": 50.0,
+                "num_others": 4,
+                "add_others_navi": False,
+                "gaussian_noise": 0.0,
+                "dropout_prob": 0.0,
+            }
+        )
+        for detector_name in ("side_detector", "lane_line_detector"):
+            detector_cfg = vehicle_cfg.setdefault(detector_name, {})
+            detector_cfg.update(
+                {
+                    "num_lasers": 12,
+                    "distance": 50.0,
+                    "gaussian_noise": 0.0,
+                    "dropout_prob": 0.0,
+                }
+            )
+        return
+
     if obs_type in {"lidar", "lidar_state", "lidarstateobservation"}:
         # MetaDrive default when `agent_observation` is unset and image_observation=False.
+        return
+
+    if obs_type in {"semantic_v2", "semanticstateobservationv2"}:
+        from thesis_rl.envs.observations.semantic_state_v2 import SemanticStateObservationV2
+
+        env_cfg["agent_observation"] = SemanticStateObservationV2
         return
 
     if obs_type in {"semantic", "semantic_state", "semanticstateobservation"}:
@@ -80,7 +118,8 @@ def _configure_agent_observation(
         return
 
     raise ValueError(
-        f"Unsupported observation type '{obs_type}'. Supported values: lidar_state, semantic_state"
+        f"Unsupported observation type '{obs_type}'. Supported values: lidar_state, "
+        "stacked_lidar_state, semantic_state, semantic_v2"
     )
 
 

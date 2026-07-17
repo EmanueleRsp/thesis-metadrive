@@ -1,0 +1,19 @@
+name: semantic_v2
+type: semantic_v2
+
+history_length: 5
+causal_track_cache_length: 5
+route_tokens: 10
+dynamic_tokens: 16
+dynamic_conflict_reserved_slots: 8
+dynamic_context_reserved_slots: 8
+static_tokens: 8
+traffic_control_tokens: 8
+interaction_tokens: 8
+
+dynamic_radius_m: 50.0
+static_radius_m: 50.0
+control_radius_m: 80.0
+interaction_prediction_horizon_s: 3.0
+
+disable_lidar_sensors: true

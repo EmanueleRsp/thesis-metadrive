@@ -30,6 +30,11 @@ def main() -> int:
     parser.add_argument("--pg-seed-start", type=int)
     parser.add_argument("--pg-count", type=int)
     parser.add_argument(
+        "--pg-include-all",
+        action="store_true",
+        help="Include every exported PG seed instead of only the configured seed window.",
+    )
+    parser.add_argument(
         "--waymo-workers",
         type=int,
         default=1,
@@ -91,8 +96,8 @@ def main() -> int:
             pg_database,
             data_root=paths.root,
             split="train",
-            seed_start=args.pg_seed_start,
-            count_per_profile=args.pg_count,
+            seed_start=None if args.pg_include_all else args.pg_seed_start,
+            count_per_profile=None if args.pg_include_all else args.pg_count,
             workers=args.pg_workers,
             progress_callback=update_pg,
         )

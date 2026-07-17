@@ -64,6 +64,7 @@ done < <(
 )
 
 data_root="${SCENARIONET_DATA_ROOT:-/workspace/data/scenarionet}"
+host_data_root="${SCENARIONET_HOST_DATA_ROOT:-${repo_root}/data/scenarionet}"
 catalog_raw="${SCENARIONET_RAW_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_raw.parquet}"
 catalog_rulebook="${SCENARIONET_RULEBOOK_V2_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_rulebook_v2.parquet}"
 catalog_split="${SCENARIONET_SPLIT_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_split.parquet}"
@@ -119,8 +120,8 @@ else
 fi
 
 if ! is_true "${SCENARIONET_SKIP_PG:-false}"; then
-  pg_database="${data_root}/pg/database"
-  pg_report="${data_root}/pg/pilot/pg_pilot_report.json"
+  pg_database="${host_data_root}/pg/database"
+  pg_report="${host_data_root}/pg/pilot/pg_pilot_report.json"
   if [[ -d "$pg_database" && -f "$pg_report" ]] && ! is_true "${SCENARIONET_PG_OVERWRITE:-false}"; then
     stage "[2/9] Reusing existing PG seeds (set SCENARIONET_PG_OVERWRITE=true to regenerate)"
   else
@@ -203,6 +204,7 @@ for ((cycle=0; ; cycle++)); do
     --data-root "$data_root" \
     --pg-seed-start "$pg_seed_start" \
     --pg-count "$pg_count" \
+    --pg-include-all \
     --waymo-workers "$waymo_workers" \
     --pg-workers "$pg_workers" \
     --output "$catalog_raw" \

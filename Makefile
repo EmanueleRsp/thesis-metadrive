@@ -1,4 +1,4 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu config config-gpu rulebook-v2-init rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog scenarionet-pg-replenish up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu config config-gpu rulebook-v2-init rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
 
 PYTHON_QUALITY_PATHS ?= src tests scripts
 
@@ -13,6 +13,8 @@ RULEBOOK_V2_RAW_CATALOG ?= $(RULEBOOK_V2_DATA_ROOT)/catalog/scenario_catalog_raw
 RULEBOOK_V2_FILTERED_CATALOG ?= $(RULEBOOK_V2_DATA_ROOT)/catalog/scenario_catalog_rulebook_v2.parquet
 RULEBOOK_V2_ELIGIBILITY ?= $(RULEBOOK_V2_DATA_ROOT)/rulebook_v2/catalog_eligibility.json
 RULEBOOK_V2_WORKERS ?= 16
+SCENARIONET_PG_REPLENISH_COUNT ?= 350
+SCENARIONET_PG_REPLENISH_SEED_START ?= 5920000
 RULEBOOK_V2_EGO_CONFIG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/ego_config.json
 RULEBOOK_V2_TRIALS_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/braking_trials.json
 RULEBOOK_V2_CALIBRATION_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/calibration_b_e.json
@@ -138,6 +140,16 @@ waymo-expand:
 
 scenarionet-pipeline:
 	bash scripts/prepare_scenarionet_dataset.sh
+
+scenarionet-pg-replenish:
+	docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.scenarios.generate_pg_dataset \
+		--data-root /workspace/data/scenarionet \
+		--repo-root /workspace/thesis-metadrive \
+		--count "$(SCENARIONET_PG_REPLENISH_COUNT)" \
+		--seed-start "$(SCENARIONET_PG_REPLENISH_SEED_START)" \
+		--workers 16 \
+		--report-output "/workspace/data/scenarionet/pg/replenishment/pg_pilot_report_$(SCENARIONET_PG_REPLENISH_SEED_START).json" \
+		--overwrite
 
 scenarionet-recatalog:
 	SCENARIONET_SKIP_PG=true SCENARIONET_OVERWRITE=true bash scripts/prepare_scenarionet_dataset.sh

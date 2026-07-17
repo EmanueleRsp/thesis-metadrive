@@ -2,6 +2,8 @@
 defaults:
   - /config
   - override /run_profile: smoke
+  - override /obs: lidar_state
+  - override /agent/planner/encoder: none
   - override /agent/planner/algorithm: td3_sb3
   - override /reward: monitor_only
   - override /curriculum: disabled

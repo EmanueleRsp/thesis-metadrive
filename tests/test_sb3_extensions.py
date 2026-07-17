@@ -66,9 +66,12 @@ def test_uses_explicit_custom_sb3_policy_detects_non_default_bridge_inputs() -> 
         pass
 
     assert uses_explicit_custom_sb3_policy({"policy": _CustomPolicy}) is True
-    assert uses_explicit_custom_sb3_policy(
-        {"policy": "MlpPolicy", "policy_kwargs": {"features_extractor_class": object}}
-    ) is True
+    assert (
+        uses_explicit_custom_sb3_policy(
+            {"policy": "MlpPolicy", "policy_kwargs": {"features_extractor_class": object}}
+        )
+        is True
+    )
     assert uses_explicit_custom_sb3_policy({"policy": "MlpPolicy"}) is False
 
 
@@ -78,7 +81,12 @@ def test_build_sb3_specs_from_configs_rejects_silently_ignored_thesis_encoder_pa
             "td3_sb3",
             {"policy": "MlpPolicy", "policy_kwargs": {"net_arch": [256, 256]}},
             encoder_cfg={"type": "lq"},
-            decoder_cfg={"name": "mlp_encoded", "type": "mlp", "hidden_layers": [256, 256], "dropout": 0.1},
+            decoder_cfg={
+                "name": "mlp_encoded",
+                "type": "mlp",
+                "hidden_layers": [256, 256],
+                "dropout": 0.1,
+            },
         )
 
 
@@ -104,7 +112,12 @@ def test_build_sb3_specs_from_configs_builds_encoder_feature_extractor_bridge() 
         "sac_sb3",
         {"policy": "MlpPolicy", "policy_kwargs": {}},
         encoder_cfg={"type": "lq", "output_dim": 256},
-        decoder_cfg={"name": "mlp_encoded", "type": "mlp", "hidden_layers": [256, 256], "activation": "relu"},
+        decoder_cfg={
+            "name": "mlp_encoded",
+            "type": "mlp",
+            "hidden_layers": [256, 256],
+            "activation": "relu",
+        },
         obs_cfg={"type": "semantic_state"},
     )
 
@@ -116,12 +129,33 @@ def test_build_sb3_specs_from_configs_builds_encoder_feature_extractor_bridge() 
     assert policy_spec.policy_kwargs["features_extractor_kwargs"]["cfg_encoder"]["type"] == "lq"
 
 
+def test_build_sb3_specs_accepts_canonical_latent_query_encoder_alias() -> None:
+    pytest.importorskip("stable_baselines3")
+
+    policy_spec, _algorithm_spec = build_sb3_specs_from_configs(
+        "td3_sb3",
+        {"policy": "MlpPolicy", "policy_kwargs": {}},
+        encoder_cfg={"type": "latent_query_v2", "output_dim": 256},
+        decoder_cfg={"name": "td3_sb3", "type": "mlp"},
+        obs_cfg={"type": "semantic_state"},
+    )
+
+    assert policy_spec.policy_kwargs["features_extractor_kwargs"]["cfg_encoder"]["type"] == (
+        "latent_query_v2"
+    )
+
+
 def test_build_sb3_specs_from_configs_builds_ppo_decoder_arch_for_both_heads() -> None:
     policy_spec, _algorithm_spec = build_sb3_specs_from_configs(
         "ppo_sb3",
         {"policy": "MlpPolicy", "policy_kwargs": {}},
         encoder_cfg={"type": "none"},
-        decoder_cfg={"name": "mlp_encoded", "type": "mlp", "hidden_layers": [256, 256], "activation": "relu"},
+        decoder_cfg={
+            "name": "mlp_encoded",
+            "type": "mlp",
+            "hidden_layers": [256, 256],
+            "activation": "relu",
+        },
         obs_cfg={"type": "semantic_state"},
     )
 
@@ -131,12 +165,19 @@ def test_build_sb3_specs_from_configs_builds_ppo_decoder_arch_for_both_heads() -
     }
 
 
-def test_build_sb3_specs_from_configs_keeps_algorithm_policy_kwargs_for_same_name_baseline_decoder() -> None:
+def test_build_sb3_specs_from_configs_keeps_algorithm_policy_kwargs_for_same_name_baseline_decoder() -> (
+    None
+):
     policy_spec, _algorithm_spec = build_sb3_specs_from_configs(
         "td3_sb3",
         {"policy": "MlpPolicy", "policy_kwargs": {"net_arch": [256, 256]}},
         encoder_cfg={"type": "none"},
-        decoder_cfg={"name": "td3_sb3", "type": "mlp", "hidden_layers": [400, 300], "activation": "relu"},
+        decoder_cfg={
+            "name": "td3_sb3",
+            "type": "mlp",
+            "hidden_layers": [400, 300],
+            "activation": "relu",
+        },
         obs_cfg={"type": "lidar_state"},
     )
 

@@ -116,7 +116,7 @@ def test_build_catalog_cli_reports_rich_progress_and_writes_artifacts(
     waymo_database.mkdir(parents=True)
     for path in waymo_source.glob("sd_*.pkl"):
         shutil.copy2(path, waymo_database / path.name)
-    pg_database = _write_pg_database(tmp_path)
+    pg_database = _write_pg_database(tmp_path, seeds=(1, 2, 3))
     output = tmp_path / "catalog" / "raw.parquet"
     groups = tmp_path / "splits" / "groups.json"
     report = tmp_path / "catalog" / "report.json"
@@ -134,6 +134,11 @@ def test_build_catalog_cli_reports_rich_progress_and_writes_artifacts(
             "2",
             "--pg-workers",
             "2",
+            "--pg-seed-start",
+            "1",
+            "--pg-count",
+            "2",
+            "--pg-include-all",
             "--output",
             str(output),
             "--groups-output",
@@ -152,7 +157,7 @@ def test_build_catalog_cli_reports_rich_progress_and_writes_artifacts(
     assert "Loading PG catalog entries" in captured.err
     assert output.is_file()
     assert groups.is_file()
-    assert json.loads(report.read_text(encoding="utf-8"))["total"] == 5
+    assert json.loads(report.read_text(encoding="utf-8"))["total"] == 6
 
 
 def test_build_catalog_cli_allows_empty_waymo_candidate_pool(
