@@ -77,7 +77,7 @@ root.
 
 | Feature | Specification | ExecPlan | Reported status | Last document update |
 |---|---|---|---|---|
-| Rulebook v2 | `specifications/rulebook_v4.7_specification.md` | `implementation/rulebook_v2_implementation_plan.md` | `IN_PROGRESS` | 2026-07-17 |
+| Rulebook v2 | `specifications/rulebook_v4.7_specification.md` | `implementation/rulebook_v2_implementation_plan.md` | `COMPLETED; final reconciliation before VERIFIED` | 2026-07-17 |
 | Rulebook v2 catalog filter parallelization | Rulebook v2 §15.11; ScenarioNet v1 §17/§24 | `implementation/rulebook_v2_catalog_filter_parallelization_exec_plan.md` | `IN_PROGRESS` | 2026-07-16 |
 | ScenarioNet catalog build parallelization | Historical ScenarioNet v1 | `implementation/scenarionet_catalog_build_parallelization_exec_plan.md` | `IMPLEMENTED`; reconciliation under v1.1 pending | 2026-07-16 |
 | ScenarioNet pipeline integrity and restructure v2 | Historical ScenarioNet v1 | `implementation/scenarionet_pipeline_restructure_v2_exec_plan.md` | `SUPERSEDED` by v1.1 planning | 2026-07-16 |

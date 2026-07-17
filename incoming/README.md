@@ -20,6 +20,11 @@ An uploaded filename, date, or version does not establish authority. Codex shoul
 preserve the uploaded source until the destination and content have been
 verified, then remove the processed duplicate from this directory.
 
+When an uploaded document remains useful for provenance but is no longer an
+active handoff, keep it under `incoming/archive/` rather than the top-level
+incoming queue. Archived documents are historical references, not
+implementation authority and not pending uploads.
+
 For a specification named `*_UNDER_REVIEW.md`, Codex must read and review the
 complete document, report material gaps, and request explicit user approval. The
 upload itself is not approval. Production implementation must not start until the
