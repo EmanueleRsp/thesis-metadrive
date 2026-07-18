@@ -91,6 +91,7 @@ truncation distinction.
 | `DEC-SN-004` | specification clarification | Episode tail | 0 / 50 / later pilot choice | Fixed `+50` | Truncation and bootstrap | Approved; ADR-001 |
 | `DEC-SN-005` | specification clarification | Waymo cap and throughput | unbounded / configured cap | batch 64, 256 new shards | Reproducibility and cost | Approved; ADR-001, ADR-007, ADR-010 |
 | `DEC-SN-006` | implementation detail | Empty acquisition ledger and two-file `awk` boundary | `NR == FNR` / compare `FILENAME` with the first argument | Use `FILENAME == ARGV[1]` so an empty ledger does not hide remote shards | Restartability only; no scientific or public-interface change | Approved by user request on 2026-07-18 |
+| `DEC-SN-007` | implementation detail | ARM64 Waymo image build fails while compiling Fiona because GDAL headers/configuration are absent | pin a prebuilt Fiona wheel / add native GDAL build dependencies | Install `build-essential`, `gdal-bin`, and `libgdal-dev` in the isolated converter image | Converter image build only; no runtime or dataset-policy change | Approved by user request on 2026-07-18 |
 
 No unresolved approval gate exists. Selector decomposition and implementation
 algorithm are private details only if every hard invariant is validated.
@@ -523,6 +524,17 @@ reconciliation, then perform the M4 fixture pipeline and smoke validation.
 - No scientific specification, dataset policy, public interface, dependency,
   or overwrite behavior changed. The user explicitly requested this fix.
 
+### 2026-07-18 — ARM64 Waymo converter build dependency
+
+- A real `waymo-converter` image build on `aarch64` resolved TensorFlow through
+  `tensorflow-cpu-aws==2.11.0` but failed while preparing the ARM64 source
+  distribution for `fiona`, with no `gdal-config` available.
+- The isolated image now installs the GDAL development/runtime tools and a
+  compiler toolchain before Python dependency resolution.
+- Added a source regression requiring these native packages to remain in the
+  Waymo image definition. The image build itself is the acceptance check for
+  the native toolchain and Fiona compilation.
+
 ## 12. Deviations
 
 No deviations identified.
@@ -552,6 +564,7 @@ No deviations identified.
 | `src/thesis_rl/envs/{thesis_scenario_env,scene_context,scenario_env_factory}.py` | Planned verification/modification | Environment contract |
 | `conf/scenarios/pipeline_v1.yaml`, `conf/env/scenarionet.yaml`, `conf/curriculum/scenario_acl_scenarionet.yaml` | Modified/planned modification | Frozen v1.1 policy and documented strict provider modes |
 | `scripts/expand_waymo_pool.sh` | Modified | Fix empty-ledger remote-shard candidate discovery |
+| `Dockerfile.waymo` | Modified | Provide native GDAL/compiler prerequisites for ARM64 Fiona build |
 | `tests/test_scenarionet_pipeline.py` | Modified | Restart, failure UX, cap accounting, config validation, CPU replenishment, and empty-ledger regressions |
 | `tests/test_scenario_catalog_build.py` | Modified | Existing-empty Waymo database regression |
 
@@ -618,6 +631,9 @@ No deviations identified.
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | 34 passed |
 | `bash -n scripts/expand_waymo_pool.sh scripts/prepare_scenarionet_dataset.sh && git diff --check` | PASS | 2026-07-18 | Shell syntax and patch whitespace pass after the empty-ledger fix |
 | `python -m pytest -q tests/test_scenarionet_pipeline.py -k 'waymo_expansion'` on host | FAIL | 2026-07-18 | Host Python lacks `omegaconf`; equivalent container test passed with 2 tests |
+| `docker compose --progress plain -f compose.yaml -f compose.waymo.yaml --profile waymo build waymo-converter` | PASS | 2026-07-18 | ARM64 image built; Fiona 1.10.1 compiled with GDAL, and the Dockerfile import check passed for TensorFlow 2.11.0, protobuf 3.20.3, and ScenarioNet |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py -k 'waymo_converter_image or waymo_expansion'` | PASS | 2026-07-18 | 3 passed; GDAL build-dependency guard plus Waymo acquisition regressions |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format --check tests/test_scenarionet_pipeline.py && docker compose run --rm -T dataset-pipeline uv run --no-sync ruff check tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | Modified test is formatted and lint-clean |
 
 ## 15. Final Reconciliation
 
@@ -629,6 +645,10 @@ Bug-fix reconciliation for `REQ-SN-006`/`REQ-SN-016`: `IMPLEMENTED` and
 `VERIFIED` for the empty-ledger candidate-discovery path. The complete v1.1
 pipeline remains `IN_PROGRESS`; full real-data acquisition and end-to-end smoke
 validation were not run as part of this focused fix.
+
+Converter-build reconciliation: `IMPLEMENTED` and `VERIFIED` for the ARM64
+GDAL/Fiona prerequisite path. The actual Waymo batch download/conversion was
+not started after the successful image build.
 
 Known limitations: no authoritative semantic-observation specification; no
 current final v1.1 dataset artifact; external Waymo acquisition is unavailable

@@ -14,7 +14,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 WORKDIR /workspace/thesis-metadrive
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        gdal-bin \
+        libgdal-dev \
+        libgl1 \
+        libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY third_party/metadrive /workspace/thesis-metadrive/third_party/metadrive

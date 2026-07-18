@@ -367,6 +367,17 @@ def test_waymo_scripts_normalize_host_mount_paths() -> None:
     assert 'raw_root="${repo_root}/${raw_root}"' in expand_waymo
 
 
+def test_waymo_converter_image_installs_gdal_build_dependencies() -> None:
+    dockerfile = Path("Dockerfile.waymo").read_text(encoding="utf-8")
+
+    apt_install = dockerfile.split("RUN apt-get update", maxsplit=1)[1].split(
+        "&& rm -rf /var/lib/apt/lists/*", maxsplit=1
+    )[0]
+    assert "build-essential" in apt_install
+    assert "gdal-bin" in apt_install
+    assert "libgdal-dev" in apt_install
+
+
 def test_waymo_expansion_reconciles_only_finalized_batches() -> None:
     expand_waymo = Path("scripts/expand_waymo_pool.sh").read_text(encoding="utf-8")
 
