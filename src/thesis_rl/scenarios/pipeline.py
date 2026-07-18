@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import replace
 from itertools import permutations
 from math import ceil
@@ -251,6 +251,28 @@ def assign_arm_balanced_splits_to_targets(
     split_totals = _split_totals(targets)
     split_arm_targets = _split_arm_targets(split_totals, seed=seed)
     available_source_arm = _available_source_arm_counts(entries)
+    arm_capacity_deficits = {
+        arm: {
+            "requested": sum(split_arm_targets[split][arm] for split in SPLITS),
+            "available": sum(available_source_arm[source][arm] for source in SOURCES),
+            "available_by_source": {
+                source: available_source_arm[source][arm] for source in SOURCES
+            },
+        }
+        for arm in ARMS
+        if sum(available_source_arm[source][arm] for source in SOURCES)
+        < sum(split_arm_targets[split][arm] for split in SPLITS)
+    }
+    if arm_capacity_deficits:
+        details = "; ".join(
+            f"{arm}: requested={payload['requested']}, "
+            f"available={payload['available']} "
+            f"(waymo={payload['available_by_source']['waymo']}, "
+            f"pg={payload['available_by_source']['pg']}), "
+            f"deficit={payload['requested'] - payload['available']}"
+            for arm, payload in sorted(arm_capacity_deficits.items())
+        )
+        raise ValueError(f"arm/source coverage is infeasible before split assignment: {details}")
     split_source_arm_targets = _split_source_arm_targets(
         split_arm_targets,
         available_source_arm=available_source_arm,
@@ -593,33 +615,99 @@ def _transport_source_arm_quota(
     split_source_targets: Mapping[str, int],
     seed: int,
 ) -> dict[str, dict[str, int]] | None:
-    """Allocate one source's per-arm totals to split capacities exactly."""
+    """Allocate one source quota with exact totals and minimum split drift.
 
-    remaining_arm = {arm: int(arm_totals[arm]) for arm in ARMS}
-    remaining_split = {split: int(split_source_targets[split]) for split in SPLITS}
-    allocations = {split: {arm: 0 for arm in ARMS} for split in SPLITS}
-    ordered_arms = list(ARMS)
-    ordered_splits = list(SPLITS)
-    np.random.default_rng([int(seed), 41]).shuffle(ordered_arms)
-    np.random.default_rng([int(seed), 43]).shuffle(ordered_splits)
-    # The complete arm×split bipartite graph has integral capacities.  Filling
-    # its most constrained vertices first is a deterministic constructive
-    # transportation algorithm; the final row/column checks retain the hard
-    # contract if a future grouping policy changes this premise.
-    for arm in sorted(ordered_arms, key=lambda name: int(arm_totals[name]), reverse=True):
-        for split in sorted(
-            ordered_splits,
-            key=lambda name: remaining_split[name],
-            reverse=True,
-        ):
-            capacity = int(split_arm_targets[split][arm])
-            count = min(remaining_arm[arm], remaining_split[split], capacity)
-            allocations[split][arm] = count
-            remaining_arm[arm] -= count
-            remaining_split[split] -= count
-    if any(remaining_arm.values()) or any(remaining_split.values()):
+    The old largest-capacity-first transport was feasible but could concentrate
+    an arm/source cell in a single split.  This min-cost flow retains exact
+    arm and split quotas while minimizing the sum of absolute deviations from
+    the arm's target split proportions.  Unit-cost edges encode the convex
+    absolute-deviation objective without adding an optimizer dependency.
+    """
+
+    del seed  # Stable graph order is the deterministic tie-breaker.
+    arm_total_sum = sum(int(arm_totals[arm]) for arm in ARMS)
+    split_total_sum = sum(int(split_source_targets[split]) for split in SPLITS)
+    if arm_total_sum != split_total_sum:
         return None
-    return allocations
+
+    source_node = 0
+    arm_nodes = {arm: index + 1 for index, arm in enumerate(ARMS)}
+    split_nodes = {split: len(ARMS) + index + 1 for index, split in enumerate(SPLITS)}
+    sink_node = len(ARMS) + len(SPLITS) + 1
+    graph: list[list[list[int]]] = [[] for _ in range(sink_node + 1)]
+
+    def add_edge(start: int, end: int, capacity: int, cost: int) -> None:
+        forward = [end, len(graph[end]), capacity, cost]
+        reverse = [start, len(graph[start]), 0, -cost]
+        graph[start].append(forward)
+        graph[end].append(reverse)
+
+    for arm in ARMS:
+        add_edge(source_node, arm_nodes[arm], int(arm_totals[arm]), 0)
+    for split in SPLITS:
+        add_edge(split_nodes[split], sink_node, int(split_source_targets[split]), 0)
+
+    allocation_edges: dict[tuple[str, str], list[list[int]]] = {}
+    for arm in ARMS:
+        arm_total = int(arm_totals[arm])
+        if arm_total < 0:
+            return None
+        arm_split_capacity = sum(int(split_arm_targets[split][arm]) for split in SPLITS)
+        if arm_total > arm_split_capacity:
+            return None
+        for split in SPLITS:
+            capacity = int(split_arm_targets[split][arm])
+            if capacity < 0:
+                return None
+            target_numerator = arm_total * capacity
+            edge_units: list[list[int]] = []
+            for selected_count in range(1, capacity + 1):
+                marginal_cost = abs(selected_count * arm_split_capacity - target_numerator) - abs(
+                    (selected_count - 1) * arm_split_capacity - target_numerator
+                )
+                add_edge(arm_nodes[arm], split_nodes[split], 1, marginal_cost)
+                edge_units.append(graph[arm_nodes[arm]][-1])
+            allocation_edges[(split, arm)] = edge_units
+
+    flow = 0
+    while flow < arm_total_sum:
+        distance: list[int | None] = [None] * len(graph)
+        predecessor: list[tuple[int, int] | None] = [None] * len(graph)
+        distance[source_node] = 0
+        queue = deque([source_node])
+        queued = {source_node}
+        while queue:
+            start = queue.popleft()
+            queued.remove(start)
+            assert distance[start] is not None
+            for edge_index, edge in enumerate(graph[start]):
+                end, _, capacity, cost = edge
+                candidate_distance = distance[start] + cost
+                if capacity <= 0 or (
+                    distance[end] is not None and candidate_distance >= distance[end]
+                ):
+                    continue
+                distance[end] = candidate_distance
+                predecessor[end] = (start, edge_index)
+                if end not in queued:
+                    queue.append(end)
+                    queued.add(end)
+        if predecessor[sink_node] is None:
+            return None
+
+        end = sink_node
+        while end != source_node:
+            start, edge_index = predecessor[end]  # type: ignore[misc]
+            edge = graph[start][edge_index]
+            edge[2] -= 1
+            graph[end][edge[1]][2] += 1
+            end = start
+        flow += 1
+
+    return {
+        split: {arm: sum(edge[2] == 0 for edge in allocation_edges[(split, arm)]) for arm in ARMS}
+        for split in SPLITS
+    }
 
 
 def assert_runtime_split_contract(

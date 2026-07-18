@@ -9,7 +9,7 @@
 - **Date:** `2026-07-16`
 - **Supersedes:** `scenarionet_integration_v1_specification.md`, version `1`
 - **Related specifications:** Automatic Curriculum Learning specification; Rulebook specification; Semantic Observation specification
-- **Related ADRs:** `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`, `docs/decisions/ADR-005-incremental-scenarionet-replenishment.md`, `docs/decisions/ADR-007-waymo-batch-throughput.md`, `docs/decisions/ADR-008-pg-compositional-replenishment.md`, `docs/decisions/ADR-009-pg-targeted-replenishment.md`
+- **Related ADRs:** `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`, `docs/decisions/ADR-005-incremental-scenarionet-replenishment.md`, `docs/decisions/ADR-007-waymo-batch-throughput.md`, `docs/decisions/ADR-008-pg-compositional-replenishment.md`, `docs/decisions/ADR-009-pg-targeted-replenishment.md`, `docs/decisions/ADR-012-stratified-source-arm-split-allocation.md`
 - **Authoritative:** `YES`
 - **Scope:** integration of real Waymo/ScenarioNet scenarios and MetaDrive procedural scenarios into a unified training and evaluation pipeline
 - **Main planned training budget:** `1_500_000` environment steps
@@ -657,6 +657,14 @@ Sono vietati:
 
 A4 è Waymo-only nella v1.1. L’eventuale scarsità Waymo in A0 viene coperta da
 PG e registrata, non corretta riclassificando scenari reali.
+
+After selecting the global `source × arm` quotas, their allocation across
+train, validation, and test must preserve the exact split source totals and
+near-uniform arm totals while minimizing the aggregate absolute deviation from
+each quota's proportional split distribution. This deterministic stratification
+prevents a source-arm cell from being concentrated in a single split solely as
+an artifact of the allocator's traversal order. Integral rounding is allowed;
+all hard eligibility and group constraints remain unchanged.
 
 ### 6.7 Acquisizione incrementale Waymo
 
@@ -2569,6 +2577,7 @@ thesis test never used by threshold or profile calibration scripts
 exact total source counts per split
 arm counts differ by at most one per split
 within-arm source balancing is best-effort and deterministic
+selected source-arm quotas are proportionally stratified across train, validation, and test, subject to integral rounding and hard capacities
 A4 × PG is empty and filled by Waymo without relabeling
 no duplicate record is selected
 no quality or reliability filter is relaxed to fill a quota
@@ -2925,6 +2934,7 @@ checked-out ScenarioNet submodule + compatible local MetaDrive
 → exact split source totals + near-uniform A0–A5
 → best-effort 50/50 source balance within each arm
 → explicit same-arm cross-source fill for unavailable cells
+→ deterministic proportional source-arm stratification across primary splits
 → frozen ScenarioCatalog and runtime views
 → UniformScenarioProvider for the default baseline
 → ArmUniformScenarioProvider for the stratified baseline
@@ -3004,7 +3014,7 @@ near-uniform primary train/validation/test splits
 exact overall 50/50 Waymo–PG per primary split
 best-effort 50/50 source allocation inside each arm
 A4 as Waymo-only in the current generator
-balanced_arm_source greedy selection
+balanced_arm_source deterministic minimum-cost split allocation
 optional Waymo-natural diagnostic holdout
 ```
 

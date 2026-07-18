@@ -15,6 +15,7 @@ from thesis_rl.cli.scenarios.pipeline_config import _validate_payload
 from thesis_rl.envs.factory import _runtime_rulebook_records
 from thesis_rl.scenarios.catalog import ScenarioCatalog, ScenarioCatalogEntry
 from thesis_rl.scenarios.pipeline import (
+    _transport_source_arm_quota,
     assign_catalog_runtime_indices,
     assign_arm_balanced_splits_to_targets,
     assign_source_splits,
@@ -341,6 +342,13 @@ def test_pipeline_pg_report_parser_handles_composition_failure(tmp_path: Path) -
     assert result.stdout.rstrip("\n") == (
         "0\truntime split target mismatch for pg/train: requested 1000, selected 550"
     )
+
+
+def test_build_splits_reports_paths_instead_of_dumping_json() -> None:
+    source = Path("src/thesis_rl/cli/scenarios/build_splits.py").read_text(encoding="utf-8")
+
+    assert 'print_key_value_table(\n        "Reports"' in source
+    assert "print(json.dumps(report" not in source
 
 
 def test_pipeline_host_data_root_follows_host_data_dir_mount() -> None:
@@ -950,6 +958,126 @@ def test_arm_balanced_selector_scales_beyond_exact_group_threshold() -> None:
     )
 
 
+def test_arm_balanced_selector_stratifies_each_source_arm_across_splits() -> None:
+    """Keep each selected source/arm quota proportional across primary splits."""
+
+    arms = (
+        "A0_simple_low_traffic",
+        "A1_traffic",
+        "A2_junction",
+        "A3_complex_junction",
+        "A4_vru",
+        "A5_critical_mixed",
+    )
+    waymo_by_arm = (7, 21, 21, 49, 70, 42)
+    entries = []
+    index = 0
+    for arm, waymo_count in zip(arms, waymo_by_arm, strict=True):
+        for source, count in (("waymo", waymo_count), ("pg", 70 - waymo_count)):
+            for _ in range(count):
+                base = _entry(source, index)
+                entries.append(
+                    ScenarioCatalogEntry(
+                        replace(base.record, primary_arm=arm, rulebook_eligible=True),
+                        base.features,
+                    )
+                )
+                index += 1
+
+    targets = {
+        "waymo": {"train": 120, "validation": 30, "test": 60},
+        "pg": {"train": 120, "validation": 30, "test": 60},
+    }
+    selected = assign_arm_balanced_splits_to_targets(tuple(entries), targets=targets, seed=0)
+
+    expected_waymo = {
+        "train": (4, 12, 12, 28, 40, 24),
+        "validation": (1, 3, 3, 7, 10, 6),
+        "test": (2, 6, 6, 14, 20, 12),
+    }
+    for split, expected_counts in expected_waymo.items():
+        actual_counts = tuple(
+            sum(
+                entry.record.split == split
+                and entry.record.source == "waymo"
+                and entry.record.primary_arm == arm
+                for entry in selected
+            )
+            for arm in arms
+        )
+        assert actual_counts == expected_counts
+
+
+def test_source_arm_transport_minimizes_split_stratification_error() -> None:
+    """Avoid concentrating a globally balanced arm quota in one split."""
+
+    allocation = _transport_source_arm_quota(
+        arm_totals={
+            "A0_simple_low_traffic": 35,
+            "A1_traffic": 140,
+            "A2_junction": 141,
+            "A3_complex_junction": 459,
+            "A4_vru": 583,
+            "A5_critical_mixed": 392,
+        },
+        split_arm_targets={
+            "train": {
+                "A0_simple_low_traffic": 333,
+                "A1_traffic": 333,
+                "A2_junction": 334,
+                "A3_complex_junction": 334,
+                "A4_vru": 333,
+                "A5_critical_mixed": 333,
+            },
+            "validation": {
+                "A0_simple_low_traffic": 83,
+                "A1_traffic": 84,
+                "A2_junction": 83,
+                "A3_complex_junction": 83,
+                "A4_vru": 84,
+                "A5_critical_mixed": 83,
+            },
+            "test": {
+                "A0_simple_low_traffic": 167,
+                "A1_traffic": 167,
+                "A2_junction": 167,
+                "A3_complex_junction": 166,
+                "A4_vru": 166,
+                "A5_critical_mixed": 167,
+            },
+        },
+        split_source_targets={"train": 1000, "validation": 250, "test": 500},
+        seed=0,
+    )
+
+    assert allocation == {
+        "train": {
+            "A0_simple_low_traffic": 20,
+            "A1_traffic": 80,
+            "A2_junction": 80,
+            "A3_complex_junction": 263,
+            "A4_vru": 333,
+            "A5_critical_mixed": 224,
+        },
+        "validation": {
+            "A0_simple_low_traffic": 5,
+            "A1_traffic": 20,
+            "A2_junction": 20,
+            "A3_complex_junction": 65,
+            "A4_vru": 84,
+            "A5_critical_mixed": 56,
+        },
+        "test": {
+            "A0_simple_low_traffic": 10,
+            "A1_traffic": 40,
+            "A2_junction": 41,
+            "A3_complex_junction": 131,
+            "A4_vru": 166,
+            "A5_critical_mixed": 112,
+        },
+    }
+
+
 def test_pg_replenishment_report_separates_pg_shortage_from_joint_failure() -> None:
     pg = [
         ScenarioCatalogEntry(
@@ -1018,6 +1146,47 @@ def test_arm_balanced_split_falls_back_to_available_source() -> None:
     assert a4["sources"]["waymo"]["actual"] == 2
     assert a4["sources"]["pg"]["actual"] == 0
     assert a4["source_compensation_from_equal_share"] == {"waymo": 1.0, "pg": -1.0}
+
+
+def test_arm_balanced_split_reports_waymo_arm_capacity_before_source_mismatch() -> None:
+    entries = []
+    index = 0
+    arms = (
+        "A0_simple_low_traffic",
+        "A1_traffic",
+        "A2_junction",
+        "A3_complex_junction",
+        "A4_vru",
+        "A5_critical_mixed",
+    )
+    for arm in arms:
+        for source in ("waymo", "pg"):
+            count = 1 if arm == "A4_vru" and source == "waymo" else 0 if arm == "A4_vru" else 2
+            for _ in range(count):
+                base = _entry(source, index)
+                entries.append(
+                    ScenarioCatalogEntry(
+                        replace(base.record, primary_arm=arm, rulebook_eligible=True),
+                        base.features,
+                    )
+                )
+                index += 1
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"arm/source coverage is infeasible before split assignment: .*"
+            r"A4_vru: requested=2, available=1 .*deficit=1"
+        ),
+    ):
+        assign_arm_balanced_splits_to_targets(
+            tuple(entries),
+            targets={
+                "waymo": {"train": 6, "validation": 0, "test": 0},
+                "pg": {"train": 6, "validation": 0, "test": 0},
+            },
+            seed=0,
+        )
 
 
 def test_arm_balancing_trims_pg_before_waymo() -> None:

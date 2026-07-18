@@ -1,7 +1,7 @@
 """Shared Rich output helpers for ScenarioNet command-line tools.
 
-Human-readable progress is sent to stderr so that the JSON reports printed by
-the scenario CLIs remain machine-readable on stdout.
+Human-readable progress is sent to stderr so that command-line reports can be
+consumed independently from the progress display.
 """
 
 from __future__ import annotations

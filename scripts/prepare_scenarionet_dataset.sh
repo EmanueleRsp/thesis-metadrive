@@ -418,6 +418,11 @@ for ((cycle=0; ; cycle++)); do
         continue
       fi
     fi
+    if [[ -n "$pg_selection_error" ]]; then
+      printf '%s\n' "PG replenishment not selected: split feasibility reported: ${pg_selection_error}"
+      printf '%s\n' \
+        "The failure is being evaluated against the Waymo pool and arm/source capacity before any new PG generation."
+    fi
   fi
   if (( waymo_batches_acquired >= max_batches )); then
     die "Waymo cap of ${waymo_max_new_shards} new shards reached before post-Rulebook split feasibility"

@@ -8,7 +8,7 @@
 - Created: `2026-07-16`
 - Last updated: `2026-07-18`
 - Branch: current working branch
-- Related ADRs: `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`, `docs/decisions/ADR-007-waymo-batch-throughput.md`, `docs/decisions/ADR-008-pg-compositional-replenishment.md`, `docs/decisions/ADR-009-pg-targeted-replenishment.md`, `docs/decisions/ADR-010-waymo-cap-expansion.md`
+- Related ADRs: `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`, `docs/decisions/ADR-007-waymo-batch-throughput.md`, `docs/decisions/ADR-008-pg-compositional-replenishment.md`, `docs/decisions/ADR-009-pg-targeted-replenishment.md`, `docs/decisions/ADR-010-waymo-cap-expansion.md`, `docs/decisions/ADR-012-stratified-source-arm-split-allocation.md`
 - Owner: thesis repository maintainer
 
 ## 2. Objective And Scope
@@ -92,6 +92,7 @@ truncation distinction.
 | `DEC-SN-005` | specification clarification | Waymo cap and throughput | unbounded / configured cap | batch 64, 256 new shards | Reproducibility and cost | Approved; ADR-001, ADR-007, ADR-010 |
 | `DEC-SN-006` | implementation detail | Empty acquisition ledger and two-file `awk` boundary | `NR == FNR` / compare `FILENAME` with the first argument | Use `FILENAME == ARGV[1]` so an empty ledger does not hide remote shards | Restartability only; no scientific or public-interface change | Approved by user request on 2026-07-18 |
 | `DEC-SN-007` | implementation detail | ARM64 Waymo image build fails while compiling Fiona because GDAL headers/configuration are absent | pin a prebuilt Fiona wheel / add native GDAL build dependencies | Install `build-essential`, `gdal-bin`, and `libgdal-dev` in the isolated converter image | Converter image build only; no runtime or dataset-policy change | Approved by user request on 2026-07-18 |
+| `DEC-SN-008` | specification clarification | Greedy arm-to-split transport produces source-arm concentration despite feasible proportional allocations | retain traversal-order greedy / deterministic minimum-cost transport | Select global source-arm quotas first, then minimize proportional split drift subject to all hard totals | Dataset composition and reproducibility | Approved; ADR-012 |
 
 No unresolved approval gate exists. Selector decomposition and implementation
 algorithm are private details only if every hard invariant is validated.
@@ -125,7 +126,9 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `REQ-SN-007`–`REQ-SN-009` | `AC-SN-007`–`AC-SN-009` | pg, features, catalog, runtime, validation | `TEST-SN-007`–`TEST-SN-009` | Partial/reconcile |
 | `REQ-SN-010`–`REQ-SN-012` | `AC-SN-010`–`AC-SN-012` | envs, provider, ACL runtime | `TEST-SN-010`–`TEST-SN-012` | Partial/reconcile |
 | `REQ-SN-013`–`REQ-SN-015` | `AC-SN-013`–`AC-SN-015` | runtime wiring, CLIs, docs | `TEST-SN-013`–`TEST-SN-015` | Planned |
-| `REQ-SN-016` | `AC-SN-016`–`AC-SN-019` | `scripts/prepare_scenarionet_dataset.sh`, `scripts/expand_waymo_pool.sh`, `src/thesis_rl/cli/scenarios/build_catalog.py`, `src/thesis_rl/cli/scenarios/pipeline_config.py`, `Makefile` | `TEST-SN-016`–`TEST-SN-019` | Verified |
+| `REQ-SN-016` | `AC-SN-016`–`AC-SN-020` | `scripts/prepare_scenarionet_dataset.sh`, `scripts/expand_waymo_pool.sh`, `src/thesis_rl/cli/scenarios/build_catalog.py`, `src/thesis_rl/cli/scenarios/pipeline_config.py`, `src/thesis_rl/scenarios/pipeline.py`, `Makefile` | `TEST-SN-016`–`TEST-SN-020` | Verified |
+| `REQ-SN-016` | `AC-SN-021` | `src/thesis_rl/scenarios/frozen.py`, `src/thesis_rl/cli/scenarios/{freeze_dataset,replay_frozen_dataset}.py`, `Makefile` | `tests/test_scenario_frozen.py` | Implemented and verified |
+| `REQ-SN-002`–`REQ-SN-003` | `AC-SN-022` | `src/thesis_rl/scenarios/pipeline.py` | `tests/test_scenarionet_pipeline.py::test_source_arm_transport_minimizes_split_stratification_error` | Implemented; validation pending |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -150,6 +153,9 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `AC-SN-017` / `TEST-SN-017` | Shell integration | Actionable orchestration failure | deterministic mocked stage failure | nonzero exit plus stage, operation, failed command, remediation, and retry command in the terminal summary | `REQ-SN-016` |
 | `AC-SN-018` / `TEST-SN-018` | Shell/real integration | Missing Rulebook prerequisite artifacts | fresh data root without ego config, braking trials, or calibration | install the frozen canonical ego config non-destructively, collect real trials, create and validate the hash-bound calibration in the CPU pipeline service, then continue filtering | `REQ-SN-016` |
 | `AC-SN-019` / `TEST-SN-019` | Shell/unit integration | Interrupted or empty Waymo conversion state | empty database, stale shard ledger, or incomplete batch directory | treat the Waymo pool as empty, quarantine incomplete output non-destructively, retry unseen shards, and never register a batch until finalized `sd_*.pkl` files exist | `REQ-SN-016` |
+| `AC-SN-020` / `TEST-SN-020` | Unit/shell integration | Feasibility failure attribution | insufficient Waymo arm capacity with sufficient PG runtime count | report the arm/source capacity deficit before any PG replenishment decision and make the controller evaluate the Waymo branch | `REQ-SN-016` |
+| `AC-SN-021` / `TEST-SN-021` | Unit/integration | Frozen selection replay | completed final catalog plus source files and shard ledger | persist selected Waymo IDs/shards and PG profile/seed pairs, then rebuild derived catalog/runtime views without search or source regeneration | `REQ-SN-016` |
+| `AC-SN-022` / `TEST-SN-022` | Unit | Source-arm split stratification | source-arm quotas with exact primary-split totals | deterministic allocation minimizes proportional source-arm drift while retaining all exact source and arm totals | `REQ-SN-002`–`003` |
 
 Mandatory commands:
 
@@ -201,6 +207,13 @@ external credentials and must not overwrite frozen data.
   first real stage-4 run: provide the documented canonical ego calibration
   config, use the CPU pipeline image for real braking trials/calibration, and
   bootstrap only missing artifacts before static eligibility filtering.
+- [x] M8 — Completed. Freeze the successful selected population into a
+  versioned replay index containing complete catalog rows, selected Waymo IDs
+  and shard inventory, PG family/seed pairs, artifact hashes, and split policy.
+  Add a non-destructive replay command that verifies source files and rebuilds
+  derived catalog/runtime views without acquisition, generation, filtering, or
+  split search. Validate both synthetic integrity fixtures and the real 3,500-
+  record dataset.
 
 ## 11. Progress And Findings Log
 
@@ -428,6 +441,23 @@ external credentials and must not overwrite frozen data.
 - The user approved doubling the Waymo cap from 128 to 256 new shards. The
   single YAML source, expansion default, ADR-010, and v1.1 specification now
   resolve the amended cap while retaining 64-shard batches and 16 workers.
+- The 2026-07-18 retry exposed a misleading split failure attribution: when
+  Waymo A4_vru coverage was below the near-uniform arm target, the constructive
+  selector reported the first downstream source/split mismatch (`pg/train`) even
+  though PG runtime capacity was sufficient. The selector now performs an
+  arm/source capacity preflight and reports the concrete deficit (for example,
+  Waymo A4_vru available versus requested); the shell controller echoes that
+  causal error and evaluates Waymo expansion without generating unrelated PG
+  candidates.
+- After the successful real dataset build, the downstream freeze/replay path
+  was implemented. `make scenarionet-freeze` writes a versioned JSON index with
+  the complete selected catalog rows, Waymo scenario-to-batch references and
+  selected shard IDs, PG profile/seed pairs, artifact hashes, and split policy.
+  `make scenarionet-from-frozen` verifies the source files and rebuilds a
+  separate frozen catalog and runtime view without catalog search, Rulebook
+  filtering, Waymo acquisition, or PG generation. The real index contains 3,500
+  records, 1,750 Waymo scenarios from 768 shards, and 1,750 PG generations; the
+  replay smoke completed successfully.
 - The first targeted PG run exposed a progress-accounting defect: unspecified
   profiles retained the default 350 count, while the progress total counted
   only the explicit profile map. Profile overrides now zero unspecified
@@ -535,6 +565,21 @@ reconciliation, then perform the M4 fixture pipeline and smoke validation.
   Waymo image definition. The image build itself is the acceptance check for
   the native toolchain and Fiona compilation.
 
+### 2026-07-18 — Source-arm split stratification
+
+- The successful real pipeline report exposed a policy violation in practice:
+  hard split/source and arm totals were exact, but the greedy transport put
+  complete source-arm cells into different primary splits.
+- The user approved retaining the exact global 50/50 Waymo-PG composition and
+  replacing only the arm-to-split allocation with deterministic proportional
+  stratification. ADR-012 records this material dataset-policy clarification.
+- Replaced the traversal-order transport with an in-repository minimum-cost
+  flow whose convex unit costs minimize absolute proportional split drift while
+  retaining exact source totals, arm capacities, and group boundaries.
+- Added regression fixtures for the observed 3,500-record quota matrix and a
+  larger end-to-end singleton selection fixture. Both reject the former
+  source-arm concentration and preserve the existing hard contract.
+
 ## 12. Deviations
 
 No deviations identified.
@@ -548,6 +593,7 @@ No deviations identified.
 | `docs/implementation/scenarionet_integration_spec_v1.1_exec_plan.md` | Added | Living v1.1 implementation record |
 | `docs/project_index.md` | Modified | Authority and ExecPlan registry |
 | `src/thesis_rl/scenarios/{records,catalog,pipeline,splits,manifests,reports,waymo_pool}.py` | Modified/planned modification | Eligibility, split, audit, manifest, scalable singleton-group selection, and PG replenishment-report contract |
+| `docs/decisions/ADR-012-stratified-source-arm-split-allocation.md` | Added | Approved deterministic primary-split source-arm stratification policy |
 | `src/thesis_rl/cli/scenarios/build_splits.py` | Modified | Strict split CLI and PG replenishment artifact on success/failure |
 | `src/thesis_rl/cli/scenarios/plan_pg_replenishment.py`, `src/thesis_rl/scenarios/pg/replenishment.py` | Added | Deterministic targeted profile allocation from reported PG arm deficits |
 | `src/thesis_rl/cli/scenarios/generate_pg_dataset.py`, `src/thesis_rl/scenarios/pg/report.py` | Modified | Profile-specific PG candidate counts for targeted replenishment |
@@ -565,8 +611,15 @@ No deviations identified.
 | `conf/scenarios/pipeline_v1.yaml`, `conf/env/scenarionet.yaml`, `conf/curriculum/scenario_acl_scenarionet.yaml` | Modified/planned modification | Frozen v1.1 policy and documented strict provider modes |
 | `scripts/expand_waymo_pool.sh` | Modified | Fix empty-ledger remote-shard candidate discovery |
 | `Dockerfile.waymo` | Modified | Provide native GDAL/compiler prerequisites for ARM64 Fiona build |
-| `tests/test_scenarionet_pipeline.py` | Modified | Restart, failure UX, cap accounting, config validation, CPU replenishment, and empty-ledger regressions |
+| `src/thesis_rl/cli/scenarios/ui.py` | Modified | Keep human-readable report output independent from machine-readable CLI output |
+| `tests/test_scenarionet_pipeline.py` | Modified | Restart, failure UX, cap accounting, config validation, CPU replenishment, empty-ledger, and report-output regressions |
+| `src/thesis_rl/scenarios/pipeline.py` | Modified | Minimum-cost allocation of global source-arm quotas across primary splits |
+| `tests/test_scenarionet_pipeline.py` | Modified | Regression coverage for proportional source-arm stratification |
 | `tests/test_scenario_catalog_build.py` | Modified | Existing-empty Waymo database regression |
+| `src/thesis_rl/scenarios/frozen.py` | Added | Versioned selected-population index, source verification, and replay records |
+| `src/thesis_rl/cli/scenarios/freeze_dataset.py` | Added | Freeze the completed ScenarioNet selection |
+| `src/thesis_rl/cli/scenarios/replay_frozen_dataset.py` | Added | Rebuild derived catalog/runtime views from a frozen selection |
+| `tests/test_scenario_frozen.py` | Added | Frozen index and source-integrity regressions |
 
 ## 14. Validation Results
 
@@ -629,17 +682,23 @@ No deviations identified.
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format --check tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | Modified regression test is formatted |
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff check tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | Modified regression test passes Ruff |
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | 34 passed |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff check src/thesis_rl/scenarios/frozen.py src/thesis_rl/cli/scenarios/freeze_dataset.py src/thesis_rl/cli/scenarios/replay_frozen_dataset.py tests/test_scenario_frozen.py && python -m pytest -q tests/test_scenario_frozen.py tests/test_scenario_manifests.py tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | 44 passed; validates frozen IDs, Waymo shard inventory, PG seed/profile inventory, source verification, and existing ScenarioNet regressions |
+| `make scenarionet-freeze` | PASS | 2026-07-18 | Real index created at `data/scenarionet/frozen/scenario_selection_index.json`: 3,500 records, 1,750 Waymo scenarios, 768 shards, 1,750 PG generations |
+| `make scenarionet-from-frozen` | PASS | 2026-07-18 | Rebuilt `catalog/scenario_catalog_frozen.parquet`, `runtime/frozen`, and `splits/split_manifest_frozen.yaml` without source regeneration |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.replay_frozen_dataset --verify-only ...` | PASS | 2026-07-18 | Read-only verification of the real frozen index and all 3,500 source files |
 | `bash -n scripts/expand_waymo_pool.sh scripts/prepare_scenarionet_dataset.sh && git diff --check` | PASS | 2026-07-18 | Shell syntax and patch whitespace pass after the empty-ledger fix |
 | `python -m pytest -q tests/test_scenarionet_pipeline.py -k 'waymo_expansion'` on host | FAIL | 2026-07-18 | Host Python lacks `omegaconf`; equivalent container test passed with 2 tests |
 | `docker compose --progress plain -f compose.yaml -f compose.waymo.yaml --profile waymo build waymo-converter` | PASS | 2026-07-18 | ARM64 image built; Fiona 1.10.1 compiled with GDAL, and the Dockerfile import check passed for TensorFlow 2.11.0, protobuf 3.20.3, and ScenarioNet |
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py -k 'waymo_converter_image or waymo_expansion'` | PASS | 2026-07-18 | 3 passed; GDAL build-dependency guard plus Waymo acquisition regressions |
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format --check tests/test_scenarionet_pipeline.py && docker compose run --rm -T dataset-pipeline uv run --no-sync ruff check tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | Modified test is formatted and lint-clean |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py && ruff format/check on build_splits, ui, and pipeline tests && bash -n scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && git diff --check` | PASS | 2026-07-18 | 37 tests passed; split CLI now reports report paths instead of dumping the full JSON, and the orchestration shell remains syntactically valid |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format src/thesis_rl/scenarios/pipeline.py tests/test_scenarionet_pipeline.py && ruff check src/thesis_rl/scenarios/pipeline.py tests/test_scenarionet_pipeline.py && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | 39 passed; validates the deterministic minimum-cost source-arm transport and the full focused ScenarioNet pipeline suite |
 
 ## 15. Final Reconciliation
 
-All v1.1 requirements are `NOT_IMPLEMENTED` or `PARTIAL` pending milestones.
-Existing v1 behavior is not evidence of v1.1 compliance until each requirement,
-acceptance criterion, artifact, and mandatory test is reconciled.
+The complete v1.1 implementation remains `IN_PROGRESS` for the broader
+specification milestones, but the selected real ScenarioNet dataset and the
+new frozen replay acceptance path are now present and verified.
 
 Bug-fix reconciliation for `REQ-SN-006`/`REQ-SN-016`: `IMPLEMENTED` and
 `VERIFIED` for the empty-ledger candidate-discovery path. The complete v1.1
@@ -648,11 +707,14 @@ validation were not run as part of this focused fix.
 
 Converter-build reconciliation: `IMPLEMENTED` and `VERIFIED` for the ARM64
 GDAL/Fiona prerequisite path. The actual Waymo batch download/conversion was
-not started after the successful image build.
+completed successfully in the user's pipeline run; the resulting selected
+population is represented by the frozen index.
 
-Known limitations: no authoritative semantic-observation specification; no
-current final v1.1 dataset artifact; external Waymo acquisition is unavailable
-in this planning environment.
+Known limitations: no authoritative semantic-observation specification; the
+frozen index references existing converted Waymo/PG source files rather than
+copying them; and rebuilding those source files from the index after deleting
+the source databases would require a future source-materialization command that
+downloads the frozen shards and regenerates the frozen PG seeds.
 
 Deferred required work: M1–M4. Optional future work: custom PG VRU generation,
 Waymo-natural evaluation, and solver optimization beyond a correct deterministic

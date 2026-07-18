@@ -1,4 +1,4 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog scenarionet-pg-replenish up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog scenarionet-pg-replenish scenarionet-freeze scenarionet-from-frozen up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
 
 PYTHON_QUALITY_PATHS ?= src tests scripts
 
@@ -175,6 +175,17 @@ scenarionet-pg-replenish:
 
 scenarionet-recatalog:
 	SCENARIONET_SKIP_PG=true SCENARIONET_SKIP_WAYMO=true bash scripts/prepare_scenarionet_dataset.sh
+
+scenarionet-freeze:
+	docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.freeze_dataset \
+		--data-root /workspace/data/scenarionet \
+		$(if $(filter 1 true yes on,$(OVERWRITE)),--overwrite,)
+
+scenarionet-from-frozen:
+	docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.replay_frozen_dataset \
+		--index /workspace/data/scenarionet/frozen/scenario_selection_index.json \
+		--data-root /workspace/data/scenarionet \
+		$(if $(OVERWRITE),--overwrite,)
 
 up:
 	docker compose up -d

@@ -74,6 +74,7 @@ root.
 | `decisions/ADR-009-pg-targeted-replenishment.md` | `APPROVED` | Explicit user approval on 2026-07-17 | Targeted 1,750-candidate PG budget allocated by observed arm deficits; no parameter calibration in this cycle |
 | `decisions/ADR-010-waymo-cap-expansion.md` | `APPROVED` | Explicit user approval on 2026-07-17 | Waymo cumulative cap increased to 256 unseen shards; batch size remains 64 |
 | `decisions/ADR-011-rulebook-scalarization-v1.md` | `APPROVED` | Explicit user approval of SCAL-V1.0 on 2026-07-17 | Scalarization modes, rulebook adapters, default, reward interface, future replay semantics, and compatibility |
+| `decisions/ADR-012-stratified-source-arm-split-allocation.md` | `APPROVED` | Explicit user approval on 2026-07-18 | ScenarioNet primary-split source-arm stratification while retaining exact global source totals |
 
 ## ExecPlan Registry
 

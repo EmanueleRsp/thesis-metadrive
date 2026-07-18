@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -415,7 +414,13 @@ def main() -> int:
             for split in SPLITS
         ],
     )
-    print(json.dumps(report, indent=2, sort_keys=True))
+    print_key_value_table(
+        "Reports",
+        [
+            ("Split report", output_path.parent / "split_report.json"),
+            ("PG replenishment report", pg_replenishment_path),
+        ],
+    )
     return 0
 
 
