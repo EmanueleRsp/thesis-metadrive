@@ -15,7 +15,7 @@ Current authoritative documents:
 
 - `rulebook_v4.6_specification.md`, version `4.6-final-implementation-complete`;
 - `automatic_curriculum_learning_v1_specification.md`, version v1;
-- `scenarionet_integration_spec_v1.1.md`, version 1.1;
+- `scenarionet_integration_v1.1_specification.md`, version 1.1;
 - `observation_v1.1_specification.md`, ID `OBS-V1.1`, version
   `1.1-final-implementation-complete`.
 - `encoder_v1.0_specification.md`, ID `ENC-V1.0`, version

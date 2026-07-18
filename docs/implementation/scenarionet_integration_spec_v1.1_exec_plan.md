@@ -3,7 +3,7 @@
 ## 1. Metadata
 
 - Feature and plan ID: ScenarioNet integration, `SCENARIONET-INTEGRATION-V1.1`
-- Authoritative specification: `docs/specifications/scenarionet_integration_spec_v1.1.md`, ID `SCENARIONET-INTEGRATION`, version `1.1`, `APPROVED`
+- Authoritative specification: `docs/specifications/scenarionet_integration_v1.1_specification.md`, ID `SCENARIONET-INTEGRATION`, version `1.1`, `APPROVED`
 - Status: `IN_PROGRESS`
 - Created: `2026-07-16`
 - Last updated: `2026-07-18`
@@ -543,7 +543,7 @@ No deviations identified.
 
 | Path | Action | Purpose |
 |---|---|---|
-| `docs/specifications/scenarionet_integration_spec_v1.1.md` | Added | Approved authoritative specification |
+| `docs/specifications/scenarionet_integration_v1.1_specification.md` | Added | Approved authoritative specification |
 | `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md` | Added | Approved material dataset/runtime policy |
 | `docs/implementation/scenarionet_integration_spec_v1.1_exec_plan.md` | Added | Living v1.1 implementation record |
 | `docs/project_index.md` | Modified | Authority and ExecPlan registry |

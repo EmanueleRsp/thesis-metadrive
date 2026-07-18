@@ -13,7 +13,7 @@
   - `docs/specifications/observation_v1.1_specification.md`
   - `docs/specifications/encoder_v1.0_specification.md`
   - `docs/specifications/automatic_curriculum_learning_v1_specification.md`
-  - `docs/specifications/scenarionet_integration_spec_v1.1.md`
+  - `docs/specifications/scenarionet_integration_v1.1_specification.md`
   - `docs/specifications/rulebook_scalarization_v1.0_specification.md`
   - future scalarized RL baseline specification
   - future lexicographic RL specification

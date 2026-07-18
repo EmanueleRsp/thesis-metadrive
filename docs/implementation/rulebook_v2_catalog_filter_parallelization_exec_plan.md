@@ -5,7 +5,7 @@
 - Feature and plan ID: Rulebook v2 catalog filter parallelization, `RBCF-PAR-001`
 - Authoritative specifications:
   - `docs/specifications/rulebook_v4.6_specification.md`, version `4.6-final-implementation-complete`, `AUTHORITATIVE`
-  - historical at implementation: `docs/specifications/scenarionet_integration_v1_specification.md`, version `v1`; current reconciliation authority is `docs/specifications/scenarionet_integration_spec_v1.1.md`, version `1.1`
+  - historical at implementation: `docs/specifications/scenarionet_integration_v1_specification.md`, version `v1`; current reconciliation authority is `docs/specifications/scenarionet_integration_v1.1_specification.md`, version `1.1`
 - Status: `IMPLEMENTED`
 - Created: 2026-07-16
 - Last updated: 2026-07-16

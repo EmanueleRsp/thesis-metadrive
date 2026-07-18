@@ -7,7 +7,7 @@
 - Supersedes: `NONE`
 - Amends: ADR-005, extending the trigger condition only
 - Amended by: ADR-009, replacing equal complete blocks with targeted profile allocation when arm deficits are known
-- Affected specification: `docs/specifications/scenarionet_integration_spec_v1.1.md`, version `1.1`
+- Affected specification: `docs/specifications/scenarionet_integration_v1.1_specification.md`, version `1.1`
 - Affected ExecPlan: `docs/implementation/scenarionet_integration_spec_v1.1_exec_plan.md`
 
 ## Context

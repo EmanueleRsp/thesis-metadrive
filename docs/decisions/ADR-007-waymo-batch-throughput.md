@@ -6,7 +6,7 @@
 - Approval date: `2026-07-17`
 - Supersedes: `NONE`
 - Amends: ADR-001, decision 5, only for the batch-size parameter
-- Affected specification: `docs/specifications/scenarionet_integration_spec_v1.1.md`, version `1.1`
+- Affected specification: `docs/specifications/scenarionet_integration_v1.1_specification.md`, version `1.1`
 - Affected ExecPlan: `docs/implementation/scenarionet_integration_spec_v1.1_exec_plan.md`
 
 ## Context
