@@ -82,9 +82,14 @@ def main() -> int:
             f"Loading catalog entries with Waymo workers={args.waymo_workers}, "
             f"PG workers={args.pg_workers}"
         )
-        if args.allow_empty_waymo and not waymo_database.is_dir():
+        has_waymo_scenarios = waymo_database.is_dir() and any(waymo_database.rglob("sd_*.pkl"))
+        if args.allow_empty_waymo and not has_waymo_scenarios:
             waymo_entries = ()
             progress.update(waymo_task, completed=0, total=0)
+            console.log(
+                "Waymo catalog directory is missing or contains no converted "
+                f"scenario files; continuing with an empty candidate pool: {waymo_database}"
+            )
         else:
             waymo_entries, _waymo_groups = load_converted_waymo_entries(
                 waymo_database,

@@ -367,6 +367,47 @@ def test_waymo_scripts_normalize_host_mount_paths() -> None:
     assert 'raw_root="${repo_root}/${raw_root}"' in expand_waymo
 
 
+def test_waymo_expansion_reconciles_only_finalized_batches() -> None:
+    expand_waymo = Path("scripts/expand_waymo_pool.sh").read_text(encoding="utf-8")
+
+    assert "valid_batch_found=false" in expand_waymo
+    assert "ignoring incomplete Waymo batch without scenario files" in expand_waymo
+    assert "quarantined incomplete Waymo batch" in expand_waymo
+    assert "Waymo conversion produced no scenario files" in expand_waymo
+    assert (
+        "Waymo conversion batch ${batch_id} was moved but contains no scenario files"
+        in expand_waymo
+    )
+
+
+def test_waymo_expansion_discovers_remote_shards_with_empty_ledger(tmp_path: Path) -> None:
+    expand_waymo = Path("scripts/expand_waymo_pool.sh").read_text(encoding="utf-8")
+    match = re.search(
+        r"awk '\n(?P<program>\s*FILENAME == ARGV\[1\].*?)\n' \"\$state_dir/converted_shards.txt\" \"\$remote_list\"",
+        expand_waymo,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+
+    ledger = tmp_path / "converted_shards.txt"
+    ledger.write_text("", encoding="utf-8")
+    remote = tmp_path / "remote_shards.txt"
+    remote.write_text(
+        "gs://bucket/training_20s.tfrecord-00000-of-01000\n"
+        "gs://bucket/training_20s.tfrecord-00001-of-01000\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["awk", match.group("program"), str(ledger), str(remote)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.splitlines() == remote.read_text(encoding="utf-8").splitlines()
+
+
 def test_pg_replenishment_uses_cpu_pipeline_service_and_resolved_workers() -> None:
     makefile = Path("Makefile").read_text(encoding="utf-8")
     target = makefile.split("scenarionet-pg-replenish:", maxsplit=1)[1].split(

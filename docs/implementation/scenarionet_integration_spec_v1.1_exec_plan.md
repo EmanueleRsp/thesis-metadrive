@@ -43,7 +43,7 @@ truncation distinction.
 | `REQ-SN-003` | Maintain candidate, eligible, and selected populations; select deterministic, no-leakage grouped splits. | §6.1–§6.6 |
 | `REQ-SN-004` | Group Waymo by verified log/segment; otherwise use original scenario ID and retain TFRecord source only as provenance. | §6.1, ADR-001 |
 | `REQ-SN-005` | Require validity, hard quality, allowed signal reliability, and `rulebook_eligible=true` in runtime pools. | §§6.5, 17.3–17.5 |
-| `REQ-SN-006` | Acquire only unseen Waymo shards in deterministic batches of 64, stop at feasibility or 256 new shards, and report deficits. | §6.7, ADR-001, ADR-007, ADR-010 |
+| `REQ-SN-006` | Acquire only unseen Waymo shards in deterministic batches of 64, stop at feasibility or 256 new shards, and report deficits; an empty acquisition ledger must not hide the remote inventory. | §6.7, ADR-001, ADR-007, ADR-010 |
 | `REQ-SN-007` | Generate and validate PG offline with native blocks, disjoint seeds, and pilot diagnostics. | §§9–11 |
 | `REQ-SN-008` | Extract specified features, calculate train-only Q40/Q75, and retain the existing A0–A5 taxonomy unchanged. | §§12–16 |
 | `REQ-SN-009` | Build runtime views and validate ScenarioNet plus thesis reset/rollout behavior. | §§4, 17 |
@@ -53,7 +53,7 @@ truncation distinction.
 | `REQ-SN-013` | Record episode/run source×arm statistics and all dataset population, target, selected, and deficit artifacts. | §24 |
 | `REQ-SN-014` | Prevent leakage at the ScenarioNet pipeline boundary; defer the complete observation contract to its own specification. | §§2.1, 27.3, ADR-001 |
 | `REQ-SN-015` | Supply reproducible CLIs, mandatory tests, smoke training, and final artifact reconciliation. | §§25–28 |
-| `REQ-SN-016` | Make the orchestration command restartable after an interrupted stage while preserving explicit overwrite protection for source PG/Waymo data, bootstrap and validate required Rulebook calibration artifacts without synthetic values, and report failures with actionable stage context. | §25 |
+| `REQ-SN-016` | Make the orchestration command restartable after an interrupted stage while preserving explicit overwrite protection for source PG/Waymo data, bootstrap and validate required Rulebook calibration artifacts without synthetic values, report failures with actionable stage context, and reconcile Waymo acquisition state with finalized converted scenario files, including empty-ledger recovery. | §25 |
 
 ## 4. Current Repository Analysis
 
@@ -90,6 +90,7 @@ truncation distinction.
 | `DEC-SN-003` | specification clarification | Semantic arm contract | new arm taxonomy / preserve existing six | Preserve existing A0–A5; ACL `K=6` | Catalog, ACL, tests | Approved; ADR-001 |
 | `DEC-SN-004` | specification clarification | Episode tail | 0 / 50 / later pilot choice | Fixed `+50` | Truncation and bootstrap | Approved; ADR-001 |
 | `DEC-SN-005` | specification clarification | Waymo cap and throughput | unbounded / configured cap | batch 64, 256 new shards | Reproducibility and cost | Approved; ADR-001, ADR-007, ADR-010 |
+| `DEC-SN-006` | implementation detail | Empty acquisition ledger and two-file `awk` boundary | `NR == FNR` / compare `FILENAME` with the first argument | Use `FILENAME == ARGV[1]` so an empty ledger does not hide remote shards | Restartability only; no scientific or public-interface change | Approved by user request on 2026-07-18 |
 
 No unresolved approval gate exists. Selector decomposition and implementation
 algorithm are private details only if every hard invariant is validated.
@@ -118,11 +119,12 @@ must not silently choose a reduced output or weaken any hard constraint.
 | Requirement | Acceptance criteria | Implementation | Tests | Status |
 |---|---|---|---|---|
 | `REQ-SN-001` | `AC-SN-001` | `scenarios/paths.py`, manifests, configs | `TEST-SN-001` | Planned |
-| `REQ-SN-002`–`REQ-SN-006` | `AC-SN-002`–`AC-SN-006` | pipeline, splits, waymo pool, reports | `TEST-SN-002`–`TEST-SN-006` | Planned |
+| `REQ-SN-002`–`REQ-SN-005` | `AC-SN-002`–`AC-SN-005` | pipeline, splits, waymo pool, reports | `TEST-SN-002`–`TEST-SN-005` | Planned |
+| `REQ-SN-006` | `AC-SN-006` | `scripts/expand_waymo_pool.sh` | `tests/test_scenarionet_pipeline.py::test_waymo_expansion_discovers_remote_shards_with_empty_ledger` plus acquisition tests | Implemented and regression-verified; full real acquisition remains data-dependent |
 | `REQ-SN-007`–`REQ-SN-009` | `AC-SN-007`–`AC-SN-009` | pg, features, catalog, runtime, validation | `TEST-SN-007`–`TEST-SN-009` | Partial/reconcile |
 | `REQ-SN-010`–`REQ-SN-012` | `AC-SN-010`–`AC-SN-012` | envs, provider, ACL runtime | `TEST-SN-010`–`TEST-SN-012` | Partial/reconcile |
 | `REQ-SN-013`–`REQ-SN-015` | `AC-SN-013`–`AC-SN-015` | runtime wiring, CLIs, docs | `TEST-SN-013`–`TEST-SN-015` | Planned |
-| `REQ-SN-016` | `AC-SN-016`–`AC-SN-018` | `scripts/prepare_scenarionet_dataset.sh`, `src/thesis_rl/cli/scenarios/pipeline_config.py`, `Makefile` | `TEST-SN-016`–`TEST-SN-018` | Verified |
+| `REQ-SN-016` | `AC-SN-016`–`AC-SN-019` | `scripts/prepare_scenarionet_dataset.sh`, `scripts/expand_waymo_pool.sh`, `src/thesis_rl/cli/scenarios/build_catalog.py`, `src/thesis_rl/cli/scenarios/pipeline_config.py`, `Makefile` | `TEST-SN-016`–`TEST-SN-019` | Verified |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -133,7 +135,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `AC-SN-003` / `TEST-SN-003` | Unit | Group and seed isolation | Waymo and PG groups | no cross-split overlap | `REQ-SN-003`–`004` |
 | `AC-SN-004` / `TEST-SN-004` | Unit | TFRecord provenance | converter-like metadata | scenario ID grouping absent real log/segment | `REQ-SN-004` |
 | `AC-SN-005` / `TEST-SN-005` | Unit | Final eligibility | invalid/partial/Rulebook-ineligible fixtures | runtime excludes; audit retains causes | `REQ-SN-005` |
-| `AC-SN-006` / `TEST-SN-006` | Unit | Bounded acquisition | unseen shard inventory | deterministic 64-shard batches; failure at 128 | `REQ-SN-006` |
+| `AC-SN-006` / `TEST-SN-006` | Unit | Bounded acquisition | unseen shard inventory and empty ledger | deterministic 64-shard batches; failure at 128; empty ledger exposes all remote shards | `REQ-SN-006` |
 | `AC-SN-007` / `TEST-SN-007` | Unit | PG seed/profile handling | native-profile fixture | reproducible, diagnostic classification | `REQ-SN-007` |
 | `AC-SN-008` / `TEST-SN-008` | Unit | Existing arm formula | exact boundary fixtures | unchanged A0–A5 labels and priority | `REQ-SN-008` |
 | `AC-SN-009` / `TEST-SN-009` | Integration | Runtime database mapping | Waymo/PG fixture views | loaded ID matches selected UID | `REQ-SN-009` |
@@ -146,6 +148,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `AC-SN-016` / `TEST-SN-016` | Shell integration | Restart after derived artifacts were partially written | mocked pipeline commands that reject existing outputs without `--overwrite` | every catalog, Rulebook, split, threshold, and runtime stage receives derived-artifact overwrite; PG source generation remains separately protected | `REQ-SN-016` |
 | `AC-SN-017` / `TEST-SN-017` | Shell integration | Actionable orchestration failure | deterministic mocked stage failure | nonzero exit plus stage, operation, failed command, remediation, and retry command in the terminal summary | `REQ-SN-016` |
 | `AC-SN-018` / `TEST-SN-018` | Shell/real integration | Missing Rulebook prerequisite artifacts | fresh data root without ego config, braking trials, or calibration | install the frozen canonical ego config non-destructively, collect real trials, create and validate the hash-bound calibration in the CPU pipeline service, then continue filtering | `REQ-SN-016` |
+| `AC-SN-019` / `TEST-SN-019` | Shell/unit integration | Interrupted or empty Waymo conversion state | empty database, stale shard ledger, or incomplete batch directory | treat the Waymo pool as empty, quarantine incomplete output non-destructively, retry unseen shards, and never register a batch until finalized `sd_*.pkl` files exist | `REQ-SN-016` |
 
 Mandatory commands:
 
@@ -189,7 +192,10 @@ external credentials and must not overwrite frozen data.
   after partial derived outputs and add actionable terminal failure summaries.
   Source PG/Waymo overwrite controls remain unchanged. Validation includes
   mocked shell integration regressions, syntax, focused pytest, and a real
-  catalog-stage resume; unavailable ShellCheck is recorded below.
+  catalog-stage resume; incomplete Waymo conversion state is now reconciled
+  against finalized scenario files before retrying. Short-lived
+  `docker compose run --rm` pipeline containers remain intentional; the Waymo
+  converter uses one persistent container per acquisition invocation.
 - [x] M7 — Completed. Close the Rulebook prerequisite gap exposed by the
   first real stage-4 run: provide the documented canonical ego calibration
   config, use the CPU pipeline image for real braking trials/calibration, and
@@ -486,6 +492,37 @@ reconciliation, then perform the M4 fixture pipeline and smoke validation.
   1,750 PG records: 972 eligible and 778 excluded. No eligibility rule or
   quality threshold was changed.
 
+### 2026-07-18 — Waymo conversion-state reconciliation
+
+- The resumed real pipeline exposed an empty `waymo/database` after a prior
+  acquisition attempt. The acquisition ledger could therefore report all
+  remote shards as converted even though no `sd_*.pkl` scenario files existed.
+- Waymo expansion now derives batched shard state only from finalized batch
+  directories containing scenario files, validates the staging output before
+  moving it, quarantines incomplete final directories non-destructively, and
+  validates the final directory before updating the ledger.
+- `build_catalog --allow-empty-waymo` now handles both a missing and an existing
+  empty database directory, allowing the post-Rulebook controller to retry
+  acquisition instead of failing with an opaque loader traceback.
+- The container lifecycle was reviewed: the pipeline intentionally uses
+  short-lived `run --rm` containers per isolated command, while the converter
+  keeps one container for the duration of a Waymo expansion. No persistent
+  pipeline service refactor was approved or needed.
+
+### 2026-07-18 — Empty Waymo ledger candidate-selection regression
+
+- Reproduced the reported failure with an empty finalized Waymo database and
+  empty `converted_shards.txt`: the remote inventory was available, but the
+  `NR == FNR` two-file `awk` idiom treated every remote row as part of the empty
+  first file and produced zero candidates.
+- Replaced the file-boundary predicate with `FILENAME == ARGV[1]`, preserving
+  the existing basename normalization and unseen-shard semantics.
+- Added a deterministic regression that extracts and executes the production
+  `awk` program with an empty ledger and two remote shards; both shards must be
+  emitted as candidates.
+- No scientific specification, dataset policy, public interface, dependency,
+  or overwrite behavior changed. The user explicitly requested this fix.
+
 ## 12. Deviations
 
 No deviations identified.
@@ -514,7 +551,9 @@ No deviations identified.
 | `src/thesis_rl/agent/agent.py`, `src/thesis_rl/runtime/loops/{train_loop,eval_loop}.py` | Modified | Preserve and persist per-episode ScenarioNet identity, sampling, and completion metadata |
 | `src/thesis_rl/envs/{thesis_scenario_env,scene_context,scenario_env_factory}.py` | Planned verification/modification | Environment contract |
 | `conf/scenarios/pipeline_v1.yaml`, `conf/env/scenarionet.yaml`, `conf/curriculum/scenario_acl_scenarionet.yaml` | Modified/planned modification | Frozen v1.1 policy and documented strict provider modes |
-| `tests/test_scenarionet_pipeline.py` | Modified | Restart, failure UX, cap accounting, config validation, and CPU replenishment regressions |
+| `scripts/expand_waymo_pool.sh` | Modified | Fix empty-ledger remote-shard candidate discovery |
+| `tests/test_scenarionet_pipeline.py` | Modified | Restart, failure UX, cap accounting, config validation, CPU replenishment, and empty-ledger regressions |
+| `tests/test_scenario_catalog_build.py` | Modified | Existing-empty Waymo database regression |
 
 ## 14. Validation Results
 
@@ -569,12 +608,27 @@ No deviations identified.
 | `make rulebook-v2-prepare RULEBOOK_V2_DATA_ROOT=/scratch/e.respino/thesis-metadrive/data/scenarionet RULEBOOK_V2_CONTAINER_DATA_ROOT=/workspace/data/scenarionet` | PASS | 2026-07-18 | Collected 40 real MetaDrive trials in the CPU container, calibrated `b_e=4.0 m/s²`, and validated the artifact against config hash `7ed6…ee94` |
 | Real stage-4 `filter_rulebook_v2_catalog --overwrite` on the mounted dataset | PASS | 2026-07-18 | Evaluated 1,750 PG records with 32 workers; 972 eligible and 778 excluded |
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py tests/test_rulebook_v2_cli.py tests/test_rulebook_v2_calibration.py tests/test_rulebook_v2_catalog_eligibility.py tests/test_scenario_catalog.py tests/test_scenario_catalog_build.py tests/test_scenario_runtime_database.py` | PASS | 2026-07-18 | 58 passed; includes bootstrap, canonical config, calibration, filtering, restart, catalog, and runtime regressions |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format src/thesis_rl/cli/scenarios/build_catalog.py tests/test_scenario_catalog_build.py && docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format --check src/thesis_rl/cli/scenarios/build_catalog.py tests/test_scenario_catalog_build.py && docker compose run --rm -T dataset-pipeline uv run --no-sync ruff check src/thesis_rl/cli/scenarios/build_catalog.py tests/test_scenario_catalog_build.py && docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenario_catalog_build.py tests/test_waymo_pool.py` | PASS | 2026-07-18 | 16 passed; validates an existing empty Waymo database as an empty candidate pool and the Waymo pool policy |
+| `bash -n scripts/expand_waymo_pool.sh scripts/prepare_scenarionet_dataset.sh && git diff --check` | PASS | 2026-07-18 | Waymo staging/final-output guards and shard-ledger reconciliation pass shell syntax and whitespace validation |
+| Host `uv`/Docker checks | BLOCKED | 2026-07-18 | Host virtualenv lacks pytest and the sandbox initially denied Docker socket access; the equivalent Docker checks above passed after running without sudo with approved Docker access |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format --check tests/test_scenarionet_pipeline.py && docker compose run --rm -T dataset-pipeline uv run --no-sync ruff check tests/test_scenarionet_pipeline.py src/thesis_rl/cli/scenarios/build_catalog.py tests/test_scenario_catalog_build.py && docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenario_catalog_build.py tests/test_waymo_pool.py tests/test_scenarionet_pipeline.py && bash -n scripts/expand_waymo_pool.sh scripts/prepare_scenarionet_dataset.sh && git diff --check` | PASS | 2026-07-18 | 49 passed; includes incomplete-batch quarantine, empty Waymo catalog handling, restartability, and PG/Waymo feasibility regressions |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py -k 'waymo_expansion'` | PASS | 2026-07-18 | 2 passed; empty-ledger regression and finalized-batch guards |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format --check tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | Modified regression test is formatted |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff check tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | Modified regression test passes Ruff |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | 34 passed |
+| `bash -n scripts/expand_waymo_pool.sh scripts/prepare_scenarionet_dataset.sh && git diff --check` | PASS | 2026-07-18 | Shell syntax and patch whitespace pass after the empty-ledger fix |
+| `python -m pytest -q tests/test_scenarionet_pipeline.py -k 'waymo_expansion'` on host | FAIL | 2026-07-18 | Host Python lacks `omegaconf`; equivalent container test passed with 2 tests |
 
 ## 15. Final Reconciliation
 
 All v1.1 requirements are `NOT_IMPLEMENTED` or `PARTIAL` pending milestones.
 Existing v1 behavior is not evidence of v1.1 compliance until each requirement,
 acceptance criterion, artifact, and mandatory test is reconciled.
+
+Bug-fix reconciliation for `REQ-SN-006`/`REQ-SN-016`: `IMPLEMENTED` and
+`VERIFIED` for the empty-ledger candidate-discovery path. The complete v1.1
+pipeline remains `IN_PROGRESS`; full real-data acquisition and end-to-end smoke
+validation were not run as part of this focused fix.
 
 Known limitations: no authoritative semantic-observation specification; no
 current final v1.1 dataset artifact; external Waymo acquisition is unavailable

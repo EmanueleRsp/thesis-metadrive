@@ -141,14 +141,16 @@ reconciled_state="$(mktemp)"
 temporary_files=("$remote_list" "$candidate_list" "$batch_list" "$reconciled_state")
 gcloud storage ls "${gcs_uri%/}/${object_pattern}" | awk '/^gs:\/\// {print}' | sort > "$remote_list"
 log "loaded remote shard inventory from ${gcs_uri%/}/${object_pattern}"
-if [[ -f "$state_dir/converted_shards.txt" ]]; then
-  cp "$state_dir/converted_shards.txt" "$reconciled_state"
-else
-  : > "$reconciled_state"
-fi
+: > "$reconciled_state"
 shopt -s nullglob
+valid_batch_found=false
 for batch_path in "$host_database"/batches/batch_*_*; do
   [[ -d "$batch_path" ]] || continue
+  if ! find "$batch_path" -type f -name 'sd_*.pkl' -print -quit | grep -q .; then
+    log "ignoring incomplete Waymo batch without scenario files: $batch_path"
+    continue
+  fi
+  valid_batch_found=true
   batch_name="${batch_path##*/}"
   if [[ "$batch_name" =~ ^batch_([0-9]{5})_([0-9]{5})$ ]]; then
     first_index=$((10#${BASH_REMATCH[1]}))
@@ -159,9 +161,18 @@ for batch_path in "$host_database"/batches/batch_*_*; do
   fi
 done
 shopt -u nullglob
+# Derive the shard ledger from finalized output whenever batched output is
+# present. This prevents an interrupted or empty conversion from permanently
+# hiding remote shards from future retries. Legacy non-batched databases retain
+# their ledger only when they contain actual converted scenario files.
+if [[ "$valid_batch_found" != true ]] \
+  && find "$host_database" -type f -name 'sd_*.pkl' -print -quit | grep -q . \
+  && -f "$state_dir/converted_shards.txt"; then
+  cp "$state_dir/converted_shards.txt" "$reconciled_state"
+fi
 sort -u "$reconciled_state" > "$state_dir/converted_shards.txt"
 awk '
-  NR == FNR { used[$1] = 1; next }
+  FILENAME == ARGV[1] { used[$1] = 1; next }
   {
     name = $0
     sub(/^.*\//, "", name)
@@ -212,6 +223,14 @@ while ! is_true "$pool_complete" || is_true "$force_one_batch"; do
   raw_batch="${raw_root%/}/batches/$batch_id"
   final_database="${host_database%/}/batches/$batch_id"
   container_staging="${container_root%/}/waymo/staging/$batch_id"
+  if [[ -e "$final_database" ]] \
+    && ! find "$final_database" -type f -name 'sd_*.pkl' -print -quit | grep -q .; then
+    incomplete_root="${host_database%/}/incomplete_batches"
+    quarantine_path="${incomplete_root}/${batch_id}_$(date +%s)"
+    mkdir -p "$incomplete_root"
+    mv "$final_database" "$quarantine_path"
+    log "quarantined incomplete Waymo batch at $quarantine_path"
+  fi
   [[ ! -e "$final_database" ]] || die \
     "batch destination already exists without being registered: $batch_id"
   mkdir -p "$raw_batch"
@@ -226,11 +245,22 @@ while ! is_true "$pool_complete" || is_true "$force_one_batch"; do
     --num-workers "$num_workers" \
     --num-files "$selected" \
     --overwrite
+  if ! docker exec "$converter_container" sh -c \
+    'find "$1" -type f -name "sd_*.pkl" -print -quit | grep -q .' sh "$container_staging"; then
+    die \
+      "Waymo conversion produced no scenario files for ${batch_id}; the shard ledger was not updated" \
+      "Inspect the converter output above and retry the same batch after repairing the conversion environment."
+  fi
   log "batch ${batch_number}: conversion finished; moving staging database into final batch directory"
   docker exec "$converter_container" sh -c \
     'mkdir -p "$1" && mv "$2" "$3"' sh \
     "${container_database%/}/batches" "$container_staging" \
     "${container_database%/}/batches/$batch_id"
+  if ! find "$final_database" -type f -name 'sd_*.pkl' -print -quit | grep -q .; then
+    die \
+      "Waymo conversion batch ${batch_id} was moved but contains no scenario files" \
+      "Inspect the staging and converter logs before retrying."
+  fi
   log "batch ${batch_number}: final database registered at ${container_database%/}/batches/$batch_id"
   if ! is_true "$keep_raw"; then
     log "batch ${batch_number}: removing raw TFRecords from $raw_batch"
