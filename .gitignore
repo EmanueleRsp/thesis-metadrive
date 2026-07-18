@@ -16,7 +16,14 @@ __pycache__/
 # Output
 outputs/
 /checkpoints/
-/data/
+# Keep the canonical frozen selection index under data/; ignore all generated
+# datasets and runtime artifacts around it.
+/data/*
+!/data/scenarionet/
+/data/scenarionet/*
+!/data/scenarionet/frozen/
+/data/scenarionet/frozen/*
+!/data/scenarionet/frozen/scenario_selection_index.json
 /.gcloud-sdk/
 /incoming/*
 !/incoming/README.md

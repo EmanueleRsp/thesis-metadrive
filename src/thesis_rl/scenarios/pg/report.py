@@ -7,7 +7,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from thesis_rl.scenarios.arms import assign_primary_arm
 from thesis_rl.scenarios.pg.generator import PGGenerationResult, generate_pg_scenario
@@ -195,6 +195,111 @@ def run_pg_pilot(
         failures=tuple(failures),
     )
     return report, tuple(results)
+
+
+def run_pg_tasks(
+    tasks: Sequence[tuple[str, int]],
+    *,
+    data_root: str | Path,
+    overwrite: bool = False,
+    generator_commit: str | None = None,
+    exporter_commit: str | None = None,
+    workers: int = 1,
+    progress_callback: PGProgressCallback | None = None,
+) -> tuple[PGPilotReport, tuple[PGGenerationResult, ...]]:
+    """Generate an explicit, deterministic set of profile/seed PG tasks."""
+
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    known_profiles = {profile.name for profile in PG_PROFILES}
+    normalized_tasks = [(str(profile), int(seed)) for profile, seed in tasks]
+    unknown_profiles = sorted({profile for profile, _seed in normalized_tasks} - known_profiles)
+    if unknown_profiles:
+        raise ValueError(f"unknown PG profiles in frozen task list: {unknown_profiles}")
+    if len(set(normalized_tasks)) != len(normalized_tasks):
+        raise ValueError("frozen PG task list contains duplicate profile/seed pairs")
+    if not normalized_tasks:
+        raise ValueError("frozen PG task list must not be empty")
+
+    worker_tasks = [
+        _PGTask(
+            profile=profile,
+            seed=seed,
+            data_root=str(data_root),
+            overwrite=overwrite,
+            generator_commit=generator_commit,
+            exporter_commit=exporter_commit,
+        )
+        for profile, seed in normalized_tasks
+    ]
+    results: list[PGGenerationResult] = []
+    failures: list[dict[str, Any]] = []
+    matrix: dict[str, Counter[str]] = defaultdict(Counter)
+
+    def consume(
+        completed: int,
+        task: _PGTask,
+        result: PGGenerationResult | None,
+        failure: dict[str, Any] | None,
+    ) -> None:
+        if result is not None:
+            results.append(result)
+            matrix[task.profile][assign_primary_arm(result.entry.features)] += 1
+        else:
+            assert failure is not None
+            failures.append(failure)
+        if progress_callback is not None:
+            progress_callback(
+                completed,
+                len(worker_tasks),
+                task.profile,
+                task.seed,
+                result is not None,
+            )
+
+    processed = 0
+    if workers == 1:
+        for task in worker_tasks:
+            completed_task, result, failure = _run_pg_task(task)
+            processed += 1
+            consume(processed, completed_task, result, failure)
+    else:
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=min(workers, len(worker_tasks)), mp_context=context
+        ) as executor:
+            futures = {executor.submit(_run_pg_task, task): task for task in worker_tasks}
+            for future in as_completed(futures):
+                task = futures[future]
+                try:
+                    completed_task, result, failure = future.result()
+                except Exception as exc:
+                    completed_task, result, failure = (
+                        task,
+                        None,
+                        {
+                            "profile": task.profile,
+                            "seed": task.seed,
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                        },
+                    )
+                processed += 1
+                consume(processed, completed_task, result, failure)
+    results.sort(key=lambda item: (str(item.spec.profile), item.spec.seed))
+    failures.sort(key=lambda item: (str(item["profile"]), int(item["seed"])))
+    return (
+        PGPilotReport(
+            requested=len(worker_tasks),
+            generated=len(results),
+            failed=len(failures),
+            by_profile_arm={
+                profile: dict(sorted(counts.items())) for profile, counts in sorted(matrix.items())
+            },
+            failures=tuple(failures),
+        ),
+        tuple(results),
+    )
 
 
 def write_pg_pilot_report(

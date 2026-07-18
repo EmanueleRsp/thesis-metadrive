@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import thesis_rl.scenarios.pg.report as pg_report
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry, write_scenario_catalog
 from thesis_rl.scenarios.frozen import (
     build_frozen_index,
@@ -159,3 +160,60 @@ def test_frozen_replay_verifies_source_files_without_search(tmp_path: Path) -> N
     (root / "pg/database/P0_simple/920000/sd_pg.pkl").unlink()
     with pytest.raises(FileNotFoundError, match="source files are missing"):
         verify_frozen_sources(payload, root)
+
+
+def test_repository_index_contains_the_completed_source_selection() -> None:
+    index_path = Path("data/scenarionet/frozen/scenario_selection_index.json")
+    payload = load_frozen_index(index_path)
+
+    assert len(payload["records"]) == 3500
+    assert len(payload["source_inventory"]["waymo"]["selected_shards"]) == 768
+    assert len(payload["source_inventory"]["pg"]["generations"]) == 1750
+    assert payload["split_manifest"]["targets"] == {
+        "waymo": {"train": 1000, "validation": 250, "test": 500},
+        "pg": {"train": 1000, "validation": 250, "test": 500},
+    }
+
+
+def test_frozen_materializer_uses_exact_sources_without_remote_discovery() -> None:
+    materializer = Path("scripts/materialize_frozen_scenarionet.sh").read_text(encoding="utf-8")
+    expansion = Path("scripts/expand_waymo_pool.sh").read_text(encoding="utf-8")
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+
+    assert "data/scenarionet/frozen/scenario_selection_index.json" in materializer
+    assert "WAYMO_FROZEN_SHARDS_FILE" in materializer
+    assert "gcloud storage ls" not in materializer
+    assert "generate_pg_from_frozen" in materializer
+    assert "replay_frozen_dataset" in materializer
+    assert "loaded frozen Waymo shard inventory" in expansion
+    assert "scenarionet-materialize-frozen:" in makefile
+
+
+def test_explicit_pg_task_runner_preserves_profile_seed_pairs(monkeypatch) -> None:
+    seen: list[tuple[str, int]] = []
+
+    def fake_run(task):
+        seen.append((task.profile, task.seed))
+        return (
+            task,
+            None,
+            {
+                "profile": task.profile,
+                "seed": task.seed,
+                "error_type": "SyntheticFailure",
+                "error": "test",
+            },
+        )
+
+    monkeypatch.setattr(pg_report, "_run_pg_task", fake_run)
+    report, results = pg_report.run_pg_tasks(
+        [("P5_complex_mixed", 920123), ("P0_simple", 920456)],
+        data_root="/tmp/scenarionet",
+        workers=1,
+    )
+
+    assert seen == [("P5_complex_mixed", 920123), ("P0_simple", 920456)]
+    assert report.requested == 2
+    assert report.generated == 0
+    assert report.failed == 2
+    assert results == ()

@@ -129,6 +129,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `REQ-SN-016` | `AC-SN-016`–`AC-SN-020` | `scripts/prepare_scenarionet_dataset.sh`, `scripts/expand_waymo_pool.sh`, `src/thesis_rl/cli/scenarios/build_catalog.py`, `src/thesis_rl/cli/scenarios/pipeline_config.py`, `src/thesis_rl/scenarios/pipeline.py`, `Makefile` | `TEST-SN-016`–`TEST-SN-020` | Verified |
 | `REQ-SN-016` | `AC-SN-021` | `src/thesis_rl/scenarios/frozen.py`, `src/thesis_rl/cli/scenarios/{freeze_dataset,replay_frozen_dataset}.py`, `Makefile` | `tests/test_scenario_frozen.py` | Implemented and verified |
 | `REQ-SN-002`–`REQ-SN-003` | `AC-SN-022` | `src/thesis_rl/scenarios/pipeline.py` | `tests/test_scenarionet_pipeline.py::test_source_arm_transport_minimizes_split_stratification_error` | Implemented; validation pending |
+| `REQ-SN-016` | `AC-SN-023` | `data/scenarionet/frozen/scenario_selection_index.json`, `scripts/materialize_frozen_scenarionet.sh`, `scripts/expand_waymo_pool.sh`, `src/thesis_rl/{scenarios/pg/report.py,cli/scenarios/generate_pg_from_frozen.py}`, `Makefile` | `tests/test_scenario_frozen.py` plus shell syntax checks | Implemented; source download/generation remains external-credential and data-volume dependent |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -156,6 +157,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `AC-SN-020` / `TEST-SN-020` | Unit/shell integration | Feasibility failure attribution | insufficient Waymo arm capacity with sufficient PG runtime count | report the arm/source capacity deficit before any PG replenishment decision and make the controller evaluate the Waymo branch | `REQ-SN-016` |
 | `AC-SN-021` / `TEST-SN-021` | Unit/integration | Frozen selection replay | completed final catalog plus source files and shard ledger | persist selected Waymo IDs/shards and PG profile/seed pairs, then rebuild derived catalog/runtime views without search or source regeneration | `REQ-SN-016` |
 | `AC-SN-022` / `TEST-SN-022` | Unit | Source-arm split stratification | source-arm quotas with exact primary-split totals | deterministic allocation minimizes proportional source-arm drift while retaining all exact source and arm totals | `REQ-SN-002`–`003` |
+| `AC-SN-023` / `TEST-SN-023` | Integration/shell | From-zero frozen materialization | versioned selection index plus empty data root and authenticated Waymo access | download only the recorded Waymo shards, generate only the recorded PG profile/seed pairs, and rebuild the selected dataset without remote discovery or split search | `REQ-SN-016` |
 
 Mandatory commands:
 
@@ -214,6 +216,15 @@ external credentials and must not overwrite frozen data.
   derived catalog/runtime views without acquisition, generation, filtering, or
   split search. Validate both synthetic integrity fixtures and the real 3,500-
   record dataset.
+- [x] M9 — Completed. Add true from-zero materialization from the versioned
+  selection index. `make scenarionet-materialize-frozen` copies the canonical
+  index into the mounted data root, downloads only its Waymo shard list through
+  the existing converter, generates only its PG profile/seed pairs, and then
+  rebuilds the frozen catalog/runtime views. Existing source files and batches
+  remain protected and are reused on retry; derived reports and frozen replay
+  outputs are restartable. The canonical index is versioned under
+  `data/scenarionet/frozen/`; `.gitignore` keeps this selection index tracked
+  while ignoring the downloaded/generated data around it.
 
 ## 11. Progress And Findings Log
 
@@ -620,6 +631,9 @@ No deviations identified.
 | `src/thesis_rl/cli/scenarios/freeze_dataset.py` | Added | Freeze the completed ScenarioNet selection |
 | `src/thesis_rl/cli/scenarios/replay_frozen_dataset.py` | Added | Rebuild derived catalog/runtime views from a frozen selection |
 | `tests/test_scenario_frozen.py` | Added | Frozen index and source-integrity regressions |
+| `data/scenarionet/frozen/scenario_selection_index.json` | Added | Versioned 3,500-record source-selection input for from-zero materialization |
+| `scripts/materialize_frozen_scenarionet.sh` | Added | Download exact Waymo shards, generate exact PG seeds, and replay the frozen dataset |
+| `src/thesis_rl/cli/scenarios/generate_pg_from_frozen.py` | Added | Generate explicit PG profile/seed tasks from the frozen index |
 
 ## 14. Validation Results
 
@@ -693,6 +707,9 @@ No deviations identified.
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format --check tests/test_scenarionet_pipeline.py && docker compose run --rm -T dataset-pipeline uv run --no-sync ruff check tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | Modified test is formatted and lint-clean |
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenarionet_pipeline.py && ruff format/check on build_splits, ui, and pipeline tests && bash -n scripts/prepare_scenarionet_dataset.sh scripts/expand_waymo_pool.sh && git diff --check` | PASS | 2026-07-18 | 37 tests passed; split CLI now reports report paths instead of dumping the full JSON, and the orchestration shell remains syntactically valid |
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format src/thesis_rl/scenarios/pipeline.py tests/test_scenarionet_pipeline.py && ruff check src/thesis_rl/scenarios/pipeline.py tests/test_scenarionet_pipeline.py && python -m pytest -q tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | 39 passed; validates the deterministic minimum-cost source-arm transport and the full focused ScenarioNet pipeline suite |
+| `bash -n scripts/materialize_frozen_scenarionet.sh scripts/expand_waymo_pool.sh && git diff --check` | PASS | 2026-07-18 | Exact frozen Waymo acquisition mode is syntactically valid and the patch has no whitespace errors |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format --check ... && ruff check ...` | PASS | 2026-07-18 | New frozen PG CLI, explicit PG task runner, and frozen materialization tests are formatted and lint-clean |
+| `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenario_frozen.py tests/test_scenario_manifests.py tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | 49 passed; validates the versioned 3,500-record index, exact shard/seed inputs, and the existing frozen/restart regressions |
 
 ## 15. Final Reconciliation
 
@@ -710,11 +727,12 @@ GDAL/Fiona prerequisite path. The actual Waymo batch download/conversion was
 completed successfully in the user's pipeline run; the resulting selected
 population is represented by the frozen index.
 
-Known limitations: no authoritative semantic-observation specification; the
-frozen index references existing converted Waymo/PG source files rather than
-copying them; and rebuilding those source files from the index after deleting
-the source databases would require a future source-materialization command that
-downloads the frozen shards and regenerates the frozen PG seeds.
+Known limitations: no authoritative semantic-observation specification; actual
+from-zero materialization requires Waymo access and is intentionally not run by
+the automated test suite; and regenerated source bytes depend on the pinned
+repository/container versions and the local MetaDrive/Waymo conversion
+environment. The materializer validates the selected source paths during the
+final replay, while the canonical index remains the selection authority.
 
 Deferred required work: M1–M4. Optional future work: custom PG VRU generation,
 Waymo-natural evaluation, and solver optimization beyond a correct deterministic

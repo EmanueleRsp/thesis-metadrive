@@ -146,6 +146,32 @@ until the configured target of 1,750 eligible scenarios is reached:
 make scenarionet-pipeline
 ```
 
+To reproduce the completed thesis dataset from an empty data root without
+running the discovery and feasibility loop, use the versioned source-selection
+index:
+
+```bash
+make scenarionet-materialize-frozen
+```
+
+This command requires an active `gcloud` account with access to the Waymo
+bucket. It downloads only the 768 recorded `training_20s` shards, converts
+those shards in the existing Waymo converter, generates only the 1,750
+recorded PG profile/seed pairs, and rebuilds the frozen catalog and runtime
+views. It does not call `gcloud storage ls`, search for a split, or regenerate
+unselected PG scenarios. The canonical selection index is committed at
+`data/scenarionet/frozen/scenario_selection_index.json`. The rest of `data/`
+remains ignored, so the selection policy is versioned while downloaded and
+generated data stays local. A local copy is placed under the mounted
+ScenarioNet data root for the container commands.
+
+The command is restartable: finalized Waymo batches and existing PG source
+files are reused, while derived reports and frozen replay outputs are rebuilt
+as needed. Set `FROZEN_OVERWRITE=true` only when the selected source files must
+be regenerated. This source-materialization path is separate from
+`make scenarionet-from-frozen`, which only works when the selected source files
+already exist.
+
 On a fresh data root the command also prepares the required Rulebook v2 ego
 calibration before catalog filtering. It installs the frozen canonical ego
 configuration non-destructively, collects 40 real CPU MetaDrive braking trials,
