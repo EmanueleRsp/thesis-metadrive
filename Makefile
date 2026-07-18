@@ -130,15 +130,7 @@ install-gcloud:
 	bash scripts/install_gcloud.sh
 
 waymo-auth:
-	@mkdir -p ./.gcloud-sdk/config
-	@if command -v gcloud >/dev/null 2>&1; then \
-		CLOUDSDK_CONFIG="$${CLOUDSDK_CONFIG:-./.gcloud-sdk/config}" gcloud init $(GCLOUD_INIT_FLAGS); \
-	elif [ -x ./.gcloud-sdk/google-cloud-sdk/bin/gcloud ]; then \
-		CLOUDSDK_CONFIG="$${CLOUDSDK_CONFIG:-./.gcloud-sdk/config}" ./.gcloud-sdk/google-cloud-sdk/bin/gcloud init $(GCLOUD_INIT_FLAGS); \
-	else \
-		echo "gcloud CLI is required; run 'make install-gcloud' first" >&2; \
-		exit 2; \
-	fi
+	GCLOUD_LOGIN_FLAGS="$(GCLOUD_INIT_FLAGS)" bash scripts/waymo_auth.sh
 
 waymo-inventory:
 	bash scripts/inspect_waymo_dataset.sh

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import yaml
 
 import thesis_rl.scenarios.pg.report as pg_report
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry, write_scenario_catalog
+from thesis_rl.cli.scenarios.prune_waymo_batch import prune_waymo_batch
 from thesis_rl.scenarios.frozen import (
     build_frozen_index,
     frozen_catalog,
@@ -182,10 +184,12 @@ def test_frozen_materializer_uses_exact_sources_without_remote_discovery() -> No
 
     assert "data/scenarionet/frozen/scenario_selection_index.json" in materializer
     assert "WAYMO_FROZEN_SHARDS_FILE" in materializer
+    assert "WAYMO_FROZEN_INDEX" in materializer
     assert "gcloud storage ls" not in materializer
     assert "generate_pg_from_frozen" in materializer
     assert "replay_frozen_dataset" in materializer
     assert "loaded frozen Waymo shard inventory" in expansion
+    assert "prune_waymo_batch" in expansion
     assert "scenarionet-materialize-frozen:" in makefile
 
 
@@ -217,3 +221,42 @@ def test_explicit_pg_task_runner_preserves_profile_seed_pairs(monkeypatch) -> No
     assert report.generated == 0
     assert report.failed == 2
     assert results == ()
+
+
+def test_waymo_batch_pruning_keeps_only_frozen_scenarios(tmp_path: Path) -> None:
+    batch_id = "batch_00000_00127"
+    database = tmp_path / "waymo" / "staging" / batch_id
+    selected = database / "batch_00000_00127_0/sd_selected.pkl"
+    unselected = database / "batch_00000_00127_0/sd_unselected.pkl"
+    selected.parent.mkdir(parents=True)
+    selected.write_bytes(b"selected")
+    unselected.write_bytes(b"unselected")
+    index = tmp_path / "scenario_selection_index.json"
+    index.write_text(
+        json.dumps(
+            {
+                "schema": "scenarionet_frozen_selection_v1",
+                "records": [{"scenario_uid": "waymo:uid"}],
+                "source_inventory": {
+                    "waymo": {
+                        "scenarios": [
+                            {
+                                "batch_id": batch_id,
+                                "relative_path": (
+                                    "waymo/database/batches/"
+                                    f"{batch_id}/batch_00000_00127_0/sd_selected.pkl"
+                                ),
+                            }
+                        ]
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    kept, removed = prune_waymo_batch(database, index_path=index, batch_id=batch_id)
+
+    assert (kept, removed) == (1, 1)
+    assert selected.is_file()
+    assert not unselected.exists()

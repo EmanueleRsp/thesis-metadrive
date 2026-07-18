@@ -33,10 +33,10 @@ make install-gcloud
 L'installer installa solo il client locale. Non esegue il login al posto
 dell'utente: l'autorizzazione Waymo richiede una conferma OAuth interattiva.
 I comandi Waymo del repository usano automaticamente il `gcloud` locale se non
-è disponibile nel `PATH`. `make waymo-auth` salva la configurazione OAuth in
-`.gcloud-sdk/config`; gli script Waymo usano quella configurazione locale se
-contiene un account attivo, altrimenti rispettano la configurazione standard di
-`gcloud`.
+è disponibile nel `PATH`. `make waymo-auth` riusa automaticamente un account
+già attivo nella configurazione standard di `gcloud`; se non ne trova uno,
+avvia il login OAuth. Una configurazione locale in `.gcloud-sdk/config` viene
+usata solo quando contiene già un account attivo.
 
 Se disponi già di un service account autorizzato al dataset, puoi usare
 un'automazione non interattiva indicando in `.env` soltanto il percorso di un
@@ -171,6 +171,13 @@ as needed. Set `FROZEN_OVERWRITE=true` only when the selected source files must
 be regenerated. This source-materialization path is separate from
 `make scenarionet-from-frozen`, which only works when the selected source files
 already exist.
+
+Frozen Waymo materialization also prunes each converted batch before it is
+registered: only the selected `sd_*.pkl` files recorded in the index are kept.
+The raw TFRecords are removed at the end of the same batch unless
+`WAYMO_KEEP_RAW_BATCHES=true` is set. Since Waymo conversion works at shard
+granularity, unselected scenarios inside a selected TFRecord shard still need
+to be decoded temporarily; they are not retained in the final converted pool.
 
 On a fresh data root the command also prepares the required Rulebook v2 ego
 calibration before catalog filtering. It installs the frozen canonical ego

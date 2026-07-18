@@ -49,6 +49,13 @@ pg_workers="${SCENARIONET_PG_WORKERS:-16}"
 overwrite="${FROZEN_OVERWRITE:-false}"
 temporary_files=()
 
+cleanup() {
+  if ((${#temporary_files[@]} > 0)); then
+    rm -f "${temporary_files[@]}"
+  fi
+}
+trap cleanup EXIT
+
 die() {
   echo "scenarionet-materialize-frozen: $*" >&2
   exit 2
@@ -107,6 +114,7 @@ shard_count="$(awk 'NF {count++} END {print count+0}' "$shard_list")"
 echo "scenarionet-materialize-frozen: materializing ${shard_count} frozen Waymo shards as ${active_account}"
 
 WAYMO_FROZEN_SHARDS_FILE="$shard_list" \
+  WAYMO_FROZEN_INDEX="$container_index_path" \
   WAYMO_BATCH_SHARDS="$batch_size" \
   WAYMO_MAX_NEW_SHARDS="$shard_count" \
   WAYMO_REQUIRED_ELIGIBLE=0 \

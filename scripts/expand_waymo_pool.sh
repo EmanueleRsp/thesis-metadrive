@@ -35,6 +35,7 @@ num_workers="${WAYMO_NUM_WORKERS:-16}"
 keep_raw="${WAYMO_KEEP_RAW_BATCHES:-false}"
 force_one_batch="${WAYMO_FORCE_ONE_BATCH:-false}"
 frozen_shards_file="${WAYMO_FROZEN_SHARDS_FILE:-}"
+frozen_index_path="${WAYMO_FROZEN_INDEX:-}"
 gcs_uri="${WAYMO_GCS_URI:-gs://waymo_open_dataset_motion_v_1_2_0/uncompressed/scenario/training_20s}"
 object_pattern="${WAYMO_GCS_OBJECT_PATTERN:-training_20s.tfrecord-*}"
 host_data_dir="${HOST_DATA_DIR:-./data}"
@@ -80,6 +81,11 @@ die() {
   echo "waymo-expand: $*" >&2
   exit 2
 }
+
+if is_true "$frozen_mode"; then
+  [[ -n "$frozen_index_path" ]] || die \
+    "WAYMO_FROZEN_INDEX is required when materializing a frozen Waymo selection"
+fi
 
 [[ "$required" =~ ^[0-9]+$ ]] || die "required eligible count must be non-negative: $required"
 [[ "$batch_size" =~ ^[1-9][0-9]*$ ]] || die "WAYMO_BATCH_SHARDS must be positive: $batch_size"
@@ -277,6 +283,13 @@ while ! is_true "$pool_complete" || is_true "$force_one_batch"; do
     die \
       "Waymo conversion produced no scenario files for ${batch_id}; the shard ledger was not updated" \
       "Inspect the converter output above and retry the same batch after repairing the conversion environment."
+  fi
+  if is_true "$frozen_mode"; then
+    log "batch ${batch_number}: pruning unselected converted scenarios"
+    docker exec "$converter_container" python -m thesis_rl.cli.scenarios.prune_waymo_batch \
+      --database "$container_staging" \
+      --index "$frozen_index_path" \
+      --batch-id "$batch_id"
   fi
   log "batch ${batch_number}: conversion finished; moving staging database into final batch directory"
   docker exec "$converter_container" sh -c \

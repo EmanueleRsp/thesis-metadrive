@@ -130,6 +130,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `REQ-SN-016` | `AC-SN-021` | `src/thesis_rl/scenarios/frozen.py`, `src/thesis_rl/cli/scenarios/{freeze_dataset,replay_frozen_dataset}.py`, `Makefile` | `tests/test_scenario_frozen.py` | Implemented and verified |
 | `REQ-SN-002`–`REQ-SN-003` | `AC-SN-022` | `src/thesis_rl/scenarios/pipeline.py` | `tests/test_scenarionet_pipeline.py::test_source_arm_transport_minimizes_split_stratification_error` | Implemented; validation pending |
 | `REQ-SN-016` | `AC-SN-023` | `data/scenarionet/frozen/scenario_selection_index.json`, `scripts/materialize_frozen_scenarionet.sh`, `scripts/expand_waymo_pool.sh`, `src/thesis_rl/{scenarios/pg/report.py,cli/scenarios/generate_pg_from_frozen.py}`, `Makefile` | `tests/test_scenario_frozen.py` plus shell syntax checks | Implemented; source download/generation remains external-credential and data-volume dependent |
+| `REQ-SN-016` | `AC-SN-024` | `src/thesis_rl/cli/scenarios/prune_waymo_batch.py`, `scripts/expand_waymo_pool.sh` | `tests/test_scenario_frozen.py::test_waymo_batch_pruning_keeps_only_frozen_scenarios` | Implemented; conversion still operates at TFRecord-shard granularity |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -158,6 +159,7 @@ must not silently choose a reduced output or weaken any hard constraint.
 | `AC-SN-021` / `TEST-SN-021` | Unit/integration | Frozen selection replay | completed final catalog plus source files and shard ledger | persist selected Waymo IDs/shards and PG profile/seed pairs, then rebuild derived catalog/runtime views without search or source regeneration | `REQ-SN-016` |
 | `AC-SN-022` / `TEST-SN-022` | Unit | Source-arm split stratification | source-arm quotas with exact primary-split totals | deterministic allocation minimizes proportional source-arm drift while retaining all exact source and arm totals | `REQ-SN-002`–`003` |
 | `AC-SN-023` / `TEST-SN-023` | Integration/shell | From-zero frozen materialization | versioned selection index plus empty data root and authenticated Waymo access | download only the recorded Waymo shards, generate only the recorded PG profile/seed pairs, and rebuild the selected dataset without remote discovery or split search | `REQ-SN-016` |
+| `AC-SN-024` / `TEST-SN-024` | Unit/integration | Batch-level source pruning | converted staging batch plus selected and unselected `sd_*.pkl` files | delete unselected converted scenarios before batch registration and remove raw TFRecords after conversion by default | `REQ-SN-016` |
 
 Mandatory commands:
 
@@ -225,6 +227,15 @@ external credentials and must not overwrite frozen data.
   outputs are restartable. The canonical index is versioned under
   `data/scenarionet/frozen/`; `.gitignore` keeps this selection index tracked
   while ignoring the downloaded/generated data around it.
+- [x] M10 — Completed. Bound frozen Waymo storage to one acquisition batch at a
+  time: after each conversion, remove every unselected `sd_*.pkl` from the
+  staging database before registering the batch, then remove the batch's raw
+  TFRecords by default. The converter still decodes complete selected shards,
+  because its current interface has no scenario-level filter.
+- The frozen Waymo materializer now prunes unselected converted scenario files
+  immediately after each shard batch and removes the corresponding raw
+  TFRecords by default. The converter still has to decode complete selected
+  TFRecord shards because it has no scenario-level input filter.
 
 ## 11. Progress And Findings Log
 
@@ -634,6 +645,7 @@ No deviations identified.
 | `data/scenarionet/frozen/scenario_selection_index.json` | Added | Versioned 3,500-record source-selection input for from-zero materialization |
 | `scripts/materialize_frozen_scenarionet.sh` | Added | Download exact Waymo shards, generate exact PG seeds, and replay the frozen dataset |
 | `src/thesis_rl/cli/scenarios/generate_pg_from_frozen.py` | Added | Generate explicit PG profile/seed tasks from the frozen index |
+| `src/thesis_rl/cli/scenarios/prune_waymo_batch.py` | Added | Remove unselected converted Waymo files from each frozen batch |
 
 ## 14. Validation Results
 
@@ -710,6 +722,7 @@ No deviations identified.
 | `bash -n scripts/materialize_frozen_scenarionet.sh scripts/expand_waymo_pool.sh && git diff --check` | PASS | 2026-07-18 | Exact frozen Waymo acquisition mode is syntactically valid and the patch has no whitespace errors |
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync ruff format --check ... && ruff check ...` | PASS | 2026-07-18 | New frozen PG CLI, explicit PG task runner, and frozen materialization tests are formatted and lint-clean |
 | `docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenario_frozen.py tests/test_scenario_manifests.py tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | 49 passed; validates the versioned 3,500-record index, exact shard/seed inputs, and the existing frozen/restart regressions |
+| `bash -n scripts/materialize_frozen_scenarionet.sh scripts/expand_waymo_pool.sh && focused Ruff && docker compose run --rm -T dataset-pipeline uv run --no-sync python -m pytest -q tests/test_scenario_frozen.py tests/test_scenario_manifests.py tests/test_scenarionet_pipeline.py` | PASS | 2026-07-18 | 50 passed; validates batch-level Waymo pruning and the exact frozen materialization path |
 
 ## 15. Final Reconciliation
 
