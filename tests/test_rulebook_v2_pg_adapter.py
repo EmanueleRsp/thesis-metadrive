@@ -67,3 +67,10 @@ def test_pg_adapter_prefers_persisted_route_over_future_sdc_track() -> None:
 
     assert result.task_route.lane_ids == ("lane-a", "lane-b")
     assert result.task_route.route_assignment_source == "pg_sdc_offline_task_annotation"
+
+
+def test_pg_adapter_preserves_lane_successors() -> None:
+    result = build_pg_static_adapter_result(_minimal_pg_scenario(), scenario_uid="topology")
+    lanes = {lane.lane_id: lane for lane in result.route_lanes}
+    assert lanes["lane-a"].successor_lane_ids == ("lane-b",)
+    assert lanes["lane-b"].successor_lane_ids == ()

@@ -1,2 +1,3 @@
-# Rulebook v2 is monitor-only until F9 wires its wrapper into ScenarioEnv.
-version: 4.6-final-implementation-complete
+# Rulebook v2 live adapter wiring is available after ScenarioEnv reset; runtime
+# validation remains fail-closed for missing calibration or ambiguous topology.
+version: 4.7-final-implementation-complete

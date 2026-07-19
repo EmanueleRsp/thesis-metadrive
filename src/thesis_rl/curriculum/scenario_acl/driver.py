@@ -325,6 +325,7 @@ def _persist_buffer_state(
     path: Path,
     buffer: ScenarioBuffer,
 ) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(buffer.state_dict(), ensure_ascii=True, indent=2),
         encoding="utf-8",

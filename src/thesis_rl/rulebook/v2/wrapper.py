@@ -27,6 +27,7 @@ from thesis_rl.rulebook.v2.types import (
 
 Snapshotter = Callable[[Any], EnvSnapshot]
 TransitionEvaluator = Callable[..., tuple[RulebookResult, RulebookMemory, Any]]
+AdapterFactory = Callable[[], "RulebookV2Adapter"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,9 +53,10 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         *,
         snapshotter: Snapshotter,
         transition_evaluator: TransitionEvaluator,
-        initial_memory: RulebookMemory,
-        initial_cache: EpisodeCache,
+        initial_memory: RulebookMemory | None,
+        initial_cache: EpisodeCache | None,
         scalarizer: RulebookScalarizer | None = None,
+        adapter_factory: AdapterFactory | None = None,
     ) -> None:
         super().__init__(env)
         self._snapshotter = snapshotter
@@ -62,6 +64,7 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         self._initial_memory = initial_memory
         self._initial_cache = initial_cache
         self._scalarizer = scalarizer
+        self._adapter_factory = adapter_factory
         self._memory = initial_memory
         self._cache = initial_cache
         self._pre_snapshot: EnvSnapshot | None = None
@@ -69,10 +72,14 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
 
     @property
     def memory(self) -> RulebookMemory:
+        if self._memory is None:
+            raise RuntimeError("Rulebook v2 memory is unavailable before reset")
         return self._memory
 
     @property
     def cache(self) -> EpisodeCache:
+        if self._cache is None:
+            raise RuntimeError("Rulebook v2 cache is unavailable before reset")
         return self._cache
 
     @property
@@ -113,6 +120,14 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
 
     def reset(self, **kwargs: Any):
         observation, info = self.env.reset(**kwargs)
+        if self._adapter_factory is not None:
+            adapter = self._adapter_factory()
+            if not isinstance(adapter, RulebookV2Adapter):
+                raise TypeError("Rulebook v2 adapter factory must return RulebookV2Adapter")
+            self._snapshotter = adapter.snapshotter
+            self._transition_evaluator = adapter.transition_evaluator
+            self._initial_memory = adapter.initial_memory
+            self._initial_cache = adapter.initial_cache
         self._memory = self._initial_memory
         self._cache = self._initial_cache
         self._pre_snapshot = self._snapshotter(self.env)

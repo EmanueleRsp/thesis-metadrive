@@ -32,11 +32,35 @@ from thesis_rl.rulebook.v2.geometry.lanes import (
     RouteLaneRecord,
     associate_route_lane,
     bumper_to_bumper_gap,
+    derive_lane_movement_key,
     footprint_route_coordinates,
 )
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.geometry.vertical import vertically_compatible_at_xy
 from thesis_rl.rulebook.v2.types import MovementKey
+
+
+def test_lane_movement_key_uses_unique_successor_or_assigned_route() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    unique = RouteLaneRecord(
+        "approach", Polygon(((-1.0, -2.0), (11.0, -2.0), (11.0, 2.0), (-1.0, 2.0))), route, ("exit",)
+    )
+    assert derive_lane_movement_key(unique) is not None
+    assert derive_lane_movement_key(unique).exit_lane_id == "exit"
+
+    branching = RouteLaneRecord(
+        "approach",
+        unique.polygon_xy,
+        route,
+        ("left", "right"),
+    )
+    assert derive_lane_movement_key(branching) is None
+    resolved = derive_lane_movement_key(
+        branching,
+        assigned_route_lane_ids=("approach", "right"),
+    )
+    assert resolved is not None
+    assert resolved.exit_lane_id == "right"
 
 
 def test_canonical_wkb_and_synthetic_id_ignore_ring_orientation_and_small_noise() -> None:
@@ -182,6 +206,20 @@ def test_drivable_surface_uses_current_vertical_layer_and_width_fallback() -> No
     assert surface.bounds == pytest.approx((0.0, -2.0, 10.0, 2.0))
     with pytest.raises(ValueError, match="lane_width"):
         DrivableLaneRecord("broken", lower, None, None)
+
+
+def test_drivable_surface_remains_available_when_ego_is_off_lane() -> None:
+    lane = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    ego = oriented_bounding_box(
+        center_xy=(50.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0
+    )
+    surface = drivable_surface_for_ego(
+        ego_footprint=ego,
+        ego_position_xy=(50.0, 0.0),
+        ego_position_z=0.0,
+        lanes=(DrivableLaneRecord("lane", lane, None, 4.0),),
+    )
+    assert not surface.is_empty
 
 
 def test_derived_control_line_is_orthogonal_and_signed_upstream_positive() -> None:

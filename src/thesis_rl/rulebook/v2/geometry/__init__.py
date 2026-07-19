@@ -41,6 +41,7 @@ from thesis_rl.rulebook.v2.geometry.footprint import (
     swept_front_bumper,
 )
 from thesis_rl.rulebook.v2.geometry.lanes import (
+    derive_lane_movement_key,
     FootprintRouteCoordinates,
     LaneAssociation,
     RouteLaneRecord,
@@ -73,6 +74,7 @@ __all__ = [
     "RouteProjection",
     "build_assigned_route_polyline",
     "RouteLaneRecord",
+    "derive_lane_movement_key",
     "MovementCorridor",
     "associate_route_lane",
     "bumper_to_bumper_gap",

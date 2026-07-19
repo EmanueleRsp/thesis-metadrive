@@ -92,19 +92,55 @@ The companion candidate CSV remains the required selection coverage matrix. The 
 
 The canonical five-test ScenarioNet integration smoke subsequently passed in the
 Docker GPU container, covering all split/runtime equality checks and PG/Waymo
-vectorized reset/step paths. Rulebook v4.7 learner wiring remains intentionally
-fail-closed because `ThesisScenarioEnv` does not yet expose the required live
-`rulebook_v2_adapter`; no learner stage was started under a silent fallback.
+vectorized reset/step paths. Rulebook v4.7 learner wiring now reaches the
+deferred live adapter after reset; no learner stage is claimed under a silent
+fallback.
 The first isolated live-adapter increments now normalize finite MetaDrive actor
 snapshots and Bullet contact onset records for one real PG and one real Waymo
 fixed-sequence scenario. The isolated source-bound provider also mapped 14
 current Waymo traffic-light states by their ScenarioNet physical IDs; unknown
-states remain explicit. Persistent-contact wiring, static zones, and the
-transition evaluator remain pending.
+states remain explicit. The live adapter increment now also includes persistent
+Bullet-manifold contact
+reconstruction, successor-graph preservation, fail-closed movement-key
+derivation, an immutable episode-cache builder, and a source-neutral complete
+transition evaluator. These are implementation-level Rulebook contracts and
+are covered by the focused suite; the deferred adapter is installed on
+`ThesisScenarioEnv` after reset. A direct canonical-runtime PG reset/step probe
+reached the complete adapter and failed closed at RSS because no approved
+calibration artifact was configured. This is an expected prerequisite failure,
+not a dataset defect.
+After loading the existing read-only calibration artifact from the mounted data
+root and aligning the source elevation datum to MetaDrive's live `z=0` spawn
+convention, the same complete Rulebook path passed one real PG and one real
+Waymo reset/step (`2 passed`). The alignment translates only the common datum;
+relative elevation and topology remain unchanged.
+The live object-registry probe on a Waymo scenario tagged with VRU content
+produced 12 unique finite other-actor snapshots (11 vehicles and one cyclist)
+after one ego exclusion. This does not yet establish complete
+pedestrian/static-object parity across the dataset; unknown public-registry
+objects are rejected rather than silently dropped.
 Read-only static-adapter probes on the actually loaded canonical content had
 zero validation errors for one PG record, one Waymo record, and one Waymo
 traffic-light record (two route-relevant signal controls). These are
 representative probes, not dataset-wide live Rulebook validation.
+
+The Docker GPU learner diagnostics subsequently passed S1 (TD3/MLP, PER and
+ACL off), S2 (TD3/LQ, PER and ACL off), S3 (TD3/LQ with the approved ACL core,
+PER off), S4 (TD3/LQ with PER on, ACL off), S5 (TD3/LQ with ACL and PER on),
+and diagnostic S6 (PPO/LQ with replay off). Each run used the canonical root,
+finite source-backed observations/actions, short updates, evaluation, and
+checkpoint publication. S3/S5 also emitted ACL arm probabilities and persisted
+curriculum state. These are diagnostic runtime smokes only; they do not claim
+policy quality, convergence, dataset-wide Rulebook eligibility, or thesis
+performance.
+
+The smokes exposed and fixed three repository defects: non-ego and node-only
+Bullet callbacks are filtered/deferred to the current manifold; Bullet
+single-point manifold access supports both indexed and no-argument bindings;
+and off-road geometry unions every vertically compatible drivable lane rather
+than returning an empty surface after the ego leaves a lane. Semantic builders
+now consume the elevation-aligned Rulebook route, and ACL buffer persistence
+creates its parent directory. No protected source file was changed.
 
 ## Reproducibility
 

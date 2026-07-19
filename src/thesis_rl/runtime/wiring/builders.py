@@ -302,11 +302,15 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
         adapter = getattr(env, "rulebook_v2_adapter", None)
         if adapter is None:
             adapter = getattr(getattr(env, "unwrapped", None), "rulebook_v2_adapter", None)
+        adapter_factory = None
         if adapter is None:
-            raise ValueError(
-                "Rulebook v2 requires env.rulebook_v2_adapter with snapshotter, "
-                "transition_evaluator, initial_memory and initial_cache"
-            )
+            adapter_factory = getattr(env, "make_rulebook_v2_adapter", None)
+            if not callable(adapter_factory):
+                raise ValueError(
+                    "Rulebook v2 requires env.rulebook_v2_adapter with snapshotter, "
+                    "transition_evaluator, initial_memory and initial_cache"
+                )
+            setattr(getattr(env, "unwrapped", env), "_rulebook_v2_requested", True)
         scalarizer = None
         if str(cfg.reward.behavior).lower() == "scalar_reward":
             scalarization_cfg = cfg.get("scalarization")
@@ -319,13 +323,28 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
                     OmegaConf.to_container(scalarization_cfg, resolve=True)
                 )
             )
+        if adapter_factory is not None:
+            def snapshotter(_env):
+                raise RuntimeError("Deferred Rulebook v2 adapter is unavailable before reset")
+
+            def transition_evaluator(**_kwargs):
+                raise RuntimeError("Deferred Rulebook v2 adapter is unavailable before reset")
+
+            initial_memory = None
+            initial_cache = None
+        else:
+            snapshotter = adapter.snapshotter
+            transition_evaluator = adapter.transition_evaluator
+            initial_memory = adapter.initial_memory
+            initial_cache = adapter.initial_cache
         return RulebookV2MonitorWrapper(
             env,
-            snapshotter=adapter.snapshotter,
-            transition_evaluator=adapter.transition_evaluator,
-            initial_memory=adapter.initial_memory,
-            initial_cache=adapter.initial_cache,
+            snapshotter=snapshotter,
+            transition_evaluator=transition_evaluator,
+            initial_memory=initial_memory,
+            initial_cache=initial_cache,
             scalarizer=scalarizer,
+            adapter_factory=adapter_factory,
         )
     mode = str(cfg.reward.behavior).lower()
     if mode == "off":

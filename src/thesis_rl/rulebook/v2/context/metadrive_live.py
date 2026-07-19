@@ -157,6 +157,68 @@ def live_vehicle_objects(env: Any) -> tuple[Any, ...]:
     return tuple(by_id[key] for key in sorted(by_id))
 
 
+def live_actor_objects(env: Any) -> tuple[Any, ...]:
+    """Collect supported live actors from MetaDrive's public object registry.
+
+    The traffic manager exposes vehicles, while ScenarioNet VRUs such as
+    cyclists are exposed through ``engine.get_objects()``.  Both collections
+    are merged deterministically by runtime ID.  Traffic-light and map
+    objects are intentionally excluded because they are represented by the
+    dedicated signal/static providers.
+    """
+
+    engine = getattr(env, "engine", None)
+    candidates: list[Any] = list(live_vehicle_objects(env))
+    get_objects = getattr(engine, "get_objects", None)
+    if callable(get_objects):
+        objects = get_objects()
+        values = objects.values() if isinstance(objects, Mapping) else ()
+        candidates.extend(values)
+    by_id: dict[str, Any] = {}
+    for actor in candidates:
+        name = type(actor).__name__.lower()
+        if "trafficlight" in name or "traffic_light" in name or "lane" in name:
+            continue
+        try:
+            _actor_class(actor)
+        except ValueError as error:
+            raise ValueError(
+                f"Unsupported MetaDrive live object in public registry: {type(actor).__name__!r}"
+            ) from error
+        actor_id = getattr(actor, "id", None)
+        if not isinstance(actor_id, str) or not actor_id:
+            raise ValueError("MetaDrive live actor has no stable runtime id")
+        by_id[actor_id] = actor
+    return tuple(by_id[key] for key in sorted(by_id))
+
+
+def live_ego_snapshot(env: Any) -> ActorSnapshot:
+    """Normalize the configured live ego vehicle from MetaDrive."""
+
+    traffic_manager = getattr(getattr(env, "engine", None), "traffic_manager", None)
+    ego = getattr(traffic_manager, "ego_vehicle", None)
+    if ego is None:
+        raise ValueError("MetaDrive environment has no configured ego vehicle")
+    return actor_snapshot_from_metadrive(env, ego)
+
+
+def live_actor_snapshots(env: Any) -> tuple[ActorSnapshot, ...]:
+    """Normalize live traffic actors, excluding the ego by runtime identity."""
+
+    traffic_manager = getattr(getattr(env, "engine", None), "traffic_manager", None)
+    ego = getattr(traffic_manager, "ego_vehicle", None)
+    if ego is None:
+        raise ValueError("MetaDrive environment has no configured ego vehicle")
+    ego_id = getattr(ego, "id", None)
+    if not isinstance(ego_id, str) or not ego_id:
+        raise ValueError("MetaDrive ego vehicle has no stable runtime id")
+    return tuple(
+        actor_snapshot_from_metadrive(env, actor)
+        for actor in live_actor_objects(env)
+        if getattr(actor, "id", None) != ego_id
+    )
+
+
 def live_signal_states_by_physical_id(env: Any) -> dict[str, str]:
     """Read current MetaDrive signal states without consulting future tracks.
 
@@ -314,7 +376,9 @@ class MetaDriveContactRecorder:
         self.object_from_node = object_from_node
         self.buffer = ContactOnsetBuffer()
         self._active_actor_ids: set[str] = set()
+        self._last_snapshot_active_ids: frozenset[str] = frozenset()
         self.ignored_non_actor_contacts = 0
+        self.deferred_manifold_contacts = 0
 
     def clear_control_step(self) -> None:
         self.buffer.clear_control_step()
@@ -329,24 +393,118 @@ class MetaDriveContactRecorder:
             )
         except ValueError as error:
             # MetaDrive reports lane/boundary contacts through the same Bullet
-            # callback but those nodes have no Python object to normalize. They
-            # are not actor onsets; malformed resolved actor contacts still
+            # callback, including contacts between two non-ego actors. Neither
+            # is an ego contact onset; malformed resolved ego contacts still
             # propagate and fail closed.
-            if str(error) != "MetaDrive contact objects could not be resolved":
+            if str(error) not in {
+                "MetaDrive contact objects could not be resolved",
+                "MetaDrive contact does not involve the configured ego vehicle",
+            }:
+                if str(error) == (
+                    "MetaDrive contact has no supported accessor: "
+                    "('getManifoldPoint', 'get_manifold_point', 'manifold_point')"
+                ):
+                    # Bullet's ContactAdded callback carries node identities;
+                    # manifold points are available from the world manifold
+                    # query at the control-step snapshot boundary.
+                    self.deferred_manifold_contacts += 1
+                    return
                 raise
             self.ignored_non_actor_contacts += 1
             return
         self.buffer.record_onset(record)
         self._active_actor_ids.add(record.actor_id)
 
+    def _persistent_contact_records(self) -> tuple[ContactOnsetRecord, ...]:
+        """Read current Bullet manifolds without changing simulator state."""
+
+        world = getattr(getattr(self.env, "engine", None), "physics_world", None)
+        world = getattr(world, "dynamic_world", world)
+        if world is None:
+            return ()
+        getter = getattr(world, "get_manifolds", None) or getattr(world, "getManifolds", None)
+        if not callable(getter):
+            raise ValueError("MetaDrive Bullet world has no persistent-manifold accessor")
+        records: list[ContactOnsetRecord] = []
+        for manifold in getter():
+            node0 = getattr(manifold, "getNode0", None) or getattr(manifold, "get_node0", None)
+            node1 = getattr(manifold, "getNode1", None) or getattr(manifold, "get_node1", None)
+            if not callable(node0) or not callable(node1):
+                raise ValueError("MetaDrive persistent manifold has no node accessors")
+            point_count = getattr(manifold, "getNumManifoldPoints", None) or getattr(
+                manifold, "get_num_manifold_points", None
+            )
+            count = int(point_count()) if callable(point_count) else 1
+            if count < 1:
+                continue
+            for index in range(count):
+                point_getter = getattr(manifold, "getManifoldPoint", None) or getattr(
+                    manifold, "get_manifold_point", None
+                )
+                if not callable(point_getter):
+                    raise ValueError("MetaDrive persistent manifold has no point accessor")
+
+                class _PersistentContact:
+                    def getNode0(self):
+                        return node0()
+
+                    def getNode1(self):
+                        return node1()
+
+                    def getManifoldPoint(self):
+                        try:
+                            return point_getter(index)
+                        except TypeError:
+                            if count != 1:
+                                raise
+                            # Test doubles and older Bullet bindings expose a
+                            # single-point accessor without an index.
+                            return point_getter()
+
+                try:
+                    records.append(
+                        contact_onset_from_metadrive_contact(
+                            _PersistentContact(),
+                            self.env,
+                            object_from_node=self.object_from_node,
+                        )
+                    )
+                except ValueError as error:
+                    if str(error) not in {
+                        "MetaDrive contact objects could not be resolved",
+                        "MetaDrive contact does not involve the configured ego vehicle",
+                    }:
+                        raise
+                    self.ignored_non_actor_contacts += 1
+        return tuple(records)
+
     def snapshot_contact_state(self) -> tuple[tuple[ContactOnsetRecord, ...], frozenset[str]]:
-        return self.buffer.drain(), frozenset(self._active_actor_ids)
+        persistent = self._persistent_contact_records()
+        persistent_ids = frozenset(record.actor_id for record in persistent)
+        buffered = self.buffer.drain()
+        buffered_ids = frozenset(record.actor_id for record in buffered)
+        onset_records = list(buffered)
+        seen_onsets = set(buffered_ids)
+        for record in persistent:
+            if (
+                record.actor_id not in self._last_snapshot_active_ids
+                and record.actor_id not in seen_onsets
+            ):
+                onset_records.append(record)
+                seen_onsets.add(record.actor_id)
+        current_ids = frozenset((*persistent_ids, *self._active_actor_ids))
+        self._last_snapshot_active_ids = current_ids
+        self._active_actor_ids.clear()
+        return tuple(onset_records), current_ids
 
 
 __all__ = [
     "MetaDriveContactRecorder",
     "actor_snapshot_from_metadrive",
     "contact_onset_from_metadrive_contact",
+    "live_actor_objects",
+    "live_actor_snapshots",
+    "live_ego_snapshot",
     "live_signal_states_by_physical_id",
     "live_vehicle_objects",
 ]

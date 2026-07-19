@@ -101,6 +101,8 @@ class ThesisScenarioEnv(ScenarioEnv):
             "termination_reasons": Counter(),
         }
         self._last_sampling_metadata: dict[str, Any] = {}
+        self._rulebook_v2_requested = False
+        self.rulebook_v2_adapter: Any | None = None
 
     def _select_provider_seed(self, force_seed: int | None) -> int | None:
         if force_seed is not None:
@@ -269,9 +271,25 @@ class ThesisScenarioEnv(ScenarioEnv):
             from thesis_rl.envs.observations.causal_semantic import CausalSemanticBatchBuilder
 
             static_result = self._build_static_adapter_result(scenario, record)
+            # The live Rulebook cache may apply a source-to-simulator elevation
+            # datum translation at reset. Reuse that committed geometry for
+            # semantic observations so the causal route identity is exact in
+            # 2.5D, rather than comparing a pre-alignment static copy.
+            rulebook_adapter = getattr(self, "rulebook_v2_adapter", None)
+            episode_cache = getattr(rulebook_adapter, "initial_cache", None)
+            route = (
+                episode_cache.route_polyline
+                if episode_cache is not None
+                else static_result.assigned_route_polyline
+            )
+            route_lanes = (
+                episode_cache.route_lanes
+                if episode_cache is not None
+                else static_result.route_lanes
+            )
             semantic_builder = CausalSemanticBatchBuilder(
-                route=static_result.assigned_route_polyline,
-                route_lanes=static_result.route_lanes,
+                route=route,
+                route_lanes=route_lanes,
                 context_provider=lambda: self.causal_scene_context,
                 history_length=5,
                 control_timestep_s=0.1,
@@ -299,6 +317,124 @@ class ThesisScenarioEnv(ScenarioEnv):
         for builder in getattr(self, "_causal_semantic_builders", ()):
             builder.reset()
             builder.commit_context(context)
+
+    def _install_rulebook_v2_adapter(self) -> None:
+        """Install the source-bound Rulebook adapter after ScenarioEnv reset."""
+
+        if not self._rulebook_v2_requested:
+            return
+        from metadrive.engine.core.collision_callback import collision_callback
+        from metadrive.utils.utils import get_object_from_node
+        import hashlib
+        import json
+        from pathlib import Path
+
+        from thesis_rl.rulebook.v2.context.metadrive_live import (
+            MetaDriveContactRecorder,
+            live_actor_snapshots,
+            live_ego_snapshot,
+            live_signal_states_by_physical_id,
+        )
+        from thesis_rl.rulebook.v2.context.live_adapter import (
+            LiveSnapshotAdapter,
+            LiveSnapshotSources,
+            install_collision_callback_hook,
+        )
+        from thesis_rl.rulebook.v2.calibration import load_calibration_artifact
+        from thesis_rl.rulebook.v2.transition import (
+            RulebookTransitionConfig,
+            align_episode_cache_to_live_elevation,
+            build_episode_cache,
+            initial_memory_for_snapshot,
+            transition_evaluator_factory,
+        )
+        from thesis_rl.rulebook.v2.wrapper import RulebookV2Adapter
+
+        scenario = getattr(getattr(self.engine, "data_manager", None), "current_scenario", None)
+        record = self.current_scenario_record
+        if not isinstance(scenario, Mapping) or record is None:
+            raise RuntimeError("Rulebook v2 adapter requires a loaded scenario and catalog record")
+        static_result = self._build_static_adapter_result(scenario, record)
+        cache = build_episode_cache(static_result)
+        recorder = MetaDriveContactRecorder(self, object_from_node=get_object_from_node)
+        dynamic_world = self.engine.physics_world.dynamic_world
+        install_collision_callback_hook(
+            dynamic_world,
+            original_callback=collision_callback,
+            observer=recorder.observe,
+        )
+        contact_cache: dict[str, object] = {"step": None, "value": ((), frozenset())}
+
+        def contact_state(_env: Any) -> tuple[tuple[Any, ...], frozenset[str]]:
+            step = int(self.episode_step)
+            if contact_cache["step"] != step:
+                contact_cache["value"] = recorder.snapshot_contact_state()
+                contact_cache["step"] = step
+            return contact_cache["value"]  # type: ignore[return-value]
+
+        decision_repeat = int(self.config.get("decision_repeat", 1))
+        physics_dt = float(self.config.get("physics_world_step_size", 0.02))
+        snapshotter = LiveSnapshotAdapter(
+            LiveSnapshotSources(
+                scenario_id=lambda _env: str(record.scenario_uid),
+                step_index=lambda env: int(env.episode_step),
+                sim_time_s=lambda env: float(env.episode_step * decision_repeat * physics_dt),
+                ego=live_ego_snapshot,
+                actors=live_actor_snapshots,
+                contact_onset_records=lambda env: tuple(contact_state(env)[0]),
+                active_contact_ids=lambda env: contact_state(env)[1],
+                signal_states_by_physical_id=live_signal_states_by_physical_id,
+            )
+        )
+        initial_snapshot = snapshotter.capture(self)
+        cache = align_episode_cache_to_live_elevation(cache, initial_snapshot)
+        calibration = None
+        data_directory = Path(str(self.config.get("data_directory", "")))
+        data_root = data_directory.parent.parent
+        configured_calibration = self.config.get("rulebook_v2_calibration_path")
+        if configured_calibration:
+            calibration_path = Path(str(configured_calibration))
+        else:
+            calibration_path = data_root / "rulebook_v2" / "calibration_b_e.json"
+        if calibration_path.is_file():
+            configured_ego = self.config.get("rulebook_v2_ego_config_path")
+            ego_config_path = (
+                Path(str(configured_ego))
+                if configured_ego
+                else data_root / "rulebook_v2" / "ego_config.json"
+            )
+            if not ego_config_path.is_file():
+                raise ValueError(
+                    "Rulebook RSS calibration exists but its canonical ego config is missing"
+                )
+            expected_config_hash = hashlib.sha256(
+                json.dumps(
+                    json.loads(ego_config_path.read_text(encoding="utf-8")),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            calibration = load_calibration_artifact(
+                calibration_path,
+                expected_config_hash=expected_config_hash,
+            )
+        transition_config = RulebookTransitionConfig(
+            rss_calibration=calibration,
+            expected_config_hash="" if calibration is None else calibration.config_hash,
+        )
+        self.rulebook_v2_adapter = RulebookV2Adapter(
+            snapshotter=snapshotter.capture,
+            transition_evaluator=transition_evaluator_factory(transition_config),
+            initial_memory=initial_memory_for_snapshot(initial_snapshot, cache),
+            initial_cache=cache,
+        )
+
+    def make_rulebook_v2_adapter(self) -> Any:
+        """Return the adapter prepared by the immediately preceding reset."""
+
+        if self.rulebook_v2_adapter is None:
+            raise RuntimeError("Rulebook v2 adapter is unavailable before ScenarioEnv reset")
+        return self.rulebook_v2_adapter
 
     def _on_causal_context_committed(self, context: object) -> None:
         for builder in getattr(self, "_causal_semantic_builders", ()):
@@ -328,6 +464,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         # _reset_global_seed would populate the manager before its
         # before_reset hook and leave two scenarios cached across episodes.
         self._inject_assigned_route_metadata_into_scenario()
+        self._install_rulebook_v2_adapter()
         self._install_causal_observation_builder()
         self._prepare_initial_causal_context()
         return super()._get_reset_return(reset_info)

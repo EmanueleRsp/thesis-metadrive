@@ -6,6 +6,9 @@ from thesis_rl.rulebook.v2.context.metadrive_live import (
     MetaDriveContactRecorder,
     actor_snapshot_from_metadrive,
     contact_onset_from_metadrive_contact,
+    live_actor_objects,
+    live_actor_snapshots,
+    live_ego_snapshot,
     live_signal_states_by_physical_id,
     live_vehicle_objects,
 )
@@ -38,6 +41,9 @@ class _Traffic:
 
 class _Engine:
     traffic_manager = _Traffic()
+
+    def get_objects(self):
+        return {}
 
 
 class _Env:
@@ -118,6 +124,58 @@ def test_metadrive_vehicle_collection_is_deterministic_and_deduplicated():
     assert live_vehicle_objects(_Env()) == (_Traffic.vehicles["runtime-object"],)
 
 
+def test_metadrive_ego_and_actor_snapshots_have_explicit_partition():
+    assert live_ego_snapshot(_Env()).actor_id == "scenario-object"
+    assert live_actor_snapshots(_Env()) == ()
+
+
+def test_metadrive_actor_objects_include_public_registry_vru():
+    class Cyclist(_Vehicle):
+        id = "cyclist-runtime"
+
+    class RegistryEngine(_Engine):
+        def get_objects(self):
+            return {"cyclist-runtime": Cyclist()}
+
+    class RegistryEnv:
+        engine = RegistryEngine()
+
+    objects = live_actor_objects(RegistryEnv())
+    assert {obj.id for obj in objects} == {"runtime-object", "cyclist-runtime"}
+    snapshots = live_actor_snapshots(RegistryEnv())
+    assert {snapshot.actor_class for snapshot in snapshots} == {ActorClass.CYCLIST}
+
+
+def test_metadrive_actor_objects_fail_closed_on_unknown_registry_object():
+    class UnknownObject:
+        id = "unknown-runtime"
+
+    class RegistryEngine(_Engine):
+        def get_objects(self):
+            return {"unknown-runtime": UnknownObject()}
+
+    class RegistryEnv:
+        engine = RegistryEngine()
+
+    with pytest.raises(ValueError, match="Unsupported MetaDrive live object"):
+        live_actor_objects(RegistryEnv())
+
+
+def test_metadrive_actor_snapshot_partition_rejects_missing_ego():
+    class NoEgoTraffic:
+        vehicles = _Traffic.vehicles
+        ego_vehicle = None
+
+    class NoEgoEngine:
+        traffic_manager = NoEgoTraffic()
+
+    class NoEgoEnv:
+        engine = NoEgoEngine()
+
+    with pytest.raises(ValueError, match="configured ego"):
+        live_actor_snapshots(NoEgoEnv())
+
+
 def test_metadrive_signal_provider_reads_current_states_by_source_id():
     assert live_signal_states_by_physical_id(_SignalEnv()) == {
         "signal-go": "GREEN",
@@ -171,6 +229,41 @@ def test_metadrive_contact_recorder_clears_per_control_step():
     assert recorder.snapshot_contact_state() == ((), frozenset())
 
 
+def test_metadrive_contact_recorder_keeps_persistent_manifold_active():
+    _Traffic.obj_id_to_scenario_id["other-runtime"] = "other-scenario"
+
+    class World:
+        manifolds = [_Contact()]
+
+        def get_manifolds(self):
+            return tuple(self.manifolds)
+
+    class Physics:
+        dynamic_world = World()
+
+    class PersistentEngine:
+        traffic_manager = _Traffic()
+        physics_world = Physics()
+
+    class PersistentEnv:
+        engine = PersistentEngine()
+
+    recorder = MetaDriveContactRecorder(PersistentEnv(), object_from_node=_object_from_node)
+    recorder.observe(_Contact())
+    first_records, first_active = recorder.snapshot_contact_state()
+    assert len(first_records) == 1
+    assert first_active == frozenset({"other-scenario"})
+
+    recorder.clear_control_step()
+    second_records, second_active = recorder.snapshot_contact_state()
+    assert second_records == ()
+    assert second_active == frozenset({"other-scenario"})
+
+    PersistentEngine.physics_world.dynamic_world.manifolds = []
+    recorder.clear_control_step()
+    assert recorder.snapshot_contact_state() == ((), frozenset())
+
+
 def test_metadrive_contact_recorder_ignores_unresolved_non_actor_contacts():
     class UnresolvedContact(_Contact):
         pass
@@ -178,6 +271,33 @@ def test_metadrive_contact_recorder_ignores_unresolved_non_actor_contacts():
     recorder = MetaDriveContactRecorder(_Env(), object_from_node=lambda _node: None)
     recorder.observe(UnresolvedContact())
     assert recorder.ignored_non_actor_contacts == 1
+    assert recorder.snapshot_contact_state() == ((), frozenset())
+
+
+def test_metadrive_contact_recorder_ignores_non_ego_actor_contacts():
+    class ContactWithoutEgo(_Contact):
+        def __init__(self):
+            self.node0 = _Node(_OtherVehicle())
+            self.node1 = _Node(_OtherVehicle())
+            self.manifold_point = _Manifold()
+
+    recorder = MetaDriveContactRecorder(_Env(), object_from_node=_object_from_node)
+    recorder.observe(ContactWithoutEgo())
+    assert recorder.ignored_non_actor_contacts == 1
+    assert recorder.snapshot_contact_state() == ((), frozenset())
+
+
+def test_metadrive_contact_recorder_defers_node_only_callback_to_manifold_query():
+    class NodeOnlyContact(_Contact):
+        getManifoldPoint = None
+
+        def __init__(self):
+            super().__init__()
+            self.manifold_point = None
+
+    recorder = MetaDriveContactRecorder(_Env(), object_from_node=_object_from_node)
+    recorder.observe(NodeOnlyContact())
+    assert recorder.deferred_manifold_contacts == 1
     assert recorder.snapshot_contact_state() == ((), frozenset())
 
 

@@ -9,6 +9,7 @@ from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 
 from thesis_rl.rulebook.v2.geometry.route import GEOMETRY_EPSILON_M, RoutePolyline
+from thesis_rl.rulebook.v2.types import MovementKey
 
 
 LANE_ANGLE_EQUIVALENCE_EPSILON_RAD = 1.0e-6
@@ -21,12 +22,45 @@ class RouteLaneRecord:
     lane_id: str
     polygon_xy: BaseGeometry
     centerline: RoutePolyline
+    successor_lane_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.lane_id:
             raise ValueError("Route lane_id must be non-empty")
         if self.polygon_xy.is_empty or not self.polygon_xy.is_valid:
             raise ValueError("Route lane polygon must be non-empty and valid")
+        if any(not isinstance(lane_id, str) or not lane_id for lane_id in self.successor_lane_ids):
+            raise ValueError("Route lane successor IDs must be non-empty strings")
+
+
+def derive_lane_movement_key(
+    lane: RouteLaneRecord,
+    *,
+    assigned_route_lane_ids: tuple[str, ...] = (),
+) -> MovementKey | None:
+    """Derive a movement key only when the exit is topologically unambiguous.
+
+    The assigned route may disambiguate a branching lane for the ego.  For
+    other actors, a lane with multiple successors remains unresolved rather
+    than selecting an arbitrary branch.
+    """
+
+    route = tuple(assigned_route_lane_ids)
+    route_successors = tuple(
+        route[index + 1]
+        for index, lane_id in enumerate(route[:-1])
+        if lane_id == lane.lane_id and route[index + 1] in lane.successor_lane_ids
+    )
+    if len(route_successors) == 1:
+        exit_lane_id = route_successors[0]
+    elif len(lane.successor_lane_ids) == 1:
+        exit_lane_id = lane.successor_lane_ids[0]
+    elif not lane.successor_lane_ids:
+        exit_lane_id = lane.lane_id
+    else:
+        return None
+    conflict_node_id = f"junction:{lane.lane_id}->{exit_lane_id}"
+    return MovementKey(lane.lane_id, conflict_node_id, exit_lane_id)
 
 
 @dataclass(frozen=True, slots=True)

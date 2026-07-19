@@ -95,6 +95,15 @@ def test_waymo_adapter_prefers_persisted_route_over_future_sdc_track() -> None:
     assert result.task_route.route_assignment_source == "waymo_sdc_offline_task_annotation"
 
 
+def test_waymo_adapter_preserves_lane_successors() -> None:
+    result = build_waymo_static_adapter_result(
+        _minimal_scenario(signal_lane_reachable=True), scenario_uid="topology"
+    )
+    lanes = {lane.lane_id: lane for lane in result.route_lanes}
+    assert lanes["lane-a"].successor_lane_ids == ("lane-b",)
+    assert lanes["lane-b"].successor_lane_ids == ()
+
+
 @pytest.mark.parametrize(
     ("reachable", "expected"),
     ((False, False), (True, True)),

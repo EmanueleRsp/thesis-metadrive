@@ -22,13 +22,12 @@ from thesis_rl.rulebook.v2.context.static_adapter import (
     normalize_static_records,
 )
 from thesis_rl.rulebook.v2.geometry.controls import derive_control_line
-from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
+from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord, derive_lane_movement_key
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.types import (
     ApproachControl,
     MapFeatureClass,
     MapFeatureRecord,
-    MovementKey,
     TrafficControlRecord,
 )
 
@@ -50,7 +49,9 @@ def _array_points(value: Any) -> np.ndarray:
     return points[:, :3]
 
 
-def _track_samples(track: Mapping[str, Any]) -> tuple[OfflineTrackSample, ...]:
+def _track_samples(
+    track: Mapping[str, Any], *, z_origin_m: float = 0.0
+) -> tuple[OfflineTrackSample, ...]:
     state = track.get("state")
     if not isinstance(state, Mapping):
         raise ValueError("PG track state must be a mapping")
@@ -60,16 +61,16 @@ def _track_samples(track: Mapping[str, Any]) -> tuple[OfflineTrackSample, ...]:
     if len(headings) != len(positions) or len(valid) != len(positions):
         raise ValueError("PG SDC track arrays have inconsistent lengths")
     return tuple(
-        OfflineTrackSample((float(p[0]), float(p[1])), float(p[2]), float(h))
+        OfflineTrackSample((float(p[0]), float(p[1])), float(p[2] - z_origin_m), float(h))
         for p, h, ok in zip(positions, headings, valid)
         if ok
     )
 
 
-def _lane_record(lane_id: str, lane: Mapping[str, Any]) -> RouteLaneRecord:
+def _lane_record(lane_id: str, lane: Mapping[str, Any], *, z_origin_m: float = 0.0) -> RouteLaneRecord:
     points = _array_points(lane.get("polyline"))
     centerline = RoutePolyline(
-        tuple((float(point[0]), float(point[1]), float(point[2])) for point in points)
+        tuple((float(point[0]), float(point[1]), float(point[2] - z_origin_m)) for point in points)
     )
     polygon_value = lane.get("polygon")
     if polygon_value is not None:
@@ -79,7 +80,8 @@ def _lane_record(lane_id: str, lane: Mapping[str, Any]) -> RouteLaneRecord:
         polygon = LineString(tuple((float(x), float(y)) for x, y, _ in points)).buffer(
             1.75, cap_style="flat", join_style="mitre"
         )
-    return RouteLaneRecord(lane_id, polygon, centerline)
+    successors = tuple(str(successor) for successor in lane.get("exit_lanes", ()))
+    return RouteLaneRecord(lane_id, polygon, centerline, successors)
 
 
 def _lane_successors(features: Mapping[Any, Any]) -> dict[str, tuple[str, ...]]:
@@ -90,6 +92,23 @@ def _lane_successors(features: Mapping[Any, Any]) -> dict[str, tuple[str, ...]]:
     }
 
 
+def _sdc_z_origin(scenario: Mapping[str, Any], metadata: Mapping[str, Any]) -> float:
+    """Match MetaDrive's reset convention while retaining relative elevation."""
+
+    tracks = scenario.get("tracks")
+    sdc_id = str(metadata.get("sdc_id", ""))
+    if not isinstance(tracks, Mapping) or sdc_id not in tracks:
+        return 0.0
+    state = tracks[sdc_id].get("state") if isinstance(tracks[sdc_id], Mapping) else None
+    positions = state.get("position") if isinstance(state, Mapping) else None
+    if positions is None:
+        return 0.0
+    values = np.asarray(positions, dtype=float)
+    if values.ndim != 2 or values.shape[1] < 3 or len(values) == 0 or not np.isfinite(values[0, 2]):
+        return 0.0
+    return float(values[0, 2])
+
+
 def build_pg_static_adapter_result(
     scenario: Mapping[str, Any], *, scenario_uid: str, adapter_version: str = "pg-v2"
 ) -> StaticAdapterResult:
@@ -98,10 +117,11 @@ def build_pg_static_adapter_result(
     metadata = scenario.get("metadata")
     if not isinstance(features, Mapping) or not isinstance(metadata, Mapping):
         raise ValueError("PG scenario requires map_features and metadata mappings")
+    z_origin_m = _sdc_z_origin(scenario, metadata)
     lanes: dict[str, RouteLaneRecord] = {}
     for feature_id, feature in features.items():
         if isinstance(feature, Mapping) and str(feature.get("type", "")).startswith("LANE_"):
-            lanes[str(feature_id)] = _lane_record(str(feature_id), feature)
+            lanes[str(feature_id)] = _lane_record(str(feature_id), feature, z_origin_m=z_origin_m)
     if not lanes:
         raise ValueError("PG scenario has no lane geometry")
     source_hash = hashlib.sha256(json.dumps(sorted(lanes), separators=(",", ":")).encode()).digest()
@@ -126,7 +146,7 @@ def build_pg_static_adapter_result(
             raise ValueError("PG scenario has no valid SDC track for offline annotation")
         task_route = map_match_sdc_track_to_task_route(
             scenario_uid=scenario_uid,
-            track=_track_samples(tracks[sdc_id]),
+            track=_track_samples(tracks[sdc_id], z_origin_m=z_origin_m),
             route_lanes=lanes,
             source_geometry_bytes=source_hash,
             adapter_version=adapter_version,
@@ -153,7 +173,7 @@ def build_pg_static_adapter_result(
         )
         map_records.append(
             MapFeatureRecord(
-                str(feature_id), feature_class, geometry, float(np.median(points[:, 2]))
+                str(feature_id), feature_class, geometry, float(np.median(points[:, 2] - z_origin_m))
             )
         )
     controls: list[TrafficControlRecord] = []
@@ -171,7 +191,12 @@ def build_pg_static_adapter_result(
             lane = lanes.get(lane_id)
             if lane is None:
                 continue
-            movement = MovementKey(lane_id, f"control:{feature_id}", lane_id)
+            movement = derive_lane_movement_key(
+                lane, assigned_route_lane_ids=task_route.lane_ids
+            )
+            if movement is None:
+                feature_errors.append(f"movement_key_ambiguous:{feature_id}:{lane_id}")
+                continue
             try:
                 line = derive_control_line(
                     control_point_xy=(float(point[0]), float(point[1])),
@@ -188,7 +213,7 @@ def build_pg_static_adapter_result(
                     movement,
                     line.geometry,
                     line.route_s_m,
-                    float(point[2]),
+                    float(point[2] - z_origin_m),
                     (),
                 )
             )
@@ -218,7 +243,12 @@ def build_pg_static_adapter_result(
                 elif any(str(state) == "LANE_STATE_UNKNOWN" for state in states):
                     signal_errors.append(f"signal_state_unknown:{physical_id}")
             point = _array_points(np.asarray(point_value).reshape(1, -1))[0]
-            movement = MovementKey(lane_id, f"control:{physical_id}", lane_id)
+            movement = derive_lane_movement_key(
+                lanes[lane_id], assigned_route_lane_ids=task_route.lane_ids
+            )
+            if movement is None:
+                signal_errors.append(f"movement_key_ambiguous:{physical_id}:{lane_id}")
+                continue
             try:
                 line = derive_control_line(
                     control_point_xy=(float(point[0]), float(point[1])),
@@ -235,7 +265,7 @@ def build_pg_static_adapter_result(
                     movement,
                     line.geometry,
                     line.route_s_m,
-                    float(point[2]),
+                    float(point[2] - z_origin_m),
                     (str(physical_id),),
                 )
             )

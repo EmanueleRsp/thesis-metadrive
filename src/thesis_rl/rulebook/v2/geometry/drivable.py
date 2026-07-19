@@ -67,11 +67,12 @@ def drivable_surface_for_ego(
         projection = lane.centerline.project(ego_position_xy)
         if abs(ego_position_z - projection.z_m) > VERTICAL_COMPATIBILITY_TOLERANCE_M:
             continue
-        polygon = lane.resolved_polygon()
-        if ego_footprint.intersects(polygon) or polygon.buffer(1.0e-2).contains(
-            ego_footprint.centroid
-        ):
-            selected.append(polygon)
+        # The normative surface is the union of every vertically compatible
+        # drivable lane. Do not prefilter by current footprint intersection:
+        # an ego that has left a lane still needs a non-empty reference surface
+        # so the off-road area fraction can be evaluated instead of failing as
+        # if the map were unavailable.
+        selected.append(lane.resolved_polygon())
     if not selected:
         return shapely.GeometryCollection()
     return shapely.union_all(selected)

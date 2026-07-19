@@ -8,6 +8,7 @@ from thesis_rl.curriculum import (
     ScenarioRecord,
     compute_replay_probabilities,
 )
+from thesis_rl.curriculum.scenario_acl.driver import _persist_buffer_state
 
 
 def _record(
@@ -99,3 +100,13 @@ def test_scenario_buffer_sample_replay_returns_probabilities() -> None:
     assert selection.record.scenario_id in {"a", "b"}
     assert len(selection.probabilities) == 2
     assert np.isclose(sum(selection.probabilities), 1.0)
+
+
+def test_scenario_acl_buffer_persistence_creates_artifact_parent(tmp_path) -> None:
+    buffer = ScenarioBuffer(capacity=2)
+    buffer.insert(_record("a", usefulness=1.0, scenario_hash="a"))
+    path = tmp_path / "artifacts" / "curriculum" / "scenario_buffer.json"
+
+    _persist_buffer_state(path=path, buffer=buffer)
+
+    assert path.is_file()

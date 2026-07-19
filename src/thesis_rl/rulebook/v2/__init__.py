@@ -1,4 +1,4 @@
-"""Rulebook v2 monitor contracts (monitor wiring follows in later phases)."""
+"""Rulebook v2 contracts, adapters, and transactional transition composition."""
 
 from thesis_rl.rulebook.v2.config import (
     ConflictZoneOccupancyConfig,
@@ -32,6 +32,13 @@ from thesis_rl.rulebook.v2.context.waymo_static_adapter import build_waymo_stati
 from thesis_rl.rulebook.v2.context.pg_static_adapter import build_pg_static_adapter_result
 from thesis_rl.rulebook.v2.context.static_adapter import validate_reset_contract
 from thesis_rl.rulebook.v2.aggregation import aggregate_rulebook_result
+from thesis_rl.rulebook.v2.transition import (
+    RulebookTransitionConfig,
+    build_episode_cache,
+    evaluate_transition,
+    initial_memory_for_snapshot,
+    transition_evaluator_factory,
+)
 from thesis_rl.rulebook.v2.calibration import (
     BrakingTrial,
     calibrate_ego_braking,
@@ -108,6 +115,11 @@ __all__ = [
     "write_calibration_artifact",
     "evaluate_monitor_transition",
     "evaluate_registered_transition",
+    "RulebookTransitionConfig",
+    "build_episode_cache",
+    "evaluate_transition",
+    "initial_memory_for_snapshot",
+    "transition_evaluator_factory",
     "build_motion_history_preview",
     "RulebookV2Adapter",
     "RulebookV2MonitorWrapper",
