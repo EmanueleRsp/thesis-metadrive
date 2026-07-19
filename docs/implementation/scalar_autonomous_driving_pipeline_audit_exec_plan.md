@@ -30,12 +30,12 @@ In scope: frozen-index reconstruction, immutable reference manifests, live read-
 
 ## 4. Current Repository Analysis
 
-- `VERIFIED`: `data/scenarionet/frozen/scenario_selection_index.json` contains schema `scenarionet_frozen_selection_v1`, 3,500 records, frozen artifact digests, split manifest, and source references. Runtime source paths are not present in this workspace.
+- `VERIFIED`: `data/scenarionet/frozen/scenario_selection_index.json` contains schema `scenarionet_frozen_selection_v1`, 3,500 records, frozen artifact digests, split manifest, and source references. The protected runtime root is mounted in Docker, but its current train view matches the non-frozen catalog rather than the final frozen catalog.
 - `VERIFIED`: `src/thesis_rl/scenarios/frozen.py` reconstructs a catalog from the frozen index and checks exact source/split counts, indices, eligible statuses, and, when mounted, source files.
 - `VERIFIED`: `conf/agent/planner/algorithm/{td3_sb3,sac_sb3}.yaml` set the approved `n_steps: 3`; `src/thesis_rl/sb3_extensions/replay/config.py` rejects values outside `{1,3}`.
-- `VERIFIED`: Scenario ACL production code is ScenarioNet-specific with six semantic arms, MAB, buffer/replay, staleness, persisted buffer/bandit/RNG state, and mutation rejection. `usefulness.py` records Rulebook criticality diagnostically but ranks by a scalar critic/value-loss proxy.
-- `VERIFIED`: ACL v1 §28 and ADR-014 govern the six-arm ScenarioNet core: mutation is prohibited and `ScenarioUsefulness.value` is learning-potential-only. §12 calculators are implemented for PPO, TD3, and SAC and wired through custom and SB3 planner backends; runtime learner execution remains pending GPU capacity.
-- `VERIFIED`: the Docker GPU environment mounts `/workspace/data/scenarionet` read-only. It verified all 3,500 frozen references exist, read-only content checks on all 48 golden references, and raw zero-policy ScenarioEnv smoke for one PG and one Waymo reference. This is not dataset-wide loadability, route/trajectory, Rulebook, semantic-observation, or learner validation.
+- `VERIFIED`: Scenario ACL production code is ScenarioNet-specific with six semantic arms, MAB, buffer/replay, staleness, persisted buffer/bandit/RNG state, and mutation rejection. `usefulness.py` records Rulebook criticality diagnostically while the selected core ranks by algorithm-specific learning potential.
+- `VERIFIED`: ACL v1 §28 and ADR-014 govern the six-arm ScenarioNet core: mutation is prohibited and `ScenarioUsefulness.value` is learning-potential-only. §12 calculators are implemented for PPO, TD3, and SAC and wired through custom and SB3 planner backends; runtime learner execution remains blocked by live ScenarioNet/Rulebook wiring, not Torch availability.
+- `VERIFIED`: the Docker GPU environment mounts `/workspace/data/scenarionet` read-only. It verified all 3,500 frozen references exist, read-only content checks on all 48 golden references, and raw zero-policy ScenarioEnv smoke for one PG and one Waymo reference. The mounted runtime train view is coherent with `catalog/scenario_catalog.parquet` but not with the frozen catalog (360 PG entries differ); this prevents a frozen-catalog learner claim. This is not full Rulebook v4.7, semantic-observation, or learner validation.
 
 ## 5. Assumptions And Invariants
 
@@ -88,7 +88,7 @@ Commands use `docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev uv
 - [x] A3: Produce source/config/test conformance inventory and amendment surface.
 - [x] A3: Implement ACL §12 algorithm-specific learning-potential formulas and propagate the result through custom/SB3 planner backends.
 - [x] A4: Fix the verified vectorized reset route-metadata defect and add a regression.
-- [ ] A4/A5: Run the full scalar S0 vertical path and later staged PG/Waymo smoke when their prerequisites are satisfied and GPU capacity is available.
+- [ ] A4/A5: Complete the scalar S0 vertical path and staged PG/Waymo learner smoke. Current blockers are the catalog/runtime mismatch for the frozen catalog, missing live `rulebook_v2_adapter`, and MetaDrive scenario-cache reset invariant.
 
 ## 11. Progress And Findings Log
 
@@ -99,14 +99,17 @@ Commands use `docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev uv
 - 2026-07-19: Added `scripts/audit_frozen_scenarionet.py` and generated only external compact audit/reference artifacts under `docs/audits/scalar_pipeline_audit_2026-07-19/`. The command does not write to source roots and refuses to overwrite output.
 - 2026-07-19: The candidate selection is exactly 48 unique train records (8 per arm). Actual train source composition is one-sided in every arm, so proportional largest-remainder allocation is PG-only for A0–A2 and Waymo-only for A3–A5.
 - 2026-07-19: Added a static component inventory and authoritative ACL reconciliation table. They identify incomplete PER verification, the narrow ACL usefulness amendment, and the final transition-replay v1 boundary.
-- 2026-07-19: The corrected ARM64 Docker GPU environment reports `aarch64`, `torch 2.9.1+cu128`, CUDA available, and a GH200 GPU. `torch.cuda.mem_get_info()` currently raises CUDA out-of-memory because only about 2 GiB is free; this is a capacity constraint, not repository evidence. No learner training was started.
+- 2026-07-19: The corrected ARM64 Docker GPU environment reports `aarch64`, `torch 2.9.1+cu128`, CUDA available, and a GH200 GPU. A later container probe reports 10.84 GiB free; this permits short diagnostics but is not a scientific capacity claim.
 - 2026-07-19: `verify_frozen_sources` found all 3,500 mounted immutable references. `scripts/finalize_golden_suite.py` content-validated all 48 final references (24 PG, 24 Waymo) without writing to the source root.
 - 2026-07-19: `scripts/validate_frozen_scenarionet_content.py` opened all 3,500 sources read-only and passed loadability, horizon, SDC trajectory, and assigned-route map-membership checks. Its first attempt treated NumPy-backed arrays as non-sequences; the checker was corrected and regression-tested before the final pass. No dataset defect was found.
 - 2026-07-19: Raw zero-policy ScenarioEnv S0 smoke passed for PG `PGMap-1920034` (runtime index 169) and Waymo `632ee424a8a6f73b` (runtime index 1358), ten steps each, with observations `(161,)`, actions `(2,)`, and neither termination nor truncation.
 - 2026-07-19: Vectorized ScenarioEnv tests exposed `Config.pop()` incompatibility in `_publish_assigned_route_metadata`. Replaced the dict-only default-argument call with membership-guarded single-argument removal and added a regression for MetaDrive-style `Config.pop(key)`.
 - 2026-07-19: The user approved the narrow ScenarioNet ACL amendment. ACL v1 §28 and ADR-014 now make mutation prohibited and usefulness learning-potential-only; configuration rejects `use_rule_criticality=true` and its focused ACL regression matrix passes.
 - 2026-07-19: Implemented ACL §12 learning-potential calculators: PPO positive GAE-style residuals, TD3 absolute TD residuals, and SAC entropy-aware absolute TD residuals. Removed critic-loss-only fallback; missing algorithm-specific inputs fail closed. Custom and SB3 planner backends propagate `learning_potential` through lifecycle and Agent chunk summaries.
-- 2026-07-19: ACL/replay matrix passed (`50` tests on first run, then `47` after the focused rerun); planner import and py_compile smoke passed. Lifecycle/checkpoint/preset matrix passed `48` tests; five pre-existing Hydra encoder alias assertions remain unrelated (`lq` versus `latent_query_v2`).
+- 2026-07-19: ACL/replay matrix passed (`50` tests on first run, then `47` after the focused rerun); planner import and py_compile smoke passed. The five stale Hydra encoder alias assertions were aligned to canonical `latent_query_v2`; the focused Hydra matrix now passes `32/32`.
+- 2026-07-19: Standard GPU smoke (`presets/test/smoke_train`) completed 2,000 TD3-SB3 steps, evaluations, and final checkpoint; `learning_starts=10000` yielded zero learner updates, so this is an environment/checkpoint smoke only.
+- 2026-07-19: ScenarioNet learner attempts were not promoted to S1: the frozen catalog differs from mounted runtime train by 360 PG records, Rulebook v4.7 fails closed because `ThesisScenarioEnv` lacks `rulebook_v2_adapter`, and a legacy v1 attempt reaches MetaDrive's scenario-cache invariant. No protected file was changed.
+- 2026-07-19: A candidate vector-worker cardinality fix was tested but reverted: setting one loaded scenario per worker collapses MetaDrive's global seed modulo and produces catalog/runtime identity mismatches. The original vectorized path remains blocked by the ScenarioDataManager multi-scenario invariant; no unverified workaround was retained.
 
 ## 12. Deviations
 
@@ -136,6 +139,9 @@ No approved deviations. The inaccessible protected source root prevents live ver
 | `scripts/validate_frozen_scenarionet_content.py` | Added | Read-only all-record loadability, trajectory, and route validator |
 | `src/thesis_rl/envs/thesis_scenario_env.py` | Modified | Config-compatible route metadata publication during reset |
 | `tests/test_thesis_scenario_env.py` | Modified | Regression for MetaDrive-style single-argument `Config.pop` |
+| `tests/test_hydra_preset_test_configs.py` | Modified | Canonical encoder alias formatting and `latent_query_v2` assertion |
+| `tests/test_hydra_agent_presets.py` | Modified | Canonical `latent_query_v2` assertions for LQ agent presets |
+| `tests/test_hydra_preset_run_configs.py` | Modified | Canonical `latent_query_v2` assertion for ScenarioNet ACL composition |
 | `tests/test_validate_frozen_scenarionet_content.py` | Added | Regression for NumPy-like state arrays in the dataset validator |
 | `docs/audits/scalar_pipeline_audit_2026-07-19/audit_report.md` | Added | Versioned static audit report outside protected data |
 | `docs/audits/scalar_pipeline_audit_2026-07-19/golden_suite_candidate_manifest.json` | Added | 48 reference-only train candidate manifest |
@@ -166,11 +172,15 @@ No approved deviations. The inaccessible protected source root prevents live ver
 | `docker compose ... pytest -q tests/test_scenario_acl_config.py tests/test_scenario_acl_usefulness.py tests/test_scenario_acl_buffer.py tests/test_scenario_acl_mab.py` | PASS | 2026-07-19 | 26 passed after ACL v1 §28 / ADR-014 configuration enforcement. |
 | `docker compose ... pytest -q tests/test_scenario_acl_usefulness.py ... tests/test_transition_boundary.py` | PASS | 2026-07-19 | 50 passed; ACL §12 formulas, ACL state/replay, and approved transition replay boundaries. |
 | `docker compose ... ruff check ... planner/usefulness files` | PASS | 2026-07-19 | All modified ACL/planner files pass focused Ruff. |
-| `docker compose ... pytest -q tests/test_planner_lifecycle.py ... tests/test_checkpointing.py` | PARTIAL | 2026-07-19 | 48 passed, 5 known Hydra encoder alias failures (`lq` expected, `latent_query_v2` actual); unrelated to ACL changes. |
+| `docker compose ... pytest -q tests/test_planner_lifecycle.py tests/test_hydra_agent_presets.py tests/test_hydra_preset_run_configs.py tests/test_hydra_preset_test_configs.py tests/test_checkpointing.py` | PASS | 2026-07-19 | Initial run: 48 passed, 5 stale Hydra alias failures; after canonical `latent_query_v2` alignment, the complete focused lifecycle/Hydra/checkpoint matrix passes 44/44. |
 | `docker compose ... pytest -q tests/test_scenario_frozen.py ... tests/test_agent_pipeline.py` | PASS | 2026-07-19 | 102 passed across ScenarioNet, scalarization, observation, encoder, checkpoint, and Agent regressions. |
 | `docker compose ... py_compile ... && python -c 'import ... PPO/TD3/SAC SB3 backends'` | PASS | 2026-07-19 | Syntax and planner import smoke passed without learner/GPU initialization. |
 | `docker compose ... ruff check ... && ruff format --check ...` | PASS | 2026-07-19 | Modified source, test, and new scripts pass focused Ruff checks. |
-| full learner smoke or S1–S6 | NOT_RUN | 2026-07-19 | Current GPU free memory is about 2 GiB; no diagnostic learner run was started. |
+| `docker compose ... python -m thesis_rl.cli.train --config-name presets/test/smoke_train` | PASS | 2026-07-19 | GPU standard smoke completed 2,000 steps, two evaluations, and final checkpoint; no updates because `learning_starts=10000`. |
+| `docker compose ... pytest -q tests/test_rulebook_v2_contracts.py tests/test_rulebook_v2_wrapper.py tests/test_rulebook_v2_monitor.py tests/test_rulebook_v2_causal_context.py tests/test_rulebook_v2_live_adapter.py tests/test_rulebook_v2_causality.py` | PASS | 2026-07-19 | 41 focused Rulebook v4.7 contract/live-adapter tests pass; this does not prove `ThesisScenarioEnv` live adapter wiring. |
+| ScenarioNet S1 attempt with frozen catalog | BLOCKED | 2026-07-19 | Read-only catalog/runtime mismatch: 360 PG train references differ; no repair executed. |
+| ScenarioNet S1 attempt with Rulebook v4.7 | BLOCKED | 2026-07-19 | Wiring fails closed: `ThesisScenarioEnv` does not expose the required live `rulebook_v2_adapter`. |
+| legacy Rulebook-v1 learner attempt | BLOCKED | 2026-07-19 | MetaDrive `ScenarioDataManager` raises `It seems you access multiple scenarios in one episode`; no scientific result claimed. |
 
 ## 15. Final Reconciliation
 

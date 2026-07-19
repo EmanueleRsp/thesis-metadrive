@@ -5,8 +5,8 @@
 - Architecture: `aarch64`.
 - Kernel identity: `Linux gh200-1 6.2.0-1015-nvidia-64k`.
 - Docker GPU container: `torch 2.9.1+cu128`, CUDA available, NVIDIA GH200 visible.
-- Current capacity: `nvidia-smi` reported approximately 2 GiB free. A direct `torch.cuda.mem_get_info()` allocation probe raised CUDA out-of-memory. This is a transient shared-GPU capacity limit, not a repository defect.
-- Consequence: containerized source/content checks and focused tests are usable; do not start learner smoke or training until sufficient free GPU memory is available. Do not alter pinned Torch/CUDA dependencies merely to accommodate this audit host.
+- Current capacity: a Docker probe on 2026-07-19 reported `torch.cuda.mem_get_info()=(10841358336, 102005473280)` (10.84 GiB free of 102.01 GiB visible to the process). Capacity is transient shared-GPU state, not a repository defect.
+- Consequence: short diagnostic GPU checks are feasible. The standard smoke completed, but ScenarioNet learner stages remain blocked by catalog/runtime and Rulebook live-wiring defects. Do not alter pinned Torch/CUDA dependencies merely to accommodate this audit host.
 
 ## Intended Execution Environment
 
@@ -50,4 +50,4 @@ make rulebook-v2-check
 make smoke-gpu
 ```
 
-The final 48-reference manifest has now passed read-only content checks. The raw zero-policy S0 path has passed once for PG and once for Waymo, but the full scalar S0 runner/configuration remains to be registered and exercised. Do not substitute a generic training command.
+The final 48-reference manifest has passed read-only content checks. The raw zero-policy S0 path and the standard MetaDrive GPU checkpoint smoke have passed. The full scalar S0 runner and S1–S6 ScenarioNet stages remain unverified until the mounted runtime view matches the selected catalog and the live Rulebook adapter is wired. Do not substitute the legacy Rulebook-v1 attempt for those stages.
