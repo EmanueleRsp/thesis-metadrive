@@ -12,6 +12,18 @@ Status: `METADATA AUDIT COMPLETE — LIVE DATASET VALIDATION PENDING`
 - Live-validation root (read-only Docker mount): `/workspace/data/scenarionet`
 - Protected-data policy: no source file, ScenarioDescription, split, tag, or selected reference was modified.
 
+## Canonical Replay Alignment
+
+The frozen index is the sole selection authority. Its declared catalog hash
+`8d8a72b81db34fe41595114883adaddc1be3f3c1fc4e55754ec427f07b942801` equals the
+SHA-256 of the mounted canonical `catalog/scenario_catalog.parquet`. The
+catalog UID set equals the 3,500 index records, and the canonical runtime
+mapping matches the catalog for every split: train 2,000, validation 500, and
+test 1,000. The obsolete `runtime/frozen/`,
+`catalog/scenario_catalog_frozen.parquet`, and
+`splits/split_manifest_frozen.yaml` artifacts are absent. This alignment was
+verified read-only in Docker; no source scenario was rewritten.
+
 ## Population And Targets
 
 | split | source | actual | target | result |
@@ -77,6 +89,12 @@ The suite contains exactly eight train references per arm. Source allocation use
 The candidate was finalized as a reference-only suite after read-only inspection of all 48 selected `ScenarioDescription` pickle mappings. Every reference exists, has matching catalog length, nonempty tracks and map features, an SDC track, and assigned-route lanes present in map features. The final manifest and content evidence are under `golden_suite_content_validated/`; no source file was copied or modified. The final suite contains 24 PG and 24 Waymo references.
 
 The companion candidate CSV remains the required selection coverage matrix. The content-evidence CSV adds actual map-feature types, traffic controls, and lane markings. These checks do not prove `ScenarioEnv` reset/step behavior, live Rulebook evaluation, policy termination/truncation, or semantic-policy behavior.
+
+The canonical five-test ScenarioNet integration smoke subsequently passed in the
+Docker GPU container, covering all split/runtime equality checks and PG/Waymo
+vectorized reset/step paths. Rulebook v4.7 learner wiring remains intentionally
+fail-closed because `ThesisScenarioEnv` does not yet expose the required live
+`rulebook_v2_adapter`; no learner stage was started under a silent fallback.
 
 ## Reproducibility
 

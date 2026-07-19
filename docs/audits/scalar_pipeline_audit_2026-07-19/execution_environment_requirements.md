@@ -6,7 +6,7 @@
 - Kernel identity: `Linux gh200-1 6.2.0-1015-nvidia-64k`.
 - Docker GPU container: `torch 2.9.1+cu128`, CUDA available, NVIDIA GH200 visible.
 - Current capacity: a Docker probe on 2026-07-19 reported `torch.cuda.mem_get_info()=(10841358336, 102005473280)` (10.84 GiB free of 102.01 GiB visible to the process). Capacity is transient shared-GPU state, not a repository defect.
-- Consequence: short diagnostic GPU checks are feasible. The standard smoke completed, but ScenarioNet learner stages remain blocked by catalog/runtime and Rulebook live-wiring defects. Do not alter pinned Torch/CUDA dependencies merely to accommodate this audit host.
+- Consequence: short diagnostic GPU checks are feasible. Canonical catalog/runtime alignment and focused PG/Waymo integration now pass; ScenarioNet learner stages remain blocked only by Rulebook live-wiring. Do not alter pinned Torch/CUDA dependencies merely to accommodate this audit host.
 
 ## Intended Execution Environment
 
@@ -50,4 +50,4 @@ make rulebook-v2-check
 make smoke-gpu
 ```
 
-The final 48-reference manifest has passed read-only content checks. The raw zero-policy S0 path, vectorized PG/Waymo reset integration, standard MetaDrive GPU checkpoint smoke, and canonical frozen-index reconstruction have passed. A legacy Rulebook-v1 learner diagnostic also completed with finite losses and gradients, but it is not an S1 result. The full scalar S0 and S1–S6 ScenarioNet stages remain unverified until the live Rulebook adapter is wired.
+The final 48-reference manifest has passed read-only content checks. The canonical five-test PG/Waymo S0 integration, vectorized reset/step path, standard MetaDrive GPU checkpoint smoke, and canonical frozen-index reconstruction have passed. A legacy Rulebook-v1 learner diagnostic also completed with finite losses and gradients, but it is not an S1 result. The full scalar S0 reward/observation path and S1–S6 learner stages remain unverified until the live Rulebook adapter is wired.
