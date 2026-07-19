@@ -95,6 +95,16 @@ Docker GPU container, covering all split/runtime equality checks and PG/Waymo
 vectorized reset/step paths. Rulebook v4.7 learner wiring remains intentionally
 fail-closed because `ThesisScenarioEnv` does not yet expose the required live
 `rulebook_v2_adapter`; no learner stage was started under a silent fallback.
+The first isolated live-adapter increments now normalize finite MetaDrive actor
+snapshots and Bullet contact onset records for one real PG and one real Waymo
+fixed-sequence scenario. The isolated source-bound provider also mapped 14
+current Waymo traffic-light states by their ScenarioNet physical IDs; unknown
+states remain explicit. Persistent-contact wiring, static zones, and the
+transition evaluator remain pending.
+Read-only static-adapter probes on the actually loaded canonical content had
+zero validation errors for one PG record, one Waymo record, and one Waymo
+traffic-light record (two route-relevant signal controls). These are
+representative probes, not dataset-wide live Rulebook validation.
 
 ## Reproducibility
 
