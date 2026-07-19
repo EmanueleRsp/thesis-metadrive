@@ -138,8 +138,12 @@ class ThesisScenarioEnv(ScenarioEnv):
         record = self.current_scenario_record
         if record is None:
             return
-        self.config.pop("assigned_route_lane_ids", None)
-        self.config.pop("assigned_route_source", None)
+        # MetaDrive's Config.pop accepts only the key, unlike dict.pop.  Check
+        # membership first so this works for both the runtime Config and the
+        # plain dictionaries used by lightweight environment tests.
+        for field in ("assigned_route_lane_ids", "assigned_route_source"):
+            if field in self.config:
+                self.config.pop(field)
         lane_ids = tuple(getattr(record, "assigned_route_lane_ids", ()) or ())
         if not lane_ids:
             raise ValueError(

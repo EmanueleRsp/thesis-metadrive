@@ -61,8 +61,10 @@ current integration status are recorded in the repository documentation and
 dataset manifest.
 
 For Docker builds, the repository starts from the official minimal Python
-3.10 image. PyTorch 2.8 is installed from the backend selected per machine by
-`TORCH_BACKEND` and excluded from the platform-neutral uv lock.
+3.10 image. PyTorch 2.9.1 is installed from the backend selected per machine by
+`TORCH_BACKEND` and excluded from the platform-neutral uv lock. The shared
+`TORCH_VERSION=2.9.1` pin has official Python 3.10 CUDA wheels for Linux x86_64
+and aarch64.
 
 Dataset preparation uses the separate `dataset-pipeline` Compose service. It
 shares the pre-PyTorch Docker layers with `dev` and does not install PyTorch or

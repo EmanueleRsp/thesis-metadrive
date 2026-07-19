@@ -109,6 +109,29 @@ def test_assigned_route_metadata_is_published_to_reset_config() -> None:
     assert env.config["assigned_route_source"] == "pg_sdc_offline_task_annotation"
 
 
+def test_assigned_route_metadata_supports_metadrive_style_single_argument_pop() -> None:
+    """Regression for vectorized ScenarioEnv workers using MetaDrive Config."""
+
+    class SingleArgumentPopConfig(dict[str, object]):
+        def pop(self, key: str) -> object:  # type: ignore[override]
+            return super().pop(key)
+
+    env = object.__new__(thesis_env_module.ThesisScenarioEnv)
+    env.config = SingleArgumentPopConfig(
+        assigned_route_lane_ids=("stale-lane",),
+        assigned_route_source="stale-source",
+    )
+    env.current_scenario_record = SimpleNamespace(
+        assigned_route_lane_ids=("lane-a", "lane-b"),
+        assigned_route_source="waymo_sdc_offline_task_annotation",
+    )
+
+    env._publish_assigned_route_metadata()
+
+    assert env.config["assigned_route_lane_ids"] == ("lane-a", "lane-b")
+    assert env.config["assigned_route_source"] == "waymo_sdc_offline_task_annotation"
+
+
 def test_missing_assigned_route_fails_closed_before_reset() -> None:
     env = object.__new__(thesis_env_module.ThesisScenarioEnv)
     env.config = {"assigned_route_lane_ids": ("stale-lane",)}

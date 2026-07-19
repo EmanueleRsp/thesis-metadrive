@@ -70,7 +70,7 @@ CMD ["bash"]
 # downloading PyTorch or CUDA runtime libraries.
 FROM base AS dev
 
-ARG TORCH_VERSION=2.8.0
+ARG TORCH_VERSION=2.9.1
 ARG TORCH_BACKEND=cu128
 ARG UV_HTTP_TIMEOUT=300
 
@@ -82,8 +82,7 @@ RUN case "${TORCH_BACKEND}" in cpu|cu126|cu128) ;; *) echo "Unsupported TORCH_BA
     && uv pip install --no-config --python /opt/venv \
         --index-url "https://download.pytorch.org/whl/${TORCH_BACKEND}" \
         "torch==${TORCH_VERSION}"
-RUN python -c "import torch; assert torch.__version__.split('+')[0] == '${TORCH_VERSION}', torch.__version__" \
-    && uv pip check --no-config --python /opt/venv
+RUN bash scripts/validate_torch_environment.sh "${TORCH_VERSION}" "${TORCH_BACKEND}"
 RUN chown -R "${HOST_UID}:${HOST_GID}" \
     /workspace/.container-home /workspace/outputs /workspace/data
 

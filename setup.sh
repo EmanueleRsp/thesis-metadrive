@@ -256,6 +256,13 @@ check_uid_gid() {
 check_torch_backend() {
   local env_file="$1"
   torch_backend="$(read_env_var "$env_file" TORCH_BACKEND "cu128")"
+  torch_version="$(read_env_var "$env_file" TORCH_VERSION "2.9.1")"
+
+  if [[ "$torch_version" == "2.9.1" ]]; then
+    ok "TORCH_VERSION is supported: $torch_version"
+  else
+    fail "Unsupported TORCH_VERSION=$torch_version; use the cross-architecture pin 2.9.1"
+  fi
 
   case "$torch_backend" in
     cpu|cu126|cu128)
@@ -294,11 +301,14 @@ check_host_platform() {
 check_host_resources() {
   local arch available_kb free_kb
   arch="$(uname -m 2>/dev/null || true)"
-  if [[ "$arch" == "x86_64" ]]; then
-    ok "Host architecture is x86_64"
-  else
-    warn "Host architecture is ${arch:-unknown}; the CUDA-enabled image is validated on x86_64"
-  fi
+  case "$arch" in
+    x86_64|aarch64)
+      ok "Host architecture is supported for the pinned PyTorch CUDA profiles: $arch"
+      ;;
+    *)
+      warn "Host architecture is ${arch:-unknown}; the pinned PyTorch CUDA profiles are validated only on x86_64 and aarch64"
+      ;;
+  esac
 
   available_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
   if [[ -n "$available_kb" && "$available_kb" -lt 12582912 ]]; then
@@ -413,7 +423,7 @@ run_import_smoke_check() {
   fi
 
   info "Running the container import smoke check"
-  if docker compose run --rm dev bash -lc "uv run --no-sync python -c 'import thesis_rl, metadrive, stable_baselines3, torch; assert tuple(map(int, torch.__version__.split(\"+\")[0].split(\".\")[:2])) >= (2, 8); print(\"imports ok; torch=\" + torch.__version__)' && uv pip check --no-config --python /opt/venv"; then
+  if docker compose run --rm dev bash -lc "uv run --no-sync python -c 'import thesis_rl, metadrive, stable_baselines3, torch; assert tuple(map(int, torch.__version__.split(\"+\")[0].split(\".\")[:2])) >= (2, 9); print(\"imports ok; torch=\" + torch.__version__)' && bash scripts/validate_torch_environment.sh '$torch_version' '$torch_backend'"; then
     ok "Container import smoke check succeeded"
   else
     fail "Container import smoke check failed"

@@ -139,3 +139,17 @@ def test_scenario_acl_config_rejects_mutation_scope() -> None:
                 },
             }
         )
+
+
+def test_scenario_acl_config_rejects_rulebook_usefulness_scope() -> None:
+    with pytest.raises(ValueError, match="learning-potential-only"):
+        CurriculumConfig.from_mapping(
+            {
+                "enabled": True,
+                "kind": "scenario_acl",
+                "scenario_acl": {
+                    "use_rule_criticality": True,
+                    "mab": {"num_arms": 6},
+                },
+            }
+        )

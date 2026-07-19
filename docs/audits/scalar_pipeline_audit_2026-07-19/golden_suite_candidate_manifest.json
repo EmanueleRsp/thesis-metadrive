@@ -1,0 +1,475 @@
+{
+  "catalog_fingerprint": "919872129dccd1bfdbe3ac9b61c6a73fd33fb3eea6d92e31f9a42dc3b1405180",
+  "purpose": "integration and regression testing only; not policy evaluation",
+  "references": [
+    {
+      "primary_arm": "A0_simple_low_traffic",
+      "relative_path": "pg/database/P1_vehicle_interaction/1920034/sd_pg_scenarionet_v1_PGMap-1920034.pkl",
+      "runtime_index": 169,
+      "scenario_id": "PGMap-1920034",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-1920034",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A0_simple_low_traffic",
+      "relative_path": "pg/database/P1_vehicle_interaction/1920192/sd_pg_scenarionet_v1_PGMap-1920192.pkl",
+      "runtime_index": 239,
+      "scenario_id": "PGMap-1920192",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-1920192",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A0_simple_low_traffic",
+      "relative_path": "pg/database/P1_vehicle_interaction/1920039/sd_pg_scenarionet_v1_PGMap-1920039.pkl",
+      "runtime_index": 172,
+      "scenario_id": "PGMap-1920039",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-1920039",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A0_simple_low_traffic",
+      "relative_path": "pg/database/P1_vehicle_interaction/1920189/sd_pg_scenarionet_v1_PGMap-1920189.pkl",
+      "runtime_index": 237,
+      "scenario_id": "PGMap-1920189",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-1920189",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A0_simple_low_traffic",
+      "relative_path": "pg/database/P1_vehicle_interaction/1920241/sd_pg_scenarionet_v1_PGMap-1920241.pkl",
+      "runtime_index": 265,
+      "scenario_id": "PGMap-1920241",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-1920241",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A0_simple_low_traffic",
+      "relative_path": "pg/database/P1_vehicle_interaction/1920253/sd_pg_scenarionet_v1_PGMap-1920253.pkl",
+      "runtime_index": 270,
+      "scenario_id": "PGMap-1920253",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-1920253",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A0_simple_low_traffic",
+      "relative_path": "pg/database/P1_vehicle_interaction/1920221/sd_pg_scenarionet_v1_PGMap-1920221.pkl",
+      "runtime_index": 258,
+      "scenario_id": "PGMap-1920221",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-1920221",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A0_simple_low_traffic",
+      "relative_path": "pg/database/P1_vehicle_interaction/1920163/sd_pg_scenarionet_v1_PGMap-1920163.pkl",
+      "runtime_index": 224,
+      "scenario_id": "PGMap-1920163",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-1920163",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A1_traffic",
+      "relative_path": "pg/database/P5_complex_mixed/24920616/sd_pg_scenarionet_v1_PGMap-24920616.pkl",
+      "runtime_index": 421,
+      "scenario_id": "PGMap-24920616",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-24920616",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A1_traffic",
+      "relative_path": "pg/database/P5_complex_mixed/29920890/sd_pg_scenarionet_v1_PGMap-29920890.pkl",
+      "runtime_index": 576,
+      "scenario_id": "PGMap-29920890",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-29920890",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A1_traffic",
+      "relative_path": "pg/database/P5_complex_mixed/24921740/sd_pg_scenarionet_v1_PGMap-24921740.pkl",
+      "runtime_index": 484,
+      "scenario_id": "PGMap-24921740",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-24921740",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A1_traffic",
+      "relative_path": "pg/database/P5_complex_mixed/29920939/sd_pg_scenarionet_v1_PGMap-29920939.pkl",
+      "runtime_index": 579,
+      "scenario_id": "PGMap-29920939",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-29920939",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A1_traffic",
+      "relative_path": "pg/database/P5_complex_mixed/29921702/sd_pg_scenarionet_v1_PGMap-29921702.pkl",
+      "runtime_index": 621,
+      "scenario_id": "PGMap-29921702",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-29921702",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A1_traffic",
+      "relative_path": "pg/database/P5_complex_mixed/14920601/sd_pg_scenarionet_v1_PGMap-14920601.pkl",
+      "runtime_index": 120,
+      "scenario_id": "PGMap-14920601",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-14920601",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A1_traffic",
+      "relative_path": "pg/database/P5_complex_mixed/14920341/sd_pg_scenarionet_v1_PGMap-14920341.pkl",
+      "runtime_index": 104,
+      "scenario_id": "PGMap-14920341",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-14920341",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A1_traffic",
+      "relative_path": "pg/database/P5_complex_mixed/19921282/sd_pg_scenarionet_v1_PGMap-19921282.pkl",
+      "runtime_index": 371,
+      "scenario_id": "PGMap-19921282",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-19921282",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A2_junction",
+      "relative_path": "pg/database/P5_complex_mixed/19920661/sd_pg_scenarionet_v1_PGMap-19920661.pkl",
+      "runtime_index": 348,
+      "scenario_id": "PGMap-19920661",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-19920661",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A2_junction",
+      "relative_path": "pg/database/P5_complex_mixed/19921620/sd_pg_scenarionet_v1_PGMap-19921620.pkl",
+      "runtime_index": 383,
+      "scenario_id": "PGMap-19921620",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-19921620",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A2_junction",
+      "relative_path": "pg/database/P5_complex_mixed/24921451/sd_pg_scenarionet_v1_PGMap-24921451.pkl",
+      "runtime_index": 466,
+      "scenario_id": "PGMap-24921451",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-24921451",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A2_junction",
+      "relative_path": "pg/database/P5_complex_mixed/19920128/sd_pg_scenarionet_v1_PGMap-19920128.pkl",
+      "runtime_index": 311,
+      "scenario_id": "PGMap-19920128",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-19920128",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A2_junction",
+      "relative_path": "pg/database/P5_complex_mixed/14920455/sd_pg_scenarionet_v1_PGMap-14920455.pkl",
+      "runtime_index": 111,
+      "scenario_id": "PGMap-14920455",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-14920455",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A2_junction",
+      "relative_path": "pg/database/P5_complex_mixed/14920248/sd_pg_scenarionet_v1_PGMap-14920248.pkl",
+      "runtime_index": 98,
+      "scenario_id": "PGMap-14920248",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-14920248",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A2_junction",
+      "relative_path": "pg/database/P5_complex_mixed/19920019/sd_pg_scenarionet_v1_PGMap-19920019.pkl",
+      "runtime_index": 305,
+      "scenario_id": "PGMap-19920019",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-19920019",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A2_junction",
+      "relative_path": "pg/database/P5_complex_mixed/24921505/sd_pg_scenarionet_v1_PGMap-24921505.pkl",
+      "runtime_index": 469,
+      "scenario_id": "PGMap-24921505",
+      "scenario_uid": "pg:scenarionet_v1:PGMap-24921505",
+      "source": "pg",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A3_complex_junction",
+      "relative_path": "waymo/database/batches/batch_00512_00639/batch_00512_00639_6/sd_waymo_training_20s_632ee424a8a6f73b.pkl",
+      "runtime_index": 1358,
+      "scenario_id": "632ee424a8a6f73b",
+      "scenario_uid": "waymo:training_20s:632ee424a8a6f73b",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A3_complex_junction",
+      "relative_path": "waymo/database/batches/batch_00384_00511/batch_00384_00511_27/sd_waymo_training_20s_e189c875b850dcdf.pkl",
+      "runtime_index": 1875,
+      "scenario_id": "e189c875b850dcdf",
+      "scenario_uid": "waymo:training_20s:e189c875b850dcdf",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A3_complex_junction",
+      "relative_path": "waymo/database/batches/batch_00000_00127/batch_00000_00127_18/sd_waymo_training_20s_7107b522cf9789cf.pkl",
+      "runtime_index": 1413,
+      "scenario_id": "7107b522cf9789cf",
+      "scenario_uid": "waymo:training_20s:7107b522cf9789cf",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A3_complex_junction",
+      "relative_path": "waymo/database/batches/batch_00000_00127/batch_00000_00127_5/sd_waymo_training_20s_31a49168aa5090d6.pkl",
+      "runtime_index": 1150,
+      "scenario_id": "31a49168aa5090d6",
+      "scenario_uid": "waymo:training_20s:31a49168aa5090d6",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A3_complex_junction",
+      "relative_path": "waymo/database/batches/batch_00000_00127/batch_00000_00127_28/sd_waymo_training_20s_1c3979b81163a85c.pkl",
+      "runtime_index": 1061,
+      "scenario_id": "1c3979b81163a85c",
+      "scenario_uid": "waymo:training_20s:1c3979b81163a85c",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A3_complex_junction",
+      "relative_path": "waymo/database/batches/batch_00512_00639/batch_00512_00639_6/sd_waymo_training_20s_4e8d8bd0280b24c9.pkl",
+      "runtime_index": 1273,
+      "scenario_id": "4e8d8bd0280b24c9",
+      "scenario_uid": "waymo:training_20s:4e8d8bd0280b24c9",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A3_complex_junction",
+      "relative_path": "waymo/database/batches/batch_00640_00767/batch_00640_00767_28/sd_waymo_training_20s_8c40429e97333cf7.pkl",
+      "runtime_index": 1525,
+      "scenario_id": "8c40429e97333cf7",
+      "scenario_uid": "waymo:training_20s:8c40429e97333cf7",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A3_complex_junction",
+      "relative_path": "waymo/database/batches/batch_00128_00255/batch_00128_00255_5/sd_waymo_training_20s_9d41aec0002b80dd.pkl",
+      "runtime_index": 1591,
+      "scenario_id": "9d41aec0002b80dd",
+      "scenario_uid": "waymo:training_20s:9d41aec0002b80dd",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A4_vru",
+      "relative_path": "waymo/database/batches/batch_00128_00255/batch_00128_00255_23/sd_waymo_training_20s_1ed0480a5b6cc060.pkl",
+      "runtime_index": 1073,
+      "scenario_id": "1ed0480a5b6cc060",
+      "scenario_uid": "waymo:training_20s:1ed0480a5b6cc060",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A4_vru",
+      "relative_path": "waymo/database/batches/batch_00640_00767/batch_00640_00767_5/sd_waymo_training_20s_2f6459f1e83fe69e.pkl",
+      "runtime_index": 1141,
+      "scenario_id": "2f6459f1e83fe69e",
+      "scenario_uid": "waymo:training_20s:2f6459f1e83fe69e",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A4_vru",
+      "relative_path": "waymo/database/batches/batch_00000_00127/batch_00000_00127_20/sd_waymo_training_20s_e1ea31997f9a8cc8.pkl",
+      "runtime_index": 1877,
+      "scenario_id": "e1ea31997f9a8cc8",
+      "scenario_uid": "waymo:training_20s:e1ea31997f9a8cc8",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A4_vru",
+      "relative_path": "waymo/database/batches/batch_00384_00511/batch_00384_00511_13/sd_waymo_training_20s_3de6268803715b6d.pkl",
+      "runtime_index": 1210,
+      "scenario_id": "3de6268803715b6d",
+      "scenario_uid": "waymo:training_20s:3de6268803715b6d",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A4_vru",
+      "relative_path": "waymo/database/batches/batch_00512_00639/batch_00512_00639_23/sd_waymo_training_20s_efc25189b771bca1.pkl",
+      "runtime_index": 1932,
+      "scenario_id": "efc25189b771bca1",
+      "scenario_uid": "waymo:training_20s:efc25189b771bca1",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A4_vru",
+      "relative_path": "waymo/database/batches/batch_00256_00383/batch_00256_00383_27/sd_waymo_training_20s_8ee7a0789abea53.pkl",
+      "runtime_index": 1534,
+      "scenario_id": "8ee7a0789abea53",
+      "scenario_uid": "waymo:training_20s:8ee7a0789abea53",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A4_vru",
+      "relative_path": "waymo/database/batches/batch_00512_00639/batch_00512_00639_13/sd_waymo_training_20s_291725992f58f72f.pkl",
+      "runtime_index": 1118,
+      "scenario_id": "291725992f58f72f",
+      "scenario_uid": "waymo:training_20s:291725992f58f72f",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A4_vru",
+      "relative_path": "waymo/database/batches/batch_00256_00383/batch_00256_00383_1/sd_waymo_training_20s_88a596f3b0f3aee1.pkl",
+      "runtime_index": 1509,
+      "scenario_id": "88a596f3b0f3aee1",
+      "scenario_uid": "waymo:training_20s:88a596f3b0f3aee1",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A5_critical_mixed",
+      "relative_path": "waymo/database/batches/batch_00000_00127/batch_00000_00127_25/sd_waymo_training_20s_9e49df8f3a360cdf.pkl",
+      "runtime_index": 1595,
+      "scenario_id": "9e49df8f3a360cdf",
+      "scenario_uid": "waymo:training_20s:9e49df8f3a360cdf",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A5_critical_mixed",
+      "relative_path": "waymo/database/batches/batch_00512_00639/batch_00512_00639_17/sd_waymo_training_20s_aec4311743e9158f.pkl",
+      "runtime_index": 1666,
+      "scenario_id": "aec4311743e9158f",
+      "scenario_uid": "waymo:training_20s:aec4311743e9158f",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A5_critical_mixed",
+      "relative_path": "waymo/database/batches/batch_00512_00639/batch_00512_00639_15/sd_waymo_training_20s_bcf1201797a09e9.pkl",
+      "runtime_index": 1731,
+      "scenario_id": "bcf1201797a09e9",
+      "scenario_uid": "waymo:training_20s:bcf1201797a09e9",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A5_critical_mixed",
+      "relative_path": "waymo/database/batches/batch_00000_00127/batch_00000_00127_10/sd_waymo_training_20s_1533c5be2851538b.pkl",
+      "runtime_index": 1025,
+      "scenario_id": "1533c5be2851538b",
+      "scenario_uid": "waymo:training_20s:1533c5be2851538b",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A5_critical_mixed",
+      "relative_path": "waymo/database/batches/batch_00128_00255/batch_00128_00255_14/sd_waymo_training_20s_5d62a4ad25af7d1a.pkl",
+      "runtime_index": 1335,
+      "scenario_id": "5d62a4ad25af7d1a",
+      "scenario_uid": "waymo:training_20s:5d62a4ad25af7d1a",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A5_critical_mixed",
+      "relative_path": "waymo/database/batches/batch_00000_00127/batch_00000_00127_11/sd_waymo_training_20s_abb47e459beab9c.pkl",
+      "runtime_index": 1655,
+      "scenario_id": "abb47e459beab9c",
+      "scenario_uid": "waymo:training_20s:abb47e459beab9c",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A5_critical_mixed",
+      "relative_path": "waymo/database/batches/batch_00512_00639/batch_00512_00639_31/sd_waymo_training_20s_143b5ff117b6d5ed.pkl",
+      "runtime_index": 1020,
+      "scenario_id": "143b5ff117b6d5ed",
+      "scenario_uid": "waymo:training_20s:143b5ff117b6d5ed",
+      "source": "waymo",
+      "split": "train"
+    },
+    {
+      "primary_arm": "A5_critical_mixed",
+      "relative_path": "waymo/database/batches/batch_00000_00127/batch_00000_00127_8/sd_waymo_training_20s_23eb3a96bc381cb7.pkl",
+      "runtime_index": 1101,
+      "scenario_id": "23eb3a96bc381cb7",
+      "scenario_uid": "waymo:training_20s:23eb3a96bc381cb7",
+      "source": "waymo",
+      "split": "train"
+    }
+  ],
+  "schema": "scenarionet_golden_suite_candidate_v1",
+  "selection": {
+    "per_arm": 8,
+    "ranking": "deterministic_catalog_metadata_coverage_score",
+    "requires_live_content_inspection_before_finalization": true,
+    "source_allocation": "largest_remainder_with_feasible_source_guard",
+    "source_quotas": {
+      "A0_simple_low_traffic": {
+        "pg": 8,
+        "waymo": 0
+      },
+      "A1_traffic": {
+        "pg": 8,
+        "waymo": 0
+      },
+      "A2_junction": {
+        "pg": 8,
+        "waymo": 0
+      },
+      "A3_complex_junction": {
+        "pg": 0,
+        "waymo": 8
+      },
+      "A4_vru": {
+        "pg": 0,
+        "waymo": 8
+      },
+      "A5_critical_mixed": {
+        "pg": 0,
+        "waymo": 8
+      }
+    },
+    "split": "train"
+  },
+  "source_index": "/home/e.respino/main/thesis/thesis-metadrive/data/scenarionet/frozen/scenario_selection_index.json",
+  "source_index_sha256": "a37996eb9875524104c3b5423baf95d6dd53e16975ec8b3469c91e11e558285a",
+  "status": "CANDIDATE_METADATA_ONLY_NOT_FINAL"
+}

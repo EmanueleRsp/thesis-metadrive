@@ -118,9 +118,7 @@ class ScenarioAclConfig:
     replay_sampling: ScenarioAclReplaySamplingConfig = field(
         default_factory=ScenarioAclReplaySamplingConfig
     )
-    scenario_env: ScenarioAclScenarioEnvConfig = field(
-        default_factory=ScenarioAclScenarioEnvConfig
-    )
+    scenario_env: ScenarioAclScenarioEnvConfig = field(default_factory=ScenarioAclScenarioEnvConfig)
 
 
 @dataclass(frozen=True)
@@ -151,14 +149,12 @@ class CurriculumConfig:
 
     @classmethod
     def from_mapping(cls, data: DictConfig | dict[str, Any] | None) -> CurriculumConfig:
-        '''Creates a CurriculumConfig instance from the given mapping.'''
+        """Creates a CurriculumConfig instance from the given mapping."""
         payload = _to_plain_mapping(data)
 
         kind_raw = payload.get("kind")
         if kind_raw is None:
-            raise ValueError(
-                "Curriculum config requires `kind` (e.g. staged, disabled)."
-            )
+            raise ValueError("Curriculum config requires `kind` (e.g. staged, disabled).")
         kind = str(kind_raw).strip().lower()
         if not kind:
             raise ValueError("Curriculum kind must be a non-empty string.")
@@ -183,9 +179,7 @@ class CurriculumConfig:
         if kind == "scenario_acl":
             scenario_acl_payload = payload.get("scenario_acl")
             if scenario_acl_payload is None:
-                raise ValueError(
-                    "Curriculum kind 'scenario_acl' requires a 'scenario_acl' block."
-                )
+                raise ValueError("Curriculum kind 'scenario_acl' requires a 'scenario_acl' block.")
             scenario_acl = _parse_scenario_acl_config(scenario_acl_payload)
             return cls(enabled=True, kind="scenario_acl", scenario_acl=scenario_acl)
 
@@ -260,9 +254,7 @@ def _parse_staged_config(data: DictConfig | dict[str, Any]) -> StagedCurriculumC
     )
 
 
-def _parse_scenario_acl_config(
-    data: DictConfig | dict[str, Any]
-) -> ScenarioAclConfig:
+def _parse_scenario_acl_config(data: DictConfig | dict[str, Any]) -> ScenarioAclConfig:
     payload = _to_plain_mapping(data)
 
     buffer_capacity = int(payload.get("buffer_capacity", 1000))
@@ -275,18 +267,21 @@ def _parse_scenario_acl_config(
     if warmup_buffer_size < 0:
         raise ValueError("scenario_acl.warmup_buffer_size must be >= 0.")
     if warmup_buffer_size > buffer_capacity:
-        raise ValueError(
-            "scenario_acl.warmup_buffer_size must be <= scenario_acl.buffer_capacity."
-        )
+        raise ValueError("scenario_acl.warmup_buffer_size must be <= scenario_acl.buffer_capacity.")
     if bool(payload.get("use_mutation", False)) or "mutation" in payload:
+        raise ValueError("Scenario ACL mutation is out of scope. Use generation and replay only.")
+    if bool(payload.get("use_rule_criticality", False)):
         raise ValueError(
-            "Scenario ACL mutation is out of scope. Use generation and replay only."
+            "Scenario ACL usefulness is learning-potential-only; "
+            "Rulebook criticality is diagnostic-only."
         )
     if recent_window_size <= 0:
         raise ValueError("scenario_acl.recent_window_size must be > 0.")
     if not 0.0 <= exploit_probability <= 1.0:
         raise ValueError("scenario_acl.exploit_probability must be in [0, 1].")
-    if bool(payload.get("use_replay", False)) and not bool(payload.get("use_scenario_buffer", True)):
+    if bool(payload.get("use_replay", False)) and not bool(
+        payload.get("use_scenario_buffer", True)
+    ):
         raise ValueError("scenario_acl.use_replay=true requires use_scenario_buffer=true.")
 
     mab_payload = _to_plain_mapping(payload.get("mab"))
@@ -311,13 +306,10 @@ def _parse_scenario_acl_config(
         raise ValueError("scenario_acl.mab.target_sync_interval must be > 0.")
     if weight_clip_min > weight_clip_max:
         raise ValueError(
-            "scenario_acl.mab.weight_clip_min must be <= "
-            "scenario_acl.mab.weight_clip_max."
+            "scenario_acl.mab.weight_clip_min must be <= scenario_acl.mab.weight_clip_max."
         )
     if not 0.0 < initial_weight_decay <= 1.0:
-        raise ValueError(
-            "scenario_acl.mab.initial_weight_decay must be in (0, 1]."
-        )
+        raise ValueError("scenario_acl.mab.initial_weight_decay must be in (0, 1].")
 
     return ScenarioAclConfig(
         buffer_capacity=buffer_capacity,
@@ -347,17 +339,13 @@ def _parse_scenario_acl_config(
         ),
         scenario_env=ScenarioAclScenarioEnvConfig(
             horizon=int(scenario_env_payload.get("horizon", 1000)),
-            truncate_as_terminate=bool(
-                scenario_env_payload.get("truncate_as_terminate", False)
-            ),
+            truncate_as_terminate=bool(scenario_env_payload.get("truncate_as_terminate", False)),
             out_of_route_done=bool(scenario_env_payload.get("out_of_route_done", False)),
             out_of_road_done=bool(scenario_env_payload.get("out_of_road_done", False)),
             on_continuous_line_done=bool(
                 scenario_env_payload.get("on_continuous_line_done", False)
             ),
-            on_broken_line_done=bool(
-                scenario_env_payload.get("on_broken_line_done", False)
-            ),
+            on_broken_line_done=bool(scenario_env_payload.get("on_broken_line_done", False)),
             crash_vehicle_done=bool(scenario_env_payload.get("crash_vehicle_done", True)),
             crash_object_done=bool(scenario_env_payload.get("crash_object_done", True)),
             crash_human_done=bool(scenario_env_payload.get("crash_human_done", True)),

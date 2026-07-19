@@ -35,6 +35,7 @@ On a new machine, you usually only need to check:
 USER_NAME=appuser
 HOST_UID=1000
 HOST_GID=1000
+TORCH_VERSION=2.9.1
 TORCH_BACKEND=cu128
 
 HOST_OUTPUTS_DIR=./outputs
@@ -166,10 +167,13 @@ engineering estimate based on the default configs.
 ### Runtime Image And Driver Note
 
 The repository uses the digest-pinned official
-`python:3.10.20-slim-bookworm` image and installs `torch==2.8.0` using the
-backend selected in `.env`. GPU runs require a compatible host NVIDIA driver
-plus the NVIDIA Container Toolkit. `cu128` supports Blackwell/RTX 50xx;
-CPU-only setup uses `TORCH_BACKEND=cpu` and does not require an NVIDIA GPU.
+`python:3.10.20-slim-bookworm` image and installs `torch==2.9.1` using the
+backend selected in `.env`. Official Python 3.10 CUDA wheels are available for
+Linux x86_64 and aarch64. GPU runs require a compatible host NVIDIA driver plus
+the NVIDIA Container Toolkit. `cu128` supports Blackwell/RTX 50xx; CPU-only
+setup uses `TORCH_BACKEND=cpu` and does not require an NVIDIA GPU. Keep the
+backend explicit: a GPU compute capability alone cannot establish driver,
+Python ABI, and wheel compatibility.
 
 References:
 - [Official Python Docker image](https://hub.docker.com/_/python)

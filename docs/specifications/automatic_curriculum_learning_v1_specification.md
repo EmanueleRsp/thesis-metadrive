@@ -2,7 +2,7 @@
 
 **Version:** v1  
 **Status:** user-approved authoritative specification  
-**Approval confirmed:** 2026-07-16  
+**Approval confirmed:** 2026-07-16; amended by explicit user approval on 2026-07-19 (ADR-014)
 **Scope:** scenario-level automatic curriculum learning for MetaDrive-based autonomous driving experiments  
 **Main objective:** define a complete, implementable curriculum architecture compatible with scalar, lexicographic, and distributional RL agents.
 
@@ -2639,3 +2639,100 @@ U_s = (C_rule_s, LP_alg_s)
 ```
 
 and stored in a scenario buffer `Lambda`. The curriculum alternates between generating new scenarios and exploiting the buffer. Exploitation replays useful/stale scenarios and mutates them through controlled transformations of ScenarioDescription tracks. Replay sampling is based on usefulness rank and staleness. Mutation never changes the map or ego trajectory and must pass structural and semantic validation before use. The learning-potential component is algorithm-dependent and supports PPO, TD3, SAC, lexicographic RL, distributional RL, and lexicographic-distributional combinations. The only unresolved part is the exact rulebook-dependent definition of `C_rule_s`, which will be filled after the rulebook task is finalized.
+
+---
+
+## 28. Approved ScenarioNet Scalar ACL Amendment
+
+**Status:** `AUTHORITATIVE` for the selected ScenarioNet v1.1 scalar pipeline.
+**Approval:** explicit user approval on 2026-07-19; see ADR-014.
+**Precedence:** this section supersedes only conflicting ACL v1 text for this
+ScenarioNet scalar core. Historical procedural-generation, mutation, and
+Rulebook-first material remains retained for traceability and other scopes.
+
+### 28.1 Selected core and exclusions
+
+The selected core is a ScenarioNet scenario-selection curriculum. MAB selects
+exactly the six approved frozen semantic arms A0–A5 from ScenarioNet v1.1.
+`GENERATE` means selecting a not-currently-replayed eligible frozen scenario
+from the selected arm; it does not create, alter, export, or save a scenario.
+`EXPLOIT` means replaying an existing frozen scenario from `Lambda`.
+
+The following are prohibited:
+
+```text
+scenario mutation
+mutation-generated children
+mutation operators, mutation validation, and mutation configuration
+any write to a protected ScenarioDescription or dataset source file
+```
+
+`use_mutation=true` and a `mutation` configuration block must fail validation.
+Sections 1, 2.1–2.2, 3–4, 6–8, 18–21, 22, 23.4, 26, and 27 apply only where
+consistent with this selected core; their procedural-generation/mutation terms
+do not expand its scope.
+
+### 28.2 Required curriculum behavior
+
+The core retains MAB selection, Generate/Exploit, scenario replay,
+algorithm-specific learning potential, staleness-aware replay, warm-up,
+capacity, replacement, checkpoint, and resume behavior. The existing defaults
+for these behaviors remain governed by the applicable ScenarioNet config and
+the compatible ACL v1 clauses.
+
+No new ScenarioDescription may be produced by Generate or Exploit. All buffer
+records reference the frozen catalog identity and preserve split boundaries.
+
+### 28.3 Usefulness and Rulebook boundary
+
+For this core, final curriculum usefulness is the scalar:
+
+```math
+U_s = LP_{alg,s}
+```
+
+and the implementation field is:
+
+```text
+ScenarioUsefulness.value = LP_alg_s
+```
+
+The following must not affect `ScenarioUsefulness.value`, ordering, rank,
+buffer replacement, replay probability, normalized MAB feedback, or any other
+curriculum decision:
+
+```text
+C_safe
+Rulebook margins
+Rulebook criticality
+safety rank
+all Rulebook-derived values
+```
+
+Rulebook data may be retained only as diagnostic fields for logging, debugging,
+and post-hoc analysis. `use_rule_criticality=true` must fail configuration
+validation rather than silently change curriculum behavior.
+
+This section supersedes the Rulebook-first final-usefulness, lexicographic
+ordering, replacement, normalization, and record interpretations in §§11,
+13.3, 14.1, and 16 for this core. It does not change §12: the specified
+algorithm-dependent learning-potential formulas remain mandatory.
+
+### 28.4 State compatibility and acceptance criteria
+
+Checkpoint/resume state must persist the MAB, scenario buffer, counters, and
+RNG state. A checkpoint whose buffer rank or usefulness was computed under a
+Rulebook-first interpretation is incompatible and must be explicitly migrated
+or restarted; silent reuse is prohibited.
+
+Mandatory acceptance criteria for this amendment are:
+
+```text
+AC-ACL-SN-001: MAB has exactly six A0–A5 arms.
+AC-ACL-SN-002: mutation and mutation configuration are rejected.
+AC-ACL-SN-003: changing Rulebook diagnostics without changing LP_alg leaves
+               value, rank, replacement, replay probability, and MAB feedback unchanged.
+AC-ACL-SN-004: learning potential is algorithm-specific under §12.
+AC-ACL-SN-005: warm-up, capacity/replacement, staleness replay, and
+               checkpoint/resume retain deterministic documented behavior.
+```

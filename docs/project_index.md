@@ -5,7 +5,7 @@
 This index prevents an apparently newer, exploratory, or implementation-tracking
 document from being mistaken for an approved scientific contract.
 
-- Last repository inspection: 2026-07-17
+- Last repository inspection: 2026-07-19
 - Index status: `CURRENT_WITH_DOCUMENTED_GAPS`
 - Approval evidence: explicit user confirmations recorded on 2026-07-16 and 2026-07-17
 - Rule: repository evidence establishes paths, versions, links, and reported
@@ -28,7 +28,7 @@ document from being mistaken for an approved scientific contract.
 | Rulebook v2 | `specifications/rulebook_v4.7_specification.md`; version `4.7-final-implementation-complete` | `AUTHORITATIVE`; explicit user approval 2026-07-17 | `implementation/rulebook_v2_implementation_plan.md`; F11 `COMPLETATA`; causal CTRV wiring, conformance suite and live Waymo smoke implemented | Final document/diff reconciliation required before `VERIFIED` |
 | Rulebook scalarization v1.0 | `specifications/rulebook_scalarization_v1.0_specification.md`; ID `SCAL-V1.0`, version `1.0` | `AUTHORITATIVE`; explicit user approval 2026-07-17 | `implementation/rulebook_scalarization_v1.0_exec_plan.md`; implementation in progress | Configurable scalarizer for Rulebook margins and scalar RL baselines |
 | Semantic observation v1.1 | `specifications/observation_v1.1_specification.md`; ID `OBS-V1.1`, version `1.1-final-implementation-complete`, amended 2026-07-17 by ADR-004 | `AUTHORITATIVE`; explicit user approvals 2026-07-16 and 2026-07-17 | `implementation/semantic_observation_encoder_v1_exec_plan.md`; `IN_PROGRESS`; v1.1 schema, strict `(2541,)` adapter, causal batch builder, reset installation, post-commit observation refresh, causal-context boundary, assigned-route persistence, metadata-only adapters, causal LiDAR wiring, and checkpoint manifest primitives exist | End-to-end checkpoint caller migration, full semantic sensor smoke matrix, visual PG/Waymo validation, and final reconciliation remain before `VERIFIED` |
-| Automatic curriculum learning | `specifications/automatic_curriculum_learning_v1_specification.md`; version v1 | `AUTHORITATIVE`; version and authority confirmed by the user on 2026-07-16 | `implementation/scenario_acl_implementation_plan.md`; its internal implementation stages v1/v2 are complete, v3 not started, and v4 deferred | Final reconciliation required before `VERIFIED` |
+| Automatic curriculum learning | `specifications/automatic_curriculum_learning_v1_specification.md`; version v1 amended by §28 / ADR-014 | `AUTHORITATIVE`; original approval 2026-07-16, ScenarioNet scalar amendment explicitly approved 2026-07-19 | `implementation/scenario_acl_implementation_plan.md`; its internal implementation stages v1/v2 are complete, v3 not started, and v4 deferred | Implement ACL v1 §12 algorithm-specific learning-potential formulas and complete live reconciliation before `VERIFIED` |
 | ScenarioNet integration | `specifications/scenarionet_integration_v1.1_specification.md`; version `1.1` | `AUTHORITATIVE`; explicit user approval 2026-07-16 | `implementation/scenarionet_integration_spec_v1.1_exec_plan.md`; `IN_PROGRESS` | v1 artifacts and implementation require reconciliation against v1.1 before `VERIFIED` |
 | RL baselines | No dedicated approved specification found | `MISSING` | PPO, SAC, and TD3 configurations and tests exist; the local SB3 submodule is pinned at commit `6a196a60c7df3550ac5832caad54ef8dce9a6f31` | Approved behavioral specification and accepted deviations from upstream |
 | Encoder architecture v1.0 | `specifications/encoder_v1.0_specification.md`; ID `ENC-V1.0`, version `1.0-final-implementation-complete` | `AUTHORITATIVE`; explicit user approval 2026-07-16 | `implementation/semantic_observation_encoder_v1_exec_plan.md`; `IN_PROGRESS`; schema-driven MLP/LQ core, strict SB3 bridge validation, and explicit checkpoint generation validation APIs are implemented | Complete runtime checkpoint publication/load migration and end-to-end smoke matrix before `VERIFIED` |
@@ -75,6 +75,8 @@ root.
 | `decisions/ADR-010-waymo-cap-expansion.md` | `APPROVED` | Explicit user approval on 2026-07-17 | Waymo cumulative cap increased to 256 unseen shards; batch size remains 64 |
 | `decisions/ADR-011-rulebook-scalarization-v1.md` | `APPROVED` | Explicit user approval of SCAL-V1.0 on 2026-07-17 | Scalarization modes, rulebook adapters, default, reward interface, future replay semantics, and compatibility |
 | `decisions/ADR-012-stratified-source-arm-split-allocation.md` | `APPROVED` | Explicit user approval on 2026-07-18 | ScenarioNet primary-split source-arm stratification while retaining exact global source totals |
+| `decisions/ADR-013-pytorch-cross-architecture-validation.md` | `APPROVED` | Explicit user approval on 2026-07-19 | PyTorch 2.9.1 cross-architecture pin and narrowly validated ARM64 cuSPARSELt checker exception |
+| `decisions/ADR-014-scenarionet-acl-learning-potential-only.md` | `APPROVED` | Explicit user approval on 2026-07-19 | ScenarioNet ACL usefulness equals learning potential; mutation is prohibited; Rulebook curriculum inputs are diagnostic-only |
 
 ## ExecPlan Registry
 
@@ -90,8 +92,10 @@ root.
 | Scenario ACL | `specifications/automatic_curriculum_learning_v1_specification.md` | `implementation/scenario_acl_implementation_plan.md` | Internal stages v1/v2 reported complete; later stages incomplete/deferred | Date not declared in metadata |
 | ScenarioNet integration v1 | Historical `specifications/scenarionet_integration_v1_specification.md` | `implementation/scenarionet_integration_implementation_plan.md` | `SUPERSEDED`; retain for traceability | 2026-07-15 |
 | ScenarioNet integration v1.1 | `specifications/scenarionet_integration_v1.1_specification.md` | `implementation/scenarionet_integration_spec_v1.1_exec_plan.md` | `IN_PROGRESS` | 2026-07-16 |
+| Scalar autonomous-driving pipeline audit and completion | Authoritative ScenarioNet v1.1, ACL v1 §28, Rulebook v4.7, scalarization v1.0, observation v1.1, encoder v1.0, and transition replay v1.0 | `implementation/scalar_autonomous_driving_pipeline_audit_exec_plan.md` | `IN_PROGRESS`; metadata audit and 48-reference content validation complete; partial raw ScenarioEnv PG/Waymo S0 passes; live full-pipeline/dataset validation pending; ACL usefulness amendment approved | 2026-07-19 |
 | Documentation structure | User instructions dated 2026-07-16 | `implementation/repository_documentation_restructure_exec_plan.md` | `VERIFIED` | 2026-07-16 |
 | Repository quality commands | User process decision dated 2026-07-16 | `implementation/repository_quality_commands_exec_plan.md` | `VERIFIED` | 2026-07-16 |
+| PyTorch cross-architecture compatibility | User request dated 2026-07-19; ADR-013 | `implementation/pytorch_cross_architecture_compatibility_exec_plan.md` | `IN_PROGRESS`; approved 2.9.1 pin and ARM64 CUDA validator exception pending full validation | 2026-07-19 |
 
 ## Maintenance Rules
 

@@ -1,0 +1,34 @@
+# Scalar Pipeline Component Conformance Inventory
+
+Status legend: `STATIC_IMPLEMENTED` means source/configuration/test evidence exists in this checkout; it is not `VERIFIED` without the mandatory executable matrix and representative mounted PG/Waymo smoke.
+
+| Component | Verified current behavior and paths | Isolated coverage | PG / Waymo and checkpoint evidence | Status and gaps |
+| --- | --- | --- | --- | --- |
+| ScenarioNet integration | Frozen selection: `data/scenarionet/frozen/scenario_selection_index.json`; reconstruction: `src/thesis_rl/scenarios/frozen.py`; provider/factory: `src/thesis_rl/scenarios/provider.py`, `src/thesis_rl/envs/scenario_env_factory.py`; `conf/env/scenarionet.yaml`. | `tests/test_scenario_frozen.py`, `tests/test_scenarionet_pipeline.py`, `tests/test_scenarionet_config.py`, `tests/test_scenarionet_vectorized_integration.py`, `tests/test_thesis_scenario_env.py`, `tests/test_validate_frozen_scenarionet_content.py`. | All 3,500 sources passed read-only structural load/content/route/trajectory checks; all 48 golden files have detailed content evidence; raw zero-policy ScenarioEnv smoke passed for one PG and one Waymo record. | `IMPLEMENTED`; live Rulebook/semantic path and train-loop resume remain pending. |
+| Causal scene context | `src/thesis_rl/rulebook/v2/context/{live_adapter,snapshotter,static_adapter,pg_static_adapter,waymo_static_adapter}.py`; `envs/observations/causal_semantic.py`. | `tests/test_rulebook_v2_{causal_context,causality,snapshot,pg_adapter,waymo_adapter,live_integration}.py`. | Static adapters exist for both; monitor memory is episodic. | `STATIC_IMPLEMENTED`; live parity and resume unverified. |
+| Rulebook v4.7 | `src/thesis_rl/rulebook/v2/{monitor,wrapper,lifecycle,memory,aggregation}.py`; frozen CTRV `geometry/ctrv.py`; `conf/rulebook/v2.yaml`. | `tests/test_rulebook_v2_*.py`. | Dedicated PG/Waymo adapters exist; no mounted content run. | `STATIC_IMPLEMENTED`; source conformance and full test execution pending. |
+| `bounded_satisfaction_rank` | `src/thesis_rl/reward/scalarization.py`, `conf/scalarization/default.yaml`, wrapper wiring in `runtime/wiring/builders.py`. | `tests/test_scalarization.py`, `test_scalarization_wiring.py`, `test_reward_semantics.py`. | Source-independent downstream vector contract; identity code in `contracts/{checkpoint_manifest,reward_semantics}.py`. | `STATIC_IMPLEMENTED`; executable checkpoint/smoke proof pending. |
+| SemanticStateObservation | `envs/observations/{semantic_state,semantic_state_v2,causal_semantic,assigned_route}.py`; `contracts/observation_{schema,spec}.py`. | `test_semantic_state_observation.py`, `test_semantic_state_v2.py`, `test_causal_semantic_batch.py`. | Assigned-route adapters support both sources; schema identity supports checkpoint checks. | `STATIC_IMPLEMENTED`; runtime reset/timer/sensor matrix pending. |
+| MLP encoder | `agent/planners/encoders/mlp_encoder.py`, factory, `conf/agent/planner/encoder/mlp.yaml`. | `tests/test_encoders_v10.py::test_flat_mlp_v10_*`. | Source-independent once observation is available; manifest identity exists. | `STATIC_IMPLEMENTED`; TD3/SAC/PPO source smoke pending. |
+| LQ encoder | `agent/planners/encoders/{lq_encoder.py,lq/masks.py,lq/unflatten.py}`, `conf/agent/planner/encoder/lq.yaml`. | `tests/test_encoders_v10.py::test_lq_v10_*`. | Source-independent, but 122-token source input needs live validation. | `STATIC_IMPLEMENTED`; PG/Waymo mask/token smoke pending. |
+| PPO | `agent/planners/algorithms/ppo_sb3.py`; `conf/agent/planner/algorithm/ppo_sb3.yaml`. | Lifecycle/Hydra tests and PPO replay rejection in `test_transition_replay_config.py`. | General model/adapter checkpoint code exists; no S6 source run. | `PARTIAL`; no approved dedicated baseline specification and no completed S6. |
+| TD3 | `agent/planners/algorithms/td3_sb3.py`; `conf/agent/planner/algorithm/td3_sb3.yaml`. | Planner/transition/replay-config tests. | General train-loop and replay-pair code exists; no S1/S2/S4 source run. | `PARTIAL`; actor/critic/PER integration needs execution. |
+| SAC | `agent/planners/algorithms/sac_sb3.py`; `conf/agent/planner/algorithm/sac_sb3.yaml`. | Planner/transition/replay-config tests. | General train-loop and replay-pair code exists; no S1/S2/S4 source run. | `PARTIAL`; entropy/PER/resume needs execution. |
+| N-step replay | `sb3_extensions/replay/config.py`; TD3/SAC configs set `n_steps: 3`; boundary `agent/transition_boundary.py`; uniform path uses pinned SB3 buffer. | `test_transition_replay_config.py`, `test_transition_boundary.py`, `test_transition_replay_persistence.py`. | Source-agnostic after collection; persistence code in `runtime/loops/train_loop.py`. | `IMPLEMENTED`; focused replay checks pass. Full source-backed learner smoke remains pending. |
+| PER | `sb3_extensions/replay/prioritized.py`; TD3/SAC factories select it when enabled. | `test_transition_replay_per.py` covers sum-tree and beta horizon only. | Source-agnostic; pair tests do not prove serialized PER tree/RNG round trip. | `NOT_VERIFIED`; weighted critic, priorities, vectors, frontier, persistence, numerical tests and smoke incomplete. |
+| ACL | `curriculum/scenario_acl/{arms,mab,buffer,driver,runtime,usefulness,record}.py`; `conf/curriculum/scenario_acl.yaml`. | `tests/test_scenario_acl_{config,buffer,mab,usefulness,scenario_env}.py`. | Uses frozen catalog records; driver persists buffer, MAB and RNG state; focused ACL checks pass. | `IMPLEMENTED`; ACL v1 §28 / ADR-014 make the no-mutation, learning-potential-only core authoritative. §12 formulas and live resume validation remain incomplete. |
+
+## Historical And Dead Paths
+
+- `src/thesis_rl/envs/observations/semantic_state.py` is the legacy 2363-feature observation, not the approved v1.1 2541-feature v2 contract.
+- Rulebook v1 and legacy reward-manager paths remain reproducibility material; they do not verify the v4.7 scalar core.
+- `docs/implementation/scenario_acl_implementation_plan.md` documents procedural-generation/mutation phases that do not match the ScenarioNet driver currently wired in `driver.py`.
+- `conf/scenarios/pipeline_v1.yaml` contains historical acquisition values and does not supersede the frozen selection or ADR-approved policy.
+
+## ACL Reconciliation
+
+The exact authoritative-text analysis is in `acl_authoritative_reconciliation.md`. ACL v1 §28 / ADR-014 now govern the six-arm mutation-disabled, learning-potential-only ScenarioNet core. No ACL v1.1 rewrite is required.
+
+## Transition Replay Boundary
+
+`TRANSITION-REPLAY` v1 remains final for this project: supported values remain exactly `{1,3}` and the approved core remains `n_steps=3`. No five-step implementation, compatibility migration, scientific comparison, or transition-replay v1.1 amendment is planned. Historical notes about D4PG five-step returns remain historical context only.
