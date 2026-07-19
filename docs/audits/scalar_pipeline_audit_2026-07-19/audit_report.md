@@ -124,7 +124,7 @@ zero validation errors for one PG record, one Waymo record, and one Waymo
 traffic-light record (two route-relevant signal controls). These are
 representative probes, not dataset-wide live Rulebook validation.
 
-The Docker GPU learner diagnostics subsequently passed S1 (TD3/MLP, PER and
+The Docker learner diagnostics subsequently passed S1 (TD3/MLP, PER and
 ACL off), S2 (TD3/LQ, PER and ACL off), S3 (TD3/LQ with the approved ACL core,
 PER off), S4 (TD3/LQ with PER on, ACL off), S5 (TD3/LQ with ACL and PER on),
 and diagnostic S6 (PPO/LQ with replay off). Each run used the canonical root,
@@ -133,6 +133,20 @@ checkpoint publication. S3/S5 also emitted ACL arm probabilities and persisted
 curriculum state. These are diagnostic runtime smokes only; they do not claim
 policy quality, convergence, dataset-wide Rulebook eligibility, or thesis
 performance.
+
+The GPU overlay was then exercised explicitly with an S2 TD3/LQ smoke: the
+planner reported `device=cuda`, Torch `2.9.1+cu128`, and GH200 execution; the
+20-step evaluation and final checkpoint passed.
+
+An additional 200-step S5 diagnostic was executed with the GPU overlay using
+TD3/LQ, the approved ACL core, PER, and transition replay `n_steps=3`. The
+run completed 200 environment steps with finite actor/critic updates,
+evaluation, ACL/MAB state, replay configuration, and final/latest checkpoints.
+The same run was resumed from `latest.zip` with RNG restoration and completed
+the next 100 steps (global step 300), again producing finite updates,
+evaluation, ACL state, and checkpoints. This is checkpoint/resume evidence for
+one scalar configuration only; it is not a full algorithm/source parity or
+scientific performance result.
 
 The smokes exposed and fixed three repository defects: non-ego and node-only
 Bullet callbacks are filtered/deferred to the current manifold; Bullet
