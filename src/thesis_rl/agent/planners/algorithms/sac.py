@@ -466,6 +466,7 @@ class SacPlannerBackend(BasePlannerBackend):
         actor_losses: list[float] = []
         critic_losses: list[float] = []
         alpha_losses: list[float] = []
+        td_residuals: list[np.ndarray] = []
 
         for gradient_step in range(gradient_steps):
             batch = self.replay_buffer.sample(self.batch_size, device=self.device)
@@ -493,6 +494,10 @@ class SacPlannerBackend(BasePlannerBackend):
                 q_target = rewards + (1.0 - dones) * self.gamma * min_q_t
 
             q1, q2 = self.critic(obs, actions)
+            with torch.no_grad():
+                td_residuals.append(
+                    (q_target - torch.min(q1, q2)).detach().cpu().numpy().reshape(-1)
+                )
             critic_loss = 0.5 * (
                 torch.mean((q1 - q_target) ** 2) + torch.mean((q2 - q_target) ** 2)
             )
@@ -541,6 +546,7 @@ class SacPlannerBackend(BasePlannerBackend):
             "learning_rate": float(self.actor_opt.param_groups[0]["lr"]),
             "update_calls": 1,
             "gradient_steps": int(gradient_steps),
+            "learning_potential": float(np.abs(np.concatenate(td_residuals)).mean()),
         }
 
     def end_training(self) -> None:

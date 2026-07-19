@@ -4,7 +4,12 @@ import pytest
 
 from thesis_rl.curriculum.scenario_acl.usefulness import (
     compute_learning_potential,
+    compute_ppo_learning_potential,
+    compute_sac_learning_potential,
     compute_scenario_usefulness,
+    compute_td3_learning_potential,
+    compute_sac_td_residuals,
+    compute_td3_td_residuals,
 )
 
 
@@ -50,11 +55,54 @@ def test_learning_potential_alone_determines_buffer_usefulness() -> None:
     assert ordinary.value == 999_999.0
 
 
-def test_learning_potential_uses_backend_critic_loss_and_rejects_missing_updates() -> None:
-    assert compute_learning_potential(
-        {"critic_loss_ema": 2.5, "update_calls": 1}, planner_name="td3_sb3"
-    ) == 2.5
+def test_ppo_learning_potential_uses_positive_gae_style_advantages() -> None:
+    assert compute_ppo_learning_potential(advantages=[-2.0, 1.0, 3.0]) == pytest.approx(4.0 / 3.0)
+
+
+def test_ppo_learning_potential_builds_gae_from_transition_inputs() -> None:
+    assert compute_ppo_learning_potential(
+        rewards=[1.0, 1.0],
+        values=[0.0, 0.0],
+        next_values=[0.0, 0.0],
+        dones=[False, True],
+        gamma=1.0,
+        gae_lambda=1.0,
+    ) == pytest.approx(1.5)
+
+
+def test_td3_and_sac_learning_potential_use_absolute_residuals() -> None:
+    assert compute_td3_learning_potential([-2.0, 1.0, 3.0]) == pytest.approx(2.0)
+    assert compute_sac_learning_potential([-2.0, 1.0, 3.0]) == pytest.approx(2.0)
+
+
+def test_td3_and_sac_residuals_apply_terminal_and_entropy_terms() -> None:
+    td3 = compute_td3_td_residuals(
+        rewards=[1.0, 1.0], dones=[False, True], target_q=[2.0, 4.0], current_q=[0.0, 2.0]
+    )
+    sac = compute_sac_td_residuals(
+        rewards=[1.0],
+        dones=[False],
+        target_q=[2.0],
+        current_q=[0.0],
+        log_pi=[-0.5],
+        entropy_temperature=0.2,
+    )
+    assert td3.tolist() == pytest.approx([2.98, -1.0])
+    assert sac.tolist() == pytest.approx([3.079])
+
+
+def test_learning_potential_rejects_loss_only_proxy_and_accepts_backend_value() -> None:
+    assert (
+        compute_learning_potential(
+            {"learning_potential": 2.5, "update_calls": 1}, planner_name="td3_sb3"
+        )
+        == 2.5
+    )
     with pytest.raises(ValueError, match="planner update"):
         compute_learning_potential(
-            {"critic_loss_ema": 2.5, "update_calls": 0}, planner_name="td3_sb3"
+            {"learning_potential": 2.5, "update_calls": 0}, planner_name="td3_sb3"
+        )
+    with pytest.raises(ValueError, match="TD3 residual"):
+        compute_learning_potential(
+            {"critic_loss_ema": 2.5, "update_calls": 1}, planner_name="td3_sb3"
         )

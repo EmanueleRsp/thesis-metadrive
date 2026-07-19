@@ -26,7 +26,7 @@ def test_td3_sb3_preset_composes() -> None:
 def test_td3_lq_sb3_preset_composes() -> None:
     cfg = _compose_preset("presets/agent/td3_lq_sb3")
     assert str(cfg.obs.type) == "semantic_state"
-    assert str(cfg.agent.planner.encoder.type) == "lq"
+    assert str(cfg.agent.planner.encoder.type) == "latent_query_v2"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
     assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
 
@@ -58,7 +58,7 @@ def test_sac_sb3_preset_composes() -> None:
 def test_sac_lq_sb3_preset_composes() -> None:
     cfg = _compose_preset("presets/agent/sac_lq_sb3")
     assert str(cfg.obs.type) == "semantic_state"
-    assert str(cfg.agent.planner.encoder.type) == "lq"
+    assert str(cfg.agent.planner.encoder.type) == "latent_query_v2"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
     assert str(cfg.agent.planner.algorithm.name) == "sac_sb3"
 
@@ -106,7 +106,7 @@ def test_ppo_sb3_preset_composes() -> None:
 def test_ppo_lq_sb3_preset_composes() -> None:
     cfg = _compose_preset("presets/agent/ppo_lq_sb3")
     assert str(cfg.obs.type) == "semantic_state"
-    assert str(cfg.agent.planner.encoder.type) == "lq"
+    assert str(cfg.agent.planner.encoder.type) == "latent_query_v2"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
     assert str(cfg.agent.planner.algorithm.name) == "ppo_sb3"
 

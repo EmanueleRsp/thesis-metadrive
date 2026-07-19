@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import torch
 
 from thesis_rl.agent.types import Transition
 from thesis_rl.agent.transition_boundary import normalize_vector_transition_boundary
@@ -444,6 +445,43 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
             batch_size=int(self.model.batch_size),
         )
 
+        replay_data = self.replay_buffer.sample(
+            int(self.model.batch_size), env=self.model._vec_normalize_env
+        )
+        with torch.no_grad():
+            next_actions, next_log_prob = self.model.actor.action_log_prob(
+                replay_data.next_observations
+            )
+            next_q_values = (
+                torch.cat(
+                    self.model.critic_target(replay_data.next_observations, next_actions), dim=1
+                )
+                .min(dim=1, keepdim=True)
+                .values
+            )
+            if self.model.ent_coef_optimizer is not None and self.model.log_ent_coef is not None:
+                entropy_temperature = torch.exp(self.model.log_ent_coef.detach())
+            else:
+                entropy_temperature = self.model.ent_coef_tensor
+            entropy_target = next_q_values - entropy_temperature * next_log_prob.reshape(-1, 1)
+            discounts = (
+                replay_data.discounts
+                if replay_data.discounts is not None
+                else float(self.model.gamma)
+            )
+            target_q_values = (
+                replay_data.rewards + (1 - replay_data.dones) * discounts * entropy_target
+            )
+            current_q_values = (
+                torch.cat(self.model.critic(replay_data.observations, replay_data.actions), dim=1)
+                .min(dim=1, keepdim=True)
+                .values
+            )
+            td_residuals = (target_q_values - current_q_values).detach().cpu().numpy().reshape(-1)
+        from thesis_rl.curriculum.scenario_acl.usefulness import compute_sac_learning_potential
+
+        learning_potential = compute_sac_learning_potential(td_residuals)
+
         logger_values = self.model.logger.name_to_value
         self.last_actor_loss = float(logger_values.get("train/actor_loss", float("nan")))
         self.last_critic_loss = float(logger_values.get("train/critic_loss", float("nan")))
@@ -454,6 +492,7 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
             "learning_rate": self.last_learning_rate,
             "update_calls": 1,
             "gradient_steps": max(grad_steps, 0),
+            "learning_potential": learning_potential,
         }
 
     def to_buffer_action(self, env_action: np.ndarray) -> np.ndarray:

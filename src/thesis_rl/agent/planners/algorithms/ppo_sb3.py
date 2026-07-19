@@ -340,6 +340,25 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
             last_values=last_values,
             dones=np.asarray(self.model._last_episode_starts, dtype=bool),
         )
+        from thesis_rl.curriculum.scenario_acl.usefulness import compute_ppo_learning_potential
+
+        values = np.asarray(self.model.rollout_buffer.values)
+        rewards = np.asarray(self.model.rollout_buffer.rewards)
+        episode_starts = np.asarray(self.model.rollout_buffer.episode_starts, dtype=bool)
+        next_values = np.empty_like(values)
+        next_values[:-1] = values[1:]
+        next_values[-1] = np.asarray(last_values.detach().cpu()).reshape(-1)
+        dones = np.empty_like(episode_starts)
+        dones[:-1] = episode_starts[1:]
+        dones[-1] = np.asarray(self.model._last_episode_starts, dtype=bool)
+        learning_potential = compute_ppo_learning_potential(
+            rewards=rewards.reshape(-1),
+            values=values.reshape(-1),
+            next_values=next_values.reshape(-1),
+            dones=dones.reshape(-1),
+            gamma=float(self.cfg_planner.get("learning_potential_gamma", 0.99)),
+            gae_lambda=float(self.cfg_planner.get("learning_potential_gae_lambda", 0.9)),
+        )
 
         prev_updates = int(getattr(self.model, "_n_updates", 0))
         self.model.train()
@@ -359,6 +378,7 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
             "learning_rate": self.last_learning_rate,
             "update_calls": 1,
             "gradient_steps": max(update_delta, 0),
+            "learning_potential": learning_potential,
         }
 
     def predict(self, observation: Any, deterministic: bool = False):

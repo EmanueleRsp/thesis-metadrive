@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import torch
 
 from thesis_rl.agent.types import Transition
 from thesis_rl.agent.transition_boundary import normalize_vector_transition_boundary
@@ -455,6 +456,40 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
             batch_size=int(self.model.batch_size),
         )
 
+        replay_data = self.replay_buffer.sample(
+            int(self.model.batch_size), env=self.model._vec_normalize_env
+        )
+        with torch.no_grad():
+            noise = replay_data.actions.clone().data.normal_(0, self.model.target_policy_noise)
+            noise = noise.clamp(-self.model.target_noise_clip, self.model.target_noise_clip)
+            next_actions = (self.model.actor_target(replay_data.next_observations) + noise).clamp(
+                -1, 1
+            )
+            next_q_values = (
+                torch.cat(
+                    self.model.critic_target(replay_data.next_observations, next_actions), dim=1
+                )
+                .min(dim=1, keepdim=True)
+                .values
+            )
+            discounts = (
+                replay_data.discounts
+                if replay_data.discounts is not None
+                else float(self.model.gamma)
+            )
+            target_q_values = (
+                replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
+            )
+            current_q_values = (
+                torch.cat(self.model.critic(replay_data.observations, replay_data.actions), dim=1)
+                .min(dim=1, keepdim=True)
+                .values
+            )
+            td_residuals = (target_q_values - current_q_values).detach().cpu().numpy().reshape(-1)
+        from thesis_rl.curriculum.scenario_acl.usefulness import compute_td3_learning_potential
+
+        learning_potential = compute_td3_learning_potential(td_residuals)
+
         logger_values = self.model.logger.name_to_value
         self.last_actor_loss = float(logger_values.get("train/actor_loss", float("nan")))
         self.last_critic_loss = float(logger_values.get("train/critic_loss", float("nan")))
@@ -465,6 +500,7 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
             "learning_rate": self.last_learning_rate,
             "update_calls": 1,
             "gradient_steps": max(grad_steps, 0),
+            "learning_potential": learning_potential,
         }
 
     def to_buffer_action(self, env_action: np.ndarray) -> np.ndarray:

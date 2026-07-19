@@ -20,7 +20,12 @@ from thesis_rl.curriculum.scenario_acl.usefulness import (
     ScenarioUsefulness,
     compute_rule_criticality,
     compute_learning_potential,
+    compute_ppo_learning_potential,
+    compute_sac_learning_potential,
     compute_scenario_usefulness,
+    compute_td3_learning_potential,
+    compute_sac_td_residuals,
+    compute_td3_td_residuals,
 )
 
 __all__ = [
@@ -40,5 +45,10 @@ __all__ = [
     "ScenarioUsefulness",
     "compute_rule_criticality",
     "compute_learning_potential",
+    "compute_ppo_learning_potential",
+    "compute_td3_learning_potential",
+    "compute_sac_learning_potential",
+    "compute_td3_td_residuals",
+    "compute_sac_td_residuals",
     "compute_scenario_usefulness",
 ]

@@ -136,6 +136,8 @@ def test_lifecycle_step_and_update_counters_progress(cfg_planner, env):
 
     assert lifecycle.step_count == 30
     assert lifecycle.update_count > 0
+    assert lifecycle.learning_potential_values
+    assert all(np.isfinite(value) and value >= 0.0 for value in lifecycle.learning_potential_values)
 
 
 def test_lifecycle_save_load_compatibility(cfg_planner, env, tmp_path: Path):

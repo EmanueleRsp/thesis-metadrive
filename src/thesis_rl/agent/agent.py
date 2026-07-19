@@ -370,6 +370,11 @@ class Agent:
                         }
                         if math.isfinite(episode_critic_loss):
                             episode_metrics["critic_loss"] = episode_critic_loss
+                        episode_learning_potential = float(
+                            getattr(lifecycle, "last_learning_potential", float("nan"))
+                        )
+                        if math.isfinite(episode_learning_potential):
+                            episode_metrics["learning_potential"] = episode_learning_potential
                         if episode_end_callback is not None:
                             episode_end_callback(
                                 env,
@@ -546,6 +551,11 @@ class Agent:
             "ep_route_completion_mean": ep_route_completion_mean,
             "actor_loss": float(getattr(lifecycle, "last_actor_loss", float("nan"))),
             "critic_loss": float(getattr(lifecycle, "last_critic_loss", float("nan"))),
+            "learning_potential": (
+                float(np.mean(lifecycle.learning_potential_values))
+                if getattr(lifecycle, "learning_potential_values", [])
+                else None
+            ),
             "actor_loss_ema": float(ema_actor_loss) if not math.isnan(ema_actor_loss) else None,
             "critic_loss_ema": float(ema_critic_loss) if not math.isnan(ema_critic_loss) else None,
             "learning_rate": float(getattr(lifecycle, "last_learning_rate", float("nan"))),
@@ -968,6 +978,11 @@ class Agent:
             else None,
             "actor_loss": float(getattr(lifecycle, "last_actor_loss", float("nan"))),
             "critic_loss": float(getattr(lifecycle, "last_critic_loss", float("nan"))),
+            "learning_potential": (
+                float(np.mean(lifecycle.learning_potential_values))
+                if getattr(lifecycle, "learning_potential_values", [])
+                else None
+            ),
             "actor_loss_ema": float(ema_actor_loss) if not math.isnan(ema_actor_loss) else None,
             "critic_loss_ema": float(ema_critic_loss) if not math.isnan(ema_critic_loss) else None,
             "learning_rate": float(getattr(lifecycle, "last_learning_rate", float("nan"))),

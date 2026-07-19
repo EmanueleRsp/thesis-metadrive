@@ -34,7 +34,7 @@ In scope: frozen-index reconstruction, immutable reference manifests, live read-
 - `VERIFIED`: `src/thesis_rl/scenarios/frozen.py` reconstructs a catalog from the frozen index and checks exact source/split counts, indices, eligible statuses, and, when mounted, source files.
 - `VERIFIED`: `conf/agent/planner/algorithm/{td3_sb3,sac_sb3}.yaml` set the approved `n_steps: 3`; `src/thesis_rl/sb3_extensions/replay/config.py` rejects values outside `{1,3}`.
 - `VERIFIED`: Scenario ACL production code is ScenarioNet-specific with six semantic arms, MAB, buffer/replay, staleness, persisted buffer/bandit/RNG state, and mutation rejection. `usefulness.py` records Rulebook criticality diagnostically but ranks by a scalar critic/value-loss proxy.
-- `VERIFIED`: ACL v1 §28 and ADR-014 govern the six-arm ScenarioNet core: mutation is prohibited and `ScenarioUsefulness.value` is learning-potential-only. The current learning-potential proxy remains an implementation gap against ACL v1 §12.
+- `VERIFIED`: ACL v1 §28 and ADR-014 govern the six-arm ScenarioNet core: mutation is prohibited and `ScenarioUsefulness.value` is learning-potential-only. §12 calculators are implemented for PPO, TD3, and SAC and wired through custom and SB3 planner backends; runtime learner execution remains pending GPU capacity.
 - `VERIFIED`: the Docker GPU environment mounts `/workspace/data/scenarionet` read-only. It verified all 3,500 frozen references exist, read-only content checks on all 48 golden references, and raw zero-policy ScenarioEnv smoke for one PG and one Waymo reference. This is not dataset-wide loadability, route/trajectory, Rulebook, semantic-observation, or learner validation.
 
 ## 5. Assumptions And Invariants
@@ -64,7 +64,7 @@ Add a standard-library, read-only audit command that consumes only the frozen se
 | `REQ-AUDIT-002` | `AC-AUDIT-002` | golden manifest and coverage matrix | deterministic re-run digest | In progress |
 | `REQ-AUDIT-003` | `AC-AUDIT-003` | conformance inventory | source/config/test inspection | In progress |
 | `REQ-AUDIT-004` | `AC-AUDIT-004` | reconciliation section | replay config and planner inspection | In progress |
-| `REQ-AUDIT-005` | `AC-AUDIT-005` | reconciliation section | ACL source/config/test inspection | In progress |
+| `REQ-AUDIT-005` | `AC-AUDIT-005` | ACL §28, usefulness calculators, planner backends, and config | `tests/test_scenario_acl_usefulness.py`, ACL config matrix, planner import smoke | IMPLEMENTED; runtime learner verification pending GPU |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -86,6 +86,7 @@ Commands use `docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev uv
 - [x] A2: Generate deterministic candidate 48-reference suite and coverage matrix from actual frozen catalog metadata.
 - [x] A2: Inspect all 48 candidate `ScenarioDescription` files and finalize the reference-only suite.
 - [x] A3: Produce source/config/test conformance inventory and amendment surface.
+- [x] A3: Implement ACL §12 algorithm-specific learning-potential formulas and propagate the result through custom/SB3 planner backends.
 - [x] A4: Fix the verified vectorized reset route-metadata defect and add a regression.
 - [ ] A4/A5: Run the full scalar S0 vertical path and later staged PG/Waymo smoke when their prerequisites are satisfied and GPU capacity is available.
 
@@ -104,6 +105,8 @@ Commands use `docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev uv
 - 2026-07-19: Raw zero-policy ScenarioEnv S0 smoke passed for PG `PGMap-1920034` (runtime index 169) and Waymo `632ee424a8a6f73b` (runtime index 1358), ten steps each, with observations `(161,)`, actions `(2,)`, and neither termination nor truncation.
 - 2026-07-19: Vectorized ScenarioEnv tests exposed `Config.pop()` incompatibility in `_publish_assigned_route_metadata`. Replaced the dict-only default-argument call with membership-guarded single-argument removal and added a regression for MetaDrive-style `Config.pop(key)`.
 - 2026-07-19: The user approved the narrow ScenarioNet ACL amendment. ACL v1 §28 and ADR-014 now make mutation prohibited and usefulness learning-potential-only; configuration rejects `use_rule_criticality=true` and its focused ACL regression matrix passes.
+- 2026-07-19: Implemented ACL §12 learning-potential calculators: PPO positive GAE-style residuals, TD3 absolute TD residuals, and SAC entropy-aware absolute TD residuals. Removed critic-loss-only fallback; missing algorithm-specific inputs fail closed. Custom and SB3 planner backends propagate `learning_potential` through lifecycle and Agent chunk summaries.
+- 2026-07-19: ACL/replay matrix passed (`50` tests on first run, then `47` after the focused rerun); planner import and py_compile smoke passed. Lifecycle/checkpoint/preset matrix passed `48` tests; five pre-existing Hydra encoder alias assertions remain unrelated (`lq` versus `latent_query_v2`).
 
 ## 12. Deviations
 
@@ -119,6 +122,15 @@ No approved deviations. The inaccessible protected source root prevents live ver
 | `docs/decisions/ADR-014-scenarionet-acl-learning-potential-only.md` | Added | Approval record for ScenarioNet ACL usefulness and mutation boundary |
 | `src/thesis_rl/curriculum/config.py` | Modified | Reject Rulebook-criticality usefulness configuration |
 | `tests/test_scenario_acl_config.py` | Modified | Regression for rejected Rulebook-criticality usefulness configuration |
+| `src/thesis_rl/curriculum/scenario_acl/usefulness.py` | Modified | ACL §12 PPO/TD3/SAC formulas and fail-closed dispatch |
+| `src/thesis_rl/curriculum/scenario_acl/__init__.py` | Modified | Export algorithm-specific learning-potential APIs |
+| `src/thesis_rl/agent/planners/core/lifecycle.py` | Modified | Propagate learning potential from backend updates |
+| `src/thesis_rl/agent/agent.py` | Modified | Include learning potential in episode/chunk summaries |
+| `src/thesis_rl/agent/planners/algorithms/{ppo,td3,sac}.py` | Modified | Compute ACL potential in custom backends |
+| `src/thesis_rl/agent/planners/algorithms/{ppo_sb3,td3_sb3,sac_sb3}.py` | Modified | Compute ACL potential in SB3 backends |
+| `tests/test_scenario_acl_usefulness.py` | Modified | Formula, entropy, terminal, and proxy-rejection tests |
+| `tests/test_planner_lifecycle.py` | Modified | Regression that lifecycle exposes finite algorithm-specific learning potential |
+| `conf/agent/planner/algorithm/{ppo,ppo_sb3}.yaml` | Modified | Freeze ACL learning-potential gamma/lambda defaults |
 | `scripts/audit_frozen_scenarionet.py` | Added | Read-only frozen-index audit and candidate-manifest generator |
 | `scripts/finalize_golden_suite.py` | Added | Read-only content validation and final reference manifest writer |
 | `scripts/validate_frozen_scenarionet_content.py` | Added | Read-only all-record loadability, trajectory, and route validator |
@@ -152,6 +164,11 @@ No approved deviations. The inaccessible protected source root prevents live ver
 | `docker compose ... python -m thesis_rl.cli.scenarios.smoke ... --scenario-index 169/1358 --steps 10 --policy zero` | PASS | 2026-07-19 | Raw ScenarioEnv S0 partial smoke passed once per source. |
 | `docker compose ... pytest -q tests/test_thesis_scenario_env.py tests/test_scenarionet_vectorized_integration.py` | PASS | 2026-07-19 | 25 tests exit 0 after the route-metadata regression fix. |
 | `docker compose ... pytest -q tests/test_scenario_acl_config.py tests/test_scenario_acl_usefulness.py tests/test_scenario_acl_buffer.py tests/test_scenario_acl_mab.py` | PASS | 2026-07-19 | 26 passed after ACL v1 §28 / ADR-014 configuration enforcement. |
+| `docker compose ... pytest -q tests/test_scenario_acl_usefulness.py ... tests/test_transition_boundary.py` | PASS | 2026-07-19 | 50 passed; ACL §12 formulas, ACL state/replay, and approved transition replay boundaries. |
+| `docker compose ... ruff check ... planner/usefulness files` | PASS | 2026-07-19 | All modified ACL/planner files pass focused Ruff. |
+| `docker compose ... pytest -q tests/test_planner_lifecycle.py ... tests/test_checkpointing.py` | PARTIAL | 2026-07-19 | 48 passed, 5 known Hydra encoder alias failures (`lq` expected, `latent_query_v2` actual); unrelated to ACL changes. |
+| `docker compose ... pytest -q tests/test_scenario_frozen.py ... tests/test_agent_pipeline.py` | PASS | 2026-07-19 | 102 passed across ScenarioNet, scalarization, observation, encoder, checkpoint, and Agent regressions. |
+| `docker compose ... py_compile ... && python -c 'import ... PPO/TD3/SAC SB3 backends'` | PASS | 2026-07-19 | Syntax and planner import smoke passed without learner/GPU initialization. |
 | `docker compose ... ruff check ... && ruff format --check ...` | PASS | 2026-07-19 | Modified source, test, and new scripts pass focused Ruff checks. |
 | full learner smoke or S1–S6 | NOT_RUN | 2026-07-19 | Current GPU free memory is about 2 GiB; no diagnostic learner run was started. |
 

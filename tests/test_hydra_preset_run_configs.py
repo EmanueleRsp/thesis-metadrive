@@ -97,7 +97,7 @@ def test_scenarionet_acl_composes_with_six_semantic_arms() -> None:
     assert bool(cfg.curriculum.scenario_acl.use_replay) is True
     assert str(cfg.agent.planner.algorithm.name) == "sac_sb3"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
-    assert str(cfg.agent.planner.encoder.name) == "lq"
+    assert str(cfg.agent.planner.encoder.name) == "latent_query_v2"
 
 
 def test_run_profile_medium_overrides_experiment_budget() -> None:

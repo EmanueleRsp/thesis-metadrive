@@ -16,17 +16,21 @@ Current repository status after the replay smoke validation:
   - generator arms
   - MAB generate-only flow
   - scenario export
-  - temporary usefulness proxy
+  - learning-potential-only usefulness contract
 - `v2` completed:
   - scenario buffer
   - replay sampling with usefulness + staleness
   - replay execution through `ScenarioEnv`
   - smoke validation of `generate -> replay` in a single run
-- `v3` not started intentionally:
-  - mutation
-  - structural/semantic validation for children
-- `v4` intentionally deferred:
-  - finalized rulebook-aware usefulness / criticality
+- `v3` is prohibited for the selected ScenarioNet core:
+  - mutation and mutation-generated children remain off by ACL v1 §28 / ADR-014
+- `v4` Rulebook-first usefulness is not applicable to the selected ScenarioNet core:
+  - Rulebook criticality remains diagnostic-only
+- ACL §12 implementation completed in CPU-testable code:
+  - PPO positive GAE-style residuals
+  - TD3 absolute TD residuals
+  - SAC entropy-aware absolute TD residuals
+  - custom and SB3 backend propagation through lifecycle and Agent summaries
 
 Important:
 
@@ -111,7 +115,8 @@ Version targets:
 - `v1`: generate-only + MAB + ScenarioDescription export + basic usefulness + persistence
 - `v2`: scenario buffer + replay sampling
 - `v3`: mutation + validation + replay via `ScenarioEnv`
-- `v4`: exact rulebook criticality and algorithm-specific learning potential
+- `v4`: historical procedural-generation target; not selected for ScenarioNet
+- current ScenarioNet amendment: learning-potential-only usefulness, no mutation
 
 ### 3. Single-env only in v1
 
@@ -376,7 +381,7 @@ Introduce a stable usefulness API that works now and can be upgraded later.
 - add `LearningPotentialScorer` interface
 - implement initial scorers:
   - rule criticality fallback from already available evaluation metrics
-  - learning-potential proxy from available runtime/backend metrics
+  - algorithm-specific learning potential from planner/backend residuals
 - implement rank normalization for MAB feedback
 
 ### Important note
@@ -421,42 +426,35 @@ with ablation support for:
 
 ### Goal
 
-Enable controlled scenario mutation in exploit mode.
+Historical mutation phase retained for traceability; prohibited for the selected
+ScenarioNet core by ACL v1 §28 and ADR-014.
 
 ### Tasks
 
-- implement mutation operators
-- implement structural validation
-- implement custom semantic validation
-- implement save/reload/smoke-test path for mutated scenarios
-- enforce per-parent child limits and failed-attempt caps
+- do not implement mutation operators or mutation-generated children
+- reject mutation configuration at parse time
 
 ### Exit criterion
 
-`full_curriculum` can:
-
-- replay parent scenarios
-- produce children
-- validate them
-- evaluate them
-- insert them into the buffer
+No selected ScenarioNet configuration may produce children or write a mutated
+ScenarioDescription.
 
 ## Phase 6 - Exact rulebook integration
 
 ### Goal
 
-Replace the placeholder rule criticality scorer.
+Retain Rulebook fields as diagnostics without using them in ScenarioNet ACL
+usefulness.
 
 ### Tasks
 
-- connect to finalized rulebook outputs
-- compute final `C_rule_s`
-- finalize rulebook-dependent diagnostics
+- preserve diagnostic Rulebook extraction where available
+- ensure diagnostics do not affect value, rank, replacement, replay, or MAB
 
 ### Exit criterion
 
-`C_rule_s` is derived from the finalized rulebook definitions rather than
-from temporary proxies.
+`C_rule_s` is not a curriculum decision input for the selected ScenarioNet
+core; it remains available only for analysis.
 
 ## Phase 7 - Exact learning potential
 
@@ -474,8 +472,8 @@ Replace the proxy learning-potential scorer with backend-specific logic.
 
 ### Exit criterion
 
-Backend-specific `LP_alg_s` is available for the currently supported
-training algorithms in the repo.
+Backend-specific `LP_alg_s` is available for PPO, TD3, and SAC custom/SB3
+backends. Runtime learner smoke remains pending GPU capacity.
 
 ---
 
@@ -601,8 +599,9 @@ Additional tracked compatibility note:
 
 ### 4. Planner hook debt
 
-Do not overpromise exact `LP_alg_s` in v1.
-Treat it as a scheduled second-step integration.
+The exact PPO/TD3/SAC hooks are implemented and deterministically tested.
+Remaining validation is runtime learner execution and checkpoint/resume smoke;
+no GPU-dependent claim is made until capacity is available.
 
 ---
 
@@ -632,7 +631,7 @@ The first merge should satisfy all of the following:
 - tests cover config, MAB, and runtime wiring
 
 If all of that is true, the project has a solid base for the second wave:
-buffer, replay, mutation, and final rulebook coupling.
+buffer and replay. Mutation is excluded from the selected ScenarioNet core.
 
 ## Definition of Done for Second Merge
 
@@ -651,4 +650,7 @@ The second merge is considered achieved when all of the following are true:
 Current assessment:
 
 - this repository has reached that second-merge threshold
-- mutation and final rulebook coupling remain separate future phases
+- mutation remains permanently out of scope for the selected ScenarioNet core
+- Rulebook fields remain diagnostic-only for ACL usefulness
+- ACL §12 PPO/TD3/SAC learning-potential implementation is complete; GPU
+  learner smoke and final runtime reconciliation remain

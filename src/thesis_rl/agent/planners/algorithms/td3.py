@@ -413,6 +413,7 @@ class Td3PlannerBackend(BasePlannerBackend):
 
         critic_losses: list[float] = []
         actor_losses: list[float] = []
+        td_residuals: list[np.ndarray] = []
 
         for _ in range(gradient_steps):
             batch = self.replay_buffer.sample(self.batch_size, device=self.device)
@@ -430,6 +431,10 @@ class Td3PlannerBackend(BasePlannerBackend):
                 q_target = rewards + (1.0 - dones) * self.gamma * torch.min(q1_t, q2_t)
 
             q1, q2 = self.critic(obs, actions)
+            with torch.no_grad():
+                td_residuals.append(
+                    (q_target - torch.min(q1, q2)).detach().cpu().numpy().reshape(-1)
+                )
             critic_loss = torch.mean((q1 - q_target) ** 2) + torch.mean((q2 - q_target) ** 2)
 
             self.critic_opt.zero_grad(set_to_none=True)
@@ -481,6 +486,7 @@ class Td3PlannerBackend(BasePlannerBackend):
             "learning_rate": float(self.actor_opt.param_groups[0]["lr"]),
             "update_calls": 1,
             "gradient_steps": int(gradient_steps),
+            "learning_potential": float(np.abs(np.concatenate(td_residuals)).mean()),
         }
 
     def end_training(self) -> None:

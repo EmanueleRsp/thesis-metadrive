@@ -48,5 +48,5 @@ def test_encoder_and_planner_groups_compose() -> None:
     assert str(cfg_none_td3.agent.planner.algorithm.name) == "td3"
     assert str(cfg_mlp_sac.agent.planner.encoder.type) == "mlp"
     assert str(cfg_mlp_sac.agent.planner.algorithm.name) == "sac"
-    assert str(cfg_lq_ppo.agent.planner.encoder.type) == "lq"
+    assert str(cfg_lq_ppo.agent.planner.encoder.type) == "latent_query_v2"
     assert str(cfg_lq_ppo.agent.planner.algorithm.name) == "ppo"

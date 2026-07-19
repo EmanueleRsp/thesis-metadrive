@@ -535,6 +535,24 @@ class PpoPlannerBackend(BasePlannerBackend):
         self.rollout.compute_returns_and_advantages(
             last_values=last_values, last_dones=self._last_dones
         )
+        values = np.asarray(self.rollout.values)
+        rewards = np.asarray(self.rollout.rewards)
+        next_values = np.empty_like(values)
+        next_values[:-1] = values[1:]
+        next_values[-1] = np.asarray(last_values)
+        dones = np.empty_like(self.rollout.episode_starts, dtype=bool)
+        dones[:-1] = np.asarray(self.rollout.episode_starts[1:], dtype=bool)
+        dones[-1] = np.asarray(self._last_dones, dtype=bool)
+        from thesis_rl.curriculum.scenario_acl.usefulness import compute_ppo_learning_potential
+
+        learning_potential = compute_ppo_learning_potential(
+            rewards=rewards.reshape(-1),
+            values=values.reshape(-1),
+            next_values=next_values.reshape(-1),
+            dones=dones.reshape(-1),
+            gamma=float(self.cfg_planner.get("learning_potential_gamma", 0.99)),
+            gae_lambda=float(self.cfg_planner.get("learning_potential_gae_lambda", 0.9)),
+        )
 
         actor_losses: list[float] = []
         critic_losses: list[float] = []
@@ -608,4 +626,5 @@ class PpoPlannerBackend(BasePlannerBackend):
             "learning_rate": float(self.optimizer.param_groups[0]["lr"]),
             "update_calls": 1,
             "gradient_steps": int(optimizer_steps),
+            "learning_potential": learning_potential,
         }
