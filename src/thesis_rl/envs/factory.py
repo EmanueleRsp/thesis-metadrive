@@ -172,7 +172,7 @@ def _runtime_rulebook_records(catalog: Any, *, split: str | None = None) -> tupl
 
 
 def _scenarionet_dataset_root(cfg_env: Any) -> Path | None:
-    """Resolve the root owning the frozen catalog and runtime views."""
+    """Resolve the root owning the canonical ScenarioNet artifacts."""
 
     configured = getattr(cfg_env, "dataset_root", None)
     value = configured or os.environ.get("SCENARIONET_DATA_ROOT")
@@ -242,10 +242,8 @@ def make_env(
         )
         provider_worker_count = int(env_cfg.pop("provider_worker_count", 1))
         worker_id = provider_worker_id
-        catalog_path = (
-            getattr(cfg_env, "catalog_path", None)
-            or os.environ.get("SCENARIONET_CATALOG_PATH")
-            or (dataset_root / "catalog" / "scenario_catalog.parquet" if dataset_root else None)
+        catalog_path = getattr(cfg_env, "catalog_path", None) or (
+            dataset_root / "catalog" / "scenario_catalog.parquet" if dataset_root else None
         )
         if catalog is None:
             if catalog_path is None:

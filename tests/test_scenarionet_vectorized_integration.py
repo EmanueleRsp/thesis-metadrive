@@ -10,6 +10,7 @@ from omegaconf import OmegaConf
 from thesis_rl.runtime.wiring.builders import build_train_env
 from thesis_rl.envs.factory import _validate_scenarionet_catalog_runtime
 from thesis_rl.scenarios.catalog import read_scenario_catalog
+from thesis_rl.scenarios.frozen import frozen_catalog, load_frozen_index
 
 
 def _require_matching_runtime(catalog_path: Path, runtime_path: Path) -> None:
@@ -20,6 +21,28 @@ def _require_matching_runtime(catalog_path: Path, runtime_path: Path) -> None:
         )
     except (FileNotFoundError, ValueError) as exc:
         pytest.skip(f"requires matching real ScenarioNet fixture: {exc}")
+
+
+@pytest.mark.parametrize("split", ("train", "validation", "test"))
+def test_canonical_catalog_matches_frozen_index_and_runtime(split: str) -> None:
+    data_root = Path(os.environ.get("SCENARIONET_DATA_ROOT", "data/scenarionet"))
+    catalog_path = data_root / "catalog" / "scenario_catalog.parquet"
+    runtime_path = data_root / "runtime" / split
+    index_path = data_root / "frozen" / "scenario_selection_index.json"
+    if not catalog_path.is_file() or not (runtime_path / "dataset_summary.pkl").is_file():
+        pytest.skip("requires the prepared canonical ScenarioNet catalog and runtime views")
+    catalog = read_scenario_catalog(catalog_path)
+    frozen = frozen_catalog(load_frozen_index(index_path))
+    assert {
+        (record.scenario_uid, record.runtime_index)
+        for record in catalog.records
+        if record.split == split
+    } == {
+        (record.scenario_uid, record.runtime_index)
+        for record in frozen.records
+        if record.split == split
+    }
+    _validate_scenarionet_catalog_runtime(catalog, split=split, data_directory=str(runtime_path))
 
 
 def test_scenarionet_vectorized_spawn_smoke() -> None:

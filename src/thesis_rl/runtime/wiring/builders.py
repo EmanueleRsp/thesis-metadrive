@@ -370,7 +370,13 @@ def merge_env_config_with_overrides(
     # ScenarioNet keeps split/provider/episode-control outside the native
     # MetaDrive config. Moving these fields here prevents unknown-key errors
     # while allowing evaluation to select validation/test runtime views.
-    for top_level_key in ("split", "catalog_path", "global_seed", "provider", "episode_control"):
+    for top_level_key in (
+        "split",
+        "catalog_path",
+        "global_seed",
+        "provider",
+        "episode_control",
+    ):
         if top_level_key in config_overrides:
             override = config_overrides.pop(top_level_key)
             if top_level_key == "provider" and isinstance(override, dict):
@@ -433,11 +439,15 @@ def _worker_env_overrides(
         base_start_seed = int(overrides.get("start_seed", cfg.env.config.start_seed))
     total_scenarios = int(overrides.get("num_scenarios", cfg.env.config.num_scenarios))
     if env_name == "scenarionet" and total_scenarios <= 0:
-        catalog_path = cfg.env.get("catalog_path") or os.environ.get("SCENARIONET_CATALOG_PATH")
+        catalog_path = cfg.env.get("catalog_path")
+        if not catalog_path:
+            dataset_root = cfg.env.get("dataset_root") or os.environ.get("SCENARIONET_DATA_ROOT")
+            if dataset_root:
+                catalog_path = Path(str(dataset_root)) / "catalog" / "scenario_catalog.parquet"
         if not catalog_path:
             raise ValueError(
-                "ScenarioNet vectorization requires env.catalog_path or "
-                "SCENARIONET_CATALOG_PATH when num_scenarios=-1."
+                "ScenarioNet vectorization requires env.dataset_root or env.catalog_path "
+                "when num_scenarios=-1."
             )
         from thesis_rl.scenarios.catalog import read_scenario_catalog
 

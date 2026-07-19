@@ -162,6 +162,39 @@ def test_reset_injects_frozen_route_metadata_without_inspecting_track() -> None:
     assert env.engine.data_manager.current_scenario["tracks"] == "sentinel"
 
 
+def test_provider_seed_selection_does_not_access_data_manager_before_reset() -> None:
+    record = SimpleNamespace(
+        scenario_uid="pg:scenario",
+        runtime_index=17,
+        source="pg",
+        primary_arm="A0_simple_low_traffic",
+        assigned_route_lane_ids=("lane-a",),
+        assigned_route_source="pg_sdc_offline_task_annotation",
+    )
+    provider = SimpleNamespace(
+        sample=lambda **_kwargs: record,
+        sampling_metadata=lambda **_kwargs: {},
+    )
+    env = object.__new__(thesis_env_module.ThesisScenarioEnv)
+    env.scenario_provider = provider
+    env.scenario_excluded_uids = set()
+    env.split = "train"
+    env.worker_id = 0
+    env.scenario_arm = None
+    env.current_scenario_record = None
+    env.config = {}
+    env.seed_calls = []
+    env.seed = lambda seed: env.seed_calls.append(seed)
+    env._inject_assigned_route_metadata_into_scenario = lambda: (_ for _ in ()).throw(
+        AssertionError("route metadata must be injected after ScenarioDataManager.reset")
+    )
+
+    thesis_env_module.ThesisScenarioEnv._reset_global_seed(env)
+
+    assert env.seed_calls == [17]
+    assert env.current_scenario_record is record
+
+
 def test_causal_builder_is_built_from_persisted_route_metadata() -> None:
     scenario = {
         "metadata": {

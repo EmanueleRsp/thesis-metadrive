@@ -193,6 +193,18 @@ def test_frozen_materializer_uses_exact_sources_without_remote_discovery() -> No
     assert "scenarionet-materialize-frozen:" in makefile
 
 
+def test_frozen_replay_rebuilds_canonical_artifacts() -> None:
+    replay = Path("src/thesis_rl/cli/scenarios/replay_frozen_dataset.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'root / "catalog" / "scenario_catalog.parquet"' in replay
+    assert 'root / "runtime"' in replay
+    assert 'root / "splits" / "split_manifest.yaml"' in replay
+    assert "scenario_catalog_frozen.parquet" not in replay
+    assert 'root / "runtime" / "frozen"' not in replay
+
+
 def test_explicit_pg_task_runner_preserves_profile_seed_pairs(monkeypatch) -> None:
     seen: list[tuple[str, int]] = []
 

@@ -50,4 +50,4 @@ make rulebook-v2-check
 make smoke-gpu
 ```
 
-The final 48-reference manifest has passed read-only content checks. The raw zero-policy S0 path and the standard MetaDrive GPU checkpoint smoke have passed. The full scalar S0 runner and S1–S6 ScenarioNet stages remain unverified until the mounted runtime view matches the selected catalog and the live Rulebook adapter is wired. Do not substitute the legacy Rulebook-v1 attempt for those stages.
+The final 48-reference manifest has passed read-only content checks. The raw zero-policy S0 path, vectorized PG/Waymo reset integration, standard MetaDrive GPU checkpoint smoke, and canonical frozen-index reconstruction have passed. A legacy Rulebook-v1 learner diagnostic also completed with finite losses and gradients, but it is not an S1 result. The full scalar S0 and S1–S6 ScenarioNet stages remain unverified until the live Rulebook adapter is wired.

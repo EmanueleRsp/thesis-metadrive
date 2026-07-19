@@ -157,10 +157,8 @@ class ThesisScenarioEnv(ScenarioEnv):
         provider_seed = self._select_provider_seed(force_seed)
         if provider_seed is not None:
             self.seed(provider_seed)
-            self._inject_assigned_route_metadata_into_scenario()
             return
         super()._reset_global_seed(force_seed)
-        self._inject_assigned_route_metadata_into_scenario()
 
     def _inject_assigned_route_metadata_into_scenario(self) -> None:
         """Attach frozen catalog route metadata without reading SDC samples."""
@@ -325,6 +323,11 @@ class ThesisScenarioEnv(ScenarioEnv):
         return rebuilt if getattr(self, "is_multi_agent", False) else next(iter(rebuilt.values()))
 
     def _get_reset_return(self, reset_info):
+        # ScenarioDataManager must complete its reset before the current
+        # scenario is accessed. Injecting route metadata from
+        # _reset_global_seed would populate the manager before its
+        # before_reset hook and leave two scenarios cached across episodes.
+        self._inject_assigned_route_metadata_into_scenario()
         self._install_causal_observation_builder()
         self._prepare_initial_causal_context()
         return super()._get_reset_return(reset_info)

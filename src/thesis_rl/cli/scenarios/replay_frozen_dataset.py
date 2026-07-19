@@ -1,4 +1,4 @@
-"""Rebuild ScenarioNet derived catalogs and runtime views from a frozen index."""
+"""Rebuild canonical ScenarioNet artifacts from a frozen selection index."""
 
 from __future__ import annotations
 
@@ -40,13 +40,9 @@ def main() -> int:
         )
         return 0
 
-    catalog_output = Path(
-        args.catalog_output or root / "catalog" / "scenario_catalog_frozen.parquet"
-    )
-    runtime_root = Path(args.runtime_root or root / "runtime" / "frozen")
-    manifest_output = Path(
-        args.split_manifest_output or root / "splits" / "split_manifest_frozen.yaml"
-    )
+    catalog_output = Path(args.catalog_output or root / "catalog" / "scenario_catalog.parquet")
+    runtime_root = Path(args.runtime_root or root / "runtime")
+    manifest_output = Path(args.split_manifest_output or root / "splits" / "split_manifest.yaml")
     write_scenario_catalog(catalog.entries, catalog_output, overwrite=args.overwrite)
     for split in ("train", "validation", "test"):
         records = tuple(entry.record for entry in catalog.entries if entry.record.split == split)
@@ -58,7 +54,7 @@ def main() -> int:
         )
         verify_runtime_mapping(runtime_root / split)
     if manifest_output.exists() and not args.overwrite:
-        raise FileExistsError(f"refusing to overwrite frozen split manifest: {manifest_output}")
+        raise FileExistsError(f"refusing to overwrite canonical split manifest: {manifest_output}")
     manifest_output.parent.mkdir(parents=True, exist_ok=True)
     manifest_output.write_text(
         yaml.safe_dump(payload["split_manifest"], sort_keys=True), encoding="utf-8"
