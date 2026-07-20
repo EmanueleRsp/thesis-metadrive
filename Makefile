@@ -1,4 +1,4 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog scenarionet-pg-replenish scenarionet-freeze scenarionet-from-frozen scenarionet-materialize-frozen up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu run run-train run-golden-rulebook config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-rebuild-existing scenarionet-recatalog scenarionet-pg-replenish scenarionet-freeze scenarionet-from-frozen scenarionet-materialize-frozen up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu run run-train run-golden-rulebook config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
 
 PYTHON_QUALITY_PATHS ?= src tests scripts
 
@@ -8,6 +8,7 @@ ALGORITHM ?=
 RUN_PROFILE ?= smoke
 RUN_NAME ?= run
 RUN_OVERRIDES ?=
+NUM_ENVS ?= 5
 RUN_ALGORITHM_CONFIGS := ppo ppo_sb3 sac sac_sb3 td3 td3_sb3
 RUN_PROFILE_CONFIGS := default fast medium long thesis tune smoke
 GOLD_MANIFEST ?= docs/audits/scalar_pipeline_audit_2026-07-19/golden_suite_content_validated/golden_suite_manifest.json
@@ -36,6 +37,10 @@ RULEBOOK_V2_PILOT_PRELIMINARY_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/ru
 RULEBOOK_V2_RAW_CATALOG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_raw.parquet
 RULEBOOK_V2_FILTERED_CATALOG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_rulebook_v2.parquet
 RULEBOOK_V2_ELIGIBILITY_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/catalog_eligibility.json
+
+# Optional override for the existing-source ScenarioNet rebuild. If empty, the
+# filtering CLI default applies. Example: make scenarionet-rebuild-existing SCENARIONET_REBUILD_WORKERS=64
+SCENARIONET_REBUILD_WORKERS ?=
 
 rulebook-v2-init:
 	mkdir -p "$(RULEBOOK_V2_DATA_ROOT)/rulebook_v2"
@@ -165,6 +170,60 @@ waymo-expand:
 scenarionet-pipeline:
 	bash scripts/prepare_scenarionet_dataset.sh
 
+# Revalidate and rebuild only from already materialized source databases.
+# Docker TTY allocation is intentionally retained so Rich progress remains
+# visible. No discovery, acquisition, or source generation is performed.
+scenarionet-rebuild-existing:
+	@test -f "$(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" || (echo "Missing raw catalog: $(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" >&2; exit 2)
+	@test -f "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" || (echo "Missing frozen ego config: $(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" >&2; exit 2)
+	@test -f "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" || (echo "Missing Rulebook calibration: $(RULEBOOK_V2_CALIBRATION_CONTAINER)" >&2; exit 2)
+	docker compose run --rm dataset-pipeline uv run --no-sync python \
+		-m thesis_rl.cli.scenarios.filter_rulebook_v2_catalog \
+		--catalog "$(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" \
+		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
+		--output-catalog "$(RULEBOOK_V2_FILTERED_CATALOG_CONTAINER)" \
+		--eligibility-output "$(RULEBOOK_V2_ELIGIBILITY_CONTAINER)" \
+		--ego-config "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" \
+		--calibration "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" \
+		$(if $(strip $(SCENARIONET_REBUILD_WORKERS)),--workers "$(SCENARIONET_REBUILD_WORKERS)",) \
+		--no-incremental \
+		--overwrite
+	docker compose run --rm dataset-pipeline uv run --no-sync python \
+		-m thesis_rl.cli.scenarios.build_splits \
+		--catalog "$(RULEBOOK_V2_FILTERED_CATALOG_CONTAINER)" \
+		--output "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_split.parquet" \
+		--groups "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/splits/scenario_groups.json" \
+		--split-manifest "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/splits/split_manifest.yaml" \
+		--pg-replenishment-report "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/pg/replenishment_report.json" \
+		--split-seed 0 \
+		--waymo-ordering-seed 0 \
+		--waymo-batch-shards 128 \
+		--waymo-max-new-shards 1000 \
+		--arm-minimums-config /workspace/thesis-metadrive/conf/scenarios/pipeline_v1.yaml \
+		--auto-targets \
+		--waymo-target-train 1000 \
+		--waymo-target-validation 250 \
+		--waymo-target-test 500 \
+		--pg-target-train 1000 \
+		--pg-target-validation 250 \
+		--pg-target-test 500 \
+		--overwrite
+	docker compose run --rm dataset-pipeline uv run --no-sync python \
+		-m thesis_rl.cli.scenarios.compute_arm_thresholds \
+		--catalog "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_split.parquet" \
+		--output-catalog "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog.parquet" \
+		--thresholds "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/splits/arm_thresholds.json" \
+		--balance-seed 0 \
+		--overwrite
+	docker compose run --rm dataset-pipeline uv run --no-sync python \
+		-m thesis_rl.cli.scenarios.build_runtime_databases \
+		--catalog "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog.parquet" \
+		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
+		--runtime-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/runtime" \
+		--output-catalog "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog.parquet" \
+		--overwrite
+	$(MAKE) scenarionet-freeze OVERWRITE=1
+
 scenarionet-pg-replenish:
 	docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.generate_pg_dataset \
 		--data-root /workspace/data/scenarionet \
@@ -231,6 +290,10 @@ run-train:
 		echo "ALGORITHM is required. Valid Hydra configs: $(RUN_ALGORITHM_CONFIGS)" >&2; \
 		exit 2; \
 	fi
+	@if ! printf '%s\n' "$(NUM_ENVS)" | grep -Eq '^[1-9][0-9]*$$'; then \
+		echo "NUM_ENVS must be an integer greater than or equal to 1; got '$(NUM_ENVS)'" >&2; \
+		exit 2; \
+	fi
 	@if ! printf '%s\n' "$(RUN_ALGORITHM_CONFIGS)" | tr ' ' '\n' | grep -Fxq "$(ALGORITHM)"; then \
 		echo "Unsupported ALGORITHM='$(ALGORITHM)'. Valid Hydra configs: $(RUN_ALGORITHM_CONFIGS)" >&2; \
 		exit 2; \
@@ -254,8 +317,8 @@ run-train:
 		env.provider.source_probability.waymo=0.5 \
 		env.provider.source_probability.pg=0.5 \
 		env.config.num_scenarios=-1 \
-		env.vectorized.enabled=false \
-		env.vectorized.num_envs=1 \
+		env.vectorized.enabled=$(if $(filter 1,$(NUM_ENVS)),false,true) \
+		env.vectorized.num_envs=$(NUM_ENVS) \
 		agent/planner/algorithm=$(ALGORITHM) \
 		run_profile=$(RUN_PROFILE) \
 		experiment.name=$(RUN_NAME) \

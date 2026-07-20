@@ -293,7 +293,7 @@ def make_env(
             num_scenarios = int(env_cfg.get("num_scenarios", -1))
             records = tuple(
                 record
-                for record in _runtime_rulebook_records(catalog)
+                for record in _runtime_rulebook_records(catalog, split=split)
                 if (
                     provider_worker_count > 1
                     and record.runtime_index is not None

@@ -54,6 +54,13 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         self._last_log_probs: Any | None = None
         self._last_buffer_actions: np.ndarray | None = None
         self._last_next_obs: np.ndarray | None = None
+        self._acl_episode_advantages: dict[tuple[int, int], list[float]] = {}
+        self._acl_rollout_slot_ids = np.full(
+            (int(self.model.rollout_buffer.buffer_size), self.n_envs), -1, dtype=np.int64
+        )
+        self._acl_rollout_episode_ids = np.full(
+            (int(self.model.rollout_buffer.buffer_size), self.n_envs), -1, dtype=np.int64
+        )
 
     @classmethod
     def build(
@@ -148,6 +155,12 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         self.collected_transitions = 0
         self._global_total_timesteps = global_total_timesteps
         self._global_steps_done = int(global_steps_done)
+        if not hasattr(self, "_acl_episode_advantages"):
+            self._acl_episode_advantages = {}
+        shape = (int(self.model.rollout_buffer.buffer_size), self.n_envs)
+        if not hasattr(self, "_acl_rollout_slot_ids") or self._acl_rollout_slot_ids.shape != shape:
+            self._acl_rollout_slot_ids = np.full(shape, -1, dtype=np.int64)
+            self._acl_rollout_episode_ids = np.full(shape, -1, dtype=np.int64)
 
     def end_training(self) -> None:
         return None
@@ -297,6 +310,16 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         )
         episode_starts = np.asarray(self.model._last_episode_starts, dtype=np.float32)
 
+        position = int(self.model.rollout_buffer.pos)
+        if position >= int(self.model.rollout_buffer.buffer_size):
+            raise RuntimeError("PPO rollout provenance position exceeded the rollout buffer.")
+        self._acl_rollout_slot_ids[position] = np.asarray(
+            [int(info.get("acl_slot_id", -1)) for info in infos], dtype=np.int64
+        )
+        self._acl_rollout_episode_ids[position] = np.asarray(
+            [int(info.get("acl_episode_id", -1)) for info in infos], dtype=np.int64
+        )
+
         self.model.rollout_buffer.add(
             obs=obs_batch,
             action=action_batch,
@@ -351,6 +374,16 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         dones = np.empty_like(episode_starts)
         dones[:-1] = episode_starts[1:]
         dones[-1] = np.asarray(self.model._last_episode_starts, dtype=bool)
+        for slot_id, episode_id, advantage in zip(
+            self._acl_rollout_slot_ids.reshape(-1),
+            self._acl_rollout_episode_ids.reshape(-1),
+            np.asarray(self.model.rollout_buffer.advantages).reshape(-1),
+            strict=True,
+        ):
+            if int(slot_id) >= 0 and int(episode_id) >= 0:
+                self._acl_episode_advantages.setdefault((int(slot_id), int(episode_id)), []).append(
+                    float(max(float(advantage), 0.0))
+                )
         learning_potential = compute_ppo_learning_potential(
             rewards=rewards.reshape(-1),
             values=values.reshape(-1),
@@ -379,6 +412,19 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
             "update_calls": 1,
             "gradient_steps": max(update_delta, 0),
             "learning_potential": learning_potential,
+        }
+
+    def pop_acl_episode_learning_potential(self, slot_id: int, episode_id: int) -> float | None:
+        values = self._acl_episode_advantages.pop((int(slot_id), int(episode_id)), None)
+        if not values:
+            return None
+        return float(np.mean(np.asarray(values, dtype=np.float64)))
+
+    def acl_ready_learning_potentials(self) -> dict[tuple[int, int], float]:
+        return {
+            key: float(np.mean(np.asarray(values, dtype=np.float64)))
+            for key, values in self._acl_episode_advantages.items()
+            if values
         }
 
     def predict(self, observation: Any, deterministic: bool = False):

@@ -410,6 +410,47 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
         self.model.num_timesteps += collected
         self.collected_transitions += collected
 
+    def collection_learning_potential_batch(
+        self,
+        observations: np.ndarray,
+        buffer_actions: np.ndarray,
+        rewards: np.ndarray,
+        dones: np.ndarray,
+        next_observations: np.ndarray,
+        infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> np.ndarray:
+        """Compute entropy-aware SAC residuals on collected transitions only."""
+
+        del infos
+        obs = torch.as_tensor(observations, dtype=torch.float32, device=self.model.device)
+        actions = torch.as_tensor(buffer_actions, dtype=torch.float32, device=self.model.device)
+        rewards_tensor = torch.as_tensor(
+            rewards, dtype=torch.float32, device=self.model.device
+        ).reshape(-1, 1)
+        dones_tensor = torch.as_tensor(
+            dones, dtype=torch.float32, device=self.model.device
+        ).reshape(-1, 1)
+        next_obs = torch.as_tensor(
+            next_observations, dtype=torch.float32, device=self.model.device
+        )
+        with torch.no_grad():
+            next_actions, next_log_prob = self.model.actor.action_log_prob(next_obs)
+            target_q = torch.cat(self.model.critic_target(next_obs, next_actions), dim=1).min(
+                dim=1, keepdim=True
+            ).values
+            if self.model.ent_coef_optimizer is not None and self.model.log_ent_coef is not None:
+                entropy_temperature = torch.exp(self.model.log_ent_coef.detach())
+            else:
+                entropy_temperature = self.model.ent_coef_tensor
+            target = rewards_tensor + (1.0 - dones_tensor) * self.model.gamma * (
+                target_q - entropy_temperature * next_log_prob.reshape(-1, 1)
+            )
+            current_q = torch.cat(self.model.critic(obs, actions), dim=1).min(
+                dim=1, keepdim=True
+            ).values
+            residuals = target - current_q
+        return residuals.detach().cpu().numpy().reshape(-1)
+
     def maybe_update(
         self,
         collected_steps: int,

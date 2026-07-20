@@ -48,10 +48,13 @@ def test_curriculum_config_parses_scenarionet_semantic_acl_block() -> None:
     assert curriculum.scenario_acl.mab.num_arms == 6
 
 
-def test_scenario_acl_runtime_validation_rejects_vectorized_envs() -> None:
+def test_scenario_acl_runtime_validation_accepts_spawned_vectorized_envs() -> None:
     cfg = OmegaConf.create(
         {
-            "env": {"vectorized": {"enabled": True}},
+            "env": {
+                "name": "scenarionet",
+                "vectorized": {"enabled": True, "num_envs": 2, "start_method": "spawn"},
+            },
             "reward": {"behavior": "monitor_only"},
         }
     )
@@ -65,7 +68,23 @@ def test_scenario_acl_runtime_validation_rejects_vectorized_envs() -> None:
         }
     )
 
-    with pytest.raises(ValueError, match="env.vectorized.enabled=false"):
+    validate_scenario_acl_runtime_support(cfg, curriculum, context="training")
+
+
+def test_scenario_acl_runtime_validation_rejects_non_spawn_vectorization() -> None:
+    cfg = OmegaConf.create(
+        {
+            "env": {
+                "name": "scenarionet",
+                "vectorized": {"enabled": True, "num_envs": 2, "start_method": "fork"},
+            },
+            "reward": {"behavior": "monitor_only"},
+        }
+    )
+    curriculum = CurriculumConfig.from_mapping(
+        {"enabled": True, "kind": "scenario_acl", "scenario_acl": {"mab": {"num_arms": 6}}}
+    )
+    with pytest.raises(ValueError, match="start_method='spawn'"):
         validate_scenario_acl_runtime_support(cfg, curriculum, context="training")
 
 

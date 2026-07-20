@@ -4,19 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import Mapping
 from types import MappingProxyType
+from typing import Mapping
 
 from thesis_rl.rulebook.v2.geometry.canonical import canonicalize_geometry, stable_geometry_id
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline, build_assigned_route_polyline
 from thesis_rl.rulebook.v2.types import (
+    ApproachControl,
+    ActorClass,
+    ActorSnapshot,
+    MapFeatureClass,
     MapFeatureRecord,
     MovementPriorityRecord,
     TaskRouteRecord,
     TrafficControlRecord,
 )
-from thesis_rl.rulebook.v2.types import ActorClass, ActorSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +71,56 @@ def validate_reset_contract(
     return tuple(errors)
 
 
+def _group_signal_controls(
+    controls: tuple[TrafficControlRecord, ...],
+) -> tuple[TrafficControlRecord, ...]:
+    """Group physical signal heads that govern one movement/control line."""
+
+    grouped: list[TrafficControlRecord] = []
+    pending = sorted(controls, key=lambda control: control.control_group_id)
+    while pending:
+        control = pending.pop(0)
+        if control.control_type is not ApproachControl.SIGNAL:
+            grouped.append(control)
+            continue
+        compatible = [control]
+        retained: list[TrafficControlRecord] = []
+        for candidate in pending:
+            if (
+                candidate.control_type is ApproachControl.SIGNAL
+                and candidate.movement_key == control.movement_key
+                and abs(candidate.route_s_m - control.route_s_m) <= 5.0e-2
+                and abs(candidate.elevation_m - control.elevation_m) <= 1.0e-3
+                and candidate.control_line.equals(control.control_line)
+            ):
+                compatible.append(candidate)
+            else:
+                retained.append(candidate)
+        pending = retained
+        physical_ids = tuple(
+            sorted(
+                {physical_id for item in compatible for physical_id in item.physical_control_ids}
+            )
+        )
+        if not physical_ids:
+            raise ValueError("Signal control group requires physical IDs")
+        grouped.append(
+            TrafficControlRecord(
+                control_group_id="signal:" + ":".join(physical_ids),
+                control_type=ApproachControl.SIGNAL,
+                controlled_lane_ids=tuple(
+                    sorted({lane_id for item in compatible for lane_id in item.controlled_lane_ids})
+                ),
+                movement_key=control.movement_key,
+                control_line=control.control_line,
+                route_s_m=control.route_s_m,
+                elevation_m=control.elevation_m,
+                physical_control_ids=physical_ids,
+            )
+        )
+    return tuple(sorted(grouped, key=lambda control: control.control_group_id))
+
+
 def normalize_static_records(
     *,
     scenario_uid: str,
@@ -101,6 +154,17 @@ def normalize_static_records(
         if feature.elevation_m is not None and not isfinite(feature.elevation_m):
             errors.append(f"invalid_map_feature_elevation:{feature.feature_id}")
             continue
+        if (
+            feature.feature_class
+            in {
+                MapFeatureClass.CROSSWALK,
+                MapFeatureClass.LANE_MARKING_SOLID,
+                MapFeatureClass.LANE_MARKING_DASHED,
+            }
+            and feature.elevation_m is None
+        ):
+            errors.append(f"missing_map_feature_elevation:{feature.feature_id}")
+            continue
         try:
             geometry = canonicalize_geometry(feature.geometry)
         except ValueError as error:
@@ -122,8 +186,9 @@ def normalize_static_records(
             elevation_m=feature.elevation_m,
             logical_boundary_id=feature.logical_boundary_id,
         )
+    normalized_controls = _group_signal_controls(traffic_controls)
     control_ids: set[str] = set()
-    for control in traffic_controls:
+    for control in normalized_controls:
         if not control.control_group_id or control.control_group_id in control_ids:
             errors.append(f"duplicate_control_group_id:{control.control_group_id}")
         control_ids.add(control.control_group_id)
@@ -142,7 +207,7 @@ def normalize_static_records(
         task_route=task_route,
         route_lanes=route_lanes,
         map_features=normalized_features,
-        traffic_controls=traffic_controls,
+        traffic_controls=normalized_controls,
         movement_priority_records=movement_priority_records,
         validation_errors=tuple(errors),
     )

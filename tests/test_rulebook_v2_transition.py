@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Polygon
 
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact
 from thesis_rl.rulebook.v2.transition import (
     RulebookTransitionConfig,
     align_episode_cache_to_live_elevation,
@@ -20,6 +21,9 @@ from thesis_rl.rulebook.v2.types import (
     ContactOnsetRecord,
     RulebookMemory,
     TaskRouteRecord,
+    ApproachControl,
+    MovementKey,
+    TrafficControlRecord,
 )
 
 
@@ -108,9 +112,7 @@ def test_transition_evaluates_contact_onset_from_post_snapshot() -> None:
     post = replace(
         _snapshot(1, 0.1, 1.1),
         actors=(other,),
-        contact_onset_records=(
-            ContactOnsetRecord("other", ActorClass.VEHICLE),
-        ),
+        contact_onset_records=(ContactOnsetRecord("other", ActorClass.VEHICLE),),
         active_contact_ids=frozenset({"other"}),
     )
     memory = initial_memory_for_snapshot(pre, cache)
@@ -123,6 +125,39 @@ def test_transition_evaluates_contact_onset_from_post_snapshot() -> None:
     )
     assert result.components["collision"].raw["new_collision"] is True
     assert result.components["collision"].applicable is True
+
+
+def test_transition_penalizes_a_red_signal_crossed_during_step() -> None:
+    cache = _cache()
+    control = TrafficControlRecord(
+        "signal:p",
+        ApproachControl.SIGNAL,
+        ("lane-a",),
+        MovementKey("lane-a", "node", "lane-a"),
+        LineString(((10.0, -2.0), (10.0, 2.0))),
+        10.0,
+        0.0,
+        ("p",),
+    )
+    cache = replace(cache, traffic_control_catalog=(control,))
+    pre = _snapshot(0, 0.0, 8.0)
+    post = replace(_snapshot(1, 0.1, 10.0), signal_states_by_physical_id={"p": "RED"})
+    pre = replace(pre, signal_states_by_physical_id={"p": "RED"})
+    memory = initial_memory_for_snapshot(pre, cache)
+
+    result, next_memory, _ = evaluate_transition(
+        pre_state=pre,
+        post_state=post,
+        memory=memory,
+        cache=cache,
+        config=RulebookTransitionConfig(
+            rss_calibration=RSSCalibrationArtifact("calibration", 4.0),
+            expected_config_hash="calibration",
+        ),
+    )
+
+    assert result.components["signal"].cost == 1.0
+    assert "signal:p" in next_memory.resolved_signal_group_ids
 
 
 def test_transition_rejects_non_positive_simulation_step() -> None:

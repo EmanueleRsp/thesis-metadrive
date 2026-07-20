@@ -3,7 +3,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import warnings
 from collections import OrderedDict
-from typing import Any, Callable, List, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Callable, List, Mapping, Optional, Sequence, Tuple, Type, Union
 
 import cloudpickle
 import gymnasium as gym
@@ -85,6 +85,7 @@ def _worker(
     remote: mp.connection.Connection,
     parent_remote: mp.connection.Connection,
     env_fn_wrapper: CloudpickleWrapper,
+    acl_mode: bool = False,
 ) -> None:
     parent_remote.close()
     env = env_fn_wrapper.var()
@@ -102,6 +103,9 @@ def _worker(
                 info["TimeLimit.truncated"] = bool(truncated and not terminated)
                 if done:
                     info["terminal_observation"] = observation
+                    info["terminated"] = bool(terminated)
+                    info["truncated"] = bool(truncated)
+                if done and not acl_mode:
                     start, count = _extract_seed_bounds(env)
                     if start is not None and count is not None and count > 0:
                         provider_env = getattr(env, "unwrapped", env)
@@ -123,6 +127,21 @@ def _worker(
                     else:
                         observation, reset_info = env.reset()
                 remote.send((observation, reward, done, info, reset_info))
+            elif cmd == "configure_acl_selection":
+                base_env = getattr(env, "unwrapped", env)
+                method = getattr(base_env, "configure_acl_selection", None)
+                if not callable(method):
+                    method = getattr(env, "configure_acl_selection", None)
+                if not callable(method):
+                    raise RuntimeError(
+                        "ACL worker environment does not support selection configuration."
+                    )
+                remote.send(method(data))
+            elif cmd == "reset_slots":
+                seed_arg, options_arg = data
+                maybe_options = {"options": options_arg} if options_arg else {}
+                observation, reset_info = env.reset(seed=seed_arg, **maybe_options)
+                remote.send((observation, reset_info))
             elif cmd == "reset":
                 seed_arg, options_arg = data
                 maybe_options = {"options": options_arg} if options_arg else {}
@@ -169,10 +188,17 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
     next deterministic seed inside the worker scenario window (if available).
     """
 
-    def __init__(self, env_fns: List[Callable[[], gym.Env]], start_method: Optional[str] = None):
+    def __init__(
+        self,
+        env_fns: List[Callable[[], gym.Env]],
+        start_method: Optional[str] = None,
+        *,
+        acl_mode: bool = False,
+    ):
         self.waiting = False
         self.closed = False
         self.num_envs = len(env_fns)
+        self.acl_mode = bool(acl_mode)
 
         if start_method is None:
             forkserver_available = "forkserver" in mp.get_all_start_methods()
@@ -182,7 +208,7 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         self.remotes, self.work_remotes = zip(*[ctx.Pipe() for _ in range(self.num_envs)])
         self.processes: list[mp.Process] = []
         for work_remote, remote, env_fn in zip(self.work_remotes, self.remotes, env_fns):
-            args = (work_remote, remote, CloudpickleWrapper(env_fn))
+            args = (work_remote, remote, CloudpickleWrapper(env_fn), self.acl_mode)
             process = ctx.Process(target=_worker, args=args, daemon=True)  # type: ignore[attr-defined]
             process.start()
             self.processes.append(process)
@@ -238,6 +264,34 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         self._reset_seeds()
         self._reset_options()
         return _flatten_obs(obs, self.observation_space)
+
+    def configure_acl_selection(self, slot: int, selection: Mapping[str, Any]) -> Any:
+        """Install one parent-owned selection before resetting its worker."""
+        if not self.acl_mode:
+            raise RuntimeError("ACL selection protocol is available only in acl_mode.")
+        index = self._get_indices(slot)[0]
+        self.remotes[index].send(("configure_acl_selection", dict(selection)))
+        return self.remotes[index].recv()
+
+    def reset_slots(
+        self,
+        slots: Sequence[int],
+        *,
+        seeds: Mapping[int, int | None] | None = None,
+        options: Mapping[int, dict[str, Any] | None] | None = None,
+    ) -> dict[int, tuple[Any, dict[str, Any]]]:
+        """Reset only completed ACL slots after their next selection is installed."""
+        if not self.acl_mode:
+            raise RuntimeError("Selective reset protocol is available only in acl_mode.")
+        selected = [int(slot) for slot in slots]
+        for slot in selected:
+            self.remotes[slot].send(
+                (
+                    "reset_slots",
+                    ((seeds or {}).get(slot), (options or {}).get(slot)),
+                )
+            )
+        return {slot: self.remotes[slot].recv() for slot in selected}
 
     def close(self) -> None:
         if self.closed:

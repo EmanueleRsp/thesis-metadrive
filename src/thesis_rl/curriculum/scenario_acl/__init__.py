@@ -27,6 +27,19 @@ from thesis_rl.curriculum.scenario_acl.usefulness import (
     compute_sac_td_residuals,
     compute_td3_td_residuals,
 )
+from thesis_rl.curriculum.scenario_acl.vectorized import (
+    AclCompletion,
+    AclEpisodeAccumulator,
+    AclSlotSelection,
+    AclVectorState,
+    AclVectorSelectionCoordinator,
+    AclVectorTransaction,
+    derive_worker_rng,
+    load_acl_vector_state,
+    order_acl_completions,
+    save_acl_vector_state,
+    validate_fresh_batch_unique,
+)
 
 __all__ = [
     "ScenarioAclDriverPaths",
@@ -51,4 +64,15 @@ __all__ = [
     "compute_td3_td_residuals",
     "compute_sac_td_residuals",
     "compute_scenario_usefulness",
+    "AclEpisodeAccumulator",
+    "AclCompletion",
+    "AclSlotSelection",
+    "AclVectorState",
+    "AclVectorSelectionCoordinator",
+    "AclVectorTransaction",
+    "derive_worker_rng",
+    "load_acl_vector_state",
+    "order_acl_completions",
+    "save_acl_vector_state",
+    "validate_fresh_batch_unique",
 ]

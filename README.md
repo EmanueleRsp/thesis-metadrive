@@ -273,6 +273,14 @@ available Hydra algorithm names when it is omitted:
 make run-train ALGORITHM=td3_sb3
 ```
 
+`make run-train` uses 5 parallel environments by default. Set `NUM_ENVS` to
+any integer greater than or equal to 1; `NUM_ENVS=1` keeps the sequential path.
+
+```bash
+make run-train ALGORITHM=td3_sb3 NUM_ENVS=2
+make run-train ALGORITHM=td3_sb3 NUM_ENVS=1
+```
+
 The defaults are ScenarioNet, `semantic_v2`, LQ, `mlp_encoded`, Rulebook
 v4.7, `bounded_satisfaction_rank`, Scenario ACL, PER, transition replay
 `n_steps=3`, checkpoint/replay persistence, and the `smoke` profile. Choose a

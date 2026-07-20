@@ -92,7 +92,7 @@ class Agent:
         episode_context_callback: Callable[[Any, dict[str, Any]], dict[str, Any] | None]
         | None = None,
         monitor_extra_rows_callback: Callable[[], list[tuple[str, str]]] | None = None,
-    ) -> dict[str, float | int]:
+    ) -> dict[str, Any]:
         """Train the agent in the given environment for a specified number of timesteps.
         Args:
             env: The environment to train in. Must have `reset()` and `step()` methods.
@@ -579,8 +579,20 @@ class Agent:
         deterministic: bool = False,
         log_interval: int = 1000,
         reset_seed_fn: Callable[[int], int | None] | None = None,
-    ) -> dict[str, float | int]:
-        """Train with a vectorized env, counting timesteps as total collected transitions."""
+        vector_episode_end_callback: Callable[
+            [Any, list[int], list[dict[str, Any]]], Mapping[int, Any]
+        ]
+        | None = None,
+        initial_observations: Any | None = None,
+    ) -> dict[str, Any]:
+        """Train with a vectorized env, counting total collected transitions.
+
+        ACL vector environments expose terminal observations without auto-reset.
+        Their parent callback receives completed slot metrics after the learner
+        transition is stored and must commit the ACL outcome, configure the next
+        selections, reset only those slots, and return ``slot -> observation``.
+        Generic vector environments retain their existing worker auto-reset.
+        """
         n_envs = count_envs(env)
         if n_envs <= 1:
             return self.train(
@@ -641,7 +653,7 @@ class Agent:
                     # Keep metadata visibility even if worker seeding is unavailable.
                     reset_seeds_used.append(int(first_seed))
         try:
-            obs = env.reset()
+            obs = env.reset() if initial_observations is None else initial_observations
         except EOFError as exc:
             raise RuntimeError(
                 "A SubprocVecEnv worker crashed during reset(). "
@@ -854,6 +866,56 @@ class Agent:
 
                     collected_steps += n_envs
                     done_indices = np.flatnonzero(dones)
+                    acl_episode_payloads = [
+                        {
+                            "worker_id": int(idx),
+                            "episode_id": infos[idx].get("acl_episode_id"),
+                            "episode_length": int(episode_len[idx]),
+                            "episode_return": float(episode_scalar_reward[idx]),
+                            "terminated": bool(terminated[idx]),
+                            "truncated": bool(truncated[idx]),
+                            "metrics": {
+                                "reward": float(episode_scalar_reward[idx]),
+                                "success": bool(episode_success[idx]),
+                                "collision": bool(episode_collision[idx]),
+                                "out_of_road": bool(episode_out_of_road[idx]),
+                                "route_completion": float(episode_route_completion[idx]),
+                                "env_reward": float(episode_env_reward[idx]),
+                                "scalar_rule_reward": (
+                                    float(episode_scalar_rule_reward[idx])
+                                    if episode_has_scalar_rule_reward[idx]
+                                    else None
+                                ),
+                                "hybrid_reward": (
+                                    float(episode_hybrid_reward[idx])
+                                    if episode_has_hybrid_reward[idx]
+                                    else None
+                                ),
+                                "termination_reason": (
+                                    "success"
+                                    if episode_success[idx]
+                                    else "collision"
+                                    if episode_collision[idx]
+                                    else "out_of_road"
+                                    if episode_out_of_road[idx]
+                                    else "timeout"
+                                ),
+                            },
+                            "learning_potential": getattr(
+                                lifecycle, "acl_learning_potential", lambda *_: None
+                            )(
+                                int(infos[idx].get("acl_slot_id", idx)),
+                                int(infos[idx]["acl_episode_id"]),
+                            )
+                            if infos[idx].get("acl_episode_id") is not None
+                            else None,
+                            "info": dict(infos[idx]),
+                            "ready_learning_potentials": getattr(
+                                lifecycle, "acl_ready_learning_potentials", lambda: {}
+                            )(),
+                        }
+                        for idx in done_indices.tolist()
+                    ]
                     if len(done_indices) > 0:
                         lifecycle.on_episode_end(indices=done_indices.tolist())
                         self.preprocessor.reset()
@@ -896,6 +958,28 @@ class Agent:
                         episode_collision[idx] = False
                         episode_out_of_road[idx] = False
                         episode_route_completion[idx] = 0.0
+
+                    if len(done_indices) > 0 and bool(getattr(env, "acl_mode", False)):
+                        if vector_episode_end_callback is None:
+                            raise RuntimeError(
+                                "ACL vector environment requires "
+                                "vector_episode_end_callback for parent-controlled reset."
+                            )
+                        reset_observations = vector_episode_end_callback(
+                            env,
+                            done_indices.tolist(),
+                            acl_episode_payloads,
+                        )
+                        if set(int(idx) for idx in reset_observations) != set(
+                            int(idx) for idx in done_indices.tolist()
+                        ):
+                            raise ValueError(
+                                "ACL vector reset callback must return exactly one observation "
+                                "for every completed worker slot."
+                            )
+                        next_obs = np.asarray(next_obs).copy()
+                        for idx, reset_observation in reset_observations.items():
+                            next_obs[int(idx)] = reset_observation
 
                     actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
                     critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))
@@ -994,6 +1078,7 @@ class Agent:
             "train_reset_seed_first": reset_seeds_used[0] if reset_seeds_used else None,
             "train_reset_seed_last": reset_seeds_used[-1] if reset_seeds_used else None,
             "train_reset_seed_unique_count": len(set(reset_seeds_used)),
+            "last_observations": obs,
         }
 
     def predict(self, observation: Any, deterministic: bool = False):

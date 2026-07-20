@@ -522,6 +522,11 @@ def build_train_env(cfg: DictConfig, env_overrides: dict[str, Any] | None = None
     cfg_plain = OmegaConf.to_container(cfg, resolve=True)
     start_method = str(cfg.env.get("vectorized", {}).get("start_method", "forkserver"))
     env_name = str(cfg.env.get("name", "")).lower()
+    acl_vector_mode = (
+        str(cfg.get("curriculum", {}).get("kind", "")).lower() == "scenario_acl"
+    )
+    if acl_vector_mode and start_method != "spawn":
+        raise ValueError("Scenario ACL vector execution requires start_method='spawn'.")
     if env_name == "metadrive" and start_method != "spawn":
         _LOGGER.warning(
             "MetaDrive vectorized training with start_method='%s' may be unstable. "
@@ -571,6 +576,7 @@ def build_train_env(cfg: DictConfig, env_overrides: dict[str, Any] | None = None
     return DeterministicSubprocVecEnv(
         [make_thunk(rank) for rank in range(num_envs)],
         start_method=start_method,
+        acl_mode=acl_vector_mode,
     )
 
 

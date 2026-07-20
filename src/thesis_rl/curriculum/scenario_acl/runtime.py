@@ -26,10 +26,16 @@ def validate_scenario_acl_runtime_support(
 
     vectorized_cfg = cfg.env.get("vectorized", {})
     if bool(vectorized_cfg.get("enabled", False)):
-        raise ValueError(
-            "Curriculum kind 'scenario_acl' currently requires "
-            "env.vectorized.enabled=false."
-        )
+        num_envs = int(vectorized_cfg.get("num_envs", 1))
+        start_method = str(vectorized_cfg.get("start_method", "spawn")).lower()
+        if num_envs <= 1:
+            raise ValueError("ACL vector execution requires env.vectorized.num_envs > 1.")
+        if start_method != "spawn":
+            raise ValueError(
+                "Scenario ACL vector execution requires env.vectorized.start_method='spawn'."
+            )
+        if int(curriculum_cfg.scenario_acl.mab.num_arms) != 6:
+            raise ValueError("ScenarioNet ACL vector execution requires exactly six A0-A5 arms.")
 
     env_name = str(cfg.env.get("name", "")).strip().lower()
     if env_name != "scenarionet":

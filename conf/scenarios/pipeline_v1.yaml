@@ -5,7 +5,7 @@ waymo:
   auto_expand: true
   batch_shards: 128
   max_new_shards: 1000
-  workers: 32
+  workers: 64
   keep_raw_batches: false
   required_arms:
     # A4_vru is structurally Waymo-only. This is an acquisition feasibility
@@ -15,7 +15,7 @@ waymo:
 pg:
   count_per_profile: 350
   seed_start: 920000
-  workers: 32
+  workers: 64
   max_composition_replenishment_blocks: 50
   replenishment_candidate_budget: 1750
 
@@ -23,7 +23,7 @@ pg:
 # eligibility is evaluated before split assignment and recorded separately.
 rulebook_v2:
   enabled: true
-  workers: 32
+  workers: 64
 
 split:
   seed: 0
@@ -44,4 +44,4 @@ split:
 
 checks:
   simulation: true
-  workers: 32
+  workers: 64

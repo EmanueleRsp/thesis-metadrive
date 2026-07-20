@@ -147,6 +147,8 @@ class RolloutBuffer:
         self.episode_starts = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
         self.values = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
         self.log_probs = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
+        self.acl_slot_ids = np.full((self.n_steps, self.n_envs), -1, dtype=np.int64)
+        self.acl_episode_ids = np.full((self.n_steps, self.n_envs), -1, dtype=np.int64)
         self.advantages = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
         self.returns = np.zeros((self.n_steps, self.n_envs), dtype=np.float32)
         self.pos = 0
@@ -160,6 +162,8 @@ class RolloutBuffer:
         episode_starts: np.ndarray,
         values: np.ndarray,
         log_probs: np.ndarray,
+        acl_slot_ids: np.ndarray | None = None,
+        acl_episode_ids: np.ndarray | None = None,
     ) -> None:
         if self.full:
             raise RuntimeError("RolloutBuffer is full. Call reset() before adding new rollout.")
@@ -169,6 +173,10 @@ class RolloutBuffer:
         self.episode_starts[self.pos] = np.asarray(episode_starts, dtype=np.float32)
         self.values[self.pos] = np.asarray(values, dtype=np.float32)
         self.log_probs[self.pos] = np.asarray(log_probs, dtype=np.float32)
+        if acl_slot_ids is not None:
+            self.acl_slot_ids[self.pos] = np.asarray(acl_slot_ids, dtype=np.int64)
+        if acl_episode_ids is not None:
+            self.acl_episode_ids[self.pos] = np.asarray(acl_episode_ids, dtype=np.int64)
         self.pos += 1
         if self.pos >= self.n_steps:
             self.full = True

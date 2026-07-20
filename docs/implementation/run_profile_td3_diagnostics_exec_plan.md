@@ -97,19 +97,19 @@ part of the normal training path.
 
 | Requirement | Acceptance criteria | Implementation | Tests | Status |
 |---|---|---|---|---|
-| `REQ-RP-001` | `fast` resolves to 120,000 steps | `conf/run_profile/fast.yaml` | `tests/test_hydra_preset_run_configs.py` | Planned |
-| `REQ-RP-002` | All profiles resolve expected TD3 warm-up/batch values | `conf/run_profile/*.yaml` | `tests/test_hydra_preset_run_configs.py` | Planned |
+| `REQ-RP-001` | `fast` resolves to 120,000 steps | `conf/run_profile/fast.yaml` | `tests/test_hydra_preset_run_configs.py` | Verified |
+| `REQ-RP-002` | All profiles resolve expected TD3 warm-up/batch values | `conf/run_profile/*.yaml` | `tests/test_hydra_preset_run_configs.py` | Verified |
 | `REQ-RP-003` | Smoke has a margin path; all other profiles resolve `None` | `conf/reward/rulebook_defaults.yaml`, `conf/run_profile/smoke.yaml` | `tests/test_hydra_preset_run_configs.py` | Verified |
 | `REQ-RP-004` | Explicit tuning path remains present | `conf/presets/td3/td3_scalar_reward_scale_tuning_no_curr.yaml` | config composition test / inspection | Verified |
-| `REQ-RP-005` | All profiles resolve expected SAC warm-up/batch values | `conf/run_profile/*.yaml`, `src/thesis_rl/runtime/wiring/builders.py` | `tests/test_hydra_preset_run_configs.py` | Planned |
-| `REQ-RP-006` | TD3/SAC persistence resolves to `false` by default | `conf/agent/planner/algorithm/{td3_sb3,sac_sb3}.yaml` | `tests/test_hydra_preset_run_configs.py` | Planned |
-| `REQ-RP-007` | PPO smoke resolves to `n_steps=16`, `batch_size=8` | `conf/run_profile/smoke.yaml`, `src/thesis_rl/runtime/wiring/builders.py` | `tests/test_hydra_preset_run_configs.py` | Planned |
+| `REQ-RP-005` | All profiles resolve expected SAC warm-up/batch values | `conf/run_profile/*.yaml`, `src/thesis_rl/runtime/wiring/builders.py` | `tests/test_hydra_preset_run_configs.py` | Verified |
+| `REQ-RP-006` | TD3/SAC persistence resolves to `false` by default | `conf/agent/planner/algorithm/{td3_sb3,sac_sb3}.yaml` | `tests/test_hydra_preset_run_configs.py` | Verified |
+| `REQ-RP-007` | PPO smoke resolves to `n_steps=16`, `batch_size=8` | `conf/run_profile/smoke.yaml`, `src/thesis_rl/runtime/wiring/builders.py` | `tests/test_hydra_preset_run_configs.py` | Verified |
 
 ## 9. Test strategy defined before implementation
 
 | ID | Level | Behavior | Fixture/input | Expected result | Requirement |
 |---|---|---|---|---|---|
-| `TEST-RP-001` | Hydra config | fast composition | `run_profile=fast`, `agent/planner/algorithm=td3_sb3` | 120,000 steps and `5000/512` | `REQ-RP-001`, `REQ-RP-002` |
+| `TEST-RP-001` | Hydra config | fast composition | `run_profile=fast`, `agent/planner/algorithm=td3_sb3` | 120,000 steps and `5000/256` | `REQ-RP-001`, `REQ-RP-002` |
 | `TEST-RP-002` | Hydra config | profile matrix | default, smoke, fast, medium, long, tune, thesis | exact expected planner values | `REQ-RP-002` |
 | `TEST-RP-003` | Hydra config | diagnostic gating | all named profiles | only smoke has margin path | `REQ-RP-003` |
 | `TEST-RP-004` | Hydra config | explicit diagnostic preset | TD3 scale tuning preset | explicit margin path remains configured | `REQ-RP-004` |

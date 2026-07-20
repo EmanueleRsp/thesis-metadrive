@@ -33,6 +33,19 @@ from thesis_rl.curriculum.scenario_acl.usefulness import (
     compute_learning_potential,
     compute_scenario_usefulness,
 )
+from thesis_rl.curriculum.scenario_acl.vectorized import (
+    AclCompletion,
+    AclEpisodeAccumulator,
+    AclSlotSelection,
+    AclVectorSelectionCoordinator,
+    AclVectorState,
+    AclVectorTransaction,
+    load_acl_vector_state,
+    retain_unresolved_acl_completions,
+    save_acl_vector_state,
+)
+from thesis_rl.runtime.wiring.builders import train_num_envs
+from thesis_rl.scenarios.catalog import read_scenario_catalog
 from thesis_rl.runtime.execution.seeding import (
     apply_eval_scenario_seed_split,
     seed_env_spaces,
@@ -52,6 +65,7 @@ from thesis_rl.runtime.wiring.builders import (
     load_planner,
     merge_env_config_with_overrides,
     set_planner_env_if_compatible,
+    build_train_env,
 )
 
 
@@ -290,6 +304,7 @@ def _scenario_acl_artifact_paths(artifacts_dir: Path) -> dict[str, Path]:
         "iterations": root / "iterations.jsonl",
         "buffer": root / "scenario_buffer.json",
         "buffer_events": root / "scenario_buffer_events.jsonl",
+        "vector_state": root / "scenario_acl_vector_state.json",
         "scenarios": root / "scenarios",
     }
 
@@ -478,6 +493,529 @@ def _load_scenario_acl_resume_state(
     )
 
 
+def _run_scenario_acl_vectorized_training(
+    *,
+    cfg: DictConfig,
+    curriculum_cfg: CurriculumConfig,
+    env: Any,
+    agent: Agent,
+    planner: Any,
+    preprocessor: Any,
+    adapter: Any,
+    recorder: CSVRecorder,
+    base_csv_fields: dict[str, Any],
+    metadata_path: Path,
+    hydra_config_path: Path,
+    start_time: float,
+    paths: ScenarioAclDriverPaths,
+    train_logger: logging.Logger,
+    curriculum_logger: logging.Logger,
+    artifact_paths: dict[str, Path],
+    semantic_env_overrides: dict[str, object],
+    transition_replay_config: Any,
+    run_seed: int,
+    total_timesteps: int,
+    eval_interval: int,
+    log_interval: int,
+    current_global_step: int,
+    current_chunk_id: int,
+    current_eval_id: int,
+    current_episode_id: int,
+    buffer: ScenarioBuffer,
+    bandit: ScenarioArmBandit,
+    rng: np.random.Generator,
+    recent_usefulness: list[float],
+    generate_count: int,
+    replay_count: int,
+    resume_enabled: bool,
+) -> None:
+    """Run the parent-controlled ACL vector path for ``num_envs > 1``."""
+
+    from thesis_rl.curriculum.scenario_acl.vectorized import VECTOR_STATE_VERSION
+
+    n_envs = count_envs(env)
+    if n_envs <= 1 or not bool(getattr(env, "acl_mode", False)):
+        raise ValueError("Scenario ACL vector driver requires an ACL-mode vector environment.")
+    scenario_cfg = curriculum_cfg.scenario_acl
+    arms = list(build_default_scenario_arms())
+    catalog = read_scenario_catalog(str(semantic_env_overrides["catalog_path"]))
+    train_records = tuple(
+        sorted(
+            catalog.valid_records(split=str(cfg.env.get("split", "train"))),
+            key=lambda r: r.scenario_uid,
+        )
+    )
+    if not train_records:
+        raise ValueError("Scenario ACL vector execution requires valid train catalog records.")
+
+    vector_state_load_path = artifact_paths["vector_state"]
+    if resume_enabled:
+        configured_resume_dir = cfg.checkpoint.get("resume", {}).get("run_dir")
+        if configured_resume_dir not in (None, "", "null"):
+            vector_state_load_path = (
+                Path(str(configured_resume_dir))
+                / "artifacts"
+                / "curriculum"
+                / "scenario_acl_vector_state.json"
+            )
+        if not vector_state_load_path.is_file():
+            raise FileNotFoundError(
+                "Scenario ACL vector resume requires the versioned vector state: "
+                f"{vector_state_load_path}"
+            )
+        vector_state = load_acl_vector_state(vector_state_load_path, expected_n_envs=n_envs)
+        if vector_state.version != VECTOR_STATE_VERSION:
+            raise ValueError("Scenario ACL vector state version is incompatible.")
+        if vector_state.rng_state is not None:
+            rng.bit_generator.state = vector_state.rng_state
+    else:
+        vector_state = AclVectorState(n_envs=n_envs)
+
+    coordinator = AclVectorSelectionCoordinator(vector_state)
+    transaction = AclVectorTransaction(vector_state)
+    initial_observations: Any | None = None
+
+    def select_batch(slots: list[int]) -> dict[int, AclSlotSelection]:
+        def selector(slot: int, excluded: frozenset[str]) -> AclSlotSelection:
+            nonlocal generate_count, replay_count
+            episode_id = vector_state.next_episode_id
+            vector_state.next_episode_id += 1
+            generation = vector_state.next_generation
+            effective_excluded = set(excluded)
+            effective_excluded.update(str(record.scenario_id) for record in buffer.records())
+            can_replay = bool(
+                scenario_cfg.use_replay and len(buffer) >= int(scenario_cfg.warmup_buffer_size)
+            )
+            if can_replay and float(rng.random()) < float(scenario_cfg.exploit_probability):
+                replay = buffer.sample_replay(
+                    rng=rng,
+                    current_step=episode_id,
+                    cfg=scenario_cfg.replay_sampling,
+                    use_staleness=bool(scenario_cfg.use_staleness),
+                )
+                record = replay.record
+                replay_count += 1
+                return AclSlotSelection(
+                    slot_id=slot,
+                    episode_id=episode_id,
+                    generation=generation,
+                    mode="replay",
+                    arm_index=SCENARIO_ARM_NAMES.index(
+                        str(record.scenario_arm or record.generator_arm or record.source)
+                    ),
+                    arm_name=str(record.scenario_arm or record.generator_arm or record.source),
+                    reset_seed=int(record.reset_seed),
+                    scenario_uid=str(record.scenario_id),
+                    runtime_index=int(record.scenario_index),
+                    source=str(record.source),
+                )
+
+            if bool(scenario_cfg.use_mab):
+                arm_index, probabilities = bandit.sample_arm(rng)
+            else:
+                arm_index = int(rng.integers(0, len(arms)))
+                probabilities = np.full(len(arms), 1.0 / len(arms), dtype=np.float64)
+            arm_name = arms[arm_index].name
+            candidates = [
+                record
+                for record in train_records
+                if record.primary_arm == arm_name and record.scenario_uid not in effective_excluded
+            ]
+            if not candidates:
+                if not len(buffer):
+                    raise RuntimeError(
+                        f"Selected ACL arm {arm_name!r} has no fresh catalog record and replay is empty."
+                    )
+                replay = buffer.sample_replay(
+                    rng=rng,
+                    current_step=episode_id,
+                    cfg=scenario_cfg.replay_sampling,
+                    use_staleness=bool(scenario_cfg.use_staleness),
+                )
+                record = replay.record
+                replay_count += 1
+                return AclSlotSelection(
+                    slot_id=slot,
+                    episode_id=episode_id,
+                    generation=generation,
+                    mode="replay",
+                    arm_index=SCENARIO_ARM_NAMES.index(
+                        str(record.scenario_arm or record.generator_arm or record.source)
+                    ),
+                    arm_name=str(record.scenario_arm or record.generator_arm or record.source),
+                    reset_seed=int(record.reset_seed),
+                    scenario_uid=str(record.scenario_id),
+                    runtime_index=int(record.scenario_index),
+                    source=str(record.source),
+                )
+            record = candidates[int(rng.integers(0, len(candidates)))]
+            generate_count += 1
+            return AclSlotSelection(
+                slot_id=slot,
+                episode_id=episode_id,
+                generation=generation,
+                mode="generate",
+                arm_index=int(arm_index),
+                arm_name=arm_name,
+                reset_seed=int(record.runtime_index),
+                scenario_uid=str(record.scenario_uid),
+                runtime_index=int(record.runtime_index),
+                source=str(record.source),
+                selection_probability=float(probabilities[arm_index]),
+            )
+
+        selected = coordinator.select_batch(slots, selector=selector)
+        for slot in sorted(selected):
+            vector_state.accumulators[slot] = AclEpisodeAccumulator(
+                slot_id=slot, episode_id=selected[slot].episode_id
+            )
+        return selected
+
+    if resume_enabled and vector_state.active_selections:
+        active_slots = set(vector_state.active_selections)
+        expected_slots = set(range(n_envs))
+        if active_slots != expected_slots:
+            raise ValueError(
+                "Scenario ACL vector resume requires one persisted active selection per slot: "
+                f"expected {sorted(expected_slots)}, got {sorted(active_slots)}."
+            )
+        reset_results = coordinator.restart_active_slots_for_resume(env)
+        initial_observations = np.asarray([reset_results[slot][0] for slot in range(n_envs)])
+        for slot in sorted(vector_state.active_selections):
+            selection = vector_state.active_selections[slot]
+            log_event(
+                paths.events_log_path,
+                "scenario_acl_active_slot_restarted_on_resume",
+                worker_id=int(slot),
+                episode_id=int(selection.episode_id),
+                selection_generation=int(selection.generation),
+                scenario_id=selection.scenario_uid,
+                reset_seed=int(selection.reset_seed),
+                reason="simulator_state_not_serialized",
+            )
+    else:
+        active_slots = list(range(n_envs))
+        if not vector_state.active_selections:
+            select_batch(active_slots)
+        reset_results = coordinator.configure_and_reset(env, vector_state.active_selections)
+        initial_observations = np.asarray([reset_results[slot][0] for slot in active_slots])
+
+    def vector_episode_end_callback(
+        vector_env: Any, done_indices: list[int], payloads: list[dict[str, Any]]
+    ) -> dict[int, Any]:
+        completed: dict[tuple[int, int], AclCompletion] = {}
+        learning_potentials: dict[tuple[int, int], float] = {}
+        ready: dict[tuple[int, int], float] = {}
+        for payload in payloads:
+            ready.update(
+                {
+                    (int(key[0]), int(key[1])): float(value)
+                    for key, value in dict(payload.get("ready_learning_potentials", {})).items()
+                }
+            )
+            slot = int(payload["worker_id"])
+            episode_id = int(payload["episode_id"])
+            selection = vector_state.active_selections.get(slot)
+            if selection is None or selection.episode_id != episode_id:
+                raise ValueError(
+                    f"ACL completion has no matching active selection for slot {slot}."
+                )
+            completion = AclCompletion(
+                collection_tick=vector_state.collection_tick,
+                worker_id=slot,
+                episode_id=episode_id,
+                selection=selection,
+                metrics=dict(payload.get("metrics", {})),
+            )
+            completed[(slot, episode_id)] = completion
+            if payload.get("learning_potential") is not None:
+                learning_potentials[(slot, episode_id)] = float(payload["learning_potential"])
+            elif (slot, episode_id) in ready:
+                learning_potentials[(slot, episode_id)] = ready[(slot, episode_id)]
+
+        pending_by_key = {
+            (item.worker_id, item.episode_id): item for item in vector_state.pending_completions
+        }
+        pending_by_key.update(completed)
+        for key, value in ready.items():
+            if key in pending_by_key:
+                learning_potentials[key] = float(value)
+        ready_completions = [
+            completion for key, completion in pending_by_key.items() if key in learning_potentials
+        ]
+
+        def commit_event(event: dict[str, Any]) -> None:
+            key = (int(event["worker_id"]), int(event["episode_id"]))
+            completion = pending_by_key[key]
+            lp = float(event["learning_potential"])
+            normalized = _normalize_learning_potential(lp, recent_usefulness)
+            recent_usefulness.append(lp)
+            max_recent = int(scenario_cfg.recent_window_size)
+            if len(recent_usefulness) > max_recent:
+                del recent_usefulness[:-max_recent]
+            if completion.selection.mode == "generate" and bool(scenario_cfg.use_mab):
+                if completion.selection.selection_probability is None:
+                    raise ValueError("Fresh ACL selection is missing its MAB probability.")
+                bandit.update(
+                    arm_index=completion.selection.arm_index,
+                    normalized_usefulness=normalized,
+                    selection_probability=float(completion.selection.selection_probability),
+                )
+            metrics = dict(completion.metrics)
+            scenario_uid = completion.selection.scenario_uid
+            if scenario_uid is None:
+                raise ValueError("ACL completion is missing scenario identity.")
+            if completion.selection.mode == "replay":
+                record = next(
+                    (item for item in buffer.records() if item.scenario_id == scenario_uid), None
+                )
+                if record is None:
+                    raise ValueError(
+                        f"Replay ACL record is missing from the parent buffer: {scenario_uid}"
+                    )
+                updated = _update_replay_record(
+                    record,
+                    episode_id=completion.episode_id,
+                    learning_potential=lp,
+                    normalized_usefulness=normalized,
+                    metrics=_episode_record_metrics(metrics),
+                )
+                buffer.update(updated)
+                action = "updated"
+            else:
+                catalog_record = catalog.get_by_uid(scenario_uid).record
+                inserted = buffer.insert(
+                    _build_record_from_catalog_entry(
+                        catalog_record=catalog_record,
+                        cfg=cfg,
+                        episode_id=completion.episode_id,
+                        learning_potential=lp,
+                        normalized_usefulness=normalized,
+                        metrics=_episode_record_metrics(metrics),
+                    )
+                )
+                action = "inserted" if inserted else "rejected"
+            _append_jsonl(
+                artifact_paths["buffer_events"],
+                {
+                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    "collection_tick": int(event["collection_tick"]),
+                    "worker_id": int(event["worker_id"]),
+                    "episode_id": int(event["episode_id"]),
+                    "selection_generation": int(event["selection_generation"]),
+                    "scenario_id": scenario_uid,
+                    "learning_potential": lp,
+                    "buffer_action": action,
+                },
+            )
+            log_event(
+                paths.events_log_path,
+                "scenario_acl_episode_ended",
+                collection_tick=int(event["collection_tick"]),
+                worker_id=int(event["worker_id"]),
+                episode_id=int(event["episode_id"]),
+                selection_generation=int(event["selection_generation"]),
+                scenario_id=scenario_uid,
+                learning_potential=lp,
+                buffer_action=action,
+                metrics=metrics,
+            )
+
+        transaction.commit_tick(
+            ready_completions,
+            learning_potentials=learning_potentials,
+            commit=commit_event,
+        )
+        committed_keys = set(learning_potentials).intersection(pending_by_key)
+        vector_state.pending_completions = retain_unresolved_acl_completions(
+            vector_state.pending_completions,
+            completed.values(),
+            resolved_keys=committed_keys,
+        )
+
+        coordinator.clear_completed(done_indices)
+        selected = select_batch(done_indices)
+        reset_results = coordinator.configure_and_reset(vector_env, selected)
+        return {slot: reset_results[slot][0] for slot in done_indices}
+
+    current_observations = initial_observations
+    try:
+        while current_global_step < total_timesteps:
+            current_chunk_id += 1
+            chunk_steps = min(eval_interval, total_timesteps - current_global_step)
+            summary = agent.train_vectorized(
+                env=env,
+                chunk_timesteps=chunk_steps,
+                global_total_timesteps=total_timesteps,
+                global_steps_done=current_global_step,
+                stage_name="scenario_acl_vectorized",
+                deterministic=False,
+                log_interval=log_interval,
+                vector_episode_end_callback=vector_episode_end_callback,
+                initial_observations=current_observations,
+            )
+            current_observations = summary["last_observations"]
+            current_global_step = min(
+                total_timesteps, current_global_step + int(summary["chunk_steps_actual"])
+            )
+            vector_state.last_observations = current_observations
+            vector_state.rng_state = rng.bit_generator.state
+            _persist_buffer_state(path=artifact_paths["buffer"], buffer=buffer)
+            save_acl_vector_state(artifact_paths["vector_state"], vector_state)
+            recorder.append_row(
+                "train_chunks.csv",
+                {
+                    **base_csv_fields,
+                    "chunk_id": current_chunk_id,
+                    "stage": "scenario_acl_vectorized",
+                    "steps_start": current_global_step - int(summary["chunk_steps_actual"]),
+                    "steps_end": current_global_step,
+                    "global_step": current_global_step,
+                    "chunk_steps": int(summary["chunk_steps_actual"]),
+                    "episodes": int(summary.get("episodes", 0)),
+                    "ep_rew_mean": float(summary.get("ep_rew_mean", 0.0)),
+                    "ep_len_mean": float(summary.get("ep_len_mean", 0.0)),
+                    "learning_potential": summary.get("learning_potential"),
+                    "vector_envs": n_envs,
+                },
+            )
+            history_payload = {
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "chunk_id": current_chunk_id,
+                "global_step": current_global_step,
+                "mode": "vectorized",
+                "vector_envs": n_envs,
+                "buffer_size": len(buffer),
+                "pending_completions": len(vector_state.pending_completions),
+                "mab": bandit.state_dict(),
+            }
+            _append_jsonl(artifact_paths["history"], history_payload)
+            _append_jsonl(artifact_paths["iterations"], history_payload)
+            artifact_paths["state"].write_text(
+                json.dumps(
+                    {
+                        "global_step": current_global_step,
+                        "chunk_id": current_chunk_id,
+                        "eval_id": current_eval_id,
+                        "episode_id": vector_state.next_episode_id,
+                        "buffer_size": len(buffer),
+                        "mab": bandit.state_dict(),
+                        "rng_state": rng.bit_generator.state,
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
+                agent.save(paths.latest_checkpoint_stem)
+                if transition_replay_config.persistence_enabled:
+                    _save_acl_replay_buffer(
+                        planner, paths.checkpoints_dir / "latest_replay_buffer.pkl"
+                    )
+                    _save_acl_checkpoint_pair(
+                        path=paths.checkpoints_dir / "latest_checkpoint_pair.json",
+                        checkpoint_name="latest",
+                        replay_name="latest_replay_buffer.pkl",
+                        training_timestep=current_global_step,
+                    )
+                if bool(cfg.checkpoint.get("save_rng_state", True)):
+                    _save_acl_rng_state(paths.checkpoints_dir / "latest_rng_state.pkl")
+
+            train_logger.info(
+                "Scenario ACL vector chunk finished | chunk_id=%d | global_step=%d | "
+                "buffer_size=%d | pending=%d",
+                current_chunk_id,
+                current_global_step,
+                len(buffer),
+                len(vector_state.pending_completions),
+            )
+    finally:
+        env.close()
+
+    if not bool(cfg.checkpoint.get("save_final", True)):
+        raise ValueError("checkpoint.save_final must be true for scenario_acl training.")
+    agent.save(paths.final_checkpoint_stem)
+    if transition_replay_config.persistence_enabled:
+        _save_acl_replay_buffer(planner, paths.checkpoints_dir / "final_replay_buffer.pkl")
+        _save_acl_checkpoint_pair(
+            path=paths.checkpoints_dir / "final_checkpoint_pair.json",
+            checkpoint_name="final",
+            replay_name="final_replay_buffer.pkl",
+            training_timestep=current_global_step,
+        )
+    if bool(cfg.checkpoint.get("save_rng_state", True)):
+        _save_acl_rng_state(paths.checkpoints_dir / "latest_rng_state.pkl")
+
+    final_eval_overrides = apply_eval_scenario_seed_split(
+        base_run_seed=run_seed,
+        eval_env_overrides=None,
+        cfg=cfg,
+        n_eval_episodes=int(
+            cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)
+        ),
+        split="test",
+    )
+    final_eval_overrides.update(semantic_env_overrides)
+    final_eval_env = build_env(cfg, final_eval_overrides)
+    seed_env_spaces(final_eval_env, run_seed + 600_000)
+    final_eval_agent = Agent(
+        preprocessor=preprocessor,
+        planner=load_planner(
+            cfg, checkpoint_path=f"{paths.final_checkpoint_stem}.zip", env=final_eval_env
+        ),
+        adapter=adapter,
+    )
+    final_metrics = final_eval_agent.evaluate(
+        env=final_eval_env,
+        n_eval_episodes=int(
+            cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)
+        ),
+        deterministic=bool(cfg.experiment.eval_deterministic),
+        return_episode_metrics=True,
+        error_priority_base=float(cfg.reward.get("a", 2.01)),
+        show_progress=True,
+        before_episode_reset_callback=_configure_waymo_eval_episode,
+    )
+    final_eval_env.close()
+    recorder.append_row(
+        "final_eval.csv",
+        {
+            **base_csv_fields,
+            "eval_type": "final",
+            "scenario_set": f"test_{_WAYMO_STRATIFIED_SET}",
+            "total_timesteps": current_global_step,
+            "final_stage": "scenario_acl",
+            "final_stage_reached": True,
+            "final_eval_episodes": int(
+                cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)
+            ),
+            "mean_reward": float(final_metrics.get("mean_reward", 0.0)),
+            "collision_rate": float(final_metrics.get("collision_rate", 0.0)),
+            "success_rate": float(final_metrics.get("success_rate", 0.0)),
+            "route_completion": float(final_metrics.get("route_completion", 0.0)),
+            "checkpoint_path": str(
+                paths.final_checkpoint_stem.with_suffix(".zip").relative_to(paths.run_dir)
+            ),
+            "checkpoint_type": "final",
+            "checkpoint_global_step": current_global_step,
+        },
+    )
+    update_run_metadata(
+        paths.artifacts_dir,
+        {
+            "status": "completed",
+            "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_seconds": round(time.time() - start_time, 2),
+            "global_step": current_global_step,
+            "chunk_id": current_chunk_id,
+            "eval_id": current_eval_id + 1,
+            "stage": "scenario_acl",
+            "stage_index": 0,
+        },
+    )
+
+
 def _choose_iteration_spec(
     *,
     cfg: DictConfig,
@@ -600,7 +1138,7 @@ def run_scenario_acl_training(
 
     # Arms are assigned immediately before every reset. Construct an
     # unfiltered provider once per evaluation chunk so no prior choice leaks.
-    env = build_env(cfg, semantic_env_overrides)
+    env = build_train_env(cfg, semantic_env_overrides)
     seed_env_spaces(env, run_seed)
     train_env_count = count_envs(env)
 
@@ -669,6 +1207,44 @@ def run_scenario_acl_training(
             ("Scenario ACL selection", "per episode"),
         ],
     )
+
+    if train_num_envs(cfg) > 1:
+        _run_scenario_acl_vectorized_training(
+            cfg=cfg,
+            curriculum_cfg=curriculum_cfg,
+            env=env,
+            agent=agent,
+            planner=planner,
+            preprocessor=preprocessor,
+            adapter=adapter,
+            recorder=recorder,
+            base_csv_fields=base_csv_fields,
+            metadata_path=metadata_path,
+            hydra_config_path=hydra_config_path,
+            start_time=start_time,
+            paths=paths,
+            train_logger=train_logger,
+            curriculum_logger=curriculum_logger,
+            artifact_paths=artifact_paths,
+            semantic_env_overrides=semantic_env_overrides,
+            transition_replay_config=transition_replay_config,
+            run_seed=run_seed,
+            total_timesteps=total_timesteps,
+            eval_interval=eval_interval,
+            log_interval=log_interval,
+            current_global_step=current_global_step,
+            current_chunk_id=current_chunk_id,
+            current_eval_id=current_eval_id,
+            current_episode_id=current_episode_id,
+            buffer=buffer,
+            bandit=bandit,
+            rng=rng,
+            recent_usefulness=recent_usefulness,
+            generate_count=generate_count,
+            replay_count=replay_count,
+            resume_enabled=resume_enabled,
+        )
+        return
 
     try:
         remaining = max(0, total_timesteps - current_global_step)

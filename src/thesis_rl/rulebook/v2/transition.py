@@ -10,10 +10,14 @@ by a fail-fast validation error; no source-specific fallback is introduced.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from math import hypot, isfinite
+from math import cos, isfinite, sin
 
+from thesis_rl.rulebook.v2.components.controls import signal_group_state
 from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact, RSSCandidate
-from thesis_rl.rulebook.v2.geometry.conflict_zones import MovementCorridor
+from thesis_rl.rulebook.v2.geometry.conflict_zones import (
+    MovementCorridor,
+    select_first_ahead_or_occupied_zone,
+)
 from thesis_rl.rulebook.v2.geometry.continuous_sat import OccupancyInterval
 from thesis_rl.rulebook.v2.geometry.ctrv import predict_conflict_zone_occupancy_intervals
 from thesis_rl.rulebook.v2.geometry.drivable import DrivableLaneRecord, drivable_surface_for_ego
@@ -21,6 +25,7 @@ from thesis_rl.rulebook.v2.geometry.elevation import PolylineElevation
 from thesis_rl.rulebook.v2.geometry.footprint import swept_front_bumper
 from thesis_rl.rulebook.v2.geometry.lanes import (
     RouteLaneRecord,
+    associate_route_lane,
     bumper_to_bumper_gap,
     derive_lane_movement_key,
     footprint_route_coordinates,
@@ -55,8 +60,7 @@ def build_episode_cache(static_result) -> EpisodeCache:
 
     if getattr(static_result, "validation_errors", ()):
         raise ValueError(
-            "Static adapter result is not eligible: "
-            + ", ".join(static_result.validation_errors)
+            "Static adapter result is not eligible: " + ", ".join(static_result.validation_errors)
         )
     route = static_result.assigned_route_polyline
     return EpisodeCache(
@@ -110,7 +114,9 @@ def align_episode_cache_to_live_elevation(
     shifted_lanes = tuple(
         replace(
             lane,
-            centerline=RoutePolyline(tuple((x, y, z + offset) for x, y, z in lane.centerline.points_xyz)),
+            centerline=RoutePolyline(
+                tuple((x, y, z + offset) for x, y, z in lane.centerline.points_xyz)
+            ),
         )
         for lane in cache.route_lanes
     )
@@ -165,12 +171,42 @@ def _route_lane(cache: EpisodeCache, lane_id: str | None) -> RouteLaneRecord | N
 
 
 def _rss_candidates(
-    *, ego: ActorSnapshot, actors: tuple[ActorSnapshot, ...], route
+    *,
+    ego: ActorSnapshot,
+    actors: tuple[ActorSnapshot, ...],
+    route,
+    route_lanes: tuple[RouteLaneRecord, ...],
 ) -> tuple[RSSCandidate, ...]:
+    ego_lane = associate_route_lane(
+        position_xy=ego.position_xy,
+        position_z=ego.position_z,
+        heading_rad=ego.heading_rad,
+        route_lanes=route_lanes,
+    )
+    if ego_lane is None:
+        return ()
+    ego_heading = (cos(ego.heading_rad), sin(ego.heading_rad))
+    if ego_heading[0] * ego_lane.tangent_xy[0] + ego_heading[1] * ego_lane.tangent_xy[1] <= 0.0:
+        return ()
     ego_coords = footprint_route_coordinates(ego.footprint, route, position_z=ego.position_z)
     candidates: list[RSSCandidate] = []
     for actor in actors:
-        if actor.actor_class is not ActorClass.VEHICLE or actor.live_lane_id != ego.live_lane_id:
+        if actor.actor_class is not ActorClass.VEHICLE:
+            continue
+        actor_lane = associate_route_lane(
+            position_xy=actor.position_xy,
+            position_z=actor.position_z,
+            heading_rad=actor.heading_rad,
+            route_lanes=route_lanes,
+        )
+        if actor_lane is None or actor_lane.lane_id != ego_lane.lane_id:
+            continue
+        actor_heading = (cos(actor.heading_rad), sin(actor.heading_rad))
+        if (
+            actor_heading[0] * actor_lane.tangent_xy[0]
+            + actor_heading[1] * actor_lane.tangent_xy[1]
+            <= 0.0
+        ):
             continue
         other_coords = footprint_route_coordinates(
             actor.footprint, route, position_z=actor.position_z
@@ -181,17 +217,45 @@ def _rss_candidates(
                 RSSCandidate(
                     actor_id=actor.actor_id,
                     gap_m=gap,
-                    ego_speed_mps=hypot(*ego.velocity_xy),
-                    front_speed_mps=hypot(*actor.velocity_xy),
+                    ego_speed_mps=max(
+                        0.0,
+                        ego.velocity_xy[0] * ego_lane.tangent_xy[0]
+                        + ego.velocity_xy[1] * ego_lane.tangent_xy[1],
+                    ),
+                    front_speed_mps=max(
+                        0.0,
+                        actor.velocity_xy[0] * actor_lane.tangent_xy[0]
+                        + actor.velocity_xy[1] * actor_lane.tangent_xy[1],
+                    ),
                 )
             )
     return tuple(sorted(candidates, key=lambda candidate: candidate.actor_id))
 
 
-def _control_distances(control, *, pre_front_s: float, post_front_s: float) -> tuple[float, float, bool]:
+def _control_distances(
+    control,
+    *,
+    pre_front_s: float,
+    post_front_s: float,
+    pre_footprint,
+    post_footprint,
+    pre_heading_rad: float,
+    post_heading_rad: float,
+) -> tuple[float, float, bool]:
+    """Return signed distances and the normative swept-bumper crossing event."""
+
     pre_delta = control.route_s_m - pre_front_s
     post_delta = control.route_s_m - post_front_s
-    return pre_delta, post_delta, pre_delta > 0.0 and post_delta <= 0.0
+    swept_bumper = swept_front_bumper(
+        pre_footprint,
+        post_footprint,
+        pre_heading_rad=pre_heading_rad,
+        post_heading_rad=post_heading_rad,
+    )
+    crossing = (
+        pre_delta >= -0.05 and post_delta < -0.05 and swept_bumper.intersects(control.control_line)
+    )
+    return pre_delta, post_delta, crossing
 
 
 def _selected_control(controls, control_type, front_s: float, resolved):
@@ -221,15 +285,26 @@ def _crosswalk_inputs(
     route,
     delta_t_s: float,
     post_front_s: float,
+    prediction_horizon_s: float,
+    minimum_history_samples: int,
 ):
-    from thesis_rl.rulebook.v2.geometry.conflict_zones import build_crosswalk_conflict_zone_candidates, attach_route_intervals
+    from thesis_rl.rulebook.v2.geometry.conflict_zones import (
+        build_crosswalk_conflict_zone_candidates,
+        attach_route_intervals,
+    )
 
     crosswalks = tuple(
         feature
         for feature in cache.map_feature_catalog.values()
         if feature.feature_class is MapFeatureClass.CROSSWALK
     )
-    lane = _route_lane(cache, cache.task_route.lane_ids[0])
+    association = associate_route_lane(
+        position_xy=post.ego.position_xy,
+        position_z=post.ego.position_z,
+        heading_rad=post.ego.heading_rad,
+        route_lanes=cache.route_lanes,
+    )
+    lane = None if association is None else _route_lane(cache, association.lane_id)
     if not crosswalks or lane is None:
         return {
             "zone_id": "__no_crosswalk__",
@@ -245,9 +320,7 @@ def _crosswalk_inputs(
             "vertical_applicable": False,
         }
     elevation = PolylineElevation(lane.centerline.points_xyz)
-    movement_key = derive_lane_movement_key(
-        lane, assigned_route_lane_ids=cache.task_route.lane_ids
-    )
+    movement_key = derive_lane_movement_key(lane, assigned_route_lane_ids=cache.task_route.lane_ids)
     if movement_key is None:
         return {
             "zone_id": "__ambiguous_crosswalk__",
@@ -269,6 +342,8 @@ def _crosswalk_inputs(
     )
     candidates = []
     for feature in crosswalks:
+        if feature.elevation_m is None:
+            continue
         candidates.extend(
             attach_route_intervals(
                 route=route,
@@ -277,7 +352,7 @@ def _crosswalk_inputs(
                     ego_corridor=corridor,
                     crosswalk_id=feature.feature_id,
                     crosswalk_polygon=feature.geometry,
-                    crosswalk_elevation_at_xy=lambda _x, _y, z=feature.elevation_m: float(z or 0.0),
+                    crosswalk_elevation_at_xy=lambda _x, _y, z=float(feature.elevation_m): z,
                 ),
             )
         )
@@ -295,16 +370,39 @@ def _crosswalk_inputs(
             "previous_illegal_entries": memory.crosswalk_illegal_entries,
             "vertical_applicable": False,
         }
-    selected = min(candidates, key=lambda item: (item.route_entry_s_m, item.candidate.component_index))
+    selected = select_first_ahead_or_occupied_zone(
+        candidates=tuple(candidates),
+        ego_footprint=post.ego.footprint,
+        ego_front_s_m=post_front_s,
+    )
+    if selected is None:
+        return {
+            "zone_id": "__no_relevant_crosswalk__",
+            "ego_interval": _empty_interval(),
+            "vru_intervals": (),
+            "distance_to_entry_m": 0.0,
+            "approach_speed_mps": 0.0,
+            "delta_t_s": delta_t_s,
+            "ego_occupied": False,
+            "ego_entered": False,
+            "preexisting_zone_ids": memory.preexisting_ego_occupancy_zone_ids,
+            "previous_illegal_entries": memory.crosswalk_illegal_entries,
+            "vertical_applicable": False,
+        }
     zone = selected.candidate.polygon
     ego_interval, vru_intervals, _ = predict_conflict_zone_occupancy_intervals(
         ego=post.ego,
-        actors=tuple(actor for actor in post.actors if actor.actor_class in {ActorClass.PEDESTRIAN, ActorClass.CYCLIST}),
+        actors=tuple(
+            actor
+            for actor in post.actors
+            if actor.actor_class in {ActorClass.PEDESTRIAN, ActorClass.CYCLIST}
+            and abs(actor.position_z - post.ego.position_z) <= VERTICAL_COMPATIBILITY_TOLERANCE_M
+        ),
         histories=memory.actor_motion_histories,
         sim_time_s=post.sim_time_s,
         zone=zone,
-        horizon_s=3.0,
-        minimum_history_samples=3,
+        horizon_s=prediction_horizon_s,
+        minimum_history_samples=minimum_history_samples,
     )
     if ego_interval is None:
         return {
@@ -312,7 +410,11 @@ def _crosswalk_inputs(
             "ego_interval": _empty_interval(),
             "vru_intervals": vru_intervals,
             "distance_to_entry_m": max(0.0, selected.route_entry_s_m - post_front_s),
-            "approach_speed_mps": max(0.0, hypot(*post.ego.velocity_xy)),
+            "approach_speed_mps": max(
+                0.0,
+                post.ego.velocity_xy[0] * association.tangent_xy[0]
+                + post.ego.velocity_xy[1] * association.tangent_xy[1],
+            ),
             "delta_t_s": delta_t_s,
             "ego_occupied": False,
             "ego_entered": False,
@@ -325,10 +427,16 @@ def _crosswalk_inputs(
         "ego_interval": ego_interval,
         "vru_intervals": vru_intervals,
         "distance_to_entry_m": max(0.0, selected.route_entry_s_m - post_front_s),
-        "approach_speed_mps": max(0.0, hypot(*post.ego.velocity_xy)),
+        "approach_speed_mps": max(
+            0.0,
+            post.ego.velocity_xy[0] * association.tangent_xy[0]
+            + post.ego.velocity_xy[1] * association.tangent_xy[1],
+        ),
         "delta_t_s": delta_t_s,
         "ego_occupied": bool(post.ego.footprint.intersects(zone)),
-        "ego_entered": bool(not pre.ego.footprint.intersects(zone) and post.ego.footprint.intersects(zone)),
+        "ego_entered": bool(
+            not pre.ego.footprint.intersects(zone) and post.ego.footprint.intersects(zone)
+        ),
         "preexisting_zone_ids": memory.preexisting_ego_occupancy_zone_ids,
         "previous_illegal_entries": memory.crosswalk_illegal_entries,
         "vertical_applicable": True,
@@ -353,47 +461,111 @@ def evaluate_transition(
     delta_t_s = _delta_t(pre_state, post_state)
     pre_front_s = _front_s(pre_state, route)
     post_front_s = _front_s(post_state, route)
+    post_route_tangent_xy = route.project(
+        post_state.ego.position_xy,
+        position_z=post_state.ego.position_z,
+        previous_s_m=memory.previous_route_s_m,
+    ).tangent_xy
+    post_approach_speed_mps = max(
+        0.0,
+        post_state.ego.velocity_xy[0] * post_route_tangent_xy[0]
+        + post_state.ego.velocity_xy[1] * post_route_tangent_xy[1],
+    )
     pre_by_id = {actor.actor_id: actor for actor in pre_state.actors}
     actors = tuple(post_state.actors)
 
-    signal = _selected_control(
+    signal_pre = _selected_control(
+        cache.traffic_control_catalog,
+        ApproachControl.SIGNAL,
+        pre_front_s,
+        memory.resolved_signal_group_ids,
+    )
+    signal_post = _selected_control(
         cache.traffic_control_catalog,
         ApproachControl.SIGNAL,
         post_front_s,
         memory.resolved_signal_group_ids,
     )
-    stop = _selected_control(
+    signal = signal_pre or signal_post
+    stop_pre = _selected_control(
+        cache.traffic_control_catalog,
+        ApproachControl.STOP,
+        pre_front_s,
+        memory.resolved_stop_group_ids,
+    )
+    stop_post = _selected_control(
         cache.traffic_control_catalog,
         ApproachControl.STOP,
         post_front_s,
         memory.resolved_stop_group_ids,
     )
+    stop = stop_pre or stop_post
+    if signal is not None and stop is not None and stop.movement_key == signal.movement_key:
+        stop = None
+    calibrated_brake_mps2 = (
+        None if config.rss_calibration is None else config.rss_calibration.ego_min_brake_mps2
+    )
+    signal_distances = (
+        (None, None, False)
+        if signal is None
+        else _control_distances(
+            signal,
+            pre_front_s=pre_front_s,
+            post_front_s=post_front_s,
+            pre_footprint=pre_state.ego.footprint,
+            post_footprint=post_state.ego.footprint,
+            pre_heading_rad=pre_state.ego.heading_rad,
+            post_heading_rad=post_state.ego.heading_rad,
+        )
+    )
+    stop_distances = (
+        (None, None, False)
+        if stop is None
+        else _control_distances(
+            stop,
+            pre_front_s=pre_front_s,
+            post_front_s=post_front_s,
+            pre_footprint=pre_state.ego.footprint,
+            post_footprint=post_state.ego.footprint,
+            pre_heading_rad=pre_state.ego.heading_rad,
+            post_heading_rad=post_state.ego.heading_rad,
+        )
+    )
     signal_input = {
         "control": signal,
-        "pre_state": None if signal is None else next((pre_state.signal_states_by_physical_id.get(pid) for pid in signal.physical_control_ids), None),
-        "post_state": None if signal is None else next((post_state.signal_states_by_physical_id.get(pid) for pid in signal.physical_control_ids), None),
-        "pre_delta_m": None if signal is None else _control_distances(signal, pre_front_s=pre_front_s, post_front_s=post_front_s)[0],
-        "post_delta_m": None if signal is None else _control_distances(signal, pre_front_s=pre_front_s, post_front_s=post_front_s)[1],
-        "speed_mps": hypot(*post_state.ego.velocity_xy),
-        "route_tangent_xy": route.project(post_state.ego.position_xy, position_z=post_state.ego.position_z, previous_s_m=memory.previous_route_s_m).tangent_xy,
+        "pre_state": None
+        if signal is None
+        else signal_group_state(
+            control=signal, signal_states_by_physical_id=pre_state.signal_states_by_physical_id
+        ),
+        "post_state": None
+        if signal is None
+        else signal_group_state(
+            control=signal, signal_states_by_physical_id=post_state.signal_states_by_physical_id
+        ),
+        "pre_delta_m": signal_distances[0],
+        "post_delta_m": signal_distances[1],
+        "speed_mps": post_approach_speed_mps,
+        "route_tangent_xy": post_route_tangent_xy,
         "delta_t_s": delta_t_s,
         "previous_yellow_must_stop": memory.yellow_must_stop,
         "previous_signal_delta_m": memory.previous_signal_delta_m,
         "previous_group_id": memory.active_signal_group_id,
         "resolved_group_ids": memory.resolved_signal_group_ids,
-        "crossing": False if signal is None else _control_distances(signal, pre_front_s=pre_front_s, post_front_s=post_front_s)[2],
+        "crossing": signal_distances[2],
+        "ego_brake_mps2": calibrated_brake_mps2,
     }
     stop_input = {
         "control": stop,
-        "pre_delta_m": None if stop is None else _control_distances(stop, pre_front_s=pre_front_s, post_front_s=post_front_s)[0],
-        "post_delta_m": None if stop is None else _control_distances(stop, pre_front_s=pre_front_s, post_front_s=post_front_s)[1],
-        "speed_mps": hypot(*post_state.ego.velocity_xy),
+        "pre_delta_m": stop_distances[0],
+        "post_delta_m": stop_distances[1],
+        "speed_mps": post_approach_speed_mps,
         "previous_continuous_s": memory.stop_continuous_timer_s,
         "previous_best_s": memory.stop_best_timer_s,
         "delta_t_s": delta_t_s,
         "previous_group_id": memory.active_stop_group_id,
         "resolved_group_ids": memory.resolved_stop_group_ids,
-        "crossing": False if stop is None else _control_distances(stop, pre_front_s=pre_front_s, post_front_s=post_front_s)[2],
+        "crossing": stop_distances[2],
     }
     crosswalk_input = _crosswalk_inputs(
         pre=pre_state,
@@ -403,16 +575,25 @@ def evaluate_transition(
         route=route,
         delta_t_s=delta_t_s,
         post_front_s=post_front_s,
+        prediction_horizon_s=config.prediction_horizon_s,
+        minimum_history_samples=config.minimum_history_samples,
     )
+    crosswalk_input["ego_brake_mps2"] = calibrated_brake_mps2
     solid_boundaries = tuple(
         feature
         for feature in cache.map_feature_catalog.values()
         if feature.feature_class is MapFeatureClass.LANE_MARKING_SOLID
+        and feature.elevation_m is not None
+        and abs(feature.elevation_m - post_state.ego.position_z)
+        <= VERTICAL_COMPATIBILITY_TOLERANCE_M
     )
     dashed_boundaries = tuple(
         feature
         for feature in cache.map_feature_catalog.values()
         if feature.feature_class is MapFeatureClass.LANE_MARKING_DASHED
+        and feature.elevation_m is not None
+        and abs(feature.elevation_m - post_state.ego.position_z)
+        <= VERTICAL_COMPATIBILITY_TOLERANCE_M
     )
     drivable = drivable_surface_for_ego(
         ego_footprint=post_state.ego.footprint,
@@ -428,7 +609,7 @@ def evaluate_transition(
         "ego_interval": _empty_interval(),
         "prioritized_intervals": (),
         "distance_to_entry_m": 0.0,
-        "approach_speed_mps": max(0.0, hypot(*post_state.ego.velocity_xy)),
+        "approach_speed_mps": post_approach_speed_mps,
         "delta_t_s": delta_t_s,
         "ego_occupied": False,
         "entered_actor_ids": frozenset(),
@@ -436,6 +617,7 @@ def evaluate_transition(
         "actor_movement_keys": (),
         "previous_frozen_movement_keys": memory.frozen_actor_movement_keys,
         "exited_actor_ids": frozenset(),
+        "ego_brake_mps2": calibrated_brake_mps2,
     }
     component_inputs = {
         "collision": {
@@ -451,21 +633,60 @@ def evaluate_transition(
         "rss": {
             "scenario_id": post_state.scenario_id,
             "step_index": post_state.step_index,
-            "candidates": _rss_candidates(ego=pre_state.ego, actors=pre_state.actors, route=route),
+            "candidates": _rss_candidates(
+                ego=pre_state.ego,
+                actors=pre_state.actors,
+                route=route,
+                route_lanes=cache.route_lanes,
+            ),
             "calibration": config.rss_calibration,
             "expected_config_hash": config.expected_config_hash,
         },
-        "ttc": {"ego_footprint": pre_state.ego.footprint, "ego_velocity_xy": pre_state.ego.velocity_xy, "actors": pre_state.actors, "vertically_compatible_actor_ids": _vertical_actor_ids(pre_state.ego, pre_state.actors)},
-        "clearance": {"ego_footprint": post_state.ego.footprint, "actors": actors, "vertically_compatible_actor_ids": _vertical_actor_ids(post_state.ego, actors)},
+        "ttc": {
+            "ego_footprint": pre_state.ego.footprint,
+            "ego_velocity_xy": pre_state.ego.velocity_xy,
+            "actors": pre_state.actors,
+            "vertically_compatible_actor_ids": _vertical_actor_ids(pre_state.ego, pre_state.actors),
+        },
+        "clearance": {
+            "ego_footprint": post_state.ego.footprint,
+            "actors": actors,
+            "vertically_compatible_actor_ids": _vertical_actor_ids(post_state.ego, actors),
+        },
         "offroad": {"ego_footprint": post_state.ego.footprint, "drivable_surface": drivable},
-        "wrong_way": {"ego": post_state.ego, "route": route, "previous_s_m": memory.previous_route_s_m},
-        "solid_line": {"ego_footprint": post_state.ego.footprint, "solid_boundaries": solid_boundaries, "swept_front_bumper": swept_front_bumper(pre_state.ego.footprint, post_state.ego.footprint, pre_heading_rad=pre_state.ego.heading_rad, post_heading_rad=post_state.ego.heading_rad)},
-        "dashed_line": {"ego_footprint": post_state.ego.footprint, "dashed_boundaries": dashed_boundaries, "previous_boundary_id": memory.active_dashed_boundary_id, "previous_timer_s": memory.dashed_line_timer_s, "delta_t_s": delta_t_s},
+        "wrong_way": {
+            "ego": post_state.ego,
+            "route": route,
+            "previous_s_m": memory.previous_route_s_m,
+        },
+        "solid_line": {
+            "ego_footprint": post_state.ego.footprint,
+            "solid_boundaries": solid_boundaries,
+            "swept_front_bumper": swept_front_bumper(
+                pre_state.ego.footprint,
+                post_state.ego.footprint,
+                pre_heading_rad=pre_state.ego.heading_rad,
+                post_heading_rad=post_state.ego.heading_rad,
+            ),
+        },
+        "dashed_line": {
+            "ego_footprint": post_state.ego.footprint,
+            "dashed_boundaries": dashed_boundaries,
+            "previous_boundary_id": memory.active_dashed_boundary_id,
+            "previous_timer_s": memory.dashed_line_timer_s,
+            "delta_t_s": delta_t_s,
+        },
         "signal": signal_input,
         "stop": stop_input,
         "crosswalk": crosswalk_input,
         "vehicle_yield": vehicle_input,
-        "progress": {"pre_ego": pre_state.ego, "post_ego": post_state.ego, "route": route, "previous_route_s_m": memory.previous_route_s_m, "delta_t_s": delta_t_s},
+        "progress": {
+            "pre_ego": pre_state.ego,
+            "post_ego": post_state.ego,
+            "route": route,
+            "previous_route_s_m": memory.previous_route_s_m,
+            "delta_t_s": delta_t_s,
+        },
     }
     return evaluate_registered_transition(
         memory=memory,

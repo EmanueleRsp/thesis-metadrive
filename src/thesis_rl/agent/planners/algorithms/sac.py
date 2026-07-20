@@ -443,6 +443,33 @@ class SacPlannerBackend(BasePlannerBackend):
             warmup_active=bool(self.state.total_steps <= self.learning_starts),
         )
 
+    def collection_learning_potential_batch(
+        self,
+        observations: np.ndarray,
+        buffer_actions: np.ndarray,
+        rewards: np.ndarray,
+        dones: np.ndarray,
+        next_observations: np.ndarray,
+        infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> np.ndarray:
+        """Compute entropy-aware SAC residuals on collected transitions only."""
+
+        del infos
+        obs = torch.as_tensor(observations, dtype=torch.float32, device=self.device)
+        actions = torch.as_tensor(buffer_actions, dtype=torch.float32, device=self.device)
+        reward_tensor = torch.as_tensor(rewards, dtype=torch.float32, device=self.device).reshape(-1, 1)
+        done_tensor = torch.as_tensor(dones, dtype=torch.float32, device=self.device).reshape(-1, 1)
+        next_obs = torch.as_tensor(next_observations, dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            next_actions, next_log_prob, _ = self.actor.sample(next_obs, deterministic=False)
+            target_q1, target_q2 = self.critic_target(next_obs, next_actions)
+            target = reward_tensor + (1.0 - done_tensor) * self.gamma * (
+                torch.minimum(target_q1, target_q2) - self.alpha * next_log_prob
+            )
+            current_q1, current_q2 = self.critic(obs, actions)
+            residuals = target - torch.minimum(current_q1, current_q2)
+        return residuals.detach().cpu().numpy().reshape(-1)
+
     def maybe_update(
         self,
         collected_steps: int,

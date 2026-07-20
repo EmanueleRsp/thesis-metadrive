@@ -293,6 +293,43 @@ def test_static_adapter_rejects_duplicate_controls_and_invalid_elevation():
     assert "duplicate_control_group_id:stop" in result.validation_errors
 
 
+def test_static_adapter_groups_physical_signal_heads_for_one_movement():
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    task_route = build_task_route_record(
+        scenario_uid="scenario-1",
+        lane_ids=("lane-a",),
+        provenance="pg",
+        source_geometry_bytes=b"map",
+    )
+    lane = RouteLaneRecord("lane-a", Polygon(((0, -2), (10, -2), (10, 2), (0, 2))), route)
+    movement = MovementKey("lane-a", "node", "lane-a")
+    controls = tuple(
+        TrafficControlRecord(
+            physical_id,
+            ApproachControl.SIGNAL,
+            ("lane-a",),
+            movement,
+            LineString(((2, -2), (2, 2))),
+            2.0,
+            0.0,
+            (physical_id,),
+        )
+        for physical_id in ("head-b", "head-a")
+    )
+
+    result = normalize_static_records(
+        scenario_uid="scenario-1",
+        task_route=task_route,
+        route_lanes=(lane,),
+        map_features=(),
+        traffic_controls=controls,
+    )
+
+    assert result.validation_errors == ()
+    assert len(result.traffic_controls) == 1
+    assert result.traffic_controls[0].physical_control_ids == ("head-a", "head-b")
+
+
 def test_static_record_sources_are_strict_and_normalize_source_neutrally():
     route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
     task_route = build_task_route_record(

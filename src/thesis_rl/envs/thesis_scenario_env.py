@@ -101,10 +101,46 @@ class ThesisScenarioEnv(ScenarioEnv):
             "termination_reasons": Counter(),
         }
         self._last_sampling_metadata: dict[str, Any] = {}
+        self._acl_selection: dict[str, Any] | None = None
+        self._acl_episode_selection: dict[str, Any] = {}
         self._rulebook_v2_requested = False
         self.rulebook_v2_adapter: Any | None = None
 
+    def configure_acl_selection(self, selection: Mapping[str, Any]) -> dict[str, Any]:
+        """Install parent-owned ACL metadata before the next selective reset."""
+        payload = dict(selection)
+        if int(payload.get("slot_id", self.worker_id)) != self.worker_id:
+            raise ValueError("ACL selection slot_id does not match the ScenarioNet worker.")
+        self._acl_selection = payload
+        self._acl_episode_selection = payload
+        self.scenario_arm = payload.get("arm_name")
+        source = payload.get("source")
+        if source is not None:
+            self.scenario_source = str(source)
+        return {"selection_generation": int(payload.get("generation", -1))}
+
+    def _acl_info(self) -> dict[str, Any]:
+        """Expose collection provenance in info only, never in observations."""
+
+        selection = self._acl_episode_selection
+        if not selection:
+            return {}
+        return {
+            "acl_slot_id": int(selection.get("slot_id", self.worker_id)),
+            "acl_episode_id": int(selection["episode_id"])
+            if selection.get("episode_id") is not None
+            else None,
+            "acl_selection_generation": int(selection.get("generation", -1)),
+        }
+
     def _select_provider_seed(self, force_seed: int | None) -> int | None:
+        acl_selection = getattr(self, "_acl_selection", None)
+        if acl_selection is not None:
+            selection = acl_selection
+            self._acl_selection = None
+            runtime_index = selection.get("runtime_index")
+            if runtime_index is not None:
+                force_seed = int(runtime_index)
         if force_seed is not None:
             if self.catalog is not None:
                 record = self.catalog.get_by_runtime_index(
@@ -686,6 +722,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         metadata = self._scenario_metadata()
         info.update(metadata)
         info.update(self._last_sampling_metadata)
+        info.update(self._acl_info())
         source = str(metadata.get("source") or "unknown")
         arm = str(metadata.get("arm") or "unknown")
         self._runtime_stats["resets"] += 1
@@ -700,6 +737,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         metadata = self._scenario_metadata()
         info.update(metadata)
         info.update(self._last_sampling_metadata)
+        info.update(self._acl_info())
         # Publish the final Gymnasium boundary explicitly so every outer
         # wrapper and artifact recorder observes the same flags as the return
         # tuple, including custom ScenarioNet truncation.

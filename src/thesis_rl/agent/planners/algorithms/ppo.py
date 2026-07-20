@@ -143,6 +143,7 @@ class PpoPlannerBackend(BasePlannerBackend):
         self._last_next_obs: np.ndarray | None = None
         self._last_dones: np.ndarray | None = None
         self._current_episode_starts = np.ones((max(self.n_envs, 1),), dtype=np.float32)
+        self._acl_episode_advantages: dict[tuple[int, int], list[float]] = {}
 
     @classmethod
     def build(
@@ -246,7 +247,8 @@ class PpoPlannerBackend(BasePlannerBackend):
             global_total_timesteps=global_total_timesteps,
             global_steps_done=global_steps_done,
         )
-        self._current_episode_starts = np.ones((max(self.n_envs, 1),), dtype=np.float32)
+        if getattr(self, "_current_episode_starts", None) is None:
+            self._current_episode_starts = np.ones((max(self.n_envs, 1),), dtype=np.float32)
 
     def _uses_sb3_policy_setup(self) -> bool:
         return str(self.cfg_decoder.get("name", "")).strip().lower() == "ppo_sb3"
@@ -457,6 +459,10 @@ class PpoPlannerBackend(BasePlannerBackend):
             episode_starts=np.asarray(self._current_episode_starts, dtype=np.float32),
             values=np.asarray(self._last_values, dtype=np.float32),
             log_probs=np.asarray(self._last_log_probs, dtype=np.float32),
+            acl_slot_ids=np.asarray([int(transition_info.get("acl_slot_id", -1))], dtype=np.int64),
+            acl_episode_ids=np.asarray(
+                [int(transition_info.get("acl_episode_id", -1))], dtype=np.int64
+            ),
         )
         self._last_next_obs = np.asarray(transition.next_observation, dtype=np.float32)[None, :]
         self._last_dones = np.asarray(
@@ -504,6 +510,12 @@ class PpoPlannerBackend(BasePlannerBackend):
             episode_starts=np.asarray(self._current_episode_starts, dtype=np.float32),
             values=np.asarray(self._last_values, dtype=np.float32),
             log_probs=np.asarray(self._last_log_probs, dtype=np.float32),
+            acl_slot_ids=np.asarray(
+                [int(info.get("acl_slot_id", -1)) for info in infos], dtype=np.int64
+            ),
+            acl_episode_ids=np.asarray(
+                [int(info.get("acl_episode_id", -1)) for info in infos], dtype=np.int64
+            ),
         )
         self._last_next_obs = resolved_next_observations
         self._last_dones = np.asarray(terminated_batch, dtype=np.float32)
@@ -543,6 +555,16 @@ class PpoPlannerBackend(BasePlannerBackend):
         dones = np.empty_like(self.rollout.episode_starts, dtype=bool)
         dones[:-1] = np.asarray(self.rollout.episode_starts[1:], dtype=bool)
         dones[-1] = np.asarray(self._last_dones, dtype=bool)
+        for slot_id, episode_id, advantage in zip(
+            self.rollout.acl_slot_ids.reshape(-1),
+            self.rollout.acl_episode_ids.reshape(-1),
+            np.asarray(self.rollout.advantages).reshape(-1),
+            strict=True,
+        ):
+            if int(slot_id) >= 0 and int(episode_id) >= 0:
+                self._acl_episode_advantages.setdefault((int(slot_id), int(episode_id)), []).append(
+                    float(max(float(advantage), 0.0))
+                )
         from thesis_rl.curriculum.scenario_acl.usefulness import compute_ppo_learning_potential
 
         learning_potential = compute_ppo_learning_potential(
@@ -627,4 +649,17 @@ class PpoPlannerBackend(BasePlannerBackend):
             "update_calls": 1,
             "gradient_steps": int(optimizer_steps),
             "learning_potential": learning_potential,
+        }
+
+    def pop_acl_episode_learning_potential(self, slot_id: int, episode_id: int) -> float | None:
+        values = self._acl_episode_advantages.pop((int(slot_id), int(episode_id)), None)
+        if not values:
+            return None
+        return float(np.mean(np.asarray(values, dtype=np.float64)))
+
+    def acl_ready_learning_potentials(self) -> dict[tuple[int, int], float]:
+        return {
+            key: float(np.mean(np.asarray(values, dtype=np.float64)))
+            for key, values in self._acl_episode_advantages.items()
+            if values
         }

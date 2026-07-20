@@ -421,6 +421,42 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         self.model.num_timesteps += collected
         self.collected_transitions += collected
 
+    def collection_learning_potential_batch(
+        self,
+        observations: np.ndarray,
+        buffer_actions: np.ndarray,
+        rewards: np.ndarray,
+        dones: np.ndarray,
+        next_observations: np.ndarray,
+        infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> np.ndarray:
+        """Compute TD3 residuals on collected transitions, not replay samples."""
+
+        del infos
+        obs = torch.as_tensor(observations, dtype=torch.float32, device=self.model.device)
+        actions = torch.as_tensor(buffer_actions, dtype=torch.float32, device=self.model.device)
+        rewards_tensor = torch.as_tensor(
+            rewards, dtype=torch.float32, device=self.model.device
+        ).reshape(-1, 1)
+        dones_tensor = torch.as_tensor(
+            dones, dtype=torch.float32, device=self.model.device
+        ).reshape(-1, 1)
+        next_obs = torch.as_tensor(
+            next_observations, dtype=torch.float32, device=self.model.device
+        )
+        with torch.no_grad():
+            noise = torch.randn_like(actions) * self.model.target_policy_noise
+            noise = noise.clamp(-self.model.target_noise_clip, self.model.target_noise_clip)
+            next_actions = (self.model.actor_target(next_obs) + noise).clamp(-1, 1)
+            target_q = torch.cat(self.model.critic_target(next_obs, next_actions), dim=1).min(
+                dim=1, keepdim=True
+            ).values
+            current_q = torch.cat(self.model.critic(obs, actions), dim=1).min(
+                dim=1, keepdim=True
+            ).values
+            residuals = rewards_tensor + (1.0 - dones_tensor) * self.model.gamma * target_q - current_q
+        return residuals.detach().cpu().numpy().reshape(-1)
+
     def maybe_update(
         self,
         collected_steps: int,
