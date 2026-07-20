@@ -276,6 +276,8 @@ make run-train ALGORITHM=td3_sb3
 `make run-train` uses 5 parallel environments by default. Set `NUM_ENVS` to
 any integer greater than or equal to 1; `NUM_ENVS=1` keeps the sequential path.
 The run seed defaults to `42`; set `SEED` to reproduce or vary the complete run.
+The default smoke profile evaluates 5 final episodes, one per Waymo ACL arm
+(`A1`–`A5`); longer profiles use their larger configured evaluation budgets.
 
 ```bash
 make run-train ALGORITHM=td3_sb3 NUM_ENVS=2

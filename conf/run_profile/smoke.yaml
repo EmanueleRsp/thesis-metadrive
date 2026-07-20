@@ -9,7 +9,7 @@ experiment:
   log_interval: 100
   eval_interval: 1000
   eval_episodes: 2
-  final_eval_episodes: 2
+  final_eval_episodes: 5
 
 checkpoint:
   periodic_interval_steps: 10000

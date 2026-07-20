@@ -274,6 +274,7 @@ def test_final_scalar_pipeline_defaults_compose() -> None:
 
     assert str(cfg.run_profile.name) == "smoke"
     assert str(cfg.experiment.name) == "run"
+    assert int(cfg.experiment.final_eval_episodes) == 5
     resolved_planner_cfg = _resolve_planner_cfg(cfg)
     assert int(resolved_planner_cfg.learning_starts) == 100
     assert int(resolved_planner_cfg.batch_size) == 64

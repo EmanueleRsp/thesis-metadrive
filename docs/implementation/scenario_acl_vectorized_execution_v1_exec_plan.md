@@ -447,6 +447,11 @@ mandatory acceptance command. No global static-type command is configured.
 - 2026-07-20 — Made the heavy final-evaluation trajectory log profile-aware:
   it is enabled for `smoke` and disabled for all other standard profiles,
   while explicit `video.save_trajectory_log` overrides remain supported.
+- 2026-07-21 — Confirmed that the final Scenario ACL evaluation is deliberately
+  Waymo-only and cycles A1–A5, rather than mixing PG with the quantitative test.
+  Increased the smoke final evaluation from 2 to 5 episodes so its GIF bundle
+  covers every final-test arm at least once. PG remains available for training
+  and can be evaluated later through a separate source-specific protocol.
 
 ## 12. Deviations
 
