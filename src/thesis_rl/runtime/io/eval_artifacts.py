@@ -328,11 +328,13 @@ def build_live_final_eval_recorder_factory(
     def factory(episode_ctx: dict[str, Any]) -> Any:
         episode_id = int(episode_ctx["episode_id"])
         scenario_seed = episode_ctx.get("scenario_seed")
+        scenario_uid = episode_ctx.get("scenario_uid")
         manifest_payload = {
             **base_manifest,
             "episode_id": episode_id,
             "scenario_seed": int(scenario_seed) if scenario_seed is not None else None,
             "scenario_id": f"seed_{scenario_seed}" if scenario_seed is not None else None,
+            "scenario_uid": str(scenario_uid) if scenario_uid is not None else None,
         }
         if max_videos > 0 and episode_id > max_videos:
             return NoOpEpisodeArtifactRecorder(warning="live_record_skipped:max_final_videos_limit")

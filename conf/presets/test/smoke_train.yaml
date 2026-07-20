@@ -8,3 +8,8 @@ defaults:
   - override /reward: monitor_only
   - override /curriculum: disabled
   - _self_
+
+# Keep the legacy test preset name distinct from the canonical `make run`
+# entry point, whose default experiment name is `run`.
+experiment:
+  name: smoke

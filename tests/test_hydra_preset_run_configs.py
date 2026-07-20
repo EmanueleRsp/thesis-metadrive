@@ -16,7 +16,7 @@ def _compose(*overrides: str):
 
 
 def test_base_config_composes_with_monitor_only() -> None:
-    cfg = _compose("reward=monitor_only", "curriculum=disabled")
+    cfg = _compose("env=metadrive", "reward=monitor_only", "curriculum=disabled")
 
     assert cfg.env.name == "metadrive"
     assert cfg.agent.preprocessor.name == "identity"
@@ -95,7 +95,7 @@ def test_scenarionet_acl_composes_with_six_semantic_arms() -> None:
     assert int(cfg.curriculum.scenario_acl.mab.num_arms) == 6
     assert bool(cfg.curriculum.scenario_acl.use_scenario_buffer) is True
     assert bool(cfg.curriculum.scenario_acl.use_replay) is True
-    assert str(cfg.agent.planner.algorithm.name) == "sac_sb3"
+    assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
     assert str(cfg.agent.planner.encoder.name) == "latent_query_v2"
 
@@ -131,8 +131,47 @@ def test_run_profile_planner_overrides_algorithm_defaults() -> None:
     assert str(resolved_planner_cfg.name) == "sac"
 
 
-def test_replay_buffer_checkpointing_defaults_to_disabled() -> None:
-    cfg = _compose("reward=monitor_only", "curriculum=disabled")
+def test_final_scalar_pipeline_defaults_compose() -> None:
+    cfg = _compose()
 
+    assert str(cfg.env.name) == "scenarionet"
+    assert str(cfg.obs.name) == "semantic_v2"
+    assert str(cfg.agent.planner.encoder.name) == "latent_query_v2"
+    assert str(cfg.agent.planner.encoder.architecture_version) == "1.0-final"
+    assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
+    assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
+    assert str(cfg.reward.name) == "scalar_reward"
+    assert str(cfg.reward.behavior) == "scalar_reward"
+    assert str(cfg.scalarization.mode) == "bounded_satisfaction_rank"
+    assert str(cfg.curriculum.name) == "scenario_acl_scenarionet"
+    assert str(cfg.rulebook.version) == "4.7-final-implementation-complete"
+
+    assert bool(cfg.env.provider.strict) is True
+    assert bool(cfg.env.provider.allow_fallback) is False
+    assert int(cfg.env.config.num_scenarios) == -1
+    assert bool(cfg.env.vectorized.enabled) is False
+    assert int(cfg.env.vectorized.num_envs) == 1
+
+    assert int(cfg.agent.planner.algorithm.transition_replay.n_steps) == 3
+    assert bool(cfg.agent.planner.algorithm.transition_replay.prioritized) is True
+    assert bool(cfg.agent.planner.algorithm.transition_replay.persistence.enabled) is True
+    assert (
+        str(cfg.agent.planner.algorithm.transition_replay.persistence.trigger)
+        == "final_or_manual"
+    )
     assert bool(cfg.checkpoint.save_latest_each_chunk) is True
-    assert bool(cfg.checkpoint.save_replay_buffer) is False
+    assert bool(cfg.checkpoint.save_final) is True
+    assert bool(cfg.checkpoint.save_rng_state) is True
+    assert bool(cfg.checkpoint.resume.enabled) is False
+
+    assert bool(cfg.video.enabled) is True
+    assert int(cfg.video.max_final_videos) == 0
+    assert str(cfg.reward.rule_margin_log_path).endswith("/logs/rule_margins.jsonl")
+    assert bool(cfg.reward.include_violation_vector) is False
+    assert bool(cfg.reward.runtime_info_debug_enabled) is False
+
+    assert str(cfg.run_profile.name) == "smoke"
+    assert str(cfg.experiment.name) == "run"
+    resolved_planner_cfg = _resolve_planner_cfg(cfg)
+    assert int(resolved_planner_cfg.learning_starts) == 100
+    assert int(resolved_planner_cfg.batch_size) == 64

@@ -225,9 +225,14 @@ def make_env(
             FixedSequenceScenarioProvider,
             UniformScenarioProvider,
         )
+        from thesis_rl.scenarios.golden import load_golden_scenario_uids
 
         split = str(getattr(cfg_env, "split", "train"))
         provider_cfg = _to_plain_dict(getattr(cfg_env, "provider", {}))
+        scenario_uids_file = provider_cfg.get("scenario_uids_file")
+        eligible_scenario_uids = None
+        if scenario_uids_file not in (None, "", "null"):
+            eligible_scenario_uids = load_golden_scenario_uids(str(scenario_uids_file))
         scenario_arm = provider_cfg.get("arm")
         episode_control = _to_plain_dict(getattr(cfg_env, "episode_control", {}))
         if "extra_steps_after_scenario" in episode_control:
@@ -252,6 +257,17 @@ def make_env(
                     "It must contain catalog/scenario_catalog.parquet and runtime/<split>."
                 )
             catalog = read_scenario_catalog(str(catalog_path))
+        if eligible_scenario_uids is not None:
+            catalog_uids = {
+                record.scenario_uid
+                for record in _runtime_rulebook_records(catalog, split=split)
+            }
+            unknown_uids = sorted(set(eligible_scenario_uids).difference(catalog_uids))
+            if unknown_uids:
+                raise ValueError(
+                    "Scenario UID manifest contains records absent from the canonical "
+                    f"{split!r} catalog: {unknown_uids[:5]}"
+                )
         data_directory = env_cfg.get("data_directory")
         if not data_directory:
             raise ValueError(
@@ -311,6 +327,7 @@ def make_env(
                     strict=bool(provider_cfg.get("strict", True)),
                     allow_fallback=bool(provider_cfg.get("allow_fallback", False)),
                     default_arm=str(scenario_arm) if scenario_arm is not None else None,
+                    eligible_scenario_uids=eligible_scenario_uids,
                 )
             elif provider_kind == "arm_uniform":
                 if scenario_arm is not None:
@@ -320,20 +337,28 @@ def make_env(
                     global_seed=int(getattr(cfg_env, "global_seed", 0)),
                     strict=bool(provider_cfg.get("strict", True)),
                     allow_fallback=bool(provider_cfg.get("allow_fallback", False)),
+                    eligible_scenario_uids=eligible_scenario_uids,
                 )
             elif provider_kind == "fixed_sequence":
-                scenario_provider = FixedSequenceScenarioProvider(
-                    tuple(
-                        sorted(
-                            (record for record in records if record.split == split),
-                            key=lambda record: (
-                                record.runtime_index is None,
-                                record.runtime_index if record.runtime_index is not None else 0,
-                            ),
+                sequence_records = records
+                if eligible_scenario_uids is not None:
+                    record_by_uid = {record.scenario_uid: record for record in records}
+                    missing_from_window = [
+                        uid for uid in eligible_scenario_uids if uid not in record_by_uid
+                    ]
+                    if missing_from_window:
+                        raise ValueError(
+                            "Golden-suite scenario UID is outside the configured provider "
+                            f"window: {missing_from_window[:5]}"
                         )
-                    ),
+                    sequence_records = tuple(
+                        record_by_uid[uid] for uid in eligible_scenario_uids
+                    )
+                scenario_provider = FixedSequenceScenarioProvider(
+                    sequence_records,
                     repeat=bool(provider_cfg.get("repeat", False)),
                     default_arm=str(scenario_arm) if scenario_arm is not None else None,
+                    eligible_scenario_uids=eligible_scenario_uids,
                 )
             else:
                 raise ValueError(f"Unsupported ScenarioNet provider kind: {provider_kind!r}")

@@ -23,6 +23,12 @@ x-project-volumes: &project-volumes
   - ${HOST_DATA_DIR:-./data}:${CONTAINER_DATA_DIR:-/workspace/data}
   - ${HOST_CONTAINER_HOME_DIR:-./.container-home}:${CONTAINER_HOME_DIR:-/workspace/.container-home}
 
+x-runtime-volumes: &runtime-volumes
+  - .:/workspace/thesis-metadrive
+  - ${HOST_OUTPUTS_DIR:-./outputs}:${CONTAINER_OUTPUTS_DIR:-/workspace/outputs}
+  - ${HOST_DATA_DIR:-./data}:${CONTAINER_DATA_DIR:-/workspace/data}:ro
+  - ${HOST_CONTAINER_HOME_DIR:-./.container-home}:${CONTAINER_HOME_DIR:-/workspace/.container-home}
+
 services:
   dev:
     build:
@@ -42,7 +48,7 @@ services:
       stack: 67108864
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment: *project-environment
-    volumes: *project-volumes
+    volumes: *runtime-volumes
 
   dataset-pipeline:
     build:

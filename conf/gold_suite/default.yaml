@@ -1,0 +1,6 @@
+# @package _global_
+
+gold_suite:
+  manifest_path: null
+  policy: zero
+  max_steps: 0  # Zero means run each selected scenario until termination/truncation.

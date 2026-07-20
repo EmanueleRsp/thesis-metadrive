@@ -27,11 +27,11 @@ policy_kwargs:
 transition_replay:
   enabled: true
   n_steps: 3
-  prioritized: false
+  prioritized: true
   optimize_memory_usage: false
   store_reward_vector: false
   persistence:
-    enabled: false
+    enabled: true
     trigger: final_or_manual
     periodic_frequency_steps: null
     keep_last: 1

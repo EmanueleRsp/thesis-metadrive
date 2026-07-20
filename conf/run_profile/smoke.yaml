@@ -3,7 +3,7 @@ run_profile:
   name: smoke
 
 experiment:
-  name: smoke
+  name: run
   total_timesteps: 2000
   log_interval: 100
   eval_interval: 1000
@@ -13,3 +13,10 @@ experiment:
 checkpoint:
   periodic_interval_steps: 10000
   keep_last_periodic: 1
+
+# Smoke-specific learner warm-up/batch values. These override the selected
+# algorithm backend through the runtime planner merge without changing thesis
+# and long-run algorithm defaults.
+planner:
+  learning_starts: 100
+  batch_size: 64

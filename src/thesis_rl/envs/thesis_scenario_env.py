@@ -565,6 +565,14 @@ class ThesisScenarioEnv(ScenarioEnv):
         step_info["thesis_success"] = thesis_success
         return reward, step_info
 
+    def _is_out_of_road(self, vehicle: Any) -> bool:
+        """Expose the thesis physical-boundary predicate to native call paths."""
+
+        scene_context = getattr(self, "scene_context", None)
+        if scene_context is None:
+            return bool(super()._is_out_of_road(vehicle))
+        return scene_context.is_physically_out_of_road(self, vehicle)
+
     def done_function(self, vehicle_id: str):
         done, done_info = super().done_function(vehicle_id)
         vehicle = self.agents[vehicle_id]
@@ -576,6 +584,28 @@ class ThesisScenarioEnv(ScenarioEnv):
         # condition unless the native physical-boundary primitives agree.
         if not physical_out:
             done_info[TerminationState.OUT_OF_ROAD] = False
+            # ScenarioEnv maps ROAD_EDGE_BOUNDARY and actual sidewalk contact
+            # to the same CRASH_SIDEWALK flag. The adapter has already
+            # classified boundary-only contact as non-physical, so it must not
+            # re-enter the aggregate termination predicate here.
+            native_crash = bool(done_info.get(TerminationState.CRASH, False))
+            native_crash_sidewalk = bool(
+                done_info.get(TerminationState.CRASH_SIDEWALK, False)
+            )
+            done_info[TerminationState.CRASH_SIDEWALK] = False
+            collision_without_sidewalk = any(
+                bool(done_info.get(key, False))
+                for key in (
+                    TerminationState.CRASH_VEHICLE,
+                    TerminationState.CRASH_OBJECT,
+                    TerminationState.CRASH_BUILDING,
+                    TerminationState.CRASH_HUMAN,
+                    TerminationState.CRASH_SIDEWALK,
+                )
+            )
+            done_info[TerminationState.CRASH] = collision_without_sidewalk or (
+                native_crash and not native_crash_sidewalk
+            )
             done = self._recompute_terminated(done_info)
         if physical_out:
             done_info[TerminationState.OUT_OF_ROAD] = True

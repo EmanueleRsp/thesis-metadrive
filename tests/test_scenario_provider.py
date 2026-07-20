@@ -187,3 +187,14 @@ def test_providers_can_filter_to_offline_rulebook_eligible_uids():
         repeat=True,
     )
     assert fixed.sample(split="train", worker_id=0) == records[1]
+
+
+def test_fixed_sequence_preserves_manifest_order_after_uid_filter() -> None:
+    records = [_record(20, "pg"), _record(10, "waymo"), _record(30, "pg")]
+    provider = FixedSequenceScenarioProvider(
+        records,
+        eligible_scenario_uids={records[2].scenario_uid, records[1].scenario_uid},
+    )
+
+    assert provider.sample(split="train", worker_id=0).scenario_uid == records[1].scenario_uid
+    assert provider.sample(split="train", worker_id=0).scenario_uid == records[2].scenario_uid

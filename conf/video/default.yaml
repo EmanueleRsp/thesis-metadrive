@@ -1,7 +1,6 @@
-enabled: true
-
 # `offline_replay`: select episodes first and render in a second pass.
 # `live_final_eval`: record directly during final evaluation.
+enabled: true
 mode: live_final_eval
 
 format: gif
@@ -9,7 +8,7 @@ fps: 20
 
 record_intermediate_evals: false
 record_final_eval: true
-max_final_videos: 0
+max_final_videos: 0  # Zero means all final-evaluation episodes.
 save_manifest: true
 save_trajectory_log: false
 official_only: true

@@ -5,7 +5,7 @@
 This index prevents an apparently newer, exploratory, or implementation-tracking
 document from being mistaken for an approved scientific contract.
 
-- Last repository inspection: 2026-07-19
+- Last repository inspection: 2026-07-20
 - Index status: `CURRENT_WITH_DOCUMENTED_GAPS`
 - Approval evidence: explicit user confirmations recorded on 2026-07-16 and 2026-07-17
 - Rule: repository evidence establishes paths, versions, links, and reported
@@ -92,6 +92,7 @@ root.
 | Scenario ACL | `specifications/automatic_curriculum_learning_v1_specification.md` | `implementation/scenario_acl_implementation_plan.md` | Internal stages v1/v2 reported complete; later stages incomplete/deferred | Date not declared in metadata |
 | ScenarioNet integration v1 | Historical `specifications/scenarionet_integration_v1_specification.md` | `implementation/scenarionet_integration_implementation_plan.md` | `SUPERSEDED`; retain for traceability | 2026-07-15 |
 | ScenarioNet integration v1.1 | `specifications/scenarionet_integration_v1.1_specification.md` | `implementation/scenarionet_integration_spec_v1.1_exec_plan.md` | `IN_PROGRESS` | 2026-07-16 |
+| ScenarioNet boundary-only termination regression | `specifications/scenarionet_integration_v1.1_specification.md` | `implementation/out_of_road_boundary_termination_bugfix_exec_plan.md` | `IMPLEMENTED`; focused equivalent suite passed; provisioned-environment Ruff/pytest and live visual replay remain pending | 2026-07-20 |
 | Scalar autonomous-driving pipeline audit and completion | Authoritative ScenarioNet v1.1, ACL v1 §28, Rulebook v4.7, scalarization v1.0, observation v1.1, encoder v1.0, and transition replay v1.0 | `implementation/scalar_autonomous_driving_pipeline_audit_exec_plan.md` | `VERIFIED` for the final smoke integration gate; canonical read-only PG/Waymo, Rulebook/scalarization, semantic `(2541,)`/LQ, TD3/PER/n=3, ACL generation/replay, checkpoint/replay/RNG persistence and resume, and final evaluation passed. Full thesis-length/statistical validation remains out of scope; SAC was not required by the final TD3 configuration. | 2026-07-19 |
 | Documentation structure | User instructions dated 2026-07-16 | `implementation/repository_documentation_restructure_exec_plan.md` | `VERIFIED` | 2026-07-16 |
 | Repository quality commands | User process decision dated 2026-07-16 | `implementation/repository_quality_commands_exec_plan.md` | `VERIFIED` | 2026-07-16 |

@@ -13,6 +13,10 @@ from typing import Any
 class SceneContextAdapter:
     """Expose stable, defensive accessors for rulebook and termination code."""
 
+    _ROAD_EDGE_BOUNDARY = "ROAD_EDGE_BOUNDARY"
+    _ROAD_EDGE_SIDEWALK = "ROAD_EDGE_SIDEWALK"
+    _GUARDRAIL = "GUARDRAIL"
+
     def get_ego_vehicle(self, env: Any, vehicle_id: str | None = None) -> Any:
         agents = getattr(env, "agents", {})
         if vehicle_id is not None and vehicle_id in agents:
@@ -46,7 +50,21 @@ class SceneContextAdapter:
         """Use native sidewalk/lateral primitives, excluding line-only contact."""
 
         if bool(getattr(vehicle, "crash_sidewalk", False)):
-            return True
+            # MetaDrive's rectangular sidewalk probe reports ROAD_EDGE_BOUNDARY
+            # through the generic ``crash_sidewalk`` flag. That boundary can be
+            # touched while the vehicle is still on the drivable surface; only
+            # an actual sidewalk/guardrail contact is a physical road exit.
+            contacts = getattr(vehicle, "contact_results", None)
+            if contacts is None:
+                return True
+            try:
+                contacts = set(contacts)
+            except TypeError:
+                contacts = set()
+            if contacts & {self._ROAD_EDGE_SIDEWALK, self._GUARDRAIL}:
+                return True
+            if self._ROAD_EDGE_BOUNDARY not in contacts:
+                return True
         navigation = getattr(vehicle, "navigation", None)
         lateral = getattr(navigation, "current_lateral", None)
         try:

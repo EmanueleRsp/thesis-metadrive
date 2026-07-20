@@ -61,13 +61,16 @@ provider:
   # Optional semantic arm filter. Staged ScenarioNet curricula override this
   # with one of A0...A5; null keeps the global source-balanced provider.
   arm: null
+  # Optional immutable UID manifest used by the dedicated golden-suite trace.
+  scenario_uids_file: null
+  repeat: false
   source_probability:
     waymo: 0.5
     pg: 0.5
 
 vectorized:
-  enabled: true
-  num_envs: 5
+  enabled: false
+  num_envs: 1
   start_method: spawn
 
 policy_mode:

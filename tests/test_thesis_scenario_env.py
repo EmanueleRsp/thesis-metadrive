@@ -52,6 +52,28 @@ def test_scene_context_separates_line_from_physical_boundary() -> None:
     assert adapter.is_physically_out_of_road(env, vehicle) is True
 
 
+@pytest.mark.parametrize(
+    ("contacts", "expected"),
+    [
+        ({"ROAD_EDGE_BOUNDARY"}, False),
+        ({"ROAD_EDGE_SIDEWALK"}, True),
+        ({"GUARDRAIL"}, True),
+    ],
+)
+def test_scene_context_does_not_treat_boundary_probe_as_sidewalk_exit(
+    contacts: set[str], expected: bool
+) -> None:
+    adapter = SceneContextAdapter()
+    vehicle = SimpleNamespace(
+        crash_sidewalk=True,
+        contact_results=contacts,
+        navigation=SimpleNamespace(current_lateral=0.0),
+    )
+    env = SimpleNamespace(config={"max_lateral_dist": 4.0})
+
+    assert adapter.is_physically_out_of_road(env, vehicle) is expected
+
+
 def test_scene_context_termination_reason_is_stable() -> None:
     adapter = SceneContextAdapter()
     vehicle = SimpleNamespace()
@@ -362,6 +384,61 @@ def test_thesis_done_makes_continuous_line_only_non_terminal(
     assert info["crossed_continuous_line"] is True
     assert info["physical_out_of_road"] is False
     assert info["out_of_road"] is False
+
+
+def test_thesis_done_makes_boundary_probe_non_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=True,
+        done_info={"out_of_road": True, "crash_sidewalk": True, "crash": True},
+    )
+    vehicle = env.agent_manager.active_agents["default_agent"]
+    vehicle.contact_results = {"ROAD_EDGE_BOUNDARY"}
+
+    done, info = env.done_function("default_agent")
+
+    assert done is False
+    assert info["out_of_road"] is False
+    assert info["crash_sidewalk"] is False
+    assert info["crash"] is False
+    assert info["physical_out_of_road"] is False
+
+
+def test_thesis_native_out_of_road_predicate_ignores_boundary_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=False,
+        done_info={},
+    )
+    vehicle = env.agent_manager.active_agents["default_agent"]
+    vehicle.crash_sidewalk = True
+    vehicle.contact_results = {"ROAD_EDGE_BOUNDARY"}
+
+    assert env._is_out_of_road(vehicle) is False
+
+
+def test_thesis_done_preserves_physical_sidewalk_contact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=True,
+        done_info={"crash_sidewalk": True, "crash": True},
+    )
+    vehicle = env.agent_manager.active_agents["default_agent"]
+    vehicle.crash_sidewalk = True
+    vehicle.contact_results = {"ROAD_EDGE_SIDEWALK"}
+
+    done, info = env.done_function("default_agent")
+
+    assert done is True
+    assert info["crash_sidewalk"] is True
+    assert info["crash"] is True
+    assert info["physical_out_of_road"] is True
 
 
 def test_thesis_done_keeps_physical_exit_terminal_with_line_crossing(

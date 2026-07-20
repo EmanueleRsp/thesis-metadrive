@@ -102,11 +102,11 @@ Compatibility constraints:
 | `VERIFIED` | Local SB3 is pinned to `6a196a60...`; `common/buffers.py` contains `ReplayBuffer` and `NStepReplayBuffer`, including `discounts`, timeout handling, and frontier protection. | Uniform N-step can reuse the fork; `effective_n_steps` and custom PER fields require an adapter. |
 | `VERIFIED` | `stable_baselines3/common/off_policy_algorithm.py` automatically selects `NStepReplayBuffer` when `n_steps > 1` and accepts `replay_buffer_class`. | The approved uniform path needs no vendored fork change; custom PER can use the supported class hook. |
 | `VERIFIED` | Forked `td3.py` and `sac.py` consume replay data with ordinary unreduced MSE losses and do not consume IS weights or call priority updates. | PER requires owned algorithm integration/subclasses or an equivalent owned training adapter. |
-| `VERIFIED` | `src/thesis_rl/agent/planners/algorithms/td3_sb3.py` and `sac_sb3.py` build forked SB3 models and call `model.train`; current configs do not expose `transition_replay`. | Add nested replay configuration and route custom model classes without changing PPO. |
+| `VERIFIED` | `src/thesis_rl/agent/planners/algorithms/td3_sb3.py` and `sac_sb3.py` build forked SB3 models and call `model.train`; current configs expose nested `transition_replay` controls. | Keep replay configuration explicit and route custom model classes without changing PPO. |
 | `VERIFIED` | `src/thesis_rl/sb3_extensions/builders.py` already provides custom replay class/kwargs hooks, but YAML configs do not currently select them. | Reuse the existing bridge and keep implementation-owned classes in `src/thesis_rl/sb3_extensions`. |
 | `VERIFIED` | `src/thesis_rl/agent/types/transition.py` preserves scalar `terminated` and `truncated`; `Agent` scalar collection currently sets `terminal_observation` from `next_obs` for either flag, while batch collection passes combined `dones` and timeout info. | Add canonical final-observation normalization and explicit batch flags before replay insertion. |
 | `VERIFIED` | `src/thesis_rl/runtime/loops/train_loop.py` saves `latest_replay_buffer.pkl` at chunk checkpoints when `checkpoint.save_replay_buffer` is true. | Replace with canonical nested persistence control and final/manual-only behavior; legacy true must fail migration. |
-| `VERIFIED` | `conf/config.yaml` currently defaults `checkpoint.save_replay_buffer: false`. | Default behavior remains replay persistence disabled. |
+| `VERIFIED` | Final TD3/SAC-SB3 configs enable PER and nested replay persistence with `n_steps=3`; the obsolete top-level `checkpoint.save_replay_buffer` key is absent. | Final scalar runs persist replay through `transition_replay.persistence.enabled=true`; legacy `true` remains rejected. |
 | `VERIFIED` | `src/thesis_rl/curriculum/scenario_acl` uses scenario usefulness/learning potential independently of transition replay. | Add separation tests; do not share scores or priorities. |
 | `VERIFIED` | `SCAL-V1.0` and ADR-011 define the scalar reward producer, scalarization identity, legacy scale provenance, and future N-step/PER compatibility. | Replay manifest/load validation must consume these identities. |
 | `VERIFIED` | Existing TD3/SAC porting, timeout, SB3 bridge, checkpoint, and Hydra tests exist under `tests/`. | Extend tests without weakening existing baseline coverage. |
@@ -152,8 +152,9 @@ compatibility must return to the user before dependent implementation.
 
 ### 7.1 Configuration and construction
 
-Add `transition_replay` to the planner algorithm configuration mapping. TD3 and
-SAC default to `enabled=true`, `n_steps=3`, and `prioritized=false`; PPO
+Add `transition_replay` to the planner algorithm configuration mapping. Final
+TD3-SB3 and SAC-SB3 runs use `enabled=true`, `n_steps=3`, `prioritized=true`,
+and nested `persistence.enabled=true` with the `final_or_manual` trigger; PPO
 defaults to `enabled=false`. Validate PPO inactive/default-only behavior before
 learner construction. Pass `n_steps` and `gamma` to the forked SB3 model for
 uniform mode. Select owned replay/model classes for PER mode.
@@ -273,7 +274,7 @@ is provisioned.
 - [x] M3 — Implement canonical termination/truncation/final-observation collection.
 - [x] M4 — Implement replay state, beta progress, diagnostics, and compatibility metadata.
 - [x] M5 — Implement custom PER buffer and owned TD3/SAC training integration.
-- [x] M6 — Implement persistence-disabled/default behavior, final/manual atomic pairing, and legacy migration.
+- [x] M6 — Implement final/manual atomic pairing, enabled persistence, and legacy migration.
 - [x] M7 — Run focused tests, regressions, quality checks, and representative smoke matrix.
 - [ ] M8 — Reconcile every requirement/criterion, update index status, and review final diff.
 

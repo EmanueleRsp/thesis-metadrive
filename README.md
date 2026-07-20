@@ -265,6 +265,29 @@ uv run --no-sync python -m thesis_rl.cli.train
 uv run --no-sync python -m thesis_rl.cli.evaluate
 ```
 
+For the canonical scalar pipeline, use the GPU-aware Make entry point. The
+learner configuration is intentionally mandatory; the command prints the
+available Hydra algorithm names when it is omitted:
+
+```bash
+make run-train ALGORITHM=td3_sb3
+```
+
+The defaults are ScenarioNet, `semantic_v2`, LQ, `mlp_encoded`, Rulebook
+v4.7, `bounded_satisfaction_rank`, Scenario ACL, PER, transition replay
+`n_steps=3`, checkpoint/replay persistence, and the `smoke` profile. Choose a
+different learner or run label/profile explicitly when needed:
+
+```bash
+make run-train ALGORITHM=sac_sb3 RUN_PROFILE=smoke RUN_NAME=scalar_sac_smoke
+make run-train ALGORITHM=td3_sb3 RUN_OVERRIDES='seed=43 reward.runtime_info_debug_enabled=true'
+```
+
+The `dev` service mounts the dataset read-only by default; dataset-generation
+commands use the separate writable `dataset-pipeline` service. Final GIF
+recording is enabled by default and enforced by `make run-train`;
+`video.max_final_videos=0` means all final evaluation episodes.
+
 ### 5. Quality Commands
 
 Canonical Docker-based commands for project-owned Python code are:

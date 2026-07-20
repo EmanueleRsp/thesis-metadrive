@@ -24,7 +24,7 @@ scales:
 
 # Debug/diagnostic controls
 include_violation_vector: false
-rule_margin_log_path: null
+rule_margin_log_path: ${paths.logs_dir}/rule_margins.jsonl
 attach_info: true
 
 # Runtime info debug controls

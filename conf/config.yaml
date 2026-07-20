@@ -3,20 +3,21 @@ name: PLN_${agent.planner.algorithm.name}_REW_${hydra:runtime.choices.reward}_CU
 # Use a preset via `--config-name presets/...` to override groups in one shot,
 # and optionally add CLI overrides (e.g. `run_profile=medium`).
 defaults:
-  - env: metadrive          # Environment family/config in `conf/env/*`
-  - obs: semantic_state     # Observation setup in `conf/obs/*`
+  - env: scenarionet        # Canonical final environment family.
+  - obs: semantic_v2         # SemanticStateObservation v1.1.
   - experiment: default
-  - run_profile: fast       # Budget/training profile in `conf/run_profile/*`
+  - run_profile: smoke      # Short integration profile by default.
+  - gold_suite: default      # Reference-only Rulebook diagnostic controls.
 
   - agent/preprocessor: identity       # Observation preprocessor in `conf/agent/preprocessor/*`
   - agent/planner/encoder: lq          # Planner feature encoder in `conf/agent/planner/encoder/*`
   - agent/planner/decoder: mlp_encoded # Planner head decoder profile in `conf/agent/planner/decoder/*`
-  - agent/planner/algorithm: sac_sb3   # Planner backend in `conf/agent/planner/algorithm/*`
+  - agent/planner/algorithm: td3_sb3   # Primary final learner; make run requires an explicit choice.
   - agent/adapter: identity            # Action adapter in `conf/agent/adapter/*`
 
-  - reward: monitor_only    # native | monitor_only | scalar_reward
+  - reward: scalar_reward   # Final Rulebook scalar reward.
   - scalarization: default  # SCAL-V1.0 formula and immutable run parameters
-  - curriculum: disabled    # disabled | stages | stages_scenarionet | scenario_acl | scenario_acl_scenarionet
+  - curriculum: scenario_acl_scenarionet
   
   - video: default          # Video/replay pipeline settings in `conf/video/*`
   - override hydra/job_logging: disabled
@@ -26,10 +27,9 @@ defaults:
 seed: 42
 device: auto
 
-# Explicit selector. v1 remains the repository runtime default; v2 selection is
-# owned by the Rulebook implementation and can feed the scalarizer downstream.
+# Explicit authoritative Rulebook selector used by the final scalar pipeline.
 rulebook:
-  version: v1  # v1 | v2
+  version: 4.7-final-implementation-complete
 
 logging:
   # Global minimum level for thesis_rl loggers (DEBUG | INFO | WARNING | ERROR | CRITICAL)
@@ -73,7 +73,6 @@ checkpoint_path: ${paths.checkpoints_dir}/final.zip  # Canonical final checkpoin
 
 checkpoint:
   save_latest_each_chunk: true                       # Update `checkpoints/latest.zip` at each training chunk.
-  save_replay_buffer: false                          # Persist `checkpoints/latest_replay_buffer.pkl` for exact off-policy resume.
   save_final: true                                   # Write `checkpoints/final.zip` at end of training.
   save_best_lexicographic: true                      # Save best by global safety/task lexicographic key.
   save_best_lexicographic_rulebook: true             # Save best by strict per-rule margin comparison.

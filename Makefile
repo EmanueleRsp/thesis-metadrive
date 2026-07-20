@@ -1,6 +1,17 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog scenarionet-pg-replenish scenarionet-freeze scenarionet-from-frozen scenarionet-materialize-frozen up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-recatalog scenarionet-pg-replenish scenarionet-freeze scenarionet-from-frozen scenarionet-materialize-frozen up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu run run-train run-golden-rulebook config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
 
 PYTHON_QUALITY_PATHS ?= src tests scripts
+
+# The final integration run is intentionally explicit about the learner. All
+# values are Hydra config names under conf/agent/planner/algorithm/.
+ALGORITHM ?=
+RUN_PROFILE ?= smoke
+RUN_NAME ?= run
+RUN_OVERRIDES ?=
+RUN_ALGORITHM_CONFIGS := ppo ppo_sb3 sac sac_sb3 td3 td3_sb3
+RUN_PROFILE_CONFIGS := default fast medium long thesis tune smoke
+GOLD_MANIFEST ?= docs/audits/scalar_pipeline_audit_2026-07-19/golden_suite_content_validated/golden_suite_manifest.json
+GOLD_MANIFEST_CONTAINER ?= /workspace/thesis-metadrive/$(GOLD_MANIFEST)
 
 RULEBOOK_V2_DATA_ROOT ?= data/scenarionet
 RULEBOOK_V2_CONTAINER_DATA_ROOT ?= /workspace/data/scenarionet
@@ -211,3 +222,44 @@ smoke:
 
 smoke-gpu:
 	docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train
+
+# Canonical final-pipeline entry point. The dev service supplies the repository
+# and outputs mounts and mounts the dataset read-only; the GPU overlay is
+# mandatory for this target.
+run-train:
+	@if [ -z "$(strip $(ALGORITHM))" ]; then \
+		echo "ALGORITHM is required. Valid Hydra configs: $(RUN_ALGORITHM_CONFIGS)" >&2; \
+		exit 2; \
+	fi
+	@if ! printf '%s\n' "$(RUN_ALGORITHM_CONFIGS)" | tr ' ' '\n' | grep -Fxq "$(ALGORITHM)"; then \
+		echo "Unsupported ALGORITHM='$(ALGORITHM)'. Valid Hydra configs: $(RUN_ALGORITHM_CONFIGS)" >&2; \
+		exit 2; \
+	fi
+	@if ! printf '%s\n' "$(RUN_PROFILE_CONFIGS)" | tr ' ' '\n' | grep -Fxq "$(RUN_PROFILE)"; then \
+		echo "Unsupported RUN_PROFILE='$(RUN_PROFILE)'. Valid profiles: $(RUN_PROFILE_CONFIGS)" >&2; \
+		exit 2; \
+	fi
+	docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev \
+		uv run --no-sync python -m thesis_rl.cli.train \
+		agent/planner/algorithm=$(ALGORITHM) \
+		run_profile=$(RUN_PROFILE) \
+		experiment.name=$(RUN_NAME) \
+		$(RUN_OVERRIDES) \
+		video.enabled=true
+
+run: run-train
+
+run-golden-rulebook:
+	@test -f "$(GOLD_MANIFEST)" || (echo "Missing golden-suite manifest: $(GOLD_MANIFEST)" >&2; exit 2)
+	docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev \
+		uv run --no-sync python -m thesis_rl.cli.scenarios.golden_rulebook_trace \
+		gold_suite.manifest_path=$(GOLD_MANIFEST_CONTAINER) \
+		env.provider.kind=fixed_sequence \
+		env.provider.repeat=false \
+		env.provider.scenario_uids_file=$(GOLD_MANIFEST_CONTAINER) \
+		env.split=train \
+		curriculum=disabled \
+		experiment.name=gold_rulebook_trace \
+		video.enabled=true \
+		video.save_manifest=true \
+		video.save_trajectory_log=true
