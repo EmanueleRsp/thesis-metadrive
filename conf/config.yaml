@@ -7,6 +7,7 @@ defaults:
   - obs: semantic_v2         # SemanticStateObservation v1.1.
   - experiment: default
   - reward: scalar_reward   # Final Rulebook scalar reward.
+  - video: default          # Video/replay pipeline settings in `conf/video/*`
   - run_profile: smoke      # Short integration profile by default.
   - gold_suite: default      # Reference-only Rulebook diagnostic controls.
 
@@ -19,7 +20,6 @@ defaults:
   - scalarization: default  # SCAL-V1.0 formula and immutable run parameters
   - curriculum: scenario_acl_scenarionet
   
-  - video: default          # Video/replay pipeline settings in `conf/video/*`
   - override hydra/job_logging: disabled
 
   - _self_

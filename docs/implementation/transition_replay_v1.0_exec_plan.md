@@ -106,7 +106,7 @@ Compatibility constraints:
 | `VERIFIED` | `src/thesis_rl/sb3_extensions/builders.py` already provides custom replay class/kwargs hooks, but YAML configs do not currently select them. | Reuse the existing bridge and keep implementation-owned classes in `src/thesis_rl/sb3_extensions`. |
 | `VERIFIED` | `src/thesis_rl/agent/types/transition.py` preserves scalar `terminated` and `truncated`; `Agent` scalar collection currently sets `terminal_observation` from `next_obs` for either flag, while batch collection passes combined `dones` and timeout info. | Add canonical final-observation normalization and explicit batch flags before replay insertion. |
 | `VERIFIED` | `src/thesis_rl/runtime/loops/train_loop.py` saves `latest_replay_buffer.pkl` at chunk checkpoints when `checkpoint.save_replay_buffer` is true. | Replace with canonical nested persistence control and final/manual-only behavior; legacy true must fail migration. |
-| `VERIFIED` | Final TD3/SAC-SB3 configs enable PER and nested replay persistence with `n_steps=3`; the obsolete top-level `checkpoint.save_replay_buffer` key is absent. | Final scalar runs persist replay through `transition_replay.persistence.enabled=true`; legacy `true` remains rejected. |
+| `VERIFIED` | Final TD3/SAC-SB3 configs enable PER and nested replay persistence with `n_steps=3`; persistence is profile-controlled and the obsolete top-level `checkpoint.save_replay_buffer` key is absent. | Smoke runs persist replay; other standard profiles use model-only checkpoints unless explicitly opted in; legacy `true` remains rejected. |
 | `VERIFIED` | `src/thesis_rl/curriculum/scenario_acl` uses scenario usefulness/learning potential independently of transition replay. | Add separation tests; do not share scores or priorities. |
 | `VERIFIED` | `SCAL-V1.0` and ADR-011 define the scalar reward producer, scalarization identity, legacy scale provenance, and future N-step/PER compatibility. | Replay manifest/load validation must consume these identities. |
 | `VERIFIED` | Existing TD3/SAC porting, timeout, SB3 bridge, checkpoint, and Hydra tests exist under `tests/`. | Extend tests without weakening existing baseline coverage. |
@@ -154,9 +154,11 @@ compatibility must return to the user before dependent implementation.
 
 Add `transition_replay` to the planner algorithm configuration mapping. Final
 TD3-SB3 and SAC-SB3 runs use `enabled=true`, `n_steps=3`, `prioritized=true`,
-and nested `persistence.enabled=true` with the `final_or_manual` trigger; PPO
-defaults to `enabled=false`. Validate PPO inactive/default-only behavior before
-learner construction. Pass `n_steps` and `gamma` to the forked SB3 model for
+and nested `persistence.enabled` controlled by the run profile: enabled for
+`smoke`, disabled for other standard profiles, and explicitly opt-in elsewhere,
+with the `final_or_manual` trigger; PPO defaults to `enabled=false`. Validate
+PPO inactive/default-only behavior before learner construction. Pass `n_steps`
+and `gamma` to the forked SB3 model for
 uniform mode. Select owned replay/model classes for PER mode.
 
 ### 7.2 Replay module

@@ -6,9 +6,9 @@
 - Authoritative specification: `docs/specifications/rl_baselines_v1_specification.md`, ID `RL-BASELINES`, version `1.0`, `APPROVED` and `AUTHORITATIVE: YES`.
 - Status: `VERIFIED`
 - Created: 2026-07-20
-- Last update: 2026-07-20
+- Last update: 2026-07-21
 - Branch: current working branch
-- Related ADRs: `docs/decisions/ADR-014-scenarionet-acl-learning-potential-only.md`, `docs/specifications/transition_replay_v1_specification.md`
+- Related ADRs: `docs/decisions/ADR-014-scenarionet-acl-learning-potential-only.md`, `docs/decisions/ADR-017-run-profile-replay-persistence.md`
 - Owner: repository maintainer
 
 ## 2. Objective and scope
@@ -80,7 +80,7 @@ diagnostic presets such as scale tuning.
 | `DEC-RP-001` | specification clarification | What fast/long-run TD3 values should be used? | Keep algorithm defaults; use budget-aware matrix | Smoke `100/64`, fast `5000/256`, medium/long/tune/thesis `10000/256` | Learner warm-up and update batch only | Approved by user, 2026-07-20 |
 | `DEC-RP-002` | implementation detail | Where should default margin logging be gated? | Runtime conditional; profile config overrides | Set shared default to `null`, add path only to smoke | File output volume and default diagnostics | Approved by explicit user request |
 | `DEC-RP-003` | specification clarification | How should SAC warm-up vary with budget? | Keep `100` for every profile; use budget-aware matrix | Smoke `100`, fast `1000`, medium/tune `5000`, long/thesis `10000`; batch `256` | SAC replay diversity before updates | Approved by user, 2026-07-20 |
-| `DEC-RP-004` | specification clarification | Should replay persistence be enabled? | Persist replay; model-only restart | Keep persistence OFF by default due to storage/I/O cost | Restart semantics and disk use | Approved by user, 2026-07-20 |
+| `DEC-RP-004` | specification clarification | Should replay persistence be enabled? | Persist replay; model-only restart | Keep persistence OFF by default; enable only in `smoke` and by explicit opt-in due to storage/I/O cost | Restart semantics and disk use | Approved by user, 2026-07-21; ADR-017 |
 | `DEC-RP-005` | specification clarification | What is the role of the 48-record golden suite? | Use for policy data; retain as diagnostic fixture | Retain only for deterministic Rulebook/adapter integration and regression checks | Prevents biased source×arm fixture from entering scientific claims | Approved by user, 2026-07-20 |
 
 ## 7. Proposed design
@@ -89,9 +89,10 @@ Add algorithm-specific `planner` blocks to every duration profile. The runtime
 resolves only the block matching the selected fork-backed algorithm, preventing
 TD3/SAC/PPO overrides from leaking into one another. Set the shared reward
 default path to `null`, set `reward.rule_margin_log_path` in `smoke.yaml` to the
-existing run-local JSONL path, and set TD3/SAC replay persistence to `false`.
-Keep explicit diagnostic preset overrides unchanged. The golden suite is not
-part of the normal training path.
+existing run-local JSONL path, and resolve TD3/SAC replay persistence from the
+profile: `true` only for `smoke`, `false` otherwise. Keep explicit diagnostic
+preset overrides unchanged. The golden suite is not part of the normal
+training path.
 
 ## 8. Traceability
 
@@ -136,6 +137,9 @@ tests, `git diff --check`, and `make config` if the container is available.
   margin logging, replay persistence OFF, and regression coverage. The focused
   Hydra matrix passed with 33 tests; Ruff, format, Docker composition, and
   whitespace checks also passed.
+- 2026-07-21: Made replay persistence explicitly smoke-only for TD3/SAC and
+  retained an explicit Hydra opt-in for other profiles. Added ADR-017 and
+  configuration regressions covering both learners and all standard profiles.
 
 ## 12. Deviations
 
@@ -151,6 +155,8 @@ tests, `git diff --check`, and `make config` if the container is available.
 | `conf/agent/planner/algorithm/ppo_sb3.yaml` | Modified | Approved PPO head width |
 | `conf/reward/rulebook_defaults.yaml` | Modified | Disable heavy margin trace by default |
 | `conf/run_profile/smoke.yaml` | Modified | Enable margin trace for smoke only |
+| `conf/run_profile/*.yaml` | Modified | Enable replay persistence only for smoke |
+| `docs/decisions/ADR-017-run-profile-replay-persistence.md` | Added | Approved storage and resume policy |
 | `src/thesis_rl/runtime/wiring/builders.py` | Modified | Apply profile overrides only to matching fork-backed SB3 backends |
 | `tests/test_hydra_preset_run_configs.py` | Modified | TD3/SAC/PPO profile and logging regression coverage |
 | `tests/test_hydra_agent_presets.py` | Modified | PPO head-width regression coverage |
@@ -164,6 +170,9 @@ tests, `git diff --check`, and `make config` if the container is available.
 | `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/runtime/wiring/builders.py tests/test_hydra_preset_run_configs.py tests/test_hydra_agent_presets.py` | PASS | 2026-07-20 | 3 files already formatted |
 | `git diff --check` | PASS | 2026-07-20 | No whitespace errors |
 | `make config` | PASS | 2026-07-20 | `docker compose config --quiet` succeeded |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_hydra_preset_run_configs.py` | PASS | 2026-07-21 | 17 profile/config tests passed, including smoke-only TD3/SAC replay persistence and explicit non-smoke opt-in. |
+| `docker compose run --rm dev uv run --no-sync ruff check tests/test_hydra_preset_run_configs.py` | PASS | 2026-07-21 | All checks passed. |
+| `git diff --check` | PASS | 2026-07-21 | No whitespace errors after the replay policy change. |
 
 ## 15. Final reconciliation
 

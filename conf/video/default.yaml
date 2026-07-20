@@ -10,7 +10,9 @@ record_intermediate_evals: false
 record_final_eval: true
 max_final_videos: 0  # Zero means all final-evaluation episodes.
 save_manifest: true
-save_trajectory_log: true
+# The trajectory JSONL is a relatively heavy diagnostic artifact. Profiles
+# enable it explicitly when it is useful, such as the default smoke profile.
+save_trajectory_log: false
 official_only: true
 replay_checkpoint: final  # final | latest | best_lexicographic | <relative-or-absolute-path>
 

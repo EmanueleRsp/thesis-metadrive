@@ -1,6 +1,7 @@
 # @package _global_
 run_profile:
   name: smoke
+  replay_persistence: true
 
 experiment:
   name: run
@@ -30,3 +31,6 @@ planner:
 
 reward:
   rule_margin_log_path: ${paths.logs_dir}/rule_margins.jsonl
+
+video:
+  save_trajectory_log: true

@@ -9,6 +9,7 @@ RUN_PROFILE ?= smoke
 RUN_NAME ?= run
 RUN_OVERRIDES ?=
 NUM_ENVS ?= 5
+SEED ?= 42
 RUN_ALGORITHM_CONFIGS := ppo ppo_sb3 sac sac_sb3 td3 td3_sb3
 RUN_PROFILE_CONFIGS := default fast medium long thesis tune smoke
 GOLD_MANIFEST ?= docs/audits/scalar_pipeline_audit_2026-07-19/golden_suite_content_validated/golden_suite_manifest.json
@@ -294,6 +295,10 @@ run-train:
 		echo "NUM_ENVS must be an integer greater than or equal to 1; got '$(NUM_ENVS)'" >&2; \
 		exit 2; \
 	fi
+	@if ! printf '%s\n' "$(SEED)" | grep -Eq '^[0-9]+$$'; then \
+		echo "SEED must be a non-negative integer; got '$(SEED)'" >&2; \
+		exit 2; \
+	fi
 	@if ! printf '%s\n' "$(RUN_ALGORITHM_CONFIGS)" | tr ' ' '\n' | grep -Fxq "$(ALGORITHM)"; then \
 		echo "Unsupported ALGORITHM='$(ALGORITHM)'. Valid Hydra configs: $(RUN_ALGORITHM_CONFIGS)" >&2; \
 		exit 2; \
@@ -319,6 +324,7 @@ run-train:
 		env.config.num_scenarios=-1 \
 		env.vectorized.enabled=$(if $(filter 1,$(NUM_ENVS)),false,true) \
 		env.vectorized.num_envs=$(NUM_ENVS) \
+		seed=$(SEED) \
 		agent/planner/algorithm=$(ALGORITHM) \
 		run_profile=$(RUN_PROFILE) \
 		experiment.name=$(RUN_NAME) \

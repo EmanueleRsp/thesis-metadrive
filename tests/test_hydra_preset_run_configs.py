@@ -173,6 +173,38 @@ def test_rule_margin_logging_is_enabled_only_for_smoke_by_default() -> None:
             assert path is None
 
 
+def test_trajectory_logging_is_enabled_only_for_smoke_by_default() -> None:
+    profiles = ("default", "smoke", "fast", "medium", "long", "tune", "thesis")
+
+    for profile in profiles:
+        cfg = _compose(f"run_profile={profile}")
+        assert bool(cfg.video.save_trajectory_log) is (profile == "smoke")
+
+
+def test_replay_persistence_is_enabled_only_for_smoke_by_default() -> None:
+    profiles = ("default", "smoke", "fast", "medium", "long", "tune", "thesis")
+
+    for algorithm in ("td3_sb3", "sac_sb3"):
+        for profile in profiles:
+            cfg = _compose(
+                f"run_profile={profile}",
+                f"agent/planner/algorithm={algorithm}",
+            )
+            assert bool(cfg.agent.planner.algorithm.transition_replay.persistence.enabled) is (
+                profile == "smoke"
+            )
+
+
+def test_replay_persistence_can_be_enabled_explicitly_outside_smoke() -> None:
+    cfg = _compose(
+        "run_profile=medium",
+        "agent/planner/algorithm=td3_sb3",
+        "agent.planner.algorithm.transition_replay.persistence.enabled=true",
+    )
+
+    assert bool(cfg.agent.planner.algorithm.transition_replay.persistence.enabled) is True
+
+
 def test_explicit_td3_diagnostic_preset_keeps_margin_logging_enabled() -> None:
     with initialize_config_dir(version_base=None, config_dir=str(CONF_DIR)):
         cfg = compose(config_name="presets/td3/td3_scalar_reward_scale_tuning_no_curr")

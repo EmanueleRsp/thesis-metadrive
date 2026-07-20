@@ -1,6 +1,7 @@
 # @package _global_
 run_profile:
   name: long
+  replay_persistence: false
 
 experiment:
   name: long

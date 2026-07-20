@@ -584,6 +584,7 @@ class Agent:
         ]
         | None = None,
         initial_observations: Any | None = None,
+        monitor_extra_rows_callback: Callable[[], list[tuple[str, str]]] | None = None,
     ) -> dict[str, Any]:
         """Train with a vectorized env, counting total collected transitions.
 
@@ -604,6 +605,7 @@ class Agent:
                 deterministic=deterministic,
                 log_interval=log_interval,
                 reset_seed_fn=reset_seed_fn,
+                monitor_extra_rows_callback=monitor_extra_rows_callback,
             )
         if bool(getattr(self.adapter, "requires_training", False)):
             raise ValueError("Vectorized training currently supports only stateless adapters.")
@@ -744,6 +746,9 @@ class Agent:
             table.add_row(
                 "grad_steps_chunk", str(int(getattr(lifecycle, "gradient_step_count", 0)))
             )
+            if monitor_extra_rows_callback is not None:
+                for metric, value in monitor_extra_rows_callback():
+                    table.add_row(str(metric), str(value))
             return table
 
         def _logs_panel() -> Panel:
@@ -919,6 +924,7 @@ class Agent:
                     if len(done_indices) > 0:
                         lifecycle.on_episode_end(indices=done_indices.tolist())
                         self.preprocessor.reset()
+                    event_details: dict[int, tuple[int, str, int, float, float]] = {}
                     for idx in done_indices:
                         if episode_success[idx]:
                             reason = "success"
@@ -929,10 +935,12 @@ class Agent:
                         else:
                             reason = "timeout"
                         episodes += 1
-                        event_logs.appendleft(
-                            f"Episode {episodes} env={idx} ended | len={int(episode_len[idx])} "
-                            f"reward={episode_scalar_reward[idx]:.2f} | reason={reason} "
-                            f"route_completion={episode_route_completion[idx]:.2f}"
+                        event_details[int(idx)] = (
+                            episodes,
+                            reason,
+                            int(episode_len[idx]),
+                            float(episode_scalar_reward[idx]),
+                            float(episode_route_completion[idx]),
                         )
                         recent_episode_lens.append(int(episode_len[idx]))
                         recent_episode_rewards.append(float(episode_scalar_reward[idx]))
@@ -980,6 +988,40 @@ class Agent:
                         next_obs = np.asarray(next_obs).copy()
                         for idx, reset_observation in reset_observations.items():
                             next_obs[int(idx)] = reset_observation
+
+                    payload_by_slot = {
+                        int(payload["worker_id"]): payload for payload in acl_episode_payloads
+                    }
+                    for idx in done_indices:
+                        payload = payload_by_slot.get(int(idx), {})
+                        (
+                            event_number,
+                            reason,
+                            event_length,
+                            event_reward,
+                            event_route_completion,
+                        ) = event_details[int(idx)]
+                        context = {
+                            key: value
+                            for key, value in dict(payload.get("live_event_context", {})).items()
+                            if key not in {"slot", "episode_id"}
+                        }
+                        context_suffix = (
+                            " | "
+                            + " ".join(
+                                f"{key}={value}"
+                                for key, value in context.items()
+                                if value is not None
+                            )
+                            if context
+                            else ""
+                        )
+                        event_logs.appendleft(
+                            f"Episode {event_number} env={idx} ended | "
+                            f"len={event_length} reward={event_reward:.2f} "
+                            f"| reason={reason} route_completion={event_route_completion:.2f}"
+                            f"{context_suffix}"
+                        )
 
                     actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
                     critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))

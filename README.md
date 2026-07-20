@@ -275,10 +275,12 @@ make run-train ALGORITHM=td3_sb3
 
 `make run-train` uses 5 parallel environments by default. Set `NUM_ENVS` to
 any integer greater than or equal to 1; `NUM_ENVS=1` keeps the sequential path.
+The run seed defaults to `42`; set `SEED` to reproduce or vary the complete run.
 
 ```bash
 make run-train ALGORITHM=td3_sb3 NUM_ENVS=2
 make run-train ALGORITHM=td3_sb3 NUM_ENVS=1
+make run-train ALGORITHM=td3_sb3 NUM_ENVS=5 SEED=123
 ```
 
 The defaults are ScenarioNet, `semantic_v2`, LQ, `mlp_encoded`, Rulebook
@@ -294,7 +296,13 @@ make run-train ALGORITHM=td3_sb3 RUN_OVERRIDES='seed=43 reward.runtime_info_debu
 The `dev` service mounts the dataset read-only by default; dataset-generation
 commands use the separate writable `dataset-pipeline` service. Final GIF
 recording is enabled by default and enforced by `make run-train`;
-`video.max_final_videos=0` means all final evaluation episodes.
+`video.max_final_videos=0` means all final evaluation episodes. The heavier
+final-evaluation trajectory JSONL is enabled by default for `RUN_PROFILE=smoke`
+and disabled for the other run profiles; override it explicitly with
+`video.save_trajectory_log=true` when needed. TD3/SAC replay-buffer persistence
+follows the same policy: enabled for `smoke`, disabled for other profiles, and
+available explicitly with
+`agent.planner.algorithm.transition_replay.persistence.enabled=true`.
 
 ### 5. Quality Commands
 

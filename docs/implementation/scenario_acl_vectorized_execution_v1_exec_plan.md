@@ -433,6 +433,20 @@ mandatory acceptance command. No global static-type command is configured.
   available after the terminal callback; same-slot/same-tick completion ties
   now use `episode_id` as an explicit deterministic tiebreaker. The regression
   suite passed (`56 passed`).
+- 2026-07-20 — Added validation evaluation to the ACL vectorized driver after
+  every training chunk, using the validation split and the existing
+  checkpoint/evaluation artifact conventions. The final test evaluation remains
+  separate. A real 20-transition smoke with `eval_interval=10` produced two
+  intermediate terminal evaluations, `evaluation_started/finished` events,
+  `evals.csv`, and the final test evaluation.
+- 2026-07-20 — Aligned the vectorized final test path with the sequential path:
+  it now prints the `Final Evaluation` summary, records `final_eval.csv`, and
+  passes the configured live final-evaluation artifact recorder. A compact real
+  smoke produced the final-test GIF, manifest, and trajectory log under
+  `videos/final_eval/eval_0002/`.
+- 2026-07-20 — Made the heavy final-evaluation trajectory log profile-aware:
+  it is enabled for `smoke` and disabled for all other standard profiles,
+  while explicit `video.save_trajectory_log` overrides remain supported.
 
 ## 12. Deviations
 
@@ -477,6 +491,8 @@ No deviations identified.
 | Real ScenarioNet ACL vector resume | PASS | 2026-07-20 | After the approved active-slot restart fix, `latest` resume completed 10 additional transitions with `num_envs=2`, `spawn`, and no pre-reset worker step. Restart events were persisted for both active slots. |
 | Real ScenarioNet ACL vector generate/replay smoke | PASS | 2026-07-20 | Compact `horizon=10`, 60-transition TD3 run: two fresh insertions at tick 0 and replay updates on both slots at ticks 1--2; per-episode LP values were distinct. |
 | Real ScenarioNet ACL vector PPO smoke | PASS | 2026-07-20 | Compact `horizon=10`, 60-transition PPO-SB3 run: six episodes completed; pending terminal completions were persisted once each while rollout LP attribution remained incomplete at chunk end. |
+| Real ScenarioNet ACL vector periodic evaluation smoke | PASS | 2026-07-20 | Compact `horizon=10`, 20-transition TD3 run with `eval_interval=10`: two validation evaluations appeared in the terminal and `evals.csv`; final test evaluation also completed. |
+| Real ScenarioNet ACL vector final-evaluation artifact smoke | PASS | 2026-07-20 | Compact `horizon=10`, 2-transition TD3 run: `Final Evaluation` appeared in the terminal, `final_eval.csv` was written, and `videos/final_eval/eval_0002/` contained a GIF, manifest, and trajectory log. |
 | Ruff check for all modified feature files | PASS | 2026-07-20 | Ruff check passed for collector, ACL package, factory, env, subprocess vector, builders, and focused tests. |
 | Python compile check | PASS | 2026-07-20 | `PYTHONPYCACHEPREFIX=/tmp/thesis-metadrive-pycache .venv/bin/python -m compileall -q ...`. |
 | `git diff --check` | PASS | 2026-07-20 | No whitespace errors. |

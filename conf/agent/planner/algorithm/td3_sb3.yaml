@@ -25,7 +25,7 @@ transition_replay:
   optimize_memory_usage: false
   store_reward_vector: false
   persistence:
-    enabled: true
+    enabled: ${run_profile.replay_persistence}
     trigger: final_or_manual
     periodic_frequency_steps: null
     keep_last: 1
