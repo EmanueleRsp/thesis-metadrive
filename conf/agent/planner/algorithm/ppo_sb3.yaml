@@ -23,8 +23,8 @@ sde_sample_freq: -1
 monitor_ema_alpha: 0.1
 policy_kwargs:
   net_arch:
-    pi: [64, 64]
-    vf: [64, 64]
+    pi: [256, 256]
+    vf: [256, 256]
   share_features_extractor: true
   ortho_init: false
 transition_replay:

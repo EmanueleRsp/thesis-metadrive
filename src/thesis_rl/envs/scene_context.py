@@ -47,7 +47,7 @@ class SceneContextAdapter:
         return completion is not None and completion > 0.95
 
     def is_physically_out_of_road(self, env: Any, vehicle: Any) -> bool:
-        """Use native sidewalk/lateral primitives, excluding line-only contact."""
+        """Use native surface and contact primitives, excluding route drift."""
 
         if bool(getattr(vehicle, "crash_sidewalk", False)):
             # MetaDrive's rectangular sidewalk probe reports ROAD_EDGE_BOUNDARY
@@ -65,13 +65,27 @@ class SceneContextAdapter:
                 return True
             if self._ROAD_EDGE_BOUNDARY not in contacts:
                 return True
+
+        # ``navigation.current_lateral``, ``dist_to_*_side``, and ``on_lane``
+        # all derive from ``current_ref_lanes`` in ScenarioNet's
+        # TrajectoryNavigation. They describe deviation from the assigned
+        # reference route, rather than physical contact with the road edge.
+        # They remain diagnostics only: physical exit is established solely by
+        # the native sidewalk/guardrail contact primitives above.
+        return False
+
+    def get_physical_road_diagnostics(self, vehicle: Any) -> dict[str, Any]:
+        """Return native values needed to audit physical-road termination."""
+
         navigation = getattr(vehicle, "navigation", None)
-        lateral = getattr(navigation, "current_lateral", None)
-        try:
-            max_lateral = float(env.config.get("max_lateral_dist", 4.0))
-            return lateral is not None and abs(float(lateral)) > max_lateral
-        except (TypeError, ValueError, AttributeError):
-            return False
+        contacts = getattr(vehicle, "contact_results", ()) or ()
+        return {
+            "route_lateral": getattr(navigation, "current_lateral", None),
+            "dist_to_left_side": getattr(vehicle, "dist_to_left_side", None),
+            "dist_to_right_side": getattr(vehicle, "dist_to_right_side", None),
+            "on_lane": getattr(vehicle, "on_lane", None),
+            "contact_results": sorted(str(value) for value in contacts),
+        }
 
     def get_native_out_of_road(self, env: Any, vehicle: Any) -> bool:
         predicate = getattr(env, "_is_out_of_road", None)

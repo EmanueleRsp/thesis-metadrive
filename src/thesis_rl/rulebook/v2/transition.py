@@ -441,8 +441,8 @@ def evaluate_transition(
         "collision": {
             "scenario_id": post_state.scenario_id,
             "step_index": post_state.step_index,
-            "ego_velocity_xy": pre_state.ego.velocity_xy,
             "ego_configured_speed_cap_mps": pre_state.ego.configured_speed_cap_mps,
+            "pre_ego": pre_state.ego,
             "pre_actors_by_id": pre_by_id,
             "onset_records": post_state.contact_onset_records,
             "previous_contact_ids": memory.previous_contact_ids,

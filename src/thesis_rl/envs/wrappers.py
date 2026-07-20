@@ -70,6 +70,8 @@ class RuleRewardWrapper(gym.Wrapper):
         info_dict = dict(info)
         self._enrich_runtime_info(info_dict)
         self._log_rulebook_input_diagnostics(info_dict)
+        info_dict["terminated"] = bool(terminated)
+        info_dict["truncated"] = bool(truncated)
 
         result = self.reward_manager.compute(float(env_reward), info_dict)
         selected_reward = self._select_reward(float(env_reward), result)

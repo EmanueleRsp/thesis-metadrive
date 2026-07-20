@@ -109,7 +109,7 @@ def test_transition_evaluates_contact_onset_from_post_snapshot() -> None:
         _snapshot(1, 0.1, 1.1),
         actors=(other,),
         contact_onset_records=(
-            ContactOnsetRecord("other", ActorClass.VEHICLE, (1.5, 0.0), (1.0, 0.0)),
+            ContactOnsetRecord("other", ActorClass.VEHICLE),
         ),
         active_contact_ids=frozenset({"other"}),
     )

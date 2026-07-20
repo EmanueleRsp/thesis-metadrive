@@ -4,7 +4,7 @@ name: td3_sb3
 policy: MlpPolicy
 verbose: 0
 learning_starts: 10000
-batch_size: 2048
+batch_size: 256
 buffer_size: 300000
 train_freq: 1
 gradient_steps: auto

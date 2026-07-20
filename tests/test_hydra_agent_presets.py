@@ -80,8 +80,8 @@ def test_ppo_sb3_algorithm_config_composes() -> None:
     assert int(cfg.agent.planner.algorithm.batch_size) == 64
     assert int(cfg.agent.planner.algorithm.n_epochs) == 10
     assert float(cfg.agent.planner.algorithm.ent_coef) == 0.0
-    assert list(cfg.agent.planner.algorithm.policy_kwargs.net_arch.pi) == [64, 64]
-    assert list(cfg.agent.planner.algorithm.policy_kwargs.net_arch.vf) == [64, 64]
+    assert list(cfg.agent.planner.algorithm.policy_kwargs.net_arch.pi) == [256, 256]
+    assert list(cfg.agent.planner.algorithm.policy_kwargs.net_arch.vf) == [256, 256]
 
 
 def test_ppo_algorithm_config_composes_with_sb3_faithful_defaults() -> None:

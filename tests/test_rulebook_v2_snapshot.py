@@ -51,8 +51,8 @@ def test_snapshot_capture_is_complete_and_rejects_duplicate_actor_ids() -> None:
 def test_contact_buffer_preserves_points_and_drains_atomically() -> None:
     buffer = ContactOnsetBuffer()
     buffer.clear_control_step()
-    buffer.record_onset(ContactOnsetRecord("other", ActorClass.VEHICLE, (1.0, 0.0), (1.0, 0.0)))
-    buffer.record_onset(ContactOnsetRecord("other", ActorClass.VEHICLE, (1.1, 0.0), (1.0, 0.0)))
+    buffer.record_onset(ContactOnsetRecord("other", ActorClass.VEHICLE))
+    buffer.record_onset(ContactOnsetRecord("other", ActorClass.VEHICLE))
     drained = buffer.drain()
     assert len(drained) == 2
     assert buffer.drain() == ()

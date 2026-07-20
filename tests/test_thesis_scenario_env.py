@@ -39,6 +39,8 @@ def test_scene_context_separates_line_from_physical_boundary() -> None:
         on_white_continuous_line=False,
         crash_sidewalk=False,
         navigation=SimpleNamespace(current_lateral=1.0, route_completion=0.4),
+        dist_to_left_side=3.0,
+        dist_to_right_side=3.0,
         LENGTH=4.5,
         WIDTH=1.9,
     )
@@ -48,8 +50,24 @@ def test_scene_context_separates_line_from_physical_boundary() -> None:
     assert adapter.is_physically_out_of_road(env, vehicle) is False
     assert adapter.get_ego_dimensions(vehicle) == (4.5, 1.9)
 
+    # Route deviation is not physical road exit when both native surface
+    # distances remain positive.
     vehicle.navigation.current_lateral = 5.0
-    assert adapter.is_physically_out_of_road(env, vehicle) is True
+    assert adapter.is_physically_out_of_road(env, vehicle) is False
+
+
+def test_scene_context_does_not_treat_reference_lane_distance_as_road_exit() -> None:
+    adapter = SceneContextAdapter()
+    vehicle = SimpleNamespace(
+        crash_sidewalk=False,
+        navigation=SimpleNamespace(current_lateral=3.3987159729003906),
+        dist_to_left_side=4.398715972900391,
+        dist_to_right_side=-0.3987159729003906,
+        on_lane=True,
+    )
+    env = SimpleNamespace(config={"max_lateral_dist": 4.0})
+
+    assert adapter.is_physically_out_of_road(env, vehicle) is False
 
 
 @pytest.mark.parametrize(
@@ -68,6 +86,8 @@ def test_scene_context_does_not_treat_boundary_probe_as_sidewalk_exit(
         crash_sidewalk=True,
         contact_results=contacts,
         navigation=SimpleNamespace(current_lateral=0.0),
+        dist_to_left_side=1.0,
+        dist_to_right_side=1.0,
     )
     env = SimpleNamespace(config={"max_lateral_dist": 4.0})
 
@@ -343,6 +363,9 @@ def _make_done_test_env(
             route_completion=route_completion,
             reference_trajectory=reference_trajectory,
         ),
+        dist_to_left_side=1.0,
+        dist_to_right_side=1.0,
+        on_lane=True,
         LENGTH=4.5,
         WIDTH=1.9,
     )
@@ -384,6 +407,25 @@ def test_thesis_done_makes_continuous_line_only_non_terminal(
     assert info["crossed_continuous_line"] is True
     assert info["physical_out_of_road"] is False
     assert info["out_of_road"] is False
+
+
+def test_thesis_done_does_not_terminate_route_deviation_on_road(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=True,
+        done_info={"out_of_road": True},
+        lateral=5.0,
+    )
+
+    done, info = env.done_function("default_agent")
+
+    assert done is False
+    assert info["physical_out_of_road"] is False
+    assert info["out_of_road"] is False
+    assert info["route_lateral"] == 5.0
+    assert info["dist_to_right_side"] == 1.0
 
 
 def test_thesis_done_makes_boundary_probe_non_terminal(
@@ -449,8 +491,10 @@ def test_thesis_done_keeps_physical_exit_terminal_with_line_crossing(
         base_done=True,
         done_info={"out_of_road": True},
         continuous_line=True,
-        lateral=5.0,
     )
+    vehicle = env.agent_manager.active_agents["default_agent"]
+    vehicle.crash_sidewalk = True
+    vehicle.contact_results = {"ROAD_EDGE_SIDEWALK"}
 
     done, info = env.done_function("default_agent")
 
@@ -458,6 +502,28 @@ def test_thesis_done_keeps_physical_exit_terminal_with_line_crossing(
     assert info["crossed_continuous_line"] is True
     assert info["physical_out_of_road"] is True
     assert info["out_of_road"] is True
+
+
+def test_thesis_done_does_not_terminate_live_regression_reference_lane_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(
+        monkeypatch,
+        base_done=True,
+        done_info={"out_of_road": True},
+    )
+    vehicle = env.agent_manager.active_agents["default_agent"]
+    vehicle.navigation.current_lateral = 3.3987159729003906
+    vehicle.dist_to_left_side = 4.398715972900391
+    vehicle.dist_to_right_side = -0.3987159729003906
+    vehicle.contact_results = {"ROAD_LINE_BROKEN_SINGLE_WHITE"}
+
+    done, info = env.done_function("default_agent")
+
+    assert done is False
+    assert info["physical_out_of_road"] is False
+    assert info["out_of_road"] is False
+    assert info["contact_results"] == ["ROAD_LINE_BROKEN_SINGLE_WHITE"]
 
 
 def test_thesis_done_preserves_native_collision_termination(

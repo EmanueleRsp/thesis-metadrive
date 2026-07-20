@@ -87,27 +87,22 @@ def test_actor_snapshot_payload_builds_canonical_obb_and_rejects_incomplete_data
         )
 
 
-def test_contact_payload_requires_unit_ego_to_other_normal():
+def test_contact_payload_requires_only_stable_actor_identity_and_class():
     record = contact_onset_from_payload(
         {
             "actor_id": "ped-1",
             "actor_class": ActorClass.PEDESTRIAN,
-            "contact_point_xy": (2.0, 3.0),
-            "normal_ego_to_other_xy": (1.0, 0.0),
         }
     )
     assert record.actor_class is ActorClass.PEDESTRIAN
-    assert record.normal_ego_to_other_xy == (1.0, 0.0)
-    with pytest.raises(ValueError, match="unit"):
+    with pytest.raises(ValueError, match="missing"):
         contact_onset_from_payload(
             {
                 "actor_id": "ped-1",
-                "actor_class": "pedestrian",
                 "contact_point_xy": (2.0, 3.0),
-                "normal_ego_to_other_xy": (2.0, 0.0),
             }
         )
-    inverted = contact_onset_from_payload(
+    record_with_legacy_manifold_fields = contact_onset_from_payload(
         {
             "actor_id": "ped-1",
             "actor_class": "pedestrian",
@@ -116,7 +111,7 @@ def test_contact_payload_requires_unit_ego_to_other_normal():
             "normal_orientation": "other_to_ego",
         }
     )
-    assert inverted.normal_ego_to_other_xy == (1.0, 0.0)
+    assert record_with_legacy_manifold_fields.actor_id == "ped-1"
 
 
 def test_collision_wrapper_preserves_vendor_return_and_order():

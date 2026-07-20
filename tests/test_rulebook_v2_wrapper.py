@@ -17,8 +17,11 @@ from thesis_rl.rulebook.v2.wrapper import RulebookV2MonitorWrapper
 
 
 class _Env(gym.Env):
-    def __init__(self):
+    def __init__(self, *, terminated=False, truncated=False, step_info=None):
         self.t = 0
+        self._terminated = bool(terminated)
+        self._truncated = bool(truncated)
+        self._step_info = dict(step_info or {"native": True})
 
     def reset(self, **kwargs):
         self.t = 0
@@ -26,7 +29,7 @@ class _Env(gym.Env):
 
     def step(self, action):
         self.t += 1
-        return self.t, 3.5, False, False, {"native": True}
+        return self.t, 3.5, self._terminated, self._truncated, dict(self._step_info)
 
 
 def test_wrapper_preserves_native_reward_and_commits_after_transition():
@@ -55,6 +58,8 @@ def test_wrapper_preserves_native_reward_and_commits_after_transition():
     wrapped.reset()
     _, reward, _, _, info = wrapped.step(0)
     assert reward == 3.5
+    assert info["terminated"] is False
+    assert info["truncated"] is False
     assert info["rule_reward_vector"] == (0.0, 0.0, 0.0, 0.1)
     assert info["rule_metadata"]["rule_names"] == [
         "collision_impact",
@@ -69,6 +74,67 @@ def test_wrapper_preserves_native_reward_and_commits_after_transition():
         ("road_traffic_compliance", 2, 0.0),
         ("route_progress", 3, 0.1),
     ]
+
+
+def test_wrapper_exposes_native_termination_and_truncation_flags() -> None:
+    route = TaskRouteRecord("s", ("lane",), "pg", "v2", "hash")
+    cache = EpisodeCache("s", route)
+
+    def snapshot(env):
+        return env.t
+
+    def evaluate_transition(**kwargs):
+        _ = kwargs
+        return (
+            RulebookResult((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0, {}, True),
+            RulebookMemory(),
+            CacheDelta(),
+        )
+
+    for terminated, truncated in ((True, False), (False, True)):
+        wrapped = RulebookV2MonitorWrapper(
+            _Env(terminated=terminated, truncated=truncated),
+            snapshotter=snapshot,
+            transition_evaluator=evaluate_transition,
+            initial_memory=RulebookMemory(),
+            initial_cache=cache,
+        )
+        wrapped.reset()
+        _, _, returned_terminated, returned_truncated, info = wrapped.step(0)
+        assert (returned_terminated, returned_truncated) == (terminated, truncated)
+        assert (info["terminated"], info["truncated"]) == (terminated, truncated)
+
+
+def test_wrapper_preserves_physical_road_diagnostics() -> None:
+    route = TaskRouteRecord("s", ("lane",), "pg", "v2", "hash")
+    cache = EpisodeCache("s", route)
+
+    wrapped = RulebookV2MonitorWrapper(
+        _Env(
+            step_info={
+                "physical_out_of_road": False,
+                "route_lateral": 5.0,
+                "dist_to_left_side": 3.0,
+                "dist_to_right_side": 3.0,
+                "on_lane": True,
+                "contact_results": ["ROAD_EDGE_BOUNDARY"],
+            }
+        ),
+        snapshotter=lambda env: env.t,
+        transition_evaluator=lambda **_kwargs: (
+            RulebookResult((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0, {}, True),
+            RulebookMemory(),
+            CacheDelta(),
+        ),
+        initial_memory=RulebookMemory(),
+        initial_cache=cache,
+    )
+    wrapped.reset()
+    _observation, _reward, _terminated, _truncated, info = wrapped.step(0)
+
+    assert info["route_lateral"] == 5.0
+    assert info["dist_to_right_side"] == 3.0
+    assert info["contact_results"] == ["ROAD_EDGE_BOUNDARY"]
 
 
 def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation(tmp_path):

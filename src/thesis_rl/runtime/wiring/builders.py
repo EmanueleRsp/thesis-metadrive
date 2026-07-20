@@ -242,12 +242,23 @@ def build_adapter(cfg: DictConfig, common_kwargs: dict[str, object]) -> BaseAdap
 
 
 def _resolve_planner_cfg(cfg: DictConfig) -> DictConfig:
-    """Merge run-profile planner overrides on top of algorithm defaults."""
+    """Merge algorithm-specific run-profile overrides on algorithm defaults."""
     base_cfg = OmegaConf.create(OmegaConf.to_container(cfg.agent.planner.algorithm, resolve=True))
     planner_overrides = cfg.get("planner")
     if planner_overrides is None:
         return base_cfg
-    return OmegaConf.merge(base_cfg, planner_overrides)
+    algorithm_name = str(cfg.agent.planner.algorithm.name).lower()
+    if algorithm_name == "td3_sb3":
+        algorithm_overrides = planner_overrides.get("td3")
+    elif algorithm_name == "sac_sb3":
+        algorithm_overrides = planner_overrides.get("sac")
+    elif algorithm_name == "ppo_sb3":
+        algorithm_overrides = planner_overrides.get("ppo")
+    else:
+        algorithm_overrides = None
+    if algorithm_overrides is None:
+        return base_cfg
+    return OmegaConf.merge(base_cfg, algorithm_overrides)
 
 
 def build_planner(cfg: DictConfig, env: Any, seed: int | None = None) -> "BasePlanner":

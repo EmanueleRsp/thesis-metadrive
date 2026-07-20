@@ -177,6 +177,8 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         if callable(refresh):
             observation = refresh(observation)
         info_dict = dict(info) if isinstance(info, Mapping) else {}
+        info_dict["terminated"] = bool(terminated)
+        info_dict["truncated"] = bool(truncated)
         native_reward = float(reward)
         info_dict["env_reward"] = native_reward
         info_dict["rule_reward_vector"] = result.margins
@@ -239,10 +241,19 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
                     "crash_vehicle",
                     "crash_object",
                     "crash_human",
+                    "crash_sidewalk",
                     "collision",
                     "out_of_road",
                     "physical_out_of_road",
+                    "crossed_continuous_line",
                     "termination_reason",
+                    "route_lateral",
+                    "dist_to_left_side",
+                    "dist_to_right_side",
+                    "on_lane",
+                    "contact_results",
+                    "terminated",
+                    "truncated",
                 )
                 if key in info_dict
             },

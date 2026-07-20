@@ -241,6 +241,21 @@ run-train:
 	fi
 	docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev \
 		uv run --no-sync python -m thesis_rl.cli.train \
+		env=scenarionet \
+		obs=semantic_v2 \
+		agent/planner/encoder=lq \
+		agent/planner/decoder=mlp_encoded \
+		reward=scalar_reward \
+		scalarization=default \
+		curriculum=scenario_acl_scenarionet \
+		rulebook.version=4.7-final-implementation-complete \
+		env.provider.strict=true \
+		env.provider.allow_fallback=false \
+		env.provider.source_probability.waymo=0.5 \
+		env.provider.source_probability.pg=0.5 \
+		env.config.num_scenarios=-1 \
+		env.vectorized.enabled=false \
+		env.vectorized.num_envs=1 \
 		agent/planner/algorithm=$(ALGORITHM) \
 		run_profile=$(RUN_PROFILE) \
 		experiment.name=$(RUN_NAME) \

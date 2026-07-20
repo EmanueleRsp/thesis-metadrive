@@ -1190,7 +1190,7 @@ Non include TTC, clearance, off-road puramente geometrico o lane-line contact.
 
 Il collision hook mantiene l'insieme dei contatti attivi a ogni physics substep e produce un `ContactOnsetRecord` quando un ID stabile passa da non attivo ad attivo. Al reset l'insieme viene inizializzato con i contatti già presenti, che non generano onset.
 
-Durante un singolo control step, gli onset dello stesso attore vengono deduplicati per actor ID; i relativi contact point restano tutti disponibili per il massimo di severità. Si definisce:
+Durante un singolo control step, gli onset dello stesso attore vengono deduplicati per actor ID. Si definisce:
 
 $$
 \mathcal C_t^{\mathrm{new}}
@@ -1205,35 +1205,37 @@ Il post-state conserva anche l'insieme dei contatti ancora attivi, che diventa `
 
 ## 5.3 Severità raw
 
-Per un contatto nuovo con oggetto $i$, sia $\mathcal P_i$ l'insieme dei contact point restituiti dal manifold fisico per lo stesso ID stabile. Per ciascun punto $p$:
+Per un contatto nuovo con oggetto $i$, siano $\mathbf g_e^-$ e $\mathbf g_i^-$ i centri dei footprint canonici dell'ego e dell'oggetto nel `pre_state`. La normale R1 è definita una sola volta per attore:
 
 $$
-u_{i,p}(t)
+\mathbf n_i=
+\frac{\mathbf g_i^- - \mathbf g_e^-}
+{\left\|\mathbf g_i^- - \mathbf g_e^-\right\|_2}.
+$$
+
+Se il denominatore è minore o uguale a $10^{-6}\,m$, il monitor solleva `RulebookEvaluationError`: non inventa una direzione per footprint con centro coincidente. Il contact hook fisico serve esclusivamente a identificare onset e ID stabile dell'attore; non fornisce né la normale né la severità.
+
+La velocità normale è:
+
+$$
+u_i(t)
 =
 \left[
 (\mathbf v_e^{-}-\mathbf v_i^{-})^\top
-\mathbf n_{i,p}
+\mathbf n_i
 \right]_+,
 $$
 
 dove le velocità $\mathbf v^{-}$ provengono dal `pre_state` della transizione. Per un oggetto classificato `STATIC_COLLIDABLE` si pone $\mathbf v_i^{-}=\mathbf0$. Se un attore dinamico non esiste nel `pre_state` ma compare già in contatto nel `post_state`, il monitor solleva `RulebookEvaluationError`: non viene inventata una velocità pre-impatto. La validazione offline deve inoltre escludere spawn con footprint inizialmente sovrapposto all'ego.
 
-La velocità normale rappresentativa dell'oggetto è:
-
-$$
-u_i(t)=\max_{p\in\mathcal P_i}u_{i,p}(t).
-$$
-
 Dove:
 
 - $\mathbf v_e^{-}$: velocità ego nel `pre_state`;
 - $\mathbf v_i^{-}$: velocità dell'altro oggetto nel `pre_state`, nulla soltanto per `STATIC_COLLIDABLE`;
-- $\mathbf n_{i,p}$: normale unitaria del contact point $p$, orientata esplicitamente dall'ego verso l'oggetto;
+- $\mathbf n_i$: asse unitario pre-state dal centro del footprint canonico ego verso il centro del footprint canonico dell'oggetto;
 - $[x]_+=\max(x,0)$.
 
 Si usa deliberatamente l'approssimazione al precedente **control step**, non la velocità esatta del substep fisico di collisione. Questa scelta mantiene il monitor coerente con la frequenza alla quale il learner osserva e controlla l'ambiente ed evita strumentazione substep non necessaria.
-
-Il massimo fra i contact point evita che la scelta arbitraria del primo record o la media di normali discordanti riduca artificialmente la severità.
 
 La severità raw è:
 
@@ -1333,7 +1335,7 @@ Non vengono usate masse perché non sono disponibili in modo omogeneo per tutti 
 | $\mathcal C_t^{\mathrm{new}}$ | onset deduplicati durante la transizione | contact hook custom |
 | $\mathcal C_{t+1}^{\mathrm{active}}$ | contatti attivi nel post-state | contact hook custom |
 | $\mathbf v_e^{-},\mathbf v_i^{-}$ | velocità nel `pre_state` | transition snapshot |
-| $\mathcal P_i,\mathbf n_{i,p}$ | contact point e normali orientate ego $\rightarrow$ oggetto | contact manifold custom |
+| $\mathbf g_e^-,\mathbf g_i^-,\mathbf n_i$ | centri dei footprint canonici pre-state e asse ego $\rightarrow$ oggetto | transition snapshot |
 | $v_{\max,e},v_{\max,i}$ | configured speed normalization cap | configurazione/catalogo validato |
 | actor type | vehicle, VRU, static, boundary | oggetto live |
 
@@ -1347,21 +1349,19 @@ Non vengono usate masse perché non sono disponibili in modo omogeneo per tutti 
 
 ## 5.9 Fattibilità
 
-MetaDrive espone crash flags e stato precedente del veicolo, ma il callback upstream non conserva nell'interfaccia standard tutti i dati richiesti per la severità, in particolare actor ID, normale orientata e deduplicazione dei contact point. Si implementa quindi un hook localizzato nel collision callback/manager che produca record del tipo:
+MetaDrive espone crash flags e stato precedente del veicolo, ma il callback upstream non conserva nell'interfaccia standard un ID stabile e una deduplicazione degli onset. Si implementa quindi un hook localizzato nel collision callback/manager che produca record del tipo:
 
 ```python
 ContactRecord(
     other_id,
     other_type,
-    normal_ego_to_other,
 )
 ```
 
 Il wrapper:
 
-- raggruppa i contact point per actor ID senza scegliere arbitrariamente il primo;
-- orienta ogni normale dall'ego verso la controparte;
-- usa il massimo closing speed normale fra i contact point dello stesso oggetto;
+- raggruppa gli onset per actor ID senza dipendere dalla geometria del manifold;
+- deriva la normale sempre dai centri dei footprint canonici nel `pre_state`;
 - associa il record alle velocità del `pre_state`;
 - rileva l'onset a ogni physics substep, deduplica per control step e restituisce anche gli ID ancora attivi nel post-state.
 
@@ -2855,7 +2855,7 @@ Prima di `env.step` il wrapper svuota il buffer degli onset del control step; i 
 
 Il wrapper deve fornire o derivare una volta al reset:
 
-- contact actor ID stabile e normali orientate ego→oggetto;
+- contact actor ID stabile; la normale R1 è derivata dal `pre_state`;
 - footprint polygon validi e quota corrente degli attori;
 - catalogo tipizzato di attori e map features;
 - lane centerline 3D, lane width/polygon, funzione di quota, orientamento legale e successor graph;
@@ -3090,9 +3090,9 @@ rulebook:
     velocity_source: pre_state
     static_velocity_mps: 0.0
     dynamic_spawn_in_contact_policy: fail_fast
-    severity_raw: squared_max_contact_point_normal_closing_speed
-    normal_orientation: ego_to_other
-    contact_point_aggregation: max_per_stable_actor_id
+    severity_raw: squared_pre_state_centerline_normal_closing_speed
+    normal_source: pre_state_canonical_footprint_centers
+    contact_onset_aggregation: per_stable_actor_id
     normalization:
       vehicle: ego_plus_other_configured_speed_cap
       vru_or_static: ego_configured_speed_cap
@@ -3225,12 +3225,13 @@ La configurazione dell'algoritmo lessicografico resta esterna al monitor.
 ## 15.1 Collisione
 
 - nuovo contatto frontale;
-- normale restituita nel verso opposto e correttamente invertita;
+- nuovo contatto posteriore e laterale con asse pre-state deterministico;
 - contatto tangenziale;
 - contatto persistente senza nuovo onset;
 - contatto che inizia e termina fra due control frame viene rilevato;
 - separazione per almeno un physics substep e ricontatto produce un nuovo onset;
-- più contact point dello stesso oggetto e selezione del massimo closing speed normale;
+- contact callback privo di manifold fisico ma con ID attore risolvibile;
+- centri dei footprint pre-state coincidenti producono `RulebookEvaluationError`;
 - collisioni simultanee con oggetti differenti;
 - oggetto statico;
 - attore dinamico spawnato già in contatto produce `RulebookEvaluationError`;

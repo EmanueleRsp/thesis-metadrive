@@ -85,7 +85,7 @@ def detect_zone_transition(
 
 
 class ContactOnsetBuffer:
-    """Thread-safe buffer preserving all contact points and deduplicating actors."""
+    """Thread-safe buffer preserving contact onsets and deduplicating actors."""
 
     def __init__(self) -> None:
         self._lock = RLock()

@@ -109,6 +109,77 @@ def test_run_profile_medium_overrides_experiment_budget() -> None:
     assert int(cfg.experiment.eval_episodes) == 50
 
 
+def test_td3_run_profiles_use_budget_appropriate_warmup_and_batch() -> None:
+    expected = {
+        "default": (600000, 10000, 256),
+        "smoke": (2000, 100, 64),
+        "fast": (120000, 5000, 256),
+        "medium": (350000, 10000, 256),
+        "long": (700000, 10000, 256),
+        "tune": (500000, 10000, 256),
+        "thesis": (1500000, 10000, 256),
+    }
+
+    for profile, (timesteps, learning_starts, batch_size) in expected.items():
+        cfg = _compose(
+            f"run_profile={profile}",
+            "agent/planner/algorithm=td3_sb3",
+        )
+        resolved_planner_cfg = _resolve_planner_cfg(cfg)
+        assert int(cfg.experiment.total_timesteps) == timesteps
+        assert int(resolved_planner_cfg.learning_starts) == learning_starts
+        assert int(resolved_planner_cfg.batch_size) == batch_size
+
+
+def test_sb3_sac_run_profiles_use_budget_appropriate_warmup_and_batch() -> None:
+    expected = {
+        "default": (600000, 10000, 256),
+        "smoke": (2000, 100, 64),
+        "fast": (120000, 1000, 256),
+        "medium": (350000, 5000, 256),
+        "long": (700000, 10000, 256),
+        "tune": (500000, 5000, 256),
+        "thesis": (1500000, 10000, 256),
+    }
+
+    for profile, (timesteps, learning_starts, batch_size) in expected.items():
+        cfg = _compose(
+            f"run_profile={profile}",
+            "agent/planner/algorithm=sac_sb3",
+        )
+        resolved_planner_cfg = _resolve_planner_cfg(cfg)
+        assert int(cfg.experiment.total_timesteps) == timesteps
+        assert int(resolved_planner_cfg.learning_starts) == learning_starts
+        assert int(resolved_planner_cfg.batch_size) == batch_size
+
+
+def test_sb3_ppo_smoke_uses_diagnostic_rollout_override() -> None:
+    cfg = _compose("run_profile=smoke", "agent/planner/algorithm=ppo_sb3")
+    resolved_planner_cfg = _resolve_planner_cfg(cfg)
+
+    assert int(resolved_planner_cfg.n_steps) == 16
+    assert int(resolved_planner_cfg.batch_size) == 8
+
+
+def test_rule_margin_logging_is_enabled_only_for_smoke_by_default() -> None:
+    profiles = ("default", "smoke", "fast", "medium", "long", "tune", "thesis")
+
+    for profile in profiles:
+        cfg = _compose(f"run_profile={profile}")
+        path = cfg.reward.rule_margin_log_path
+        if profile == "smoke":
+            assert str(path).endswith("/logs/rule_margins.jsonl")
+        else:
+            assert path is None
+
+
+def test_explicit_td3_diagnostic_preset_keeps_margin_logging_enabled() -> None:
+    with initialize_config_dir(version_base=None, config_dir=str(CONF_DIR)):
+        cfg = compose(config_name="presets/td3/td3_scalar_reward_scale_tuning_no_curr")
+
+    assert str(cfg.reward.rule_margin_log_path).endswith("/logs/rule_margins.jsonl")
+
+
 def test_run_profile_tune_overrides_experiment_budget() -> None:
     cfg = _compose("run_profile=tune")
 
@@ -156,8 +227,7 @@ def test_final_scalar_pipeline_defaults_compose() -> None:
     assert bool(cfg.agent.planner.algorithm.transition_replay.prioritized) is True
     assert bool(cfg.agent.planner.algorithm.transition_replay.persistence.enabled) is True
     assert (
-        str(cfg.agent.planner.algorithm.transition_replay.persistence.trigger)
-        == "final_or_manual"
+        str(cfg.agent.planner.algorithm.transition_replay.persistence.trigger) == "final_or_manual"
     )
     assert bool(cfg.checkpoint.save_latest_each_chunk) is True
     assert bool(cfg.checkpoint.save_final) is True

@@ -90,6 +90,27 @@ class _Manifold:
     def getPositionWorldOnB(self):
         return (2.0, 0.0, 0.0)
 
+    def getNormalWorldOnB(self):
+        # Bullet convention: B -> A.  Here A is ego and B is the other actor.
+        return (-1.0, 0.0, 0.0)
+
+
+class _CoincidentManifold:
+    def getPositionWorldOnA(self):
+        return (0.0, 0.0, 0.0)
+
+    def getPositionWorldOnB(self):
+        return (0.0, 0.0, 0.0)
+
+    def getNormalWorldOnB(self):
+        # Bullet convention: B -> A.  For ego=A and other=B this is -X.
+        return (-1.0, 0.0, 0.0)
+
+
+class _StaleManifold(_CoincidentManifold):
+    def getDistance(self):
+        return 0.1
+
 
 class _Contact:
     def __init__(self):
@@ -207,7 +228,7 @@ def test_metadrive_actor_requires_vehicle_speed_cap():
         actor_snapshot_from_metadrive(_Env(), NoCapVehicle())
 
 
-def test_metadrive_contact_normal_is_oriented_from_ego_to_other():
+def test_metadrive_contact_identifies_ego_and_other_without_manifold_geometry():
     env = _Env()
     _Traffic.obj_id_to_scenario_id["other-runtime"] = "other-scenario"
     record = contact_onset_from_metadrive_contact(
@@ -215,8 +236,6 @@ def test_metadrive_contact_normal_is_oriented_from_ego_to_other():
     )
     assert record.actor_id == "other-scenario"
     assert record.actor_class is ActorClass.VEHICLE
-    assert record.contact_point_xy == (1.0, 0.0)
-    assert record.normal_ego_to_other_xy == (1.0, 0.0)
 
 
 def test_metadrive_contact_uses_scenario_env_agent_as_ego():
@@ -273,6 +292,58 @@ def test_metadrive_contact_recorder_keeps_persistent_manifold_active():
     PersistentEngine.physics_world.dynamic_world.manifolds = []
     recorder.clear_control_step()
     assert recorder.snapshot_contact_state() == ((), frozenset())
+
+
+def test_metadrive_contact_recorder_does_not_keep_callback_only_contact_active():
+    class World:
+        def get_manifolds(self):
+            return ()
+
+    class Physics:
+        dynamic_world = World()
+
+    class QueryEngine:
+        traffic_manager = _Traffic()
+        physics_world = Physics()
+
+    class QueryEnv:
+        engine = QueryEngine()
+
+    recorder = MetaDriveContactRecorder(QueryEnv(), object_from_node=_object_from_node)
+    recorder.observe(_Contact())
+    records, active = recorder.snapshot_contact_state()
+    assert len(records) == 1
+    assert active == frozenset()
+
+
+def test_metadrive_contact_recorder_ignores_positive_distance_manifold():
+    class World:
+        manifolds = [_Contact()]
+
+        def get_manifolds(self):
+            return tuple(self.manifolds)
+
+    class Physics:
+        dynamic_world = World()
+
+    class StaleContact(_Contact):
+        def __init__(self):
+            super().__init__()
+            self.manifold_point = _StaleManifold()
+
+    World.manifolds = [StaleContact()]
+
+    class QueryEngine:
+        traffic_manager = _Traffic()
+        physics_world = Physics()
+
+    class QueryEnv:
+        engine = QueryEngine()
+
+    recorder = MetaDriveContactRecorder(QueryEnv(), object_from_node=_object_from_node)
+    records, active = recorder.snapshot_contact_state()
+    assert records == ()
+    assert active == frozenset()
 
 
 def test_metadrive_contact_recorder_reads_base_vehicle_contact_test_path():
@@ -376,7 +447,7 @@ def test_metadrive_contact_recorder_ignores_non_ego_actor_contacts():
     assert recorder.snapshot_contact_state() == ((), frozenset())
 
 
-def test_metadrive_contact_recorder_defers_node_only_callback_to_manifold_query():
+def test_metadrive_contact_recorder_accepts_node_only_callback_without_manifold_query():
     class NodeOnlyContact(_Contact):
         getManifoldPoint = None
 
@@ -386,8 +457,10 @@ def test_metadrive_contact_recorder_defers_node_only_callback_to_manifold_query(
 
     recorder = MetaDriveContactRecorder(_Env(), object_from_node=_object_from_node)
     recorder.observe(NodeOnlyContact())
-    assert recorder.deferred_manifold_contacts == 1
-    assert recorder.snapshot_contact_state() == ((), frozenset())
+    records, active = recorder.snapshot_contact_state()
+    assert len(records) == 1
+    assert records[0].actor_id == "other-scenario"
+    assert active == frozenset({"other-scenario"})
 
 
 def test_metadrive_contact_rejects_contacts_without_ego():

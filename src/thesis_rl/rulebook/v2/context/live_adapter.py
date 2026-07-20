@@ -103,13 +103,9 @@ def actor_snapshot_from_payload(payload: Mapping[str, object]) -> ActorSnapshot:
 
 
 def contact_onset_from_payload(payload: Mapping[str, object]) -> ContactOnsetRecord:
-    """Normalize a contact-manifold record whose normal is ego-to-other."""
+    """Normalize a source contact record used only for onset identity."""
 
-    required = {"actor_id", "actor_class", "contact_point_xy"}
-    has_canonical_normal = "normal_ego_to_other_xy" in payload
-    has_manifold_normal = "normal_xy" in payload and "normal_orientation" in payload
-    if not has_canonical_normal and not has_manifold_normal:
-        required.add("normal_ego_to_other_xy")
+    required = {"actor_id", "actor_class"}
     missing = sorted(required.difference(payload))
     if missing:
         raise ValueError(f"Contact payload missing fields: {missing}")
@@ -121,20 +117,7 @@ def contact_onset_from_payload(payload: Mapping[str, object]) -> ContactOnsetRec
         canonical_class = actor_class if isinstance(actor_class, ActorClass) else ActorClass(str(actor_class))
     except ValueError as error:
         raise ValueError(f"Unknown contact actor class: {actor_class!r}") from error
-    point = _finite_pair(payload["contact_point_xy"], field_name="contact_point_xy")
-    if has_canonical_normal:
-        normal = _finite_pair(payload["normal_ego_to_other_xy"], field_name="normal_ego_to_other_xy")
-    else:
-        normal = _finite_pair(payload["normal_xy"], field_name="normal_xy")
-        orientation = payload["normal_orientation"]
-        if orientation == "other_to_ego":
-            normal = (-normal[0], -normal[1])
-        elif orientation != "ego_to_other":
-            raise ValueError("Contact normal_orientation must be ego_to_other or other_to_ego")
-    norm = (normal[0] ** 2 + normal[1] ** 2) ** 0.5
-    if norm <= 1.0e-12 or abs(norm - 1.0) > 1.0e-6:
-        raise ValueError("Contact normal must be a non-zero unit vector oriented ego-to-other")
-    return ContactOnsetRecord(actor_id, canonical_class, point, normal)
+    return ContactOnsetRecord(actor_id, canonical_class)
 
 
 def wrap_collision_callback(

@@ -8,7 +8,7 @@ those providers remain explicit inputs to the live adapter.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from math import atan2, hypot, isfinite
+from math import atan2, isfinite
 from typing import Any
 
 from thesis_rl.rulebook.v2.context.live_adapter import actor_snapshot_from_payload
@@ -31,6 +31,8 @@ _LIVE_SIGNAL_STATE_MAP = {
     "TRAFFIC_LIGHT_UNKNOWN": "UNKNOWN",
     "LANE_STATE_UNKNOWN": "UNKNOWN",
 }
+
+_CONTACT_DISTANCE_TOLERANCE_M = 1.0e-6
 
 
 def _sequence_pair(value: object, *, field_name: str) -> tuple[float, float]:
@@ -262,21 +264,6 @@ def _contact_method(contact: Any, *names: str) -> Any:
     raise ValueError(f"MetaDrive contact has no supported accessor: {names!r}")
 
 
-def _point3(value: object, *, field_name: str) -> tuple[float, float, float]:
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        if len(value) < 3:
-            raise ValueError(f"MetaDrive contact {field_name} must contain three values")
-        point = (float(value[0]), float(value[1]), float(value[2]))
-    else:
-        try:
-            point = (float(value[0]), float(value[1]), float(value[2]))  # type: ignore[index]
-        except (IndexError, KeyError, TypeError, ValueError) as error:
-            raise ValueError(f"MetaDrive contact {field_name} must contain three values") from error
-    if not all(isfinite(component) for component in point):
-        raise ValueError(f"MetaDrive contact {field_name} must be finite")
-    return point
-
-
 def _node_object_id(obj: Any) -> str:
     value = getattr(obj, "id", None)
     if not isinstance(value, str) or not value:
@@ -327,7 +314,7 @@ def contact_onset_from_metadrive_contact(
     *,
     object_from_node: Any,
 ) -> ContactOnsetRecord:
-    """Normalize one Bullet contact whose one body is the live ego vehicle.
+    """Normalize one Bullet contact into a stable ego/other onset identity.
 
     ``object_from_node`` is injected because MetaDrive's global object registry
     is an engine concern.  The helper never reads crash flags or ScenarioNet
@@ -357,48 +344,10 @@ def contact_onset_from_metadrive_contact(
         ego_is_node0 = False
     else:
         raise ValueError("MetaDrive contact does not involve the configured ego vehicle")
-    del ego_node, other_node  # identity is established; geometry uses the manifold points.
-
-    manifold = _contact_method(contact, "getManifoldPoint", "get_manifold_point", "manifold_point")
-    point_a = _point3(
-        _contact_method(
-            manifold, "getPositionWorldOnA", "get_position_world_on_a", "position_world_on_a"
-        ),
-        field_name="position_world_on_a",
-    )
-    point_b = _point3(
-        _contact_method(
-            manifold, "getPositionWorldOnB", "get_position_world_on_b", "position_world_on_b"
-        ),
-        field_name="position_world_on_b",
-    )
-    ego_point, other_point = (point_a, point_b) if ego_is_node0 else (point_b, point_a)
-    vector = (
-        other_point[0] - ego_point[0],
-        other_point[1] - ego_point[1],
-    )
-    norm = hypot(*vector)
-    if norm <= 1.0e-12:
-        normal = _point3(
-            _contact_method(
-                manifold, "getNormalWorldOnB", "get_normal_world_on_b", "normal_world_on_b"
-            ),
-            field_name="normal_world_on_b",
-        )
-        vector = (normal[0], normal[1])
-        if not ego_is_node0:
-            vector = (-vector[0], -vector[1])
-        norm = hypot(*vector)
-    if norm <= 1.0e-12 or not isfinite(norm):
-        raise ValueError("MetaDrive contact normal cannot be normalized")
+    del ego_node, other_node, ego_is_node0
     return ContactOnsetRecord(
         actor_id=_stable_actor_id(env, other),
         actor_class=_actor_class(other),
-        contact_point_xy=(
-            (ego_point[0] + other_point[0]) / 2.0,
-            (ego_point[1] + other_point[1]) / 2.0,
-        ),
-        normal_ego_to_other_xy=(vector[0] / norm, vector[1] / norm),
     )
 
 
@@ -414,7 +363,6 @@ class MetaDriveContactRecorder:
         self._active_actor_ids: set[str] = set()
         self._last_snapshot_active_ids: frozenset[str] = frozenset()
         self.ignored_non_actor_contacts = 0
-        self.deferred_manifold_contacts = 0
 
     def clear_control_step(self) -> None:
         self.buffer.clear_control_step()
@@ -436,15 +384,6 @@ class MetaDriveContactRecorder:
                 "MetaDrive contact objects could not be resolved",
                 "MetaDrive contact does not involve the configured ego vehicle",
             }:
-                if str(error) == (
-                    "MetaDrive contact has no supported accessor: "
-                    "('getManifoldPoint', 'get_manifold_point', 'manifold_point')"
-                ):
-                    # Bullet's ContactAdded callback carries node identities;
-                    # manifold points are available from the world manifold
-                    # query at the control-step snapshot boundary.
-                    self.deferred_manifold_contacts += 1
-                    return
                 raise
             self.ignored_non_actor_contacts += 1
             return
@@ -497,10 +436,28 @@ class MetaDriveContactRecorder:
                             # single-point accessor without an index.
                             return point_getter()
 
+                    def getDistance(self):
+                        manifold_point = self.getManifoldPoint()
+                        getter = getattr(manifold_point, "getDistance", None)
+                        if not callable(getter):
+                            raise AttributeError("Persistent manifold point has no distance accessor")
+                        return getter()
+
+                point = _PersistentContact()
+                try:
+                    distance = float(point.getDistance())
+                except AttributeError:
+                    distance = None
+                if distance is not None:
+                    if not isfinite(distance):
+                        raise ValueError("MetaDrive persistent manifold distance is not finite")
+                    if distance > _CONTACT_DISTANCE_TOLERANCE_M:
+                        continue
+
                 try:
                     records.append(
                         contact_onset_from_metadrive_contact(
-                            _PersistentContact(),
+                            point,
                             self.env,
                             object_from_node=self.object_from_node,
                         )
@@ -513,6 +470,24 @@ class MetaDriveContactRecorder:
                         raise
                     self.ignored_non_actor_contacts += 1
         return tuple(records)
+
+    def _has_current_contact_query(self) -> bool:
+        """Return whether active contacts can be read at the snapshot boundary."""
+
+        physics_world = getattr(getattr(self.env, "engine", None), "physics_world", None)
+        if physics_world is None:
+            return False
+        dynamic_world = getattr(physics_world, "dynamic_world", None)
+        manifold_getter = (
+            getattr(dynamic_world, "get_manifolds", None)
+            or getattr(dynamic_world, "getManifolds", None)
+        )
+        if callable(manifold_getter):
+            return True
+        return any(
+            callable(getattr(getattr(physics_world, world_name, None), "contactTest", None))
+            for world_name in ("static_world", "dynamic_world")
+        )
 
     def _contact_test_records(self) -> tuple[ContactOnsetRecord, ...]:
         """Read the same live contact-test path used by BaseVehicle._state_check."""
@@ -528,7 +503,7 @@ class MetaDriveContactRecorder:
             return ()
 
         records: list[ContactOnsetRecord] = []
-        seen: set[tuple[str, tuple[float, float]]] = set()
+        seen: set[str] = set()
         for world_name in ("static_world", "dynamic_world"):
             world = getattr(physics_world, world_name, None)
             contact_test = getattr(world, "contactTest", None) if world is not None else None
@@ -558,10 +533,9 @@ class MetaDriveContactRecorder:
                         self.ignored_non_actor_contacts += 1
                         continue
                     raise
-                key = (record.actor_id, record.contact_point_xy)
-                if key not in seen:
+                if record.actor_id not in seen:
                     records.append(record)
-                    seen.add(key)
+                    seen.add(record.actor_id)
         return tuple(records)
 
     def snapshot_contact_state(self) -> tuple[tuple[ContactOnsetRecord, ...], frozenset[str]]:
@@ -578,7 +552,15 @@ class MetaDriveContactRecorder:
             ):
                 onset_records.append(record)
                 seen_onsets.add(record.actor_id)
-        current_ids = frozenset((*persistent_ids, *self._active_actor_ids))
+        # Callback notifications are reliable onset evidence but can outlive
+        # the contact until the next control boundary.  When Bullet exposes a
+        # current manifold/contact query, only that query defines active IDs;
+        # callback IDs remain a compatibility fallback for minimal bindings.
+        current_ids = (
+            persistent_ids
+            if self._has_current_contact_query()
+            else frozenset((*persistent_ids, *self._active_actor_ids))
+        )
         self._last_snapshot_active_ids = current_ids
         self._active_actor_ids.clear()
         return tuple(onset_records), current_ids

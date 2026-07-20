@@ -5,7 +5,10 @@ import pickle
 
 import pytest
 
-from thesis_rl.rulebook.v2.context.waymo_static_adapter import build_waymo_static_adapter_result
+from thesis_rl.rulebook.v2.context.waymo_static_adapter import (
+    _lane_record,
+    build_waymo_static_adapter_result,
+)
 
 
 def _minimal_scenario(*, signal_lane_reachable: bool) -> dict:
@@ -102,6 +105,30 @@ def test_waymo_adapter_preserves_lane_successors() -> None:
     lanes = {lane.lane_id: lane for lane in result.route_lanes}
     assert lanes["lane-a"].successor_lane_ids == ("lane-b",)
     assert lanes["lane-b"].successor_lane_ids == ()
+
+
+def test_waymo_adapter_uses_per_side_widths_without_halving_them_again() -> None:
+    lane = _lane_record(
+        "asymmetric",
+        {
+            "polyline": [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+            "width": [[2.0, 1.0], [2.0, 1.0]],
+        },
+    )
+
+    assert lane.polygon_xy.bounds == pytest.approx((0.0, -1.0, 10.0, 2.0))
+
+
+def test_waymo_adapter_interpolates_missing_per_side_width_samples() -> None:
+    lane = _lane_record(
+        "partial-width",
+        {
+            "polyline": [[0.0, 0.0, 0.0], [5.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+            "width": [[2.0, 1.0], [0.0, 0.0], [2.0, 1.0]],
+        },
+    )
+
+    assert lane.polygon_xy.bounds == pytest.approx((0.0, -1.0, 10.0, 2.0))
 
 
 @pytest.mark.parametrize(

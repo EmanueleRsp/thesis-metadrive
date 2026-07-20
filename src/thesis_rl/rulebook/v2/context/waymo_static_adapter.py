@@ -51,17 +51,67 @@ def _points(value: Any) -> np.ndarray:
     return array[:, :3]
 
 
-def _lane_record(lane_id: str, lane: Mapping[str, Any], *, z_origin_m: float = 0.0) -> RouteLaneRecord:
+def _lane_polygon_from_widths(points: np.ndarray, width: Any, *, lane_id: str) -> Polygon:
+    """Build a lane polygon from ScenarioNet's left/right per-point widths."""
+
+    widths = np.asarray(width, dtype=float)
+    if widths.ndim == 1:
+        width_m = float(np.nanmedian(widths))
+        if not np.isfinite(width_m) or width_m <= 0.0:
+            raise ValueError(f"Waymo lane {lane_id!r} has invalid width")
+        return LineString(tuple((float(x), float(y)) for x, y, _ in points)).buffer(
+            width_m / 2.0, cap_style="flat", join_style="mitre"
+        )
+    if widths.ndim != 2 or widths.shape != (len(points), 2):
+        raise ValueError(
+            f"Waymo lane {lane_id!r} width must have one left/right pair per point"
+        )
+
+    # ScenarioNet's Waymo converter derives a width independently at every
+    # centerline sample. Missing boundary spans remain zero; linearly repair
+    # only those missing samples from the lane's own valid widths.
+    sample_index = np.arange(len(points), dtype=float)
+    resolved_widths = np.empty_like(widths)
+    for side in range(2):
+        valid = np.isfinite(widths[:, side]) & (widths[:, side] > 0.0)
+        if not np.any(valid):
+            raise ValueError(f"Waymo lane {lane_id!r} has invalid left/right widths")
+        resolved_widths[:, side] = np.interp(
+            sample_index,
+            sample_index[valid],
+            widths[valid, side],
+        )
+
+    xy = points[:, :2]
+    tangents = np.empty_like(xy)
+    tangents[0] = xy[1] - xy[0]
+    tangents[-1] = xy[-1] - xy[-2]
+    if len(xy) > 2:
+        tangents[1:-1] = xy[2:] - xy[:-2]
+    norms = np.linalg.norm(tangents, axis=1)
+    if np.any(norms <= 0.0):
+        raise ValueError(f"Waymo lane {lane_id!r} has repeated centerline points")
+    left_normals = np.column_stack((-tangents[:, 1] / norms, tangents[:, 0] / norms))
+    left_boundary = xy + left_normals * resolved_widths[:, :1]
+    right_boundary = xy - left_normals * resolved_widths[:, 1:]
+    polygon = Polygon(np.concatenate((left_boundary, right_boundary[::-1]), axis=0))
+    if polygon.is_empty or not polygon.is_valid:
+        raise ValueError(f"Waymo lane {lane_id!r} width polygon is invalid")
+    return polygon
+
+
+def _lane_record(
+    lane_id: str, lane: Mapping[str, Any], *, z_origin_m: float = 0.0
+) -> RouteLaneRecord:
     points = _points(lane.get("polyline"))
     centerline = RoutePolyline(
         tuple((float(point[0]), float(point[1]), float(point[2] - z_origin_m)) for point in points)
     )
     width = lane.get("width")
-    width_m = float(np.nanmedian(np.asarray(width, dtype=float))) if width is not None else 3.5
-    if not np.isfinite(width_m) or width_m <= 0.0:
-        raise ValueError(f"Waymo lane {lane_id!r} has invalid width")
-    polygon = LineString(tuple((float(x), float(y)) for x, y, _ in points)).buffer(
-        width_m / 2.0, cap_style="flat", join_style="mitre"
+    polygon = _lane_polygon_from_widths(
+        points,
+        3.5 if width is None else width,
+        lane_id=lane_id,
     )
     successors = tuple(str(successor) for successor in lane.get("exit_lanes", ()))
     return RouteLaneRecord(lane_id, polygon, centerline, successors)

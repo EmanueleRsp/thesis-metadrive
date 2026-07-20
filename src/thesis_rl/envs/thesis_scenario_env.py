@@ -629,6 +629,7 @@ class ThesisScenarioEnv(ScenarioEnv):
 
         done_info["crossed_continuous_line"] = bool(line_only)
         done_info["physical_out_of_road"] = bool(physical_out)
+        done_info.update(self.scene_context.get_physical_road_diagnostics(vehicle))
         done_info["termination_reason"] = self.scene_context.get_termination_reason(
             self, vehicle, done_info
         )
@@ -699,6 +700,11 @@ class ThesisScenarioEnv(ScenarioEnv):
         metadata = self._scenario_metadata()
         info.update(metadata)
         info.update(self._last_sampling_metadata)
+        # Publish the final Gymnasium boundary explicitly so every outer
+        # wrapper and artifact recorder observes the same flags as the return
+        # tuple, including custom ScenarioNet truncation.
+        info["terminated"] = bool(terminated)
+        info["truncated"] = bool(truncated)
         info["termination_reason"] = self._last_done_info.get("termination_reason")
         info["crossed_continuous_line"] = bool(
             self._last_done_info.get("crossed_continuous_line", False)

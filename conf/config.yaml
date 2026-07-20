@@ -6,6 +6,7 @@ defaults:
   - env: scenarionet        # Canonical final environment family.
   - obs: semantic_v2         # SemanticStateObservation v1.1.
   - experiment: default
+  - reward: scalar_reward   # Final Rulebook scalar reward.
   - run_profile: smoke      # Short integration profile by default.
   - gold_suite: default      # Reference-only Rulebook diagnostic controls.
 
@@ -15,7 +16,6 @@ defaults:
   - agent/planner/algorithm: td3_sb3   # Primary final learner; make run requires an explicit choice.
   - agent/adapter: identity            # Action adapter in `conf/agent/adapter/*`
 
-  - reward: scalar_reward   # Final Rulebook scalar reward.
   - scalarization: default  # SCAL-V1.0 formula and immutable run parameters
   - curriculum: scenario_acl_scenarionet
   

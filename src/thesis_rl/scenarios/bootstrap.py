@@ -154,9 +154,12 @@ def _scenario_env_inventory() -> dict[str, object]:
             ],
             "physical_boundary_candidates": [
                 "vehicle.crash_sidewalk",
+                "vehicle.dist_to_left_side",
+                "vehicle.dist_to_right_side",
                 "not vehicle.on_lane",
             ],
             "route_deviation_in_done_function": "vehicle.navigation.route_completion < -0.1",
+            "route_lateral_is_not_boundary": True,
             "requires_thesis_override": True,
         },
     }

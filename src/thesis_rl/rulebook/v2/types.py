@@ -153,8 +153,6 @@ class ActorSnapshot:
 class ContactOnsetRecord:
     actor_id: str
     actor_class: ActorClass
-    contact_point_xy: tuple[float, float]
-    normal_ego_to_other_xy: tuple[float, float]
 
 
 @dataclass(frozen=True, slots=True)

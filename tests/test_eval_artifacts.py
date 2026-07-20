@@ -166,6 +166,69 @@ def test_live_eval_recorder_writes_manifest_and_video(tmp_path: Path, monkeypatc
     assert rows[0]["rulebook"]["complete_evaluation"] is True
 
 
+def test_trajectory_log_preserves_termination_diagnostics(tmp_path: Path, monkeypatch) -> None:
+    def _fake_save_gif(frames, output_path: Path, fps: int) -> None:
+        _ = (frames, fps)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"GIF89a")
+
+    monkeypatch.setattr(
+        "thesis_rl.runtime.io.eval_artifacts.save_gif",
+        _fake_save_gif,
+    )
+    cfg = _build_cfg(tmp_path)
+    run_dir = Path(str(cfg.paths.run_dir))
+    run_dir.mkdir(parents=True, exist_ok=True)
+    factory = build_live_final_eval_recorder_factory(
+        cfg=cfg,
+        run_dir=run_dir,
+        resolved_env_config={},
+        eval_id=3,
+        eval_type="final",
+        scenario_set="test",
+        stage="baseline",
+        stage_index=0,
+        checkpoint_path="checkpoint.zip",
+        checkpoint_type="final",
+        checkpoint_global_step=0,
+    )
+    recorder = factory({"episode_id": 2, "scenario_seed": 42})
+    recorder.record_step(
+        env=_RenderEnv(),
+        step_index=0,
+        observation=np.zeros(2, dtype=np.float32),
+        next_observation=np.ones(2, dtype=np.float32),
+        action=np.zeros(2, dtype=np.float32),
+        reward=0.0,
+        done=False,
+        truncated=False,
+        step_info={
+            "crash_sidewalk": False,
+            "out_of_road": False,
+            "physical_out_of_road": False,
+            "crossed_continuous_line": True,
+            "termination_reason": None,
+            "route_lateral": 5.0,
+            "dist_to_left_side": 3.0,
+            "dist_to_right_side": 3.0,
+            "on_lane": True,
+            "contact_results": ["ROAD_EDGE_BOUNDARY"],
+            "terminated": False,
+            "truncated": False,
+        },
+    )
+    recorder.finalize_episode(episode_metrics={})
+    trajectory_path = run_dir / "videos/final_eval/eval_0003/episode_0002.trajectory.jsonl"
+    row = json.loads(trajectory_path.read_text(encoding="utf-8"))
+    assert row["info"]["physical_out_of_road"] is False
+    assert row["info"]["crossed_continuous_line"] is True
+    assert row["info"]["route_lateral"] == 5.0
+    assert row["info"]["dist_to_right_side"] == 3.0
+    assert row["info"]["contact_results"] == ["ROAD_EDGE_BOUNDARY"]
+    assert row["info"]["terminated"] is False
+    assert row["info"]["truncated"] is False
+
+
 def test_agent_evaluate_returns_live_artifact_paths(tmp_path: Path, monkeypatch) -> None:
     def _fake_save_gif(frames, output_path: Path, fps: int) -> None:
         _ = (frames, fps)

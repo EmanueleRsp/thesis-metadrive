@@ -35,7 +35,7 @@ def _actor(
 
 
 def _onset(actor_id: str) -> ContactOnsetRecord:
-    return ContactOnsetRecord(actor_id, ActorClass.VEHICLE, (1.0, 0.0), (1.0, 0.0))
+    return ContactOnsetRecord(actor_id, ActorClass.VEHICLE)
 
 
 def _assert_bounded(result) -> None:
@@ -48,8 +48,8 @@ def test_collision_handles_tangent_static_vru_and_simultaneous_onsets():
     result, _, _ = evaluate_collision_impact(
         scenario_id="s",
         step_index=1,
-        ego_velocity_xy=(0.0, 5.0),
         ego_configured_speed_cap_mps=10.0,
+        pre_ego=_actor("ego", ActorClass.VEHICLE, x=0.0, y=0.0, velocity_xy=(0.0, 5.0)),
         pre_actors_by_id={
             "static": _actor("static", ActorClass.STATIC_COLLIDABLE, cap=None),
             "ped": _actor("ped", ActorClass.PEDESTRIAN),
@@ -68,8 +68,8 @@ def test_collision_saturates_when_pre_state_speed_exceeds_configured_cap():
     result, _, _ = evaluate_collision_impact(
         scenario_id="s",
         step_index=1,
-        ego_velocity_xy=(5.0, 0.0),
         ego_configured_speed_cap_mps=10.0,
+        pre_ego=_actor("ego", ActorClass.VEHICLE, x=0.0, y=0.0, velocity_xy=(5.0, 0.0)),
         pre_actors_by_id={"other": _actor("other", ActorClass.VEHICLE, velocity_xy=(-100.0, 0.0), cap=10.0)},
         onset_records=(_onset("other"),),
         previous_contact_ids=frozenset(),

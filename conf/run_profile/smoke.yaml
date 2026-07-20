@@ -18,5 +18,15 @@ checkpoint:
 # algorithm backend through the runtime planner merge without changing thesis
 # and long-run algorithm defaults.
 planner:
-  learning_starts: 100
-  batch_size: 64
+  td3:
+    learning_starts: 100
+    batch_size: 64
+  sac:
+    learning_starts: 100
+    batch_size: 64
+  ppo:
+    n_steps: 16
+    batch_size: 8
+
+reward:
+  rule_margin_log_path: ${paths.logs_dir}/rule_margins.jsonl
