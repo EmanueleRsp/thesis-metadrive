@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from shapely.geometry import Polygon
 
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
@@ -15,6 +17,7 @@ from thesis_rl.rulebook.v2.types import (
     ActorSnapshot,
     EpisodeCache,
     EnvSnapshot,
+    ContactOnsetRecord,
     RulebookMemory,
     TaskRouteRecord,
 )
@@ -85,6 +88,41 @@ def test_transition_invokes_complete_registry_and_keeps_vehicle_yield_not_applic
     assert result.components["vehicle_yield"].applicable is False
     assert next_memory.previous_route_s_m > memory.previous_route_s_m
     assert cache_delta.new_conflict_zones == ()
+
+
+def test_transition_evaluates_contact_onset_from_post_snapshot() -> None:
+    cache = _cache()
+    pre = _snapshot(0, 0.0, 1.0)
+    other = ActorSnapshot(
+        "other",
+        ActorClass.VEHICLE,
+        (2.0, 0.0),
+        0.0,
+        0.0,
+        (-1.0, 0.0),
+        Polygon(((1.0, -1.0), (3.0, -1.0), (3.0, 1.0), (1.0, 1.0))),
+        "lane-a",
+        10.0,
+    )
+    pre = replace(pre, actors=(other,))
+    post = replace(
+        _snapshot(1, 0.1, 1.1),
+        actors=(other,),
+        contact_onset_records=(
+            ContactOnsetRecord("other", ActorClass.VEHICLE, (1.5, 0.0), (1.0, 0.0)),
+        ),
+        active_contact_ids=frozenset({"other"}),
+    )
+    memory = initial_memory_for_snapshot(pre, cache)
+    result, _, _ = evaluate_transition(
+        pre_state=pre,
+        post_state=post,
+        memory=memory,
+        cache=cache,
+        config=RulebookTransitionConfig(),
+    )
+    assert result.components["collision"].raw["new_collision"] is True
+    assert result.components["collision"].applicable is True
 
 
 def test_transition_rejects_non_positive_simulation_step() -> None:

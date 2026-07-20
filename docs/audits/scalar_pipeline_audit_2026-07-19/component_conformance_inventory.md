@@ -9,12 +9,12 @@ Status legend: `STATIC_IMPLEMENTED` means source/configuration/test evidence exi
 | Rulebook v4.7 | `src/thesis_rl/rulebook/v2/{monitor,wrapper,lifecycle,memory,aggregation,transition}.py`; live actor/contact/signal normalization in `context/metadrive_live.py`; topology-preserving PG/Waymo adapters; deferred `ThesisScenarioEnv` wiring; frozen CTRV `geometry/ctrv.py`; `conf/rulebook/v2.yaml`. | `tests/test_rulebook_v2_*.py`, including regressions for non-ego/node-only Bullet callbacks, manifold signatures, full compatible drivable surface, and canonical-runtime integration. | Static PG/Waymo adapters, persistent Bullet-manifold semantics, real PG/Waymo actor/contact/signal probes, complete registry composition, read-only calibration loading, live elevation-datum alignment, ten-step PG/Waymo pass, and S0–S5 source-backed learner smokes. | `IMPLEMENTED`; dataset-wide live validation, semantic-policy parity across the full suite, and broader checkpoint/resume coverage remain pending. Ambiguous movement topology stays fail-closed and `vehicle_yield` is explicitly NOT_APPLICABLE without supplied priority records. |
 | `bounded_satisfaction_rank` | `src/thesis_rl/reward/scalarization.py`, `conf/scalarization/default.yaml`, wrapper wiring in `runtime/wiring/builders.py`. | `tests/test_scalarization.py`, `test_scalarization_wiring.py`, `test_reward_semantics.py`. | Source-independent downstream vector contract; identity code in `contracts/{checkpoint_manifest,reward_semantics}.py`. | `STATIC_IMPLEMENTED`; executable checkpoint/smoke proof pending. |
 | SemanticStateObservation | `envs/observations/{semantic_state,semantic_state_v2,causal_semantic,assigned_route}.py`; `contracts/observation_{schema,spec}.py`. | `test_semantic_state_observation.py`, `test_semantic_state_v2.py`, `test_causal_semantic_batch.py`. | Assigned-route adapters support both sources; schema identity supports checkpoint checks; S1–S6 source smokes use `(2541,)` semantic observations and the reset route now follows the aligned Rulebook cache. | `IMPLEMENTED`; full timer/sensor/reset matrix and long-run checkpoint/resume remain pending. |
-| MLP encoder | `agent/planners/encoders/mlp_encoder.py`, factory, `conf/agent/planner/encoder/mlp.yaml`. | `tests/test_encoders_v10.py::test_flat_mlp_v10_*`. | Source-independent once observation is available; manifest identity exists; S1 TD3/MLP source smoke passes. | `IMPLEMENTED`; long-run checkpoint/resume remains pending. |
-| LQ encoder | `agent/planners/encoders/{lq_encoder.py,lq/masks.py,lq/unflatten.py}`, `conf/agent/planner/encoder/lq.yaml`. | `tests/test_encoders_v10.py::test_lq_v10_*`. | Source-independent; S2–S5/S6 source smokes pass with finite actions and updates. | `IMPLEMENTED`; full PG/Waymo mask/token and resume matrix remains pending. |
-| PPO | `agent/planners/algorithms/ppo_sb3.py`; `conf/agent/planner/algorithm/ppo_sb3.yaml`. | Lifecycle/Hydra tests and PPO replay rejection in `test_transition_replay_config.py`. | Diagnostic S6 source smoke passes with replay disabled, two updates, evaluation, and checkpoint using a rollout override; approved default rollout is not a thesis claim. | `IMPLEMENTED`; no approved dedicated baseline specification and long-run PPO/resume remain pending. |
-| TD3 | `agent/planners/algorithms/td3_sb3.py`; `conf/agent/planner/algorithm/td3_sb3.yaml`. | Planner/transition/replay-config tests. | S1/S2/S3/S4/S5 source smokes pass with finite actor/critic updates; S4/S5 exercise PER. A 200-step GPU S5 and a 100-step resume from `latest.zip` completed with restored RNG and finite updates/evaluation. | `IMPLEMENTED`; broader PG/Waymo, long-run replay persistence, and statistical validation remain pending. |
+| MLP encoder | `agent/planners/encoders/mlp_encoder.py`, factory, `conf/agent/planner/encoder/mlp.yaml`. | `tests/test_encoders_v10.py::test_flat_mlp_v10_*`. | Source-independent once observation is available; manifest identity exists; S1 TD3/MLP source smoke passes at 20 and 200 GPU steps. | `IMPLEMENTED`; long-run checkpoint/resume remains pending. |
+| LQ encoder | `agent/planners/encoders/{lq_encoder.py,lq/masks.py,lq/unflatten.py}`, `conf/agent/planner/encoder/lq.yaml`. | `tests/test_encoders_v10.py::test_lq_v10_*`. | Source-independent; S2–S5/S6 source smokes pass with finite actions and updates, including the 200-step GPU matrix. | `IMPLEMENTED`; full PG/Waymo mask/token and resume matrix remains pending. |
+| PPO | `agent/planners/algorithms/ppo_sb3.py`; `conf/agent/planner/algorithm/ppo_sb3.yaml`. | Lifecycle/Hydra tests and PPO replay rejection in `test_transition_replay_config.py`. | Diagnostic S6 source smoke passes with replay disabled, six updates per 100-step chunk, evaluation, and checkpoint using the rollout override `n_steps=16`, including a 200-step GPU run; approved default rollout is not a thesis claim. | `IMPLEMENTED`; no approved dedicated baseline specification and long-run PPO/resume remain pending. |
+| TD3 | `agent/planners/algorithms/td3_sb3.py`; `conf/agent/planner/algorithm/td3_sb3.yaml`. | Planner/transition/replay-config tests. | S1/S2/S3/S4/S5 source smokes pass with finite actor/critic updates; S4/S5 exercise PER. The full TD3 matrix was repeated at 200 GPU steps; S5 also resumed 100 steps from `latest.zip` with restored RNG and finite updates/evaluation. | `IMPLEMENTED`; broader PG/Waymo, long-run replay persistence, and statistical validation remain pending. |
 | SAC | `agent/planners/algorithms/sac_sb3.py`; `conf/agent/planner/algorithm/sac_sb3.yaml`. | Planner/transition/replay-config tests. | General train-loop and replay-pair code exists; no S1/S2/S4 source run. | `PARTIAL`; entropy/PER/resume needs execution. |
-| N-step replay | `sb3_extensions/replay/config.py`; TD3/SAC configs set `n_steps: 3`; boundary `agent/transition_boundary.py`; uniform path uses pinned SB3 buffer. | `test_transition_replay_config.py`, `test_transition_boundary.py`, `test_transition_replay_persistence.py`. | Source-agnostic after collection; persistence code in `runtime/loops/train_loop.py`. | `IMPLEMENTED`; focused replay checks pass. Full source-backed learner smoke remains pending. |
+| N-step replay | `sb3_extensions/replay/config.py`; TD3/SAC configs set `n_steps: 3`; boundary `agent/transition_boundary.py`; uniform path uses pinned SB3 buffer. | `test_transition_replay_config.py`, `test_transition_boundary.py`, `test_transition_replay_persistence.py`. | Source-agnostic after collection; persistence code in `runtime/loops/train_loop.py`; all 200-step GPU TD3 smokes used the approved `n_steps=3` path. | `IMPLEMENTED`; focused replay checks and source-backed TD3 smoke pass. Full cross-algorithm persistence matrix remains pending. |
 | PER | `sb3_extensions/replay/prioritized.py`; TD3/SAC factories select it when enabled. | `test_transition_replay_per.py` covers sum-tree and beta horizon only. | S4 and S5 source smokes run with PER enabled and finite critic updates; the 200-step GPU S5 resumed from `latest.zip` with RNG restoration. Pair tests still do not prove a dedicated serialized PER tree/RNG round trip. | `IMPLEMENTED`; weighted critic, priorities, vectors, frontier, persistence, numerical, broader long-run, and cross-algorithm resume evidence remain incomplete. |
 | ACL | `curriculum/scenario_acl/{arms,mab,buffer,driver,runtime,usefulness,record}.py`; `conf/curriculum/scenario_acl.yaml`. | `tests/test_scenario_acl_{config,buffer,mab,usefulness,scenario_env}.py`, including artifact-parent persistence regression. | Uses frozen catalog records; driver persists buffer, MAB and RNG state; PPO/TD3/SAC §12 calculators are wired through custom and SB3 backends; S3 and S5 source smokes pass with MAB arm probabilities, finite updates, final evaluation, and checkpoint. The GPU S5 resume restored the ACL state and continued at global step 200. | `IMPLEMENTED`; ACL v1 §28 / ADR-014 make the no-mutation, learning-potential-only core authoritative. Broader multi-episode generation/replay warm-up/replacement and cross-configuration resume remain pending. |
 
@@ -32,3 +32,36 @@ The exact authoritative-text analysis is in `acl_authoritative_reconciliation.md
 ## Transition Replay Boundary
 
 `TRANSITION-REPLAY` v1 remains final for this project: supported values remain exactly `{1,3}` and the approved core remains `n_steps=3`. No five-step implementation, compatibility migration, scientific comparison, or transition-replay v1.1 amendment is planned. Historical notes about D4PG five-step returns remain historical context only.
+
+## Final All-On Verification Update (2026-07-19)
+
+The final status for the requested integration gate is `VERIFIED` for
+ScenarioNet integration, Rulebook v4.7, `bounded_satisfaction_rank`, semantic
+observation v1.1, LQ v1.0, TD3, ACL, n-step replay v1, and PER. The corrected
+TD3 smoke/resume run used the canonical read-only dataset and strict provider,
+observed both PG and Waymo, emitted `(2541,)` float32 observations and finite
+scalar/learning-potential values, and completed final evaluation.
+
+The serialized replay evidence is `PrioritizedNStepReplayBuffer` with
+`n_steps=3`, 2,000 stored transitions, finite raw priorities and sum-tree state.
+The ACL driver now persists and restores replay/PER, checkpoint pairs, global
+RNG, MAB and scenario buffer state; resume reached global step 2,500 and
+observed both generated and scenario-buffer replay episodes. SAC remains
+`NOT_RUN` because TD3 is the requested primary learner and no final
+authoritative configuration requires SAC. Full thesis-length/statistical
+validation remains outside this integration audit.
+
+## Step-Level Trace Correction (2026-07-20)
+
+The missing trace files were caused by the v4.7 path selecting
+`RulebookV2MonitorWrapper` while tracing was wired only to the legacy wrapper.
+The v2 wrapper now emits per-transition Rulebook/scalarization records and the
+canonical `scalar_rule_reward` info key. Focused regression tests pass, and the
+corrected 2,000-step TD3 smoke produced 2,072 synchronized finite records from
+PG and Waymo sources with zero scalarization recomputation mismatches.
+
+The trace also found and corrected an ego-resolution gap: environment terminal
+collisions were not reaching the Rulebook collision component when the ego was
+owned by `env.agents`. The corrected adapter prioritizes that source and logs
+terminal flags alongside each Rulebook record. A post-fix smoke with an observed
+collision remains required before marking collision correlation verified.

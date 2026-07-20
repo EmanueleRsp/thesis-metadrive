@@ -219,6 +219,17 @@ def test_metadrive_contact_normal_is_oriented_from_ego_to_other():
     assert record.normal_ego_to_other_xy == (1.0, 0.0)
 
 
+def test_metadrive_contact_uses_scenario_env_agent_as_ego():
+    class AgentOwnedEnv:
+        engine = type("Engine", (), {"traffic_manager": type("Traffic", (), {})()})()
+        agents = {"ego": _Vehicle()}
+
+    record = contact_onset_from_metadrive_contact(
+        _Contact(), AgentOwnedEnv(), object_from_node=_object_from_node
+    )
+    assert record.actor_id == "other-runtime"
+
+
 def test_metadrive_contact_recorder_clears_per_control_step():
     recorder = MetaDriveContactRecorder(_Env(), object_from_node=_object_from_node)
     recorder.observe(_Contact())
@@ -261,6 +272,84 @@ def test_metadrive_contact_recorder_keeps_persistent_manifold_active():
 
     PersistentEngine.physics_world.dynamic_world.manifolds = []
     recorder.clear_control_step()
+    assert recorder.snapshot_contact_state() == ((), frozenset())
+
+
+def test_metadrive_contact_recorder_reads_base_vehicle_contact_test_path():
+    class ContactResult:
+        def getContacts(self):
+            return (_Contact(),)
+
+    class World:
+        def get_manifolds(self):
+            return ()
+
+        def contactTest(self, node, use_filter):
+            assert node == "ego-chassis"
+            assert use_filter is True
+            return ContactResult()
+
+    class Chassis:
+        def node(self):
+            return "ego-chassis"
+
+    class AgentOwnedVehicle(_Vehicle):
+        chassis = Chassis()
+
+    class ContactTestEnv:
+        agents = {"ego": AgentOwnedVehicle()}
+        engine = type(
+            "Engine",
+            (),
+            {
+                "traffic_manager": type("Traffic", (), {})(),
+                "physics_world": type(
+                    "Physics", (), {"static_world": World(), "dynamic_world": World()}
+                )(),
+            },
+        )()
+
+    recorder = MetaDriveContactRecorder(ContactTestEnv(), object_from_node=_object_from_node)
+    records, active = recorder.snapshot_contact_state()
+    assert len(records) == 1
+    assert active == frozenset({"other-runtime"})
+
+
+def test_metadrive_contact_test_ignores_lane_surface_contacts():
+    class LaneNode(_Node):
+        def getName(self):
+            return "LANE_SURFACE_STREET"
+
+    class LaneContact(_Contact):
+        def __init__(self):
+            self.node0 = LaneNode(_Vehicle())
+            self.node1 = LaneNode(_OtherVehicle())
+            self.manifold_point = _Manifold()
+
+    class ContactResult:
+        def getContacts(self):
+            return (LaneContact(),)
+
+    class World:
+        def get_manifolds(self):
+            return ()
+
+        def contactTest(self, node, use_filter):
+            return ContactResult()
+
+    class Chassis:
+        def node(self):
+            return "ego-chassis"
+
+    class ContactTestEnv:
+        agents = {"ego": type("Vehicle", (), {"chassis": Chassis()})()}
+        engine = type(
+            "Engine",
+            (),
+            {"physics_world": type("Physics", (), {"static_world": World(), "dynamic_world": World()})()},
+        )()
+
+    recorder = MetaDriveContactRecorder(ContactTestEnv(), object_from_node=_object_from_node)
     assert recorder.snapshot_contact_state() == ((), frozenset())
 
 

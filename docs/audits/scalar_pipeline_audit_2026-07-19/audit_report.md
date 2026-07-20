@@ -1,6 +1,6 @@
 # Frozen ScenarioNet Audit and Golden-Suite Proposal
 
-Status: `METADATA AUDIT COMPLETE — LIVE DATASET VALIDATION PENDING`
+Status: `FINAL ALL-ON TD3 INTEGRATION VERIFIED — SCIENTIFIC PERFORMANCE NOT CLAIMED`
 
 ## Immutable Inputs
 
@@ -138,6 +138,13 @@ The GPU overlay was then exercised explicitly with an S2 TD3/LQ smoke: the
 planner reported `device=cuda`, Torch `2.9.1+cu128`, and GH200 execution; the
 20-step evaluation and final checkpoint passed.
 
+The short learner matrix was then repeated at 200 steps in the GPU overlay:
+S1 TD3/MLP with ACL/PER off, S2 TD3/LQ with ACL/PER off, S3 TD3/LQ with the
+approved ACL core and PER off, S4 TD3/LQ with PER on and ACL off, and S6
+PPO/LQ with replay off. Every run completed with finite losses/actions,
+evaluation, and checkpoints; S3 persisted ACL/MAB state. These remain
+diagnostic runtime checks, not policy-quality or scientific results.
+
 An additional 200-step S5 diagnostic was executed with the GPU overlay using
 TD3/LQ, the approved ACL core, PER, and transition replay `n_steps=3`. The
 run completed 200 environment steps with finite actor/critic updates,
@@ -159,3 +166,52 @@ creates its parent directory. No protected source file was changed.
 ## Reproducibility
 
 The catalog fingerprint hashes the sorted tuple `(scenario_uid, source, split, primary_arm, runtime_index, relative_path)`. The golden-suite manifest includes the frozen-index digest, selection policy, source quotas, and the 48 source references. Re-running this command on the same index produces the same reference set.
+
+## Final All-On Integration Verification
+
+The final effective Hydra configuration used `run_profile=smoke`: canonical
+`env=scenarionet`; strict provider with `allow_fallback=false`; semantic v1.1;
+LQ encoder v1.0; Rulebook v4.7; `bounded_satisfaction_rank`; ScenarioNet ACL;
+TD3-SB3; PER; transition replay `n_steps=3`; replay persistence; checkpoint and
+RNG persistence. The ACL driver requires sequential execution, so
+`vectorized=false` was used. Diagnostic-only overrides set `learning_starts=100`
+and `batch_size=64` to exercise TD3/PER updates.
+
+The corrected run completed 2,000 steps, 1,901 TD3 updates, PG and Waymo
+episodes, finite `(2541,)` float32 observations, `(2,)` float32 actions, finite
+Rulebook scalar rewards, finite algorithm-specific learning potential, ACL
+MAB probabilities, checkpoints, and final evaluation. No provider fallback,
+mutation, or mutation-generated child was observed.
+
+Read-only Docker inspection found `PrioritizedNStepReplayBuffer`, `n_steps=3`,
+2,000 stored transitions, finite raw priorities and sum-tree values, valid
+`final.zip`, replay buffers, checkpoint pairs, and RNG state. Resume restored
+ACL/MAB/buffer state, replay/PER and RNG, completed 500 additional steps to
+global step 2,500, and recorded 11 scenario-buffer replay episodes plus 13
+generated episodes before final evaluation. These are integration results only;
+they do not claim convergence or scientific performance. SAC was not run because
+TD3 is the requested primary learner and no authoritative final configuration
+requires SAC.
+
+## Step-Level Rulebook Trace Correction (2026-07-20)
+
+The initial trace attempt exposed an implementation gap: Rulebook v4.7 uses
+`RulebookV2MonitorWrapper`, but the diagnostic paths were previously wired only
+to the legacy reward wrapper. The v2 wrapper now writes Rulebook margins,
+component values, scalarization details, and scalar reward at every transition;
+it also publishes the `scalar_rule_reward` key consumed by aggregate metrics.
+
+The corrected all-on smoke run is stored under
+`outputs/EXP_final_scalar_acl_td3_smoke_rulebook_trace_fixed_RP_smoke_CUR_scenario_acl_scenarionet_REW_scalar_reward/`.
+It completed 2,000 steps and produced 2,072 records in both the Rulebook trace
+and runtime trace. The records contain 1,819 PG transitions and 253 Waymo
+transitions. Finiteness, four-margin shape, complete evaluation, and exact
+scalarization recomputation checks passed with zero mismatches. Training and
+final-evaluation CSV scalar reward fields are now populated.
+
+The same trace then exposed a collision observability defect: five environment
+episodes had `collision=true`, but no Rulebook collision onset. The cause was
+ego resolution through `traffic_manager.ego_vehicle` instead of ScenarioEnv's
+`env.agents` ownership boundary. This is corrected and covered by a live
+adapter regression test. The earlier smoke remains valid for scalarization
+logging but is not collision-conformance evidence; a post-fix smoke is pending.

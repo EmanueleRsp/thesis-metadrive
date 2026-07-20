@@ -29,4 +29,4 @@ attach_info: true
 
 # Runtime info debug controls
 runtime_info_debug_enabled: false
-runtime_info_debug_path: ${paths.outputs_root}/runtime_info_debug.jsonl
+runtime_info_debug_path: ${paths.logs_dir}/runtime_info_debug.jsonl

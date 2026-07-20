@@ -284,6 +284,43 @@ def _node_object_id(obj: Any) -> str:
     return value
 
 
+def _ego_vehicle_from_env(env: Any) -> Any | None:
+    """Resolve the live ego using the same ownership boundary as ScenarioEnv."""
+
+    agents = getattr(env, "agents", None)
+    if isinstance(agents, Mapping) and agents:
+        return next(iter(agents.values()))
+    vehicle = getattr(env, "vehicle", None)
+    if vehicle is not None:
+        return vehicle
+    traffic_manager = getattr(getattr(env, "engine", None), "traffic_manager", None)
+    return getattr(traffic_manager, "ego_vehicle", None)
+
+
+def _node_name(node: Any) -> str | None:
+    value = getattr(node, "getName", None)
+    if callable(value):
+        value = value()
+    if value is None:
+        value = getattr(node, "name", None)
+    return str(value) if value is not None else None
+
+
+def _is_non_actor_contact_name(name: str | None) -> bool:
+    if not name:
+        return False
+    return name.startswith(("LANE_", "ROAD_LINE_", "ROAD_EDGE_")) or name in {
+        "BOUNDARY_LINE",
+        "BOUNDARY_SIDEWALK",
+        "CROSSWALK",
+        "GROUND",
+        "LIDAR_BROAD_DETECTOR",
+        "TRAFFIC_LIGHT",
+        "UNKNOWN",
+        "UNKNOWN_LINE",
+    }
+
+
 def contact_onset_from_metadrive_contact(
     contact: Any,
     env: Any,
@@ -306,8 +343,7 @@ def contact_onset_from_metadrive_contact(
     object1 = object_from_node(node1)
     if object0 is None or object1 is None:
         raise ValueError("MetaDrive contact objects could not be resolved")
-    ego = getattr(getattr(env, "engine", None), "traffic_manager", None)
-    ego = getattr(ego, "ego_vehicle", None)
+    ego = _ego_vehicle_from_env(env)
     if ego is None:
         raise ValueError("MetaDrive contact environment has no ego vehicle")
     ego_id = _node_object_id(ego)
@@ -478,8 +514,58 @@ class MetaDriveContactRecorder:
                     self.ignored_non_actor_contacts += 1
         return tuple(records)
 
+    def _contact_test_records(self) -> tuple[ContactOnsetRecord, ...]:
+        """Read the same live contact-test path used by BaseVehicle._state_check."""
+
+        ego = _ego_vehicle_from_env(self.env)
+        chassis = getattr(ego, "chassis", None) if ego is not None else None
+        node_getter = getattr(chassis, "node", None)
+        if not callable(node_getter):
+            return ()
+        ego_node = node_getter()
+        physics_world = getattr(getattr(self.env, "engine", None), "physics_world", None)
+        if physics_world is None:
+            return ()
+
+        records: list[ContactOnsetRecord] = []
+        seen: set[tuple[str, tuple[float, float]]] = set()
+        for world_name in ("static_world", "dynamic_world"):
+            world = getattr(physics_world, world_name, None)
+            contact_test = getattr(world, "contactTest", None) if world is not None else None
+            if not callable(contact_test):
+                continue
+            result = contact_test(ego_node, True)
+            contacts_getter = getattr(result, "getContacts", None)
+            contacts = contacts_getter() if callable(contacts_getter) else ()
+            for contact in contacts:
+                try:
+                    node0 = _contact_method(contact, "getNode0", "get_node0", "node0")
+                    node1 = _contact_method(contact, "getNode1", "get_node1", "node1")
+                    if _is_non_actor_contact_name(_node_name(node0)) or _is_non_actor_contact_name(
+                        _node_name(node1)
+                    ):
+                        continue
+                    record = contact_onset_from_metadrive_contact(
+                        contact,
+                        self.env,
+                        object_from_node=self.object_from_node,
+                    )
+                except ValueError as error:
+                    if str(error) in {
+                        "MetaDrive contact objects could not be resolved",
+                        "MetaDrive contact does not involve the configured ego vehicle",
+                    }:
+                        self.ignored_non_actor_contacts += 1
+                        continue
+                    raise
+                key = (record.actor_id, record.contact_point_xy)
+                if key not in seen:
+                    records.append(record)
+                    seen.add(key)
+        return tuple(records)
+
     def snapshot_contact_state(self) -> tuple[tuple[ContactOnsetRecord, ...], frozenset[str]]:
-        persistent = self._persistent_contact_records()
+        persistent = (*self._persistent_contact_records(), *self._contact_test_records())
         persistent_ids = frozenset(record.actor_id for record in persistent)
         buffered = self.buffer.drain()
         buffered_ids = frozenset(record.actor_id for record in buffered)

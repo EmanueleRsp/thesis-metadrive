@@ -8,7 +8,11 @@ from thesis_rl.curriculum import (
     ScenarioRecord,
     compute_replay_probabilities,
 )
-from thesis_rl.curriculum.scenario_acl.driver import _persist_buffer_state
+from thesis_rl.curriculum.scenario_acl.driver import (
+    _save_acl_checkpoint_pair,
+    _save_acl_replay_buffer,
+    _persist_buffer_state,
+)
 
 
 def _record(
@@ -110,3 +114,26 @@ def test_scenario_acl_buffer_persistence_creates_artifact_parent(tmp_path) -> No
     _persist_buffer_state(path=path, buffer=buffer)
 
     assert path.is_file()
+
+
+def test_scenario_acl_replay_persistence_publishes_buffer_and_pair(tmp_path) -> None:
+    class _Planner:
+        def save_replay_buffer(self, path: str) -> bool:
+            with open(path, "wb") as handle:
+                handle.write(b"serialized-per-tree")
+            return True
+
+    replay_path = tmp_path / "checkpoints" / "latest_replay_buffer.pkl"
+    pair_path = tmp_path / "checkpoints" / "latest_checkpoint_pair.json"
+
+    assert _save_acl_replay_buffer(_Planner(), replay_path) is True
+    _save_acl_checkpoint_pair(
+        path=pair_path,
+        checkpoint_name="latest",
+        replay_name=replay_path.name,
+        training_timestep=2000,
+    )
+
+    assert replay_path.read_bytes() == b"serialized-per-tree"
+    assert pair_path.is_file()
+    assert pair_path.read_text(encoding="utf-8").find('"training_timestep": 2000') >= 0

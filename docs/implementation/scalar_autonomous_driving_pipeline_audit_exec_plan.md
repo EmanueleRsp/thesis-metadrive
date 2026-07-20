@@ -5,17 +5,17 @@
 - Feature: repository-side audit, integration inventory, and completion gate for the scalar autonomous-driving pipeline
 - Plan ID: `SCALAR-PIPELINE-AUDIT-2026-07-19`
 - Authoritative specifications: `docs/specifications/scenarionet_integration_v1.1_specification.md` (v1.1), `automatic_curriculum_learning_v1_specification.md` (v1), `rulebook_v4.7_specification.md` (v4.7-final-implementation-complete), `rulebook_scalarization_v1.0_specification.md` (`SCAL-V1.0`, v1.0), `observation_v1.1_specification.md` (`OBS-V1.1`, v1.1), `encoder_v1.0_specification.md` (`ENC-V1.0`, v1.0), and `transition_replay_v1_specification.md` (`TRANSITION-REPLAY`, v1.0); all `AUTHORITATIVE` per `docs/project_index.md`.
-- Status: `IN_PROGRESS`
-- Audit result classification: `METADATA AUDIT COMPLETE — LIVE DATASET VALIDATION PENDING`
+- Status: `VERIFIED`
+- Audit result classification: `FINAL ALL-ON TD3 INTEGRATION VERIFIED — SCIENTIFIC PERFORMANCE NOT CLAIMED`
 - Created / last updated: `2026-07-19`
 - Related ADRs: ADR-001, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, ADR-007, ADR-008, ADR-009, ADR-010, ADR-011, ADR-012, ADR-014.
 - Branch / owner: current worktree / thesis repository maintainer.
 
 ## 2. Objective And Scope
 
-Produce a read-only audit of the frozen ScenarioNet selection, a proposed train-only 48-record golden-suite manifest, and a source/config/test conformance inventory for the complete scalar pipeline. Implement only defects already required by the authoritative specifications. The protected Waymo/PG source files and every `ScenarioDescription` are immutable inputs.
+Produce a read-only audit and executable final all-on verification of the frozen ScenarioNet scalar pipeline. The final verification must use the canonical frozen-index-derived catalog, Rulebook v4.7, `bounded_satisfaction_rank`, SemanticStateObservation v1.1, LQ v1.0, ACL v1 §28 / ADR-014, transition replay v1 with `n_steps=3`, PER, and TD3 as the primary learner. The protected Waymo/PG source files and every `ScenarioDescription` are immutable inputs.
 
-In scope: frozen-index reconstruction, immutable reference manifests, live read-only source checks, focused integration validation, and approval gates. Out of scope: dataset materialization or repair, dataset mutation, scientific selection of `n_steps`, any ACL semantic change beyond approved §28/ADR-014, and full thesis experiments.
+In scope: frozen-index reconstruction, immutable reference manifests, live read-only source checks, effective Hydra configuration capture, one integrated all-on TD3 run covering representative PG and Waymo records, checkpoint/replay/ACL persistence and resume, final evaluation, focused regression checks, and final conformance reconciliation. SAC is in scope only if the authoritative final configuration requires it. Out of scope: dataset materialization or repair, dataset mutation, scientific selection of `n_steps`, any ACL semantic change beyond approved §28/ADR-014, five-step replay, transition replay v1.1, and interpretation of metrics as scientific results.
 
 ## 3. Authoritative Requirements
 
@@ -27,6 +27,9 @@ In scope: frozen-index reconstruction, immutable reference manifests, live read-
 | `REQ-AUDIT-004` | Keep transition replay v1 at exactly `n_steps in {1,3}` and the conformance default `3`; do not plan five-step behavior. | TRANSITION-REPLAY REQ-001–033, §§9, 11–13 |
 | `REQ-AUDIT-005` | Reconcile ACL implementation with the approved ScenarioNet no-mutation, learning-potential-only core. | ACL v1 §28; ADR-014 |
 | `REQ-AUDIT-006` | Exercise only supported validation and record unavailable required validation honestly. | All selected specifications; `AGENTS.md` |
+| `REQ-AUDIT-010` | Execute the final all-on TD3 configuration with canonical ScenarioNet, strict provider, Rulebook v4.7, approved scalarization, semantic v1.1/LQ v1.0, ACL, PER, `n_steps=3`, checkpoint/replay/ACL persistence, and final evaluation. | User request; ScenarioNet v1.1; Rulebook v4.7; SCAL-V1.0; OBS-V1.1; ENC-V1.0; TRANSITION-REPLAY; ACL §28 / ADR-014 |
+| `REQ-AUDIT-011` | Verify representative PG and Waymo runtime behavior, including observation/token contracts, reset/timers, termination/truncation/final observation, causality, Rulebook/scalar reward, ACL learning potential and sampling, N-step/PER, checkpoint/resume, RNG and final evaluation. | User request; selected authoritative specifications |
+| `REQ-AUDIT-012` | Preserve the exact transition replay v1 boundary `{1,3}` with primary `n_steps=3`; no five-step or v1.1 work. | TRANSITION-REPLAY v1; ADR-014 |
 
 ## 4. Current Repository Analysis
 
@@ -50,7 +53,7 @@ In scope: frozen-index reconstruction, immutable reference manifests, live read-
 
 | ID | Category | Issue | Alternatives | Recommendation | Impact | Status |
 |---|---|---|---|---|---|---|
-| `DEC-AUDIT-001` | Validation boundary | The protected root is mounted read-only in the Docker GPU container, but only reference existence/content and two raw ScenarioEnv paths have been exercised. | Run progressively broader read-only checks / claim full validation. | Continue focused checks, beginning with the scalar vertical path. | Blocks `VERIFIED` status; does not block safe focused checks. | Open |
+| `DEC-AUDIT-001` | Validation boundary | The protected root must remain read-only while derived outputs remain writable. | Run with a read-only `/workspace/data` bind and separate writable outputs. | Use the GPU Compose overlay and explicit read-only data mount for every live command. | Prevents accidental dataset writes; derived canonical artifacts must already exist. | Approved by user request |
 | `DEC-AUDIT-002` | Specification clarification | ACL v1 §11 made Rulebook criticality the first component of final usefulness. | Retain ACL v1 formula / approve a narrow ScenarioNet-scope ACL v1 amendment. | Approved narrow amendment in ACL v1 §28 and ADR-014. | Usefulness, ranking, replacement, replay probability, MAB feedback, records, tests, and state migration. | Approved 2026-07-19 |
 
 ## 7. Proposed Design
@@ -66,6 +69,9 @@ Add a standard-library, read-only audit command that consumes only the frozen se
 | `REQ-AUDIT-003` | `AC-AUDIT-003` | conformance inventory | source/config/test inspection | In progress |
 | `REQ-AUDIT-004` | `AC-AUDIT-004` | reconciliation section | replay config and planner inspection | In progress |
 | `REQ-AUDIT-005` | `AC-AUDIT-005` | ACL §28, usefulness calculators, planner backends, and config | `tests/test_scenario_acl_usefulness.py`, ACL config matrix, planner import smoke, S3/S5 ACL smokes | IMPLEMENTED; long-run resume and representative multi-episode evidence pending |
+| `REQ-AUDIT-010` | `AC-AUDIT-010` | Final Hydra overrides and runtime loop | Effective `--cfg job`, integrated TD3 all-on run | VERIFIED |
+| `REQ-AUDIT-011` | `AC-AUDIT-011` | ScenarioEnv, Rulebook wrapper, observation/encoder, replay/ACL/checkpoint paths | PG/Waymo artifact and log assertions plus focused tests | VERIFIED for integration gate |
+| `REQ-AUDIT-012` | `AC-AUDIT-012` | Replay configuration validator and TD3/SAC configs | `test_transition_replay_config.py` and resolved Hydra config | VERIFIED |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -77,6 +83,9 @@ Add a standard-library, read-only audit command that consumes only the frozen se
 | `TEST-AUDIT-004` | smoke | S0 raw ScenarioEnv | mounted immutable source root, final golden manifest, zero policy | one PG and one Waymo reset/step path | `REQ-AUDIT-003` |
 | `TEST-AUDIT-005` | integration | vectorized source provider reset | mounted immutable source root | worker spawn, sampling, reset, route publishing | `REQ-AUDIT-003` |
 | `TEST-AUDIT-006` | smoke | S0–S6 full scalar stages | mounted immutable source root and golden manifest | PG/Waymo path and stage diagnostics | `REQ-AUDIT-003` |
+| `TEST-AUDIT-007` | configuration | Final effective Hydra composition | GPU container, explicit all-on overrides | Rulebook 4.7, scalarizer, semantic v1.1, LQ, strict provider, ACL, PER, n=3, persistence, TD3 | `REQ-AUDIT-010`, `REQ-AUDIT-012` |
+| `TEST-AUDIT-008` | integration | Final all-on TD3 train/evaluate | canonical read-only ScenarioNet, representative PG/Waymo sampling | finite observations/actions/rewards/losses, Rulebook/scalar fields, ACL LP/MAB/replay, n-step/PER, checkpoint artifacts | `REQ-AUDIT-010`, `REQ-AUDIT-011` |
+| `TEST-AUDIT-009` | integration | Resume from final-run checkpoint | same canonical root and saved run directory | RNG, ACL, replay, PER, encoder/checkpoint identity restored; training continues and final evaluation is emitted | `REQ-AUDIT-011` |
 
 Commands use `docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev uv run --no-sync ...` for all GPU/container validation. `make rulebook-v2-check` and learner smoke commands remain follow-up validation, not substitutes for the documented S0–S6 stages.
 
@@ -119,7 +128,9 @@ runtime mapping artifacts may be rewritten; source scenarios remain immutable.
 - [x] A4: Fix the provider/DataManager reset-order defect that cached the next scenario before `before_reset`; add a regression and real repeated-reset evidence.
 - [x] A4: Rebuild canonical catalog/runtime mappings from the frozen index and remove redundant frozen-derived runtime artifacts.
 - [x] A4/A5: Implement and execute representative scalar S0–S6 diagnostic paths. S0–S5 source-backed smokes and diagnostic S6 pass with finite updates/actions, evaluation, and checkpoint publication.
-- [ ] A4/A5: Complete multi-episode PG/Waymo semantic-policy parity, default-length PPO validation, checkpoint/resume (including PER and ACL state), and final reconciliation; these remain before `VERIFIED`.
+- [ ] A4/A5: Complete the final all-on TD3 run with representative PG/Waymo semantic-policy parity, checkpoint/resume including PER and ACL state, and final evaluation.
+- [ ] A5: Execute SAC only if the resolved authoritative final configuration requires it; otherwise record it as not applicable.
+- [ ] A6: Reconcile all acceptance criteria, audit inventory, report, ExecPlan, and project index; retain integration-only interpretation of metrics.
 
 ## 11. Progress And Findings Log
 
@@ -141,7 +152,12 @@ runtime mapping artifacts may be rewritten; source scenarios remain immutable.
 - 2026-07-19: Standard GPU smoke (`presets/test/smoke_train`) completed 2,000 TD3-SB3 steps, evaluations, and final checkpoint; `learning_starts=10000` yielded zero learner updates, so this is an environment/checkpoint smoke only.
 - 2026-07-19: An earlier ScenarioNet learner attempt was blocked by the then-mixed runtime view; canonical replay has since removed that blocker. The deferred Rulebook v2 adapter now reaches the live PG reset/step path. The mounted data root contains the approved read-only `rulebook_v2/calibration_b_e.json` plus its hash-bound ego config; one real PG and one real Waymo reset/step now pass. A Waymo elevation-datum mismatch was fixed by translating only the common static-cache `z` datum to MetaDrive's live ego `z=0`; relative elevation differences remain intact and a regression test covers the transformation.
 - 2026-07-19: Docker staged diagnostics pass: S1 TD3/MLP with PER and ACL off (20 steps), S2 TD3/LQ with PER and ACL off (20 steps), S3 TD3/LQ with approved ACL and PER off (20 steps), S4 TD3/LQ with PER on and ACL off (20 steps), S5 TD3/LQ with ACL and PER on (20 steps), and diagnostic S6 PPO/LQ with replay off (32 steps, rollout override 16). These completed in the dev container with finite updates/evaluation/checkpoints; S3/S5 also persisted ACL/MAB state. A subsequent S2 run with the explicit GPU Compose overlay reported `device=cuda` and passed evaluation/checkpoint. These are runtime smokes, not scientific performance results.
+- 2026-07-19: The requested final all-on composition was first attempted with `run_profile=thesis`; the existing ACL preflight rejected vectorized training before collecting any steps. The user then selected `run_profile=smoke`. The effective all-on smoke run used strict canonical ScenarioNet, Rulebook v4.7, `bounded_satisfaction_rank`, semantic v1.1/LQ v1.0, ACL A0–A5, TD3, PER, `n_steps=3`, replay persistence, and `vectorized=false` as required by the current ACL driver. It completed 2,000 steps, 87 generated scenarios, 1,901 TD3 updates, finite scalar rewards/learning potential, PG and Waymo episodes, checkpoints, and final evaluation.
+- 2026-07-19: Artifact inspection exposed that the ACL driver did not persist transition replay, checkpoint pairs, or global RNG state despite enabled persistence. Added atomic ACL replay/checkpoint/RNG persistence and strict resume loading, plus a regression test. Focused replay/ACL tests passed (`24 passed`) and focused Ruff passed.
+- 2026-07-19: The corrected smoke run published `latest_replay_buffer.pkl`, `final_replay_buffer.pkl`, checkpoint pairs, and `latest_rng_state.pkl`. Read-only Docker inspection found `PrioritizedNStepReplayBuffer`, `n_steps=3`, 2,000 stored transitions, finite nonzero PER priorities, finite sum-tree state, and a valid checkpoint zip.
+- 2026-07-19: Resume from the corrected run's `latest` checkpoint completed the remaining 500 steps to global step 2,500. Logs show 11 `origin=scenario_buffer` replay episodes and 13 generated episodes, all six ACL arms represented in the chunk summary, finite updates, and final evaluation. Resume artifacts again contain replay, pair, and RNG state.
 - 2026-07-19: Explicit GPU S5 diagnostic completed 200 environment steps with TD3/LQ, approved ACL, PER, and transition replay `n_steps=3`, using the canonical read-only dataset root. The run produced finite actor/critic updates, evaluation, ACL/MAB/replay artifacts, and `latest.zip`/`final.zip` checkpoints. A follow-up run resumed from the first run's `latest.zip` with RNG restoration and completed steps 200–300, again with finite updates, evaluation, ACL state, and checkpoints. This validates one checkpoint/resume path only; it does not replace the broader PG/Waymo, algorithm, or long-run matrix.
+- 2026-07-19: The GPU 200-step diagnostic matrix also passed S1 (TD3/MLP, ACL/PER off; run `outputs/.../td3_sb3/seed_42/20260719_163307`), S2 (TD3/LQ, ACL/PER off; `20260719_163404`), S3 (TD3/LQ, approved ACL, PER off; `../scenario_acl_scenarionet.../20260719_163547`), S4 (TD3/LQ, PER on, ACL off; `20260719_163757`), and S6 (PPO/LQ, replay off, rollout `n_steps=16`; `outputs/.../ppo_sb3/seed_42/20260719_163941`). Each completed with `status: completed`, finite updates/actions, evaluations, and checkpoints; the S3 artifact contains persisted ACL/MAB state. The paths are on the external mounted output root, not in the protected dataset.
 - 2026-07-19: Root-caused the legacy reset failure: `_reset_global_seed()` accessed `current_scenario` before `ScenarioDataManager.before_reset`, leaving two cached scenarios. Moving route injection to `_get_reset_return()` preserves reset ordering. The focused ScenarioEnv suite passes `24`, three real consecutive resets pass, and vectorized PG/Waymo integration passes `2`.
 - 2026-07-19: An explicit legacy Rulebook-v1 TD3/MLP learner diagnostic on the coherent runtime completed 300 steps with finite actor/critic losses, 150 gradient steps in the final chunk, evaluations, and final checkpoint. It validates learner/reset plumbing only and is not an S1 v4.7 result.
 - 2026-07-19: Root-caused the canonical mismatch: frozen-index creation was correct, as its recorded catalog hash exactly matched the former frozen replay catalog. The canonical catalog was regenerated after freeze. Reverted the erroneous two-view configuration, changed frozen replay to rebuild canonical artifacts, regenerated the canonical catalog, split manifest, and runtime mappings from the index, and removed redundant frozen-derived artifacts. The canonical catalog hash now equals the index hash and all primary runtime mappings validate.
@@ -151,10 +167,12 @@ runtime mapping artifacts may be rewritten; source scenarios remain immutable.
 - 2026-07-19: Preserved `exit_lanes` in both static adapters and added `derive_lane_movement_key`: the assigned ego route may disambiguate a branch, a unique successor may resolve an actor, and ambiguous topology returns no key with a validation error. No priority is inferred from geometry; `vehicle_yield` remains NOT_APPLICABLE without explicit movement-priority records. Added `build_episode_cache`, reset memory initialization, and a complete source-neutral `evaluate_transition` composition through the fixed registry. The focused Rulebook suite passes 166 tests with one environment-dependent skip; source-backed learner smoke and checkpoint/resume remain pending.
 - 2026-07-19: Read-only static-adapter probes on actually loaded canonical records produced zero validation errors for one PG record, one Waymo record, and one Waymo record with route traffic lights (the latter yielded two route-relevant signal controls). The mounted read-only calibration artifact was then loaded and the complete deferred live adapter passed ten control steps on one real PG and one real Waymo record; this remains representative smoke evidence, not dataset-wide live validation.
 - 2026-07-19: Corrected the stale Rulebook configuration version from `4.6-final-implementation-complete` to the authoritative `4.7-final-implementation-complete`; added a focused regression test. This changes configuration identity only and does not claim live adapter completion.
+- 2026-07-19: The first final all-on TD3 launch performed no environment steps and failed during the existing ACL runtime preflight because `scenario_acl` requires `env.vectorized.enabled=false`. This is an implementation/configuration boundary already enforced by `validate_scenario_acl_runtime_support`, not a dataset failure or silent fallback. The final run will use the supported sequential ACL path (`vectorized=false`, `num_envs=1`) while retaining strict canonical PG/Waymo provider sampling.
 
 ## 12. Deviations
 
-No approved deviations. The inaccessible protected source root prevents live verification only; it does not authorize a fallback dataset or a change in effective dataset.
+| `DEV-AUDIT-001` | The current ACL runtime requires non-vectorized ScenarioNet execution. | Final all-on verification uses `env.vectorized.enabled=false`, `num_envs=1`. | Existing runtime preflight; preserves ACL semantics and strict provider. | User-selected smoke verification; no scientific contract change. |
+| `DEV-AUDIT-002` | Smoke profile uses a shorter integration budget than the thesis profile. | `run_profile=smoke` with user-approved diagnostic overrides `learning_starts=100`, `batch_size=64` to exercise TD3/PER updates. | User explicitly requested smoke; metrics are integration evidence only. | User approval in conversation. |
 
 ## 13. Files
 
@@ -193,6 +211,10 @@ No approved deviations. The inaccessible protected source root prevents live ver
 | `src/thesis_rl/rulebook/v2/geometry/drivable.py` | Modified | Preserve the full vertically compatible drivable surface for off-road evaluation |
 | `tests/test_rulebook_v2_geometry.py` | Modified | Regression for off-lane off-road surface availability |
 | `tests/test_scenario_acl_buffer.py` | Modified | Regression for ACL artifact-parent creation |
+| `src/thesis_rl/curriculum/scenario_acl/driver.py` | Modified | Persist and restore ACL transition replay, checkpoint pairs, and global RNG state |
+| `src/thesis_rl/runtime/io/metadata.py` | Modified | Record the effective algorithm and transition replay identity in run metadata |
+| `tests/test_scenario_acl_buffer.py` | Modified | Regression for ACL replay buffer and checkpoint-pair publication |
+| `tests/test_run_metadata.py` | Added | Regression for effective algorithm and transition replay metadata |
 | `conf/env/scenarionet.yaml` | Restored | One canonical ScenarioNet root and runtime view |
 | `.env.example` | Modified | Documents that canonical paths derive from the root and frozen index |
 | `tests/test_scenarionet_vectorized_integration.py` | Modified | Live canonical catalog/index/runtime equality validation for all primary splits |
@@ -263,10 +285,68 @@ No approved deviations. The inaccessible protected source root prevents live ver
 | canonical fixed-sequence Waymo live-signal probe | PASS | 2026-07-19 | One real train Waymo scenario with 14 traffic lights produced 14 current states through the ScenarioNet physical-ID mapping; no future `dynamic_map_states` sequence was read. Unknown states remain explicit; complete evaluation passed in the ten-step source smoke. |
 | canonical fixed-sequence Waymo ego/actor snapshot probe | PASS | 2026-07-19 | One real train Waymo VRU scenario produced 12 unique finite other-actor snapshots (11 vehicles, 1 cyclist) after one ego exclusion; pedestrian/static-object parity remains unverified. |
 | `docker compose ... pytest -q tests/test_hydra_preset_test_configs.py tests/test_hydra_preset_run_configs.py tests/test_hydra_agent_presets.py` | PASS | 2026-07-19 | 32 Hydra preset/config tests pass; the previous LQ-vs-`latent_query_v2` test-alignment concern is not present in the current tree. |
-| ScenarioNet S0–S5 Rulebook/learner paths | PASS; final reconciliation pending | 2026-07-19 | S0 ten-step PG/Waymo path, S1 TD3/MLP, S2 TD3/LQ, S3 ACL+LQ, S4 PER+LQ, and S5 ACL+PER+LQ completed short source-backed smokes with finite updates/actions, evaluation, and checkpoints. A 200-step GPU S5 and a 100-step resume from `latest.zip` also passed. Long-run multi-episode parity, broader algorithm/source resume, and scientific runs remain pending. |
-| ScenarioNet S6 PPO path | PASS (diagnostic) | 2026-07-19 | PPO/LQ with replay disabled completed 32 steps, two PPO updates, evaluation, and checkpoint using a diagnostic rollout override (`n_steps=16`, batch 8); the approved default rollout remains 2048. |
+| ScenarioNet S0–S6 Rulebook/learner paths | PASS; final reconciliation pending | 2026-07-19 | S0 ten-step PG/Waymo path plus 200-step GPU S1–S6 diagnostics completed with finite updates/actions, evaluation, and checkpoints. S5 also resumed 100 steps from `latest.zip` with restored RNG. Long-run multi-episode parity, broader algorithm/source resume, and scientific runs remain pending. |
+| ScenarioNet S6 PPO path | PASS (diagnostic) | 2026-07-19 | PPO/LQ with replay disabled completed 32 steps and a 200-step GPU run, finite PPO updates, evaluation, and checkpoint using a diagnostic rollout override (`n_steps=16`, batch 8); the approved default rollout remains 2048. |
 | legacy Rulebook-v1 learner diagnostic | PASS (diagnostic only) | 2026-07-19 | 300 steps, finite TD3 actor/critic losses, 150 final-chunk gradient steps, evaluations and final checkpoint; not an S1 v4.7 result. |
+| Docker corrected ACL final smoke plus resume | PASS | 2026-07-19 | 2,000-step all-on TD3 smoke with replay/PER/ACL persistence, then resume to global step 2,500 with replayed scenarios and final evaluation. |
+| Docker metadata-only resume check | PASS | 2026-07-19 | Restored fixed checkpoint at unchanged step, final evaluation completed; new metadata records `algorithm: td3_sb3` and transition replay `n_steps=3`, PER and persistence. |
+| Docker focused regression suite after final fixes | PASS | 2026-07-19 | 25 passed; one pre-existing DeprecationWarning. Focused Ruff format/lint and `git diff --check` pass. |
+| `docker compose ... pytest -q` | PASS | 2026-07-19 | Full repository suite after ACL persistence and metadata changes: 652 passed, 1 skipped, 1 pre-existing DeprecationWarning. |
 
 ## 15. Final Reconciliation
 
-Pending. `IMPLEMENTED` and `VERIFIED` must remain distinct until the audit artifacts, focused checks, mounted-data validation, and final source/config/test reconciliation are complete.
+`REQ-AUDIT-001` — `VERIFIED`: frozen index/catalog/runtime alignment and read-only source validation remain passing; no protected source was changed.
+
+`REQ-AUDIT-002` — `VERIFIED`: final 48-reference train-only manifest remains deterministic and reference-only.
+
+`REQ-AUDIT-003` — `VERIFIED` for the requested integration matrix: Rulebook v4.7, scalarization, semantic `(2541,)` observation, LQ, termination/final evaluation, and TD3 live PG/Waymo path completed with focused contract tests.
+
+`REQ-AUDIT-004` — `VERIFIED`: resolved configuration and serialized replay both report `n_steps=3`; implementation validator remains `{1,3}` and no five-step path was added.
+
+`REQ-AUDIT-005` — `VERIFIED` for the smoke/resume matrix: ACL A0–A5, learning-potential-only usefulness, generation/replay, staleness-aware replay state, buffer/MAB persistence, no mutation, and resume were exercised. Long-run statistical behavior remains out of scope.
+
+`REQ-AUDIT-006` — `VERIFIED`: all live commands used the GPU Compose overlay and the protected data bind was read-only; failures and the ACL vectorization boundary are recorded.
+
+`REQ-AUDIT-010` — `VERIFIED`: final all-on TD3 smoke completed with the required components and final evaluation.
+
+`REQ-AUDIT-011` — `VERIFIED` for representative integration evidence: PG/Waymo source events, shape/dtype, ACL learning potential, finite Rulebook/scalar values, PER priorities, replay persistence, checkpoint integrity, RNG/ACL/replay resume, and final evaluation are recorded. Dataset-wide semantic parity and scientific performance remain outside this integration gate.
+
+`REQ-AUDIT-012` — `VERIFIED`: only approved transition replay v1 `n_steps=3` was used.
+
+Known limitations: the ACL driver remains sequential because vectorized ACL is not currently supported; final metrics are not scientific results; SAC was not run because TD3 is the requested primary final learner and no authoritative final configuration requires it; full thesis-length training and statistical algorithm comparison remain deferred.
+
+## 16. Diagnostic Logging Correction (2026-07-20)
+
+The first requested step-level trace run completed without trace files because
+Rulebook v4.7 is wired through `RulebookV2MonitorWrapper`, while the diagnostic
+options had only been implemented for the legacy `RuleRewardWrapper`. The v2
+wrapper also exposed `scalar_reward` but not the established
+`scalar_rule_reward` info key consumed by the runtime aggregators.
+
+The v2 wrapper now persists one JSON-safe Rulebook/scalarization record per
+transition, exposes both scalar reward aliases, and receives the configured
+diagnostic paths. The default runtime-debug path is run-local under `logs/`.
+Regression coverage is in `tests/test_rulebook_v2_wrapper.py`.
+
+Validation: focused v2/reward/metadata tests `8 passed`; focused Ruff and
+`git diff --check` passed. A new all-on smoke run completed 2,000 steps with
+2,072 synchronized Rulebook/runtime records, 1,819 PG records and 253 Waymo
+records. All records were finite, had four margins, complete evaluation, and
+zero mismatches against the approved `bounded_satisfaction_rank` formula.
+
+## 17. Collision Trace Correction (2026-07-20)
+
+The step-level trace exposed a second integration defect: five episodes were
+marked `collision=true` by the environment, while the Rulebook trace contained
+zero applicable collision components. The live contact normalizer resolved the
+ego only through `engine.traffic_manager.ego_vehicle`; ScenarioEnv's terminal
+collision path owns the ego through `env.agents`.
+
+The normalizer now resolves the ScenarioEnv agent first, then the direct vehicle
+attribute, and finally the traffic-manager fallback. Rulebook trace records now
+also include terminal collision/out-of-road flags for direct correlation.
+Regression coverage is in `tests/test_rulebook_v2_metadrive_live.py`.
+
+Validation: focused live-adapter and v2-wrapper tests `21 passed`. The previous
+smoke must not be used as collision-conformance evidence; a new observed smoke
+is required after this correction.

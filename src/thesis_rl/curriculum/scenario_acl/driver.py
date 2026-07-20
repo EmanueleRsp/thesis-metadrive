@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
+import os
+import pickle
+import random
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
 from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.agent.agent import Agent
@@ -37,6 +42,7 @@ from thesis_rl.runtime.io.csv_recorder import CSVRecorder
 from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
 from thesis_rl.runtime.io.metadata import update_run_metadata
 from thesis_rl.runtime.io.run_logging import log_event
+from thesis_rl.sb3_extensions.replay import resolve_transition_replay_config
 from thesis_rl.runtime.wiring.builders import (
     adapter_space_kwargs,
     build_adapter,
@@ -80,6 +86,90 @@ class EpisodeAclOutcome:
     metrics: dict[str, Any]
     learning_potential: float | None = None
     usefulness_norm: float | None = None
+
+
+def _save_acl_replay_buffer(planner: Any, path: Path) -> bool:
+    """Persist the learner replay buffer for the custom ACL training path."""
+
+    save = getattr(planner, "save_replay_buffer", None)
+    if save is None:
+        raise TypeError("ACL transition replay persistence requires planner.save_replay_buffer().")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        saved = bool(save(str(temporary_path)))
+        if not saved or not temporary_path.is_file():
+            raise RuntimeError(f"Planner did not publish replay buffer: {temporary_path}")
+        os.replace(temporary_path, path)
+        return True
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _load_acl_replay_buffer(planner: Any, path: Path) -> bool:
+    """Load the persisted replay buffer before ACL sampling resumes."""
+
+    load = getattr(planner, "load_replay_buffer", None)
+    if load is None:
+        raise TypeError("ACL transition replay resume requires planner.load_replay_buffer().")
+    if not path.is_file():
+        raise FileNotFoundError(f"ACL replay buffer is missing: {path}")
+    return bool(load(str(path)))
+
+
+def _save_acl_rng_state(path: Path) -> None:
+    """Persist process RNGs used by the learner and environment wrappers."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        payload["cuda"] = torch.cuda.get_rng_state_all()
+    with tempfile.NamedTemporaryFile(
+        dir=path.parent, prefix=f".{path.name}.", delete=False
+    ) as handle:
+        temporary_path = Path(handle.name)
+        pickle.dump(payload, handle)
+    os.replace(temporary_path, path)
+
+
+def _load_acl_rng_state(path: Path) -> None:
+    """Restore process RNGs saved by the ACL driver."""
+
+    if not path.is_file():
+        raise FileNotFoundError(f"ACL RNG state is missing: {path}")
+    with path.open("rb") as handle:
+        payload = pickle.load(handle)
+    random.setstate(payload["python"])
+    np.random.set_state(payload["numpy"])
+    torch.set_rng_state(payload["torch"])
+    if "cuda" in payload and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(payload["cuda"])
+
+
+def _save_acl_checkpoint_pair(
+    *,
+    path: Path,
+    checkpoint_name: str,
+    replay_name: str,
+    training_timestep: int,
+) -> None:
+    """Publish the model/replay pair identity used by ACL resume."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "checkpoint_id": hashlib.sha256(
+            f"{checkpoint_name}:{replay_name}:{training_timestep}".encode()
+        ).hexdigest(),
+        "training_timestep": int(training_timestep),
+        "replay_segment_id": 0,
+        "model_path": f"{checkpoint_name}.zip",
+        "replay_path": replay_name,
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _summarize_episode_acl_outcomes(
@@ -467,6 +557,17 @@ def run_scenario_acl_training(
     run_seed = int(cfg.seed)
     scenario_cfg = curriculum_cfg.scenario_acl
     artifact_paths = _scenario_acl_artifact_paths(paths.artifacts_dir)
+    transition_replay_config = resolve_transition_replay_config(
+        cfg.agent.planner.algorithm.get("transition_replay"),
+        algorithm_name=str(cfg.agent.planner.algorithm.name),
+        total_timesteps=total_timesteps,
+        legacy_save_replay_buffer=bool(cfg.checkpoint.get("save_replay_buffer", False)),
+    )
+    latest_replay_buffer_path = paths.checkpoints_dir / "latest_replay_buffer.pkl"
+    final_replay_buffer_path = paths.checkpoints_dir / "final_replay_buffer.pkl"
+    latest_checkpoint_pair_path = paths.checkpoints_dir / "latest_checkpoint_pair.json"
+    final_checkpoint_pair_path = paths.checkpoints_dir / "final_checkpoint_pair.json"
+    latest_rng_state_path = paths.checkpoints_dir / "latest_rng_state.pkl"
     rng = np.random.default_rng(run_seed)
 
     if str(cfg.env.get("name", "")).strip().lower() != "scenarionet":
@@ -537,6 +638,22 @@ def run_scenario_acl_training(
     agent.set_checkpoint_identity(build_reward_semantics_identity(cfg))
     if resume_enabled:
         agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
+        if transition_replay_config.persistence_enabled:
+            resume_replay_path = (
+                resume_run_dir
+                / "checkpoints"
+                / f"{resume_cfg.get('checkpoint_name', 'latest')}_replay_buffer.pkl"
+            )
+            _load_acl_replay_buffer(planner, resume_replay_path)
+            resume_pair_path = (
+                resume_run_dir
+                / "checkpoints"
+                / f"{resume_cfg.get('checkpoint_name', 'latest')}_checkpoint_pair.json"
+            )
+            if not resume_pair_path.is_file():
+                raise FileNotFoundError(f"ACL checkpoint pair is missing: {resume_pair_path}")
+            if bool(resume_cfg.get("restore_rng_state", True)):
+                _load_acl_rng_state(resume_run_dir / "checkpoints" / "latest_rng_state.pkl")
 
     print_run_setup(
         title="Training Run",
@@ -1085,6 +1202,16 @@ def run_scenario_acl_training(
             )
             if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
                 agent.save(paths.latest_checkpoint_stem)
+                if transition_replay_config.persistence_enabled:
+                    _save_acl_replay_buffer(planner, latest_replay_buffer_path)
+                    _save_acl_checkpoint_pair(
+                        path=latest_checkpoint_pair_path,
+                        checkpoint_name="latest",
+                        replay_name=latest_replay_buffer_path.name,
+                        training_timestep=current_global_step,
+                    )
+                    if bool(cfg.checkpoint.get("save_rng_state", True)):
+                        _save_acl_rng_state(latest_rng_state_path)
 
             train_logger.info(
                 "Scenario ACL chunk finished | chunk_id=%d | mode=%s | arms=%s | "
@@ -1104,6 +1231,16 @@ def run_scenario_acl_training(
         if not bool(cfg.checkpoint.get("save_final", True)):
             raise ValueError("checkpoint.save_final must be true for scenario_acl training.")
         agent.save(paths.final_checkpoint_stem)
+        if transition_replay_config.persistence_enabled:
+            _save_acl_replay_buffer(planner, final_replay_buffer_path)
+            _save_acl_checkpoint_pair(
+                path=final_checkpoint_pair_path,
+                checkpoint_name="final",
+                replay_name=final_replay_buffer_path.name,
+                training_timestep=current_global_step,
+            )
+            if bool(cfg.checkpoint.get("save_rng_state", True)):
+                _save_acl_rng_state(latest_rng_state_path)
 
         final_eval_env_overrides = apply_eval_scenario_seed_split(
             base_run_seed=run_seed,
@@ -1242,6 +1379,16 @@ def run_scenario_acl_training(
         )
     except KeyboardInterrupt:
         agent.save(paths.latest_checkpoint_stem)
+        if transition_replay_config.persistence_enabled:
+            _save_acl_replay_buffer(planner, latest_replay_buffer_path)
+            _save_acl_checkpoint_pair(
+                path=latest_checkpoint_pair_path,
+                checkpoint_name="latest",
+                replay_name=latest_replay_buffer_path.name,
+                training_timestep=current_global_step,
+            )
+            if bool(cfg.checkpoint.get("save_rng_state", True)):
+                _save_acl_rng_state(latest_rng_state_path)
         duration_seconds = round(time.time() - start_time, 2)
         update_run_metadata(
             paths.artifacts_dir,

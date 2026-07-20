@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any
 
 import gymnasium as gym
@@ -57,6 +59,9 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         initial_cache: EpisodeCache | None,
         scalarizer: RulebookScalarizer | None = None,
         adapter_factory: AdapterFactory | None = None,
+        rule_margin_log_path: str | None = None,
+        runtime_info_debug_enabled: bool = False,
+        runtime_info_debug_path: str | None = None,
     ) -> None:
         super().__init__(env)
         self._snapshotter = snapshotter
@@ -65,6 +70,17 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         self._initial_cache = initial_cache
         self._scalarizer = scalarizer
         self._adapter_factory = adapter_factory
+        self._rule_margin_log_path = Path(rule_margin_log_path) if rule_margin_log_path else None
+        if self._rule_margin_log_path is not None:
+            self._rule_margin_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._runtime_info_debug_enabled = bool(runtime_info_debug_enabled)
+        self._runtime_info_debug_path = (
+            Path(runtime_info_debug_path)
+            if runtime_info_debug_path
+            else Path("runtime_info_debug.jsonl")
+        )
+        if self._runtime_info_debug_enabled:
+            self._runtime_info_debug_path.parent.mkdir(parents=True, exist_ok=True)
         self._memory = initial_memory
         self._cache = initial_cache
         self._pre_snapshot: EnvSnapshot | None = None
@@ -137,10 +153,11 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
     def step(self, action: Any):
         if self._pre_snapshot is None:
             raise RuntimeError("RulebookV2MonitorWrapper.step called before reset")
+        pre_snapshot = self._pre_snapshot
         observation, reward, terminated, truncated, info = self.env.step(action)
         post_snapshot = self._snapshotter(self.env)
         result, next_memory, cache_delta = self._transition_evaluator(
-            pre_state=self._pre_snapshot,
+            pre_state=pre_snapshot,
             post_state=post_snapshot,
             memory=self._memory,
             cache=self._cache,
@@ -179,6 +196,83 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         if scalarization_result is not None:
             reward = scalarization_result.reward
             info_dict["scalar_reward"] = scalarization_result.reward
+            # The runtime logging/metric contract uses this explicit name to
+            # distinguish the scalarized Rulebook reward from the native one.
+            info_dict["scalar_rule_reward"] = scalarization_result.reward
             info_dict["selected_reward"] = scalarization_result.reward
             info_dict["scalarization"] = scalarization_result.to_dict()
+        self._append_diagnostics(
+            pre_snapshot=pre_snapshot,
+            post_snapshot=post_snapshot,
+            native_reward=native_reward,
+            info_dict=info_dict,
+            result=result,
+            scalarization_result=scalarization_result,
+        )
         return observation, reward, terminated, truncated, info_dict
+
+    def _append_diagnostics(
+        self,
+        *,
+        pre_snapshot: object,
+        post_snapshot: object,
+        native_reward: float,
+        info_dict: Mapping[str, Any],
+        result: RulebookResult,
+        scalarization_result: ScalarizationResult | None,
+    ) -> None:
+        """Persist one JSON-safe Rulebook/scalarization record per transition."""
+
+        scenario_id = getattr(post_snapshot, "scenario_id", None)
+        step_index = getattr(post_snapshot, "step_index", None)
+        sim_time_s = getattr(post_snapshot, "sim_time_s", None)
+        payload: dict[str, Any] = {
+            "scenario_id": scenario_id,
+            "step": step_index,
+            "sim_time_s": sim_time_s,
+            "pre_step": getattr(pre_snapshot, "step_index", None),
+            "env_reward": native_reward,
+            "termination": {
+                key: info_dict[key]
+                for key in (
+                    "crash",
+                    "crash_vehicle",
+                    "crash_object",
+                    "crash_human",
+                    "collision",
+                    "out_of_road",
+                    "physical_out_of_road",
+                    "termination_reason",
+                )
+                if key in info_dict
+            },
+            "rulebook": result.to_dict(),
+        }
+        if scalarization_result is not None:
+            payload["scalar_rule_reward"] = scalarization_result.reward
+            payload["scalarization"] = scalarization_result.to_dict()
+
+        if self._rule_margin_log_path is not None:
+            with self._rule_margin_log_path.open("a", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=True)
+                handle.write("\n")
+
+        if self._runtime_info_debug_enabled:
+            runtime_payload = {
+                "scenario_id": scenario_id,
+                "step": step_index,
+                "sim_time_s": sim_time_s,
+                "ego_actor_id": getattr(getattr(post_snapshot, "ego", None), "actor_id", None),
+                "actor_count": len(getattr(post_snapshot, "actors", ())),
+                "contact_onset_count": len(getattr(post_snapshot, "contact_onset_records", ())),
+                "active_contact_count": len(getattr(post_snapshot, "active_contact_ids", ())),
+                "rulebook_margins": list(result.margins),
+                "rulebook_costs": list(result.costs),
+                "raw_progress_m": result.raw_progress_m,
+                "scalar_rule_reward": (
+                    None if scalarization_result is None else scalarization_result.reward
+                ),
+            }
+            with self._runtime_info_debug_path.open("a", encoding="utf-8") as handle:
+                json.dump(runtime_payload, handle, ensure_ascii=True)
+                handle.write("\n")

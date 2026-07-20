@@ -444,7 +444,7 @@ def evaluate_transition(
             "ego_velocity_xy": pre_state.ego.velocity_xy,
             "ego_configured_speed_cap_mps": pre_state.ego.configured_speed_cap_mps,
             "pre_actors_by_id": pre_by_id,
-            "onset_records": pre_state.contact_onset_records,
+            "onset_records": post_state.contact_onset_records,
             "previous_contact_ids": memory.previous_contact_ids,
             "post_active_contact_ids": post_state.active_contact_ids,
         },

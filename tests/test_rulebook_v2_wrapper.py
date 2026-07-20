@@ -71,7 +71,7 @@ def test_wrapper_preserves_native_reward_and_commits_after_transition():
     ]
 
 
-def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation():
+def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation(tmp_path):
     route = TaskRouteRecord("s", ("lane",), "pg", "v2", "hash")
     cache = EpisodeCache("s", route)
 
@@ -89,13 +89,21 @@ def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation():
         initial_memory=RulebookMemory(),
         initial_cache=cache,
         scalarizer=RulebookScalarizer(ScalarizationConfig()),
+        rule_margin_log_path=str(tmp_path / "rule_margins.jsonl"),
+        runtime_info_debug_enabled=True,
+        runtime_info_debug_path=str(tmp_path / "runtime_info_debug.jsonl"),
     )
     wrapped.reset()
     _, reward, _, _, info = wrapped.step(0)
     assert reward == pytest.approx(0.025)
     assert info["env_reward"] == 3.5
     assert info["scalar_reward"] == pytest.approx(0.025)
+    assert info["scalar_rule_reward"] == pytest.approx(0.025)
     assert info["scalarization"]["mode"] == "bounded_satisfaction_rank"
+    margin_record = (tmp_path / "rule_margins.jsonl").read_text(encoding="utf-8").strip()
+    assert '"scalar_rule_reward": 0.025' in margin_record
+    runtime_record = (tmp_path / "runtime_info_debug.jsonl").read_text(encoding="utf-8").strip()
+    assert '"rulebook_margins": [0.0, 0.0, 0.0, 0.1]' in runtime_record
 
 
 def test_wrapper_does_not_commit_memory_or_snapshot_when_cache_commit_fails():

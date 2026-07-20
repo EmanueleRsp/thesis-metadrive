@@ -324,6 +324,7 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
                 )
             )
         if adapter_factory is not None:
+
             def snapshotter(_env):
                 raise RuntimeError("Deferred Rulebook v2 adapter is unavailable before reset")
 
@@ -345,6 +346,9 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
             initial_cache=initial_cache,
             scalarizer=scalarizer,
             adapter_factory=adapter_factory,
+            rule_margin_log_path=cfg.reward.get("rule_margin_log_path"),
+            runtime_info_debug_enabled=bool(cfg.reward.get("runtime_info_debug_enabled", False)),
+            runtime_info_debug_path=cfg.reward.get("runtime_info_debug_path"),
         )
     mode = str(cfg.reward.behavior).lower()
     if mode == "off":

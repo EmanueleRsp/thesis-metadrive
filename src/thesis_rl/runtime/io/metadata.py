@@ -85,9 +85,21 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
     legacy_cfg = scalarization_cfg.get("legacy", {})
     if not isinstance(legacy_cfg, dict):
         legacy_cfg = {}
+    transition_replay_cfg = OmegaConf.select(cfg, "agent.planner.algorithm.transition_replay")
+    transition_replay = (
+        OmegaConf.to_container(transition_replay_cfg, resolve=True)
+        if transition_replay_cfg is not None
+        else {}
+    )
+    if not isinstance(transition_replay, dict):
+        transition_replay = {}
     metadata = {
         "name": _cfg_get(cfg, "name"),
-        "algorithm": _cfg_get(cfg, "planner.name", default="unknown"),
+        "algorithm": _cfg_get(
+            cfg,
+            "agent.planner.algorithm.name",
+            default=_cfg_get(cfg, "planner.name", default="unknown"),
+        ),
         "task_contract": _cfg_get(cfg, "env.name", default="unknown"),
         "run_profile": _cfg_get(cfg, "run_profile.name", default="unknown"),
         "reward_type": _cfg_get(cfg, "reward.type", default="unknown"),
@@ -127,6 +139,12 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
             },
         },
         "curriculum_name": _cfg_get(cfg, "curriculum.name", default="unknown"),
+        "transition_replay": {
+            "enabled": transition_replay.get("enabled"),
+            "n_steps": transition_replay.get("n_steps"),
+            "prioritized": transition_replay.get("prioritized"),
+            "persistence": transition_replay.get("persistence", {}),
+        },
         "experiment_group": _cfg_get(cfg, "analysis.experiment_group"),
         "include_in_comparison": bool(_cfg_get(cfg, "analysis.include_in_comparison", True)),
         "seed": _cfg_get(cfg, "seed"),
