@@ -29,6 +29,7 @@ def _step_info() -> dict:
             "rss": {"cost": 0.12},
             "ttc": {"cost": 0.063},
             "signal": {"cost": 0.0},
+            "progress": {"cost": 0.018, "margin": 0.018},
         },
     }
 
@@ -49,8 +50,10 @@ def test_diagnostic_lines_are_compact_and_show_subrules() -> None:
         "Heading: +1.27 rad   Route: 42.7%",
         "Reward: -0.18   Cumulative: -0.18",
     ]
-    assert any("R2 dynamic -0.12" in line for line in lines)
-    assert any("rss +0.12" in line and "ttc +0.06" in line for line in lines)
+    assert any("R2 m=-0.12" in line for line in lines)
+    assert any("rss c=0.12" in line and "ttc c=0.06" in line for line in lines)
+    assert not any("collision c=" in line for line in lines)
+    assert not any("progress c=" in line for line in lines)
 
 
 def test_diagnostic_lines_tolerate_missing_optional_fields() -> None:
@@ -61,6 +64,18 @@ def test_diagnostic_lines_tolerate_missing_optional_fields() -> None:
     assert lines[1] == "Step: 1   Speed: - km/h"
     assert lines[2] == "Heading: - rad   Route: -"
     assert lines[3] == "Reward: +1.00   Cumulative: +1.00"
+
+
+def test_diagnostic_lines_use_top_level_ego_fallbacks() -> None:
+    state = DiagnosticState(algorithm="td3_sb3")
+    state.update(0.0)
+    lines = diagnostic_lines(
+        state=state,
+        reward=0.0,
+        step_info={"speed": 18.5, "yaw": -0.4, "route_completion": 0.2},
+    )
+    assert lines[1] == "Step: 1   Speed: +18.5 km/h"
+    assert lines[2] == "Heading: -0.40 rad   Route: 20.0%"
 
 
 def test_annotator_preserves_frame_shape_and_rgb() -> None:

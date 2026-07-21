@@ -208,6 +208,7 @@ make smoke
 | 2026-07-21 | Implemented shared panel and optional exact route/target/actor overlays. | Focused suite `14 passed`; Ruff format/lint passed | final reconciliation; smoke remains unverified |
 | 2026-07-21 | End-to-end smoke built and completed its first 1,000-step chunk, then made no observable progress in the second chunk. | `make smoke` interrupted with exit 130 after read-only `docker top`/logs checks | report smoke as not verified; retain focused evidence |
 | 2026-07-21 | Parallel final evaluation attempted to pickle MetaDrive `top_down_renderer` through `VectorEnvSlotProxy` while extracting optional geometry. | Attached traceback: worker `get_attr` failed on `edge_lane` pickling; panel frame transport itself was unaffected | skip world-geometry extraction across the parent proxy boundary; retain panel and worker-rendered frame |
+| 2026-07-21 | Fixed parallel diagnostics: worker now applies route/target/neighbor overlays before transferring the frame; worker also attaches pickle-safe speed/yaw scalars. Panel semantics now distinguish macro margins (`m`) from subrule costs (`c`). | Focused suite `13 passed`; Ruff format/lint passed; `git diff --check` passed | rerun the five-episode test in the real ScenarioNet smoke environment |
 
 ## 12. Deviations
 

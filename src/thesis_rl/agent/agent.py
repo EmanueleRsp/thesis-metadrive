@@ -1865,6 +1865,7 @@ class Agent:
                 "screen_size": tuple(cfg.get("screen_size", [800, 800])),
                 "scaling": float(cfg.get("scaling", 4)),
                 "semantic_map": bool(cfg.get("semantic_map", False)),
+                "diagnostic_geometry": True,
             }
 
         self.preprocessor.reset()

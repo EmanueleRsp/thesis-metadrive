@@ -99,6 +99,9 @@ def _worker(
             cmd, data = remote.recv()
             if cmd == "step":
                 observation, reward, terminated, truncated, info = env.step(data)
+                from thesis_rl.runtime.io.video_diagnostics import enrich_step_info_from_env
+
+                info = enrich_step_info_from_env(env, info)
                 done = bool(terminated or truncated)
                 info = dict(info)
                 info["TimeLimit.truncated"] = bool(truncated and not terminated)
@@ -157,6 +160,7 @@ def _worker(
                 remote.send((observation, reset_info))
             elif cmd == "render":
                 render_kwargs = {} if data is None else dict(data)
+                diagnostic_overlay = bool(render_kwargs.pop("diagnostic_geometry", False))
                 render_env = getattr(env, "unwrapped", env)
                 try:
                     frame = render_env.render(**render_kwargs)
@@ -165,6 +169,16 @@ def _worker(
                         raise
                     render_kwargs.pop("mode", None)
                     frame = render_env.render(**render_kwargs)
+                if diagnostic_overlay and frame is not None:
+                    from thesis_rl.runtime.io.video_diagnostics import (
+                        annotate_geometry_frame,
+                        diagnostic_geometry_from_env,
+                    )
+
+                    frame = annotate_geometry_frame(
+                        frame,
+                        diagnostic_geometry_from_env(env),
+                    )
                 remote.send(frame)
             elif cmd == "close":
                 env.close()

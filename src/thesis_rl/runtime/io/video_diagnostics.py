@@ -17,10 +17,6 @@ _MACRO_ALIASES = {
     "route_progress": "R4",
 }
 _SUBRULE_ALIASES = {
-    "collision_impact": "collision",
-    "dynamic_interaction_safety": "dynamic",
-    "road_traffic_compliance": "road",
-    "route_progress": "progress",
     "clearance": "CLR",
     "vehicle_yield": "yield",
     "wrong_way": "wrongway",
@@ -42,6 +38,11 @@ def _fmt(value: Any, digits: int = 2) -> str:
 def _fmt_percent(value: Any) -> str:
     number = _number(value)
     return "-" if number is None else f"{100.0 * number:.1f}%"
+
+
+def _fmt_cost(value: Any) -> str:
+    number = _number(value)
+    return "-" if number is None else f"{max(0.0, number):.2f}"
 
 
 def _get(mapping: Any, *keys: str) -> Any:
@@ -91,20 +92,32 @@ def _rule_lines(step_info: Mapping[str, Any]) -> list[str]:
         for name, value in zip(names, vector):
             macro = str(name)
             prefix = _MACRO_ALIASES.get(macro, macro[:8])
-            lines.append(f"{prefix} {_SUBRULE_ALIASES.get(macro, macro[:10])} {_fmt(value)}")
+            lines.append(f"{prefix} m={_fmt(value)}")
 
     components = step_info.get("rule_components")
     if not isinstance(components, Mapping):
         return lines
     subrules: list[str] = []
     for name, payload in components.items():
+        # Macro rules and route progress are already represented by the
+        # signed margin rows above. Only violation components belong here;
+        # progress is a signed margin, not a [0, 1] cost.
+        if str(name) in {
+            "collision_impact",
+            "collision",
+            "dynamic_interaction_safety",
+            "road_traffic_compliance",
+            "route_progress",
+            "progress",
+        }:
+            continue
         if not isinstance(payload, Mapping):
             continue
         cost = _get(payload, "cost", "margin", "value")
         if cost is None:
             continue
         label = _SUBRULE_ALIASES.get(str(name), str(name)[:9])
-        subrules.append(f"{label} {_fmt(cost)}")
+        subrules.append(f"{label} c={_fmt_cost(cost)}")
     if subrules:
         # Keep all subrules, but put them on compact continuation rows.
         for start in range(0, len(subrules), 4):
@@ -122,11 +135,15 @@ def diagnostic_lines(
 
     info = step_info if isinstance(step_info, Mapping) else {}
     ego = info.get("ego_state") if isinstance(info.get("ego_state"), Mapping) else {}
-    speed = _get(ego, "speed_km_h", "velocity_km_h")
+    speed = _get(ego, "speed_km_h", "velocity_km_h", "speed")
     if speed is None:
-        speed_mps = _get(ego, "speed_m_s", "speed")
+        speed_mps = _get(ego, "speed_m_s")
         speed = None if speed_mps is None else 3.6 * float(speed_mps)
+    if speed is None:
+        speed = _get(info, "speed_km_h", "velocity_km_h", "speed", "velocity")
     heading = _get(ego, "yaw", "heading", "heading_rad")
+    if heading is None:
+        heading = _get(info, "yaw", "heading", "heading_rad")
     route = _get(info, "route_completion", "route_completion_ratio", "progress")
 
     lines = [
@@ -134,6 +151,7 @@ def diagnostic_lines(
         f"Step: {state.step}   Speed: {_fmt(speed, 1)} km/h",
         f"Heading: {_fmt(heading, 2)} rad   Route: {_fmt_percent(route)}",
         f"Reward: {_fmt(reward)}   Cumulative: {_fmt(state.cumulative_reward)}",
+        "m: - violation, + satisfaction | c: 0 none, 1 max",
     ]
     lines.extend(_rule_lines(info))
     return lines
@@ -246,6 +264,110 @@ def diagnostic_geometry(env: Any, step_info: Any) -> dict[str, Any]:
     return geometry
 
 
+def diagnostic_geometry_from_env(env: Any) -> dict[str, Any]:
+    """Build geometry input inside a MetaDrive worker before frame transfer."""
+
+    base = getattr(env, "unwrapped", env)
+    vehicle = getattr(base, "vehicle", None)
+    if vehicle is None:
+        vehicle = getattr(getattr(base, "engine", None), "current_track_agent", None)
+    if vehicle is None:
+        return {}
+    navigation = getattr(vehicle, "navigation", None)
+    target = None
+    final_lane = getattr(navigation, "final_lane", None) if navigation is not None else None
+    if final_lane is not None and hasattr(final_lane, "position"):
+        try:
+            target = final_lane.position(float(getattr(final_lane, "length", 0.0)), 0.0)
+        except Exception:
+            target = None
+    if target is None and navigation is not None:
+        target = getattr(navigation, "current_checkpoint", None)
+    neighbors: list[dict[str, Any]] = []
+    agents = getattr(base, "agents", {})
+    if isinstance(agents, Mapping):
+        for actor in agents.values():
+            if actor is None or actor is vehicle:
+                continue
+            position = getattr(actor, "position", None)
+            if position is not None:
+                neighbors.append(
+                    {
+                        "entity_id": str(getattr(actor, "name", getattr(actor, "id", ""))),
+                        "position": position,
+                    }
+                )
+    return diagnostic_geometry(
+        base,
+        {
+            "ego_state": {"position": getattr(vehicle, "position", None)},
+            "target_point": target,
+            "neighbors": neighbors,
+        },
+    )
+
+
+def enrich_step_info_from_env(env: Any, step_info: Any) -> Any:
+    """Attach only pickle-safe ego display scalars at the worker boundary."""
+
+    if not isinstance(step_info, Mapping):
+        return step_info
+    base = getattr(env, "unwrapped", env)
+    vehicle = getattr(base, "vehicle", None)
+    if vehicle is None:
+        vehicle = getattr(getattr(base, "engine", None), "current_track_agent", None)
+    if vehicle is None:
+        return step_info
+    enriched = dict(step_info)
+    ego = (
+        dict(enriched.get("ego_state", {}))
+        if isinstance(enriched.get("ego_state"), Mapping)
+        else {}
+    )
+    speed_km_h = _number(getattr(vehicle, "speed_km_h", None))
+    heading = _number(getattr(vehicle, "heading_theta", None))
+    if speed_km_h is not None:
+        ego.setdefault("speed", speed_km_h)
+    if heading is not None:
+        ego.setdefault("yaw", heading)
+    position = getattr(vehicle, "position", None)
+    if position is not None:
+        ego.setdefault("position", position)
+    if ego:
+        enriched["ego_state"] = ego
+    return enriched
+
+
+def _draw_geometry(draw: Any, geometry: Mapping[str, Any]) -> None:
+    def line(points: Any, color: tuple[int, int, int, int], width: int = 2) -> None:
+        if isinstance(points, (list, tuple)) and len(points) >= 2:
+            draw.line([tuple(map(float, point)) for point in points], fill=color, width=width)
+
+    line(geometry.get("route_future"), (50, 130, 255, 125), width=2)
+    line(geometry.get("route_past"), (50, 190, 80, 190), width=3)
+    target = geometry.get("target")
+    if isinstance(target, (list, tuple)) and len(target) >= 2:
+        x, y = float(target[0]), float(target[1])
+        draw.ellipse((x - 5, y - 5, x + 5, y + 5), outline=(30, 80, 220, 210), width=2)
+    for point, critical in geometry.get("neighbors", ()):
+        x, y = float(point[0]), float(point[1])
+        color = (220, 40, 35, 225) if critical else (240, 145, 20, 210)
+        draw.ellipse((x - 5, y - 5, x + 5, y + 5), outline=color, width=2)
+
+
+def annotate_geometry_frame(frame: np.ndarray, geometry: Mapping[str, Any] | None) -> np.ndarray:
+    """Apply only world-geometry overlays to a worker-rendered frame."""
+
+    try:
+        from PIL import Image, ImageDraw
+    except Exception:  # pragma: no cover
+        return to_uint8_rgb(np.asarray(frame))
+    image = Image.fromarray(to_uint8_rgb(np.asarray(frame))).convert("RGBA")
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    _draw_geometry(ImageDraw.Draw(overlay), geometry or {})
+    return np.asarray(Image.alpha_composite(image, overlay).convert("RGB"))
+
+
 def annotate_diagnostic_frame(
     frame: np.ndarray,
     *,
@@ -280,20 +402,7 @@ def annotate_diagnostic_frame(
     draw = ImageDraw.Draw(overlay)
     geometry = geometry or {}
 
-    def line(points: Any, color: tuple[int, int, int, int], width: int = 2) -> None:
-        if isinstance(points, (list, tuple)) and len(points) >= 2:
-            draw.line([tuple(map(float, point)) for point in points], fill=color, width=width)
-
-    line(geometry.get("route_future"), (50, 130, 255, 125), width=2)
-    line(geometry.get("route_past"), (50, 190, 80, 190), width=3)
-    target = geometry.get("target")
-    if isinstance(target, (list, tuple)) and len(target) >= 2:
-        x, y = float(target[0]), float(target[1])
-        draw.ellipse((x - 5, y - 5, x + 5, y + 5), outline=(30, 80, 220, 210), width=2)
-    for point, critical in geometry.get("neighbors", ()):
-        x, y = float(point[0]), float(point[1])
-        color = (220, 40, 35, 225) if critical else (240, 145, 20, 210)
-        draw.ellipse((x - 5, y - 5, x + 5, y + 5), outline=color, width=2)
+    _draw_geometry(draw, geometry)
     draw.rounded_rectangle(
         (x0, y0, x0 + box_width, y0 + box_height),
         radius=4,
