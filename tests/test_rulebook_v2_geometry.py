@@ -10,7 +10,11 @@ from thesis_rl.rulebook.v2.geometry.canonical import (
     stable_geometry_id,
 )
 from thesis_rl.rulebook.v2.geometry.elevation import PolylineElevation
-from thesis_rl.rulebook.v2.geometry.drivable import DrivableLaneRecord, drivable_surface_for_ego
+from thesis_rl.rulebook.v2.geometry.drivable import (
+    DrivableLaneRecord,
+    _union_selected_surfaces,
+    drivable_surface_for_ego,
+)
 from thesis_rl.rulebook.v2.geometry.controls import derive_control_line
 from thesis_rl.rulebook.v2.geometry.continuous_sat import (
     deterministic_convex_decomposition,
@@ -43,7 +47,10 @@ from thesis_rl.rulebook.v2.types import MovementKey
 def test_lane_movement_key_uses_unique_successor_or_assigned_route() -> None:
     route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
     unique = RouteLaneRecord(
-        "approach", Polygon(((-1.0, -2.0), (11.0, -2.0), (11.0, 2.0), (-1.0, 2.0))), route, ("exit",)
+        "approach",
+        Polygon(((-1.0, -2.0), (11.0, -2.0), (11.0, 2.0), (-1.0, 2.0))),
+        route,
+        ("exit",),
     )
     assert derive_lane_movement_key(unique) is not None
     assert derive_lane_movement_key(unique).exit_lane_id == "exit"
@@ -78,7 +85,9 @@ def test_canonical_geometry_rejects_collapsed_or_invalid_input() -> None:
     with pytest.raises(CanonicalGeometryError, match="collapsed"):
         canonical_geometry_wkb(LineString(((0.0, 0.0), (0.0004, 0.0))))
     with pytest.raises(CanonicalGeometryError, match="invalid"):
-        canonical_geometry_wkb(Polygon(((0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0), (0.0, 0.0))))
+        canonical_geometry_wkb(
+            Polygon(((0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0), (0.0, 0.0)))
+        )
 
 
 def test_vertical_compatibility_does_not_match_overpass_to_underpass() -> None:
@@ -116,12 +125,8 @@ def test_oriented_bounding_box_uses_pose_heading_and_strict_dimensions() -> None
 
 
 def test_front_bumper_and_swept_region_are_canonical() -> None:
-    pre = oriented_bounding_box(
-        center_xy=(0.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0
-    )
-    post = oriented_bounding_box(
-        center_xy=(2.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0
-    )
+    pre = oriented_bounding_box(center_xy=(0.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0)
+    post = oriented_bounding_box(center_xy=(2.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0)
     assert front_bumper_segment(pre, heading_rad=0.0).bounds == pytest.approx((2.0, -1.0, 2.0, 1.0))
     assert swept_front_bumper(
         pre, post, pre_heading_rad=0.0, post_heading_rad=0.0
@@ -144,7 +149,9 @@ def test_route_projection_uses_reset_and_previous_s_tie_breaks_at_self_intersect
     assert near_final_crossing.segment_index == 2
 
 
-def test_route_consolidates_noisy_xy_points_with_median_elevation_and_rejects_large_spread() -> None:
+def test_route_consolidates_noisy_xy_points_with_median_elevation_and_rejects_large_spread() -> (
+    None
+):
     route = RoutePolyline(((0.0, 0.0, 0.0), (0.0005, 0.0005, 2.0), (10.0, 0.0, 4.0)))
     assert route.points_xyz[0] == pytest.approx((0.00025, 0.00025, 1.0))
     with pytest.raises(ValueError, match="incompatible"):
@@ -159,30 +166,47 @@ def test_route_projection_rejects_incompatible_vertical_level() -> None:
 
 def test_lane_association_rejects_vertical_and_geometric_ties() -> None:
     route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
-    lane = RouteLaneRecord("lane-a", Polygon(((0.0, -2.0), (10.0, -2.0), (10.0, 2.0), (0.0, 2.0))), route)
-    assert associate_route_lane(
-        position_xy=(5.0, 0.0), position_z=0.0, heading_rad=0.0, route_lanes=(lane,)
-    ).lane_id == "lane-a"
-    assert associate_route_lane(
-        position_xy=(5.0, 0.0), position_z=3.1, heading_rad=0.0, route_lanes=(lane,)
-    ) is None
+    lane = RouteLaneRecord(
+        "lane-a", Polygon(((0.0, -2.0), (10.0, -2.0), (10.0, 2.0), (0.0, 2.0))), route
+    )
+    assert (
+        associate_route_lane(
+            position_xy=(5.0, 0.0), position_z=0.0, heading_rad=0.0, route_lanes=(lane,)
+        ).lane_id
+        == "lane-a"
+    )
+    assert (
+        associate_route_lane(
+            position_xy=(5.0, 0.0), position_z=3.1, heading_rad=0.0, route_lanes=(lane,)
+        )
+        is None
+    )
     tied = RouteLaneRecord("lane-b", lane.polygon_xy, route)
-    assert associate_route_lane(
-        position_xy=(5.0, 0.0), position_z=0.0, heading_rad=0.0, route_lanes=(lane, tied)
-    ) is None
+    assert (
+        associate_route_lane(
+            position_xy=(5.0, 0.0), position_z=0.0, heading_rad=0.0, route_lanes=(lane, tied)
+        )
+        is None
+    )
 
 
 def test_bumper_gap_handles_separated_tangent_and_overlapping_footprints() -> None:
     route = RoutePolyline(((0.0, 0.0, 0.0), (30.0, 0.0, 0.0)))
     ego = footprint_route_coordinates(
-        oriented_bounding_box(center_xy=(5.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0), route, position_z=0.0
+        oriented_bounding_box(center_xy=(5.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0),
+        route,
+        position_z=0.0,
     )
     other = footprint_route_coordinates(
-        oriented_bounding_box(center_xy=(12.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0), route, position_z=0.0
+        oriented_bounding_box(center_xy=(12.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0),
+        route,
+        position_z=0.0,
     )
     assert bumper_to_bumper_gap(ego, other) == pytest.approx((3.0, True))
     tangent = footprint_route_coordinates(
-        oriented_bounding_box(center_xy=(9.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0), route, position_z=0.0
+        oriented_bounding_box(center_xy=(9.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0),
+        route,
+        position_z=0.0,
     )
     assert bumper_to_bumper_gap(ego, tangent) == pytest.approx((0.0, True))
 
@@ -190,9 +214,7 @@ def test_bumper_gap_handles_separated_tangent_and_overlapping_footprints() -> No
 def test_drivable_surface_uses_current_vertical_layer_and_width_fallback() -> None:
     lower = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
     upper = RoutePolyline(((0.0, 0.0, 10.0), (10.0, 0.0, 10.0)))
-    ego = oriented_bounding_box(
-        center_xy=(5.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0
-    )
+    ego = oriented_bounding_box(center_xy=(5.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0)
     lanes = (
         DrivableLaneRecord("lower", lower, None, 4.0),
         DrivableLaneRecord("upper", upper, None, 4.0),
@@ -210,9 +232,7 @@ def test_drivable_surface_uses_current_vertical_layer_and_width_fallback() -> No
 
 def test_drivable_surface_remains_available_when_ego_is_off_lane() -> None:
     lane = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
-    ego = oriented_bounding_box(
-        center_xy=(50.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0
-    )
+    ego = oriented_bounding_box(center_xy=(50.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0)
     surface = drivable_surface_for_ego(
         ego_footprint=ego,
         ego_position_xy=(50.0, 0.0),
@@ -222,9 +242,28 @@ def test_drivable_surface_remains_available_when_ego_is_off_lane() -> None:
     assert not surface.is_empty
 
 
+def test_drivable_surface_reuses_exact_union_for_same_lane_layer() -> None:
+    _union_selected_surfaces.cache_clear()
+    lane = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    ego = oriented_bounding_box(center_xy=(5.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0)
+    lanes = (DrivableLaneRecord("lane", lane, None, 4.0),)
+
+    first = drivable_surface_for_ego(
+        ego_footprint=ego, ego_position_xy=(5.0, 0.0), ego_position_z=0.0, lanes=lanes
+    )
+    second = drivable_surface_for_ego(
+        ego_footprint=ego, ego_position_xy=(5.5, 0.0), ego_position_z=0.0, lanes=lanes
+    )
+
+    assert first.equals(second)
+    assert _union_selected_surfaces.cache_info().hits == 1
+
+
 def test_derived_control_line_is_orthogonal_and_signed_upstream_positive() -> None:
     route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
-    lane = RouteLaneRecord("lane", Polygon(((0.0, -2.0), (10.0, -2.0), (10.0, 2.0), (0.0, 2.0))), route)
+    lane = RouteLaneRecord(
+        "lane", Polygon(((0.0, -2.0), (10.0, -2.0), (10.0, 2.0), (0.0, 2.0))), route
+    )
     control = derive_control_line(
         control_point_xy=(5.0, 0.0), control_point_z=0.0, controlled_lane=lane
     )
@@ -336,9 +375,12 @@ def test_continuous_sat_returns_no_interval_finite_interval_and_open_end() -> No
     assert finite is not None
     assert finite.start_s == pytest.approx(0.5)
     assert finite.end_s == pytest.approx(1.5)
-    assert predict_occupancy_interval(
-        actor_footprint=crossing, actor_velocity_xy=(0.0, 4.0), zone=zone, horizon_s=2.0
-    ) is None
+    assert (
+        predict_occupancy_interval(
+            actor_footprint=crossing, actor_velocity_xy=(0.0, 4.0), zone=zone, horizon_s=2.0
+        )
+        is None
+    )
     inside = Polygon(((0.5, -0.5), (1.5, -0.5), (1.5, 0.5), (0.5, 0.5)))
     open_end = predict_occupancy_interval(
         actor_footprint=inside, actor_velocity_xy=(0.0, 0.0), zone=zone, horizon_s=3.0
@@ -349,9 +391,7 @@ def test_continuous_sat_returns_no_interval_finite_interval_and_open_end() -> No
 
 
 def test_deterministic_decomposition_handles_concavity_and_hole() -> None:
-    concave = Polygon(
-        ((0.0, 0.0), (4.0, 0.0), (4.0, 1.0), (1.0, 1.0), (1.0, 4.0), (0.0, 4.0))
-    )
+    concave = Polygon(((0.0, 0.0), (4.0, 0.0), (4.0, 1.0), (1.0, 1.0), (1.0, 4.0), (0.0, 4.0)))
     holed = Polygon(
         ((0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)),
         holes=(((1.0, 1.0), (1.0, 4.0), (4.0, 4.0), (4.0, 1.0)),),
@@ -365,14 +405,18 @@ def test_deterministic_decomposition_handles_concavity_and_hole() -> None:
 def test_merge_corridors_produce_a_single_stable_conflict_component() -> None:
     ego = MovementCorridor(
         MovementKey("merge-ego", "merge-node", "main-out"),
-        Polygon(((0, -1), (6, -1), (6, 1), (0, 1))), lambda _x, _y: 0.0,
+        Polygon(((0, -1), (6, -1), (6, 1), (0, 1))),
+        lambda _x, _y: 0.0,
     )
     merging = MovementCorridor(
         MovementKey("merge-other", "merge-node", "main-out"),
-        Polygon(((3, -3), (5, -3), (5, 3), (3, 3))), lambda _x, _y: 0.0,
+        Polygon(((3, -3), (5, -3), (5, 3), (3, 3))),
+        lambda _x, _y: 0.0,
     )
     candidates = build_vehicle_conflict_zone_candidates(
-        scenario_id="merge", ego_corridor=ego, other_corridor=merging,
+        scenario_id="merge",
+        ego_corridor=ego,
+        other_corridor=merging,
     )
     assert len(candidates) == 1
     assert candidates[0].component_index == 0
@@ -381,17 +425,26 @@ def test_merge_corridors_produce_a_single_stable_conflict_component() -> None:
 def test_roundabout_corridor_intersection_remains_2_5d_filtered() -> None:
     circulating = MovementCorridor(
         MovementKey("roundabout", "rotary", "exit"),
-        Polygon(((-4, -1), (4, -1), (4, 1), (-4, 1))), lambda _x, _y: 0.0,
+        Polygon(((-4, -1), (4, -1), (4, 1), (-4, 1))),
+        lambda _x, _y: 0.0,
     )
     entering = MovementCorridor(
         MovementKey("entry", "rotary", "roundabout"),
-        Polygon(((1, -4), (3, -4), (3, 4), (1, 4))), lambda _x, _y: 0.0,
+        Polygon(((1, -4), (3, -4), (3, 4), (1, 4))),
+        lambda _x, _y: 0.0,
     )
     candidates = build_vehicle_conflict_zone_candidates(
-        scenario_id="rotary", ego_corridor=circulating, other_corridor=entering,
+        scenario_id="rotary",
+        ego_corridor=circulating,
+        other_corridor=entering,
     )
     assert len(candidates) == 1
     elevated_entry = MovementCorridor(entering.movement_key, entering.polygon, lambda _x, _y: 3.1)
-    assert build_vehicle_conflict_zone_candidates(
-        scenario_id="rotary", ego_corridor=circulating, other_corridor=elevated_entry,
-    ) == ()
+    assert (
+        build_vehicle_conflict_zone_candidates(
+            scenario_id="rotary",
+            ego_corridor=circulating,
+            other_corridor=elevated_entry,
+        )
+        == ()
+    )

@@ -8,6 +8,12 @@ from typing import Any
 import numpy as np
 
 from thesis_rl.runtime.io.metadata import get_git_commit
+from thesis_rl.runtime.io.video_diagnostics import (
+    DiagnosticState,
+    algorithm_name_from_cfg,
+    annotate_diagnostic_frame,
+    diagnostic_geometry,
+)
 from thesis_rl.runtime.io.video_utils import render_topdown_frame, save_gif
 
 
@@ -54,6 +60,7 @@ def _compact_step_info(step_info: Any) -> dict[str, Any] | None:
     subset: dict[str, Any] = {}
     scalar_keys = (
         "env_reward",
+        "selected_reward",
         "scalar_rule_reward",
         "hybrid_reward",
         "route_completion",
@@ -158,7 +165,17 @@ class NoOpEpisodeArtifactRecorder:
         truncated: bool,
         step_info: Any,
     ) -> None:
-        _ = (env, step_index, observation, next_observation, action, reward, done, truncated, step_info)
+        _ = (
+            env,
+            step_index,
+            observation,
+            next_observation,
+            action,
+            reward,
+            done,
+            truncated,
+            step_info,
+        )
 
     def finalize_episode(self, *, episode_metrics: dict[str, Any]) -> dict[str, Any]:
         _ = episode_metrics
@@ -185,6 +202,7 @@ class LiveEvalEpisodeRecorder:
         manifest_payload: dict[str, Any],
         save_manifest: bool,
         save_trajectory_log: bool,
+        algorithm: str = "unknown",
     ) -> None:
         self._run_dir = run_dir
         self._videos_dir = videos_dir
@@ -198,6 +216,7 @@ class LiveEvalEpisodeRecorder:
         self._frames: list[np.ndarray] = []
         self._trajectory_rows: list[dict[str, Any]] = []
         self._warning: str | None = None
+        self._diagnostic_state = DiagnosticState(algorithm=str(algorithm))
 
     def record_step(
         self,
@@ -224,6 +243,7 @@ class LiveEvalEpisodeRecorder:
                 step_info=step_info,
             )
         )
+        self._diagnostic_state.update(float(reward))
         if self._warning is not None:
             return
         try:
@@ -231,7 +251,19 @@ class LiveEvalEpisodeRecorder:
                 self._manifest_payload["wrappers"] = _wrapper_stack(env)
             frame = render_topdown_frame(env, self._topdown_cfg)
             if frame is not None:
-                self._frames.append(np.asarray(frame))
+                try:
+                    geometry = diagnostic_geometry(env, step_info)
+                except Exception:
+                    geometry = {}
+                self._frames.append(
+                    annotate_diagnostic_frame(
+                        np.asarray(frame),
+                        state=self._diagnostic_state,
+                        reward=float(reward),
+                        step_info=step_info,
+                        geometry=geometry,
+                    )
+                )
         except Exception as exc:
             self._warning = f"live_record_render_failed:{exc}"
             self._frames.clear()
@@ -275,7 +307,9 @@ class LiveEvalEpisodeRecorder:
                 "episode_metrics": _json_safe(episode_metrics),
             }
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
-            manifest_path.write_text(json.dumps(_json_safe(manifest), indent=2, ensure_ascii=False), encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(_json_safe(manifest), indent=2, ensure_ascii=False), encoding="utf-8"
+            )
             manifest_rel = str(manifest_path.relative_to(self._run_dir)).replace("\\", "/")
 
         return {
@@ -308,9 +342,12 @@ def build_live_final_eval_recorder_factory(
     videos_dir = Path(str(cfg.paths.videos_dir))
     save_manifest = bool(cfg.video.get("save_manifest", True))
     save_trajectory_log = bool(cfg.video.get("save_trajectory_log", True))
+    algorithm = algorithm_name_from_cfg(cfg)
 
     base_manifest = {
-        "run_id": Path(str(cfg.paths.run_dir)).name,
+        # Callers may provide an explicit run_dir without carrying the full
+        # Hydra paths tree (for example the golden-suite diagnostic fixture).
+        "run_id": Path(str(cfg.paths.get("run_dir", run_dir))).name,
         "eval_id": int(eval_id),
         "eval_type": str(eval_type),
         "scenario_set": str(scenario_set),
@@ -325,7 +362,9 @@ def build_live_final_eval_recorder_factory(
         "map_config": _json_safe(resolved_env_config.get("map_config")),
         "traffic_density": _json_safe(resolved_env_config.get("traffic_density")),
         "traffic_mode": _json_safe(
-            resolved_env_config.get("traffic_mode", resolved_env_config.get("traffic_vehicle_config"))
+            resolved_env_config.get(
+                "traffic_mode", resolved_env_config.get("traffic_vehicle_config")
+            )
         ),
         "termination_flags": _json_safe(
             {
@@ -362,6 +401,7 @@ def build_live_final_eval_recorder_factory(
             manifest_payload=manifest_payload,
             save_manifest=save_manifest,
             save_trajectory_log=save_trajectory_log,
+            algorithm=algorithm,
         )
 
     return factory

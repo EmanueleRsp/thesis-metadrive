@@ -158,6 +158,12 @@ def main() -> None:
         cfg = compose(
             config_name="config",
             overrides=[
+                # This fixture forces native MetaDrive geometry.  The repository
+                # default is ScenarioNet, whose ScenarioEnv config intentionally
+                # rejects native map/traffic overrides used below.
+                "env=metadrive",
+                "obs=lidar_state",
+                "rulebook.version=v1",
                 "reward=scalar_reward",
                 "reward.rulebook_config=full",
                 "curriculum=stages",

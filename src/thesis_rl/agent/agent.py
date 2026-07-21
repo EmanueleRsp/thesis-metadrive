@@ -311,6 +311,8 @@ class Agent:
         episode_context_callback: Callable[[Any, dict[str, Any]], dict[str, Any] | None]
         | None = None,
         monitor_extra_rows_callback: Callable[[], list[tuple[str, str]]] | None = None,
+        monitor_event_poll_callback: Callable[[], list[str]] | None = None,
+        live_extra_renderables_callback: Callable[[], list[Any]] | None = None,
     ) -> dict[str, Any]:
         """Train the agent in the given environment for a specified number of timesteps.
         Args:
@@ -331,6 +333,10 @@ class Agent:
                 append to each completed-episode monitor event.
             monitor_extra_rows_callback: Optional callback providing live
                 monitor rows as ``(metric, value)`` pairs.
+            monitor_event_poll_callback: Optional callback returning background
+                event-log messages to merge into the training Live view.
+            live_extra_renderables_callback: Optional callback returning Rich
+                renderables displayed below the training monitor.
         Returns:
             Dictionary with chunk-level summary metrics (episodes, moving averages, update stats, fps).
         """
@@ -423,7 +429,6 @@ class Agent:
             std_episode_reward: float,
             latest_actor_loss: float,
             latest_critic_loss: float,
-            latest_learning_rate: float,
             total_update_calls: int,
             total_gradient_steps: int,
             latest_actor_loss_ema: float,
@@ -437,13 +442,14 @@ class Agent:
             table.add_row("Episodes", str(total_episodes))
             table.add_row("FPS", str(int(chunk_step / max(elapsed_seconds, 1e-9))))
             table.add_row("Elapsed (s)", str(int(elapsed_seconds)))
-            table.add_row("ep_len_mean", f"{mean_episode_len:.2f} ± {std_episode_len:.2f}")
-            table.add_row("ep_rew_mean", f"{mean_episode_reward:.2f} ± {std_episode_reward:.2f}")
-            table.add_row("actor_loss_ema", f"{latest_actor_loss_ema:.3g}")
-            table.add_row("critic_loss_ema", f"{latest_critic_loss_ema:.3g}")
-            table.add_row("learning_rate", f"{latest_learning_rate:.3g}")
-            table.add_row("update_calls_chunk", str(total_update_calls))
-            table.add_row("grad_steps_chunk", str(total_gradient_steps))
+            table.add_row("Length (per episode)", f"{mean_episode_len:.2f} ± {std_episode_len:.2f}")
+            table.add_row(
+                "Reward (per episode)", f"{mean_episode_reward:.2f} ± {std_episode_reward:.2f}"
+            )
+            table.add_row("Actor loss (EMA)", f"{latest_actor_loss_ema:.3g}")
+            table.add_row("Critic loss (EMA)", f"{latest_critic_loss_ema:.3g}")
+            table.add_row("Update calls (chunk)", str(total_update_calls))
+            table.add_row("Gradient steps (chunk)", str(total_gradient_steps))
             if monitor_extra_rows_callback is not None:
                 for metric, value in monitor_extra_rows_callback():
                     table.add_row(str(metric), str(value))
@@ -657,7 +663,6 @@ class Agent:
                     )
                     actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))
                     critic_loss = float(getattr(lifecycle, "last_critic_loss", float("nan")))
-                    learning_rate = float(getattr(lifecycle, "last_learning_rate", float("nan")))
                     update_calls = int(getattr(lifecycle, "update_count", 0))
                     gradient_steps_total = int(getattr(lifecycle, "gradient_step_count", 0))
 
@@ -680,6 +685,10 @@ class Agent:
                     should_render = (
                         log_interval <= 0 or step % log_interval == 0 or step == chunk_timesteps
                     )
+                    extra_events = (
+                        monitor_event_poll_callback() if monitor_event_poll_callback else []
+                    )
+                    event_logs.extendleft(reversed(extra_events))
                     if should_render:
                         monitor = _build_monitor_table(
                             current_step=global_steps_done + step,
@@ -693,13 +702,22 @@ class Agent:
                             std_episode_reward=ep_rew_std,
                             latest_actor_loss=actor_loss,
                             latest_critic_loss=critic_loss,
-                            latest_learning_rate=learning_rate,
                             total_update_calls=update_calls,
                             total_gradient_steps=gradient_steps_total,
                             latest_actor_loss_ema=ema_actor_loss,
                             latest_critic_loss_ema=ema_critic_loss,
                         )
-                        layout = Group(progress, monitor, _build_logs_panel(event_logs))
+                        extra_renderables = (
+                            live_extra_renderables_callback()
+                            if live_extra_renderables_callback
+                            else []
+                        )
+                        layout = Group(
+                            progress,
+                            monitor,
+                            *extra_renderables,
+                            _build_logs_panel(event_logs),
+                        )
                         live.update(layout)
         finally:
             for logger, original_level, original_propagate in monitor_logger_restore_state:
@@ -804,6 +822,8 @@ class Agent:
         | None = None,
         initial_observations: Any | None = None,
         monitor_extra_rows_callback: Callable[[], list[tuple[str, str]]] | None = None,
+        monitor_event_poll_callback: Callable[[], list[str]] | None = None,
+        live_extra_renderables_callback: Callable[[], list[Any]] | None = None,
     ) -> dict[str, Any]:
         """Train with a vectorized env, counting total collected transitions.
 
@@ -825,6 +845,8 @@ class Agent:
                 log_interval=log_interval,
                 reset_seed_fn=reset_seed_fn,
                 monitor_extra_rows_callback=monitor_extra_rows_callback,
+                monitor_event_poll_callback=monitor_event_poll_callback,
+                live_extra_renderables_callback=live_extra_renderables_callback,
             )
         if bool(getattr(self.adapter, "requires_training", False)):
             raise ValueError("Vectorized training currently supports only stateless adapters.")
@@ -938,17 +960,13 @@ class Agent:
 
         def _table() -> Table:
             elapsed = max(time.time() - start_time, 1e-9)
-            learning_rate = float(getattr(lifecycle, "last_learning_rate", float("nan")))
             chunk_env_steps = min(collected_steps, chunk_timesteps)
             run_env_steps = global_steps_done + collected_steps
-            chunk_vec_iterations = chunk_env_steps // n_envs
             table = Table(title=monitor_title, expand=True)
             table.add_column("Metric", style="cyan", no_wrap=True)
             table.add_column("Value", style="white")
             table.add_row("Chunk env steps", f"{chunk_env_steps}/{chunk_timesteps}")
             table.add_row("Run env steps", f"{run_env_steps}/{global_total_timesteps}")
-            table.add_row("Vector envs", str(n_envs))
-            table.add_row("Chunk vec iters", str(int(chunk_vec_iterations)))
             table.add_row("Episodes", str(episodes))
             table.add_row("FPS", str(int(collected_steps / elapsed)))
             table.add_row("Elapsed (s)", str(int(elapsed)))
@@ -956,14 +974,13 @@ class Agent:
             ep_len_std = float(np.std(recent_episode_lens)) if recent_episode_lens else 0.0
             ep_rew_mean = float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0
             ep_rew_std = float(np.std(recent_episode_rewards)) if recent_episode_rewards else 0.0
-            table.add_row("ep_len_mean", f"{ep_len_mean:.2f} ± {ep_len_std:.2f}")
-            table.add_row("ep_rew_mean", f"{ep_rew_mean:.2f} ± {ep_rew_std:.2f}")
-            table.add_row("actor_loss_ema", f"{ema_actor_loss:.3g}")
-            table.add_row("critic_loss_ema", f"{ema_critic_loss:.3g}")
-            table.add_row("learning_rate", f"{learning_rate:.3g}")
-            table.add_row("update_calls_chunk", str(int(getattr(lifecycle, "update_count", 0))))
+            table.add_row("Length (per episode)", f"{ep_len_mean:.2f} ± {ep_len_std:.2f}")
+            table.add_row("Reward (per episode)", f"{ep_rew_mean:.2f} ± {ep_rew_std:.2f}")
+            table.add_row("Actor loss (EMA)", f"{ema_actor_loss:.3g}")
+            table.add_row("Critic loss (EMA)", f"{ema_critic_loss:.3g}")
+            table.add_row("Update calls (chunk)", str(int(getattr(lifecycle, "update_count", 0))))
             table.add_row(
-                "grad_steps_chunk", str(int(getattr(lifecycle, "gradient_step_count", 0)))
+                "Gradient steps (chunk)", str(int(getattr(lifecycle, "gradient_step_count", 0)))
             )
             if monitor_extra_rows_callback is not None:
                 for metric, value in monitor_extra_rows_callback():
@@ -1264,7 +1281,16 @@ class Agent:
                         or collected_steps >= chunk_timesteps
                     )
                     if should_render:
-                        live.update(Group(progress, _table(), _logs_panel()))
+                        extra_events = (
+                            monitor_event_poll_callback() if monitor_event_poll_callback else []
+                        )
+                        event_logs.extendleft(reversed(extra_events))
+                        extra_renderables = (
+                            live_extra_renderables_callback()
+                            if live_extra_renderables_callback
+                            else []
+                        )
+                        live.update(Group(progress, _table(), *extra_renderables, _logs_panel()))
                     obs = next_obs
         finally:
             for logger, original_level, original_propagate in monitor_logger_restore_state:
@@ -1359,6 +1385,8 @@ class Agent:
         show_progress: bool = True,
         artifact_recorder_factory: Any | None = None,
         before_episode_reset_callback: Callable[[Any, int], None] | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
+        progress_description: str = "Evaluation episodes",
     ) -> dict[str, Any]:
         """Evaluate the agent in the given environment for a specified number of episodes.
         Args:
@@ -1385,6 +1413,8 @@ class Agent:
                 show_progress=show_progress,
                 artifact_recorder_factory=artifact_recorder_factory,
                 before_episode_reset_callback=before_episode_reset_callback,
+                progress_callback=progress_callback,
+                progress_description=progress_description,
             )
 
         # Initialize episode-level metric trackers
@@ -1428,7 +1458,10 @@ class Agent:
                 transient=True,
             )
             progress.start()
-            progress_task = progress.add_task("Evaluation episodes", total=n_eval_episodes)
+            progress_task = progress.add_task(
+                f"{progress_description} (0/{n_eval_episodes})",
+                total=n_eval_episodes,
+            )
 
         try:
             # Loop over evaluation episodes
@@ -1657,6 +1690,13 @@ class Agent:
 
                 if progress is not None and progress_task is not None:
                     progress.advance(progress_task)
+                if progress_callback is not None:
+                    progress_callback(episode_idx + 1, n_eval_episodes)
+                if progress is not None and progress_task is not None:
+                    progress.update(
+                        progress_task,
+                        description=f"{progress_description} ({episode_idx + 1}/{n_eval_episodes})",
+                    )
         finally:
             if progress is not None:
                 progress.stop()
@@ -1785,6 +1825,8 @@ class Agent:
         show_progress: bool,
         artifact_recorder_factory: Any | None,
         before_episode_reset_callback: Callable[[Any, int], None] | None,
+        progress_callback: Callable[[int, int], None] | None,
+        progress_description: str,
     ) -> dict[str, Any]:
         """Evaluate active episodes concurrently with deterministic reduction."""
 
@@ -1884,7 +1926,10 @@ class Agent:
                 transient=True,
             )
             progress.start()
-            progress_task = progress.add_task("Evaluation episodes", total=n_eval_episodes)
+            progress_task = progress.add_task(
+                f"{progress_description} (0/{n_eval_episodes})",
+                total=n_eval_episodes,
+            )
 
         next_episode = initial_count
         try:
@@ -1962,6 +2007,15 @@ class Agent:
                             }
                     if progress is not None and progress_task is not None:
                         progress.update(progress_task, advance=len(completed_slots))
+                    if progress_callback is not None:
+                        completed_count = n_eval_episodes - len(active)
+                        progress_callback(completed_count, n_eval_episodes)
+                    if progress is not None and progress_task is not None:
+                        completed_count = n_eval_episodes - len(active)
+                        progress.update(
+                            progress_task,
+                            description=f"{progress_description} ({completed_count}/{n_eval_episodes})",
+                        )
         finally:
             if progress is not None:
                 progress.stop()

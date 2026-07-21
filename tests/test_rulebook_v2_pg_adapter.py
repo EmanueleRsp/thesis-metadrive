@@ -42,10 +42,13 @@ def _minimal_pg_scenario() -> dict:
 def test_bundled_pg_fixture_converts_to_canonical_static_records():
     paths = sorted(glob.glob("data/scenarionet/pg/database/**/*.pkl", recursive=True))
     paths = [path for path in paths if "dataset_" not in path]
-    if not paths:
-        pytest.skip("bundled PG fixture unavailable")
-    with open(paths[0], "rb") as handle:
-        scenario = pickle.load(handle)
+    if paths:
+        with open(paths[0], "rb") as handle:
+            scenario = pickle.load(handle)
+    else:
+        # Keep the contract test deterministic in source-only checkouts where
+        # the optional binary PG dataset is not mounted.
+        scenario = _minimal_pg_scenario()
     result = build_pg_static_adapter_result(scenario, scenario_uid="pg-fixture")
     assert result.task_route.lane_ids
     assert result.route_lanes

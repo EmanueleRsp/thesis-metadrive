@@ -50,7 +50,7 @@ def test_ppo_rejects_active_or_non_default_replay_settings(raw_config: dict[str,
 
 @pytest.mark.parametrize("n_steps", [0, 2, 4])
 def test_invalid_n_step_value_fails(n_steps: int) -> None:
-    with pytest.raises(ValueError, match="one of \{1, 3\}"):
+    with pytest.raises(ValueError, match=r"one of \{1, 3\}"):
         resolve_transition_replay_config(
             {"enabled": True, "n_steps": n_steps},
             algorithm_name="td3_sb3",

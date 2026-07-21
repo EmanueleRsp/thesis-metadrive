@@ -9,8 +9,9 @@
 - Related protocol: `docs/protocols/live_eval_video_protocol.md` (candidate
   protocol; implementation scope explicitly approved by the user)
 - Related ADRs: `ADR-018-parallel-evaluation-and-test.md`, `ADR-016`
-- Status: `IMPLEMENTED`; focused validation and end-to-end smoke passed; full
-  repository suite retains two unrelated baseline failures
+- Status: `IMPLEMENTED`; asynchronous overlap is implemented separately by
+  `asynchronous_evaluation_v1_exec_plan.md`; focused validation, end-to-end
+  smoke, and full repository suite passed
 - Created: 2026-07-21
 - Last updated: 2026-07-21
 - Owner: thesis repository maintainer
@@ -36,7 +37,8 @@ In scope:
 - standalone evaluation and training-time intermediate/final evaluation paths;
 - sequential fallback for one worker and backward-compatible public behavior.
 
-Out of scope, explicitly deferred by the user:
+Out of scope for this plan (implemented separately by ADR-019 and the async
+evaluation plan):
 
 - evaluation running asynchronously while training continues;
 - changing scientific training profiles or learner `n_envs`;
@@ -55,7 +57,7 @@ Out of scope, explicitly deferred by the user:
 | `REQ-PET-005` | ScenarioNet evaluation uses the same deterministic provider sequence as the sequential path; workers do not independently resample evaluation records. | ScenarioNet v1.1 §23 and repository provider contract |
 | `REQ-PET-006` | Official live video is recorded during the same evaluation episode and retains manifest, trajectory, and CSV links. | Live Evaluation Video Protocol §§2, 3, 5 |
 | `REQ-PET-007` | Existing one-worker evaluation and offline replay remain compatible. | Live Evaluation Video Protocol §§6, 8 |
-| `REQ-PET-008` | The async train/evaluation overlap remains deferred and is not enabled by this change. | Explicit user approval, 2026-07-21 |
+| `REQ-PET-008` | This plan's episode-parallel evaluator remains synchronous when used by a caller; asynchronous orchestration is specified by ADR-019. | ADR-018/ADR-019 |
 
 ## 4. Current Repository Analysis
 
@@ -97,7 +99,7 @@ Out of scope, explicitly deferred by the user:
 | `DEC-PET-003` | implementation detail | Policy placement | copy policy into workers; parent inference | parent-side deterministic feed-forward inference | avoids checkpoint/policy copies and preserves action semantics | Approved by user 2026-07-21 |
 | `DEC-PET-004` | compatibility decision | Default worker counts | one; machine-specific recommendations | validation `12`, final test `8`, capped by episode count | operational throughput default; override remains available | Approved by user 2026-07-21 |
 | `DEC-PET-005` | specification clarification | ScenarioNet ordering | independent provider sampling; parent sequence | reconstruct sequential provider-0 sequence and force runtime indices | prevents scenario/statistical drift | Approved by user 2026-07-21 |
-| `DEC-PET-006` | deferred feature | Async evaluation while training | concurrent process; synchronous evaluation | defer to a later change | no change to stage gates or training timing in this cycle | Approved deferral by user 2026-07-21 |
+| `DEC-PET-006` | scope boundary | Async evaluation while training | implement in this plan; separate orchestrator | separate `ADR-019` and ExecPlan | keeps this plan focused on deterministic episode parallelism | Superseded by ADR-019, 2026-07-21 |
 
 ## 7. Proposed Design
 
@@ -155,8 +157,8 @@ Out of scope, explicitly deferred by the user:
   trajectory bundle and the returned per-episode paths remain canonical.
 - `AC-PET-008`: one worker retains current `Agent.evaluate` and offline replay
   behavior.
-- `AC-PET-009`: no asynchronous evaluation process is started by training; the
-  training loop still waits for evaluation results before curriculum decisions.
+- `AC-PET-009`: this episode-parallel evaluator has no implicit asynchronous
+  behavior; callers that need overlap use the explicit ADR-019 orchestrator.
 
 ### Mandatory test matrix
 

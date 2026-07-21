@@ -57,6 +57,7 @@ from thesis_rl.runtime.io.run_logging import (
     parse_log_level,
     setup_file_logger,
 )
+from thesis_rl.runtime.async_evaluation import AsyncEvaluationManager, EvaluationJob
 from thesis_rl.runtime.execution.seeding import (
     apply_eval_scenario_seed_split,
     eval_base_seed_from_env_overrides,
@@ -690,6 +691,8 @@ def run_training(cfg: DictConfig) -> None:
         )
         agent.set_checkpoint_identity(build_reward_semantics_identity(cfg))
 
+        async_evaluation_manager: AsyncEvaluationManager | None = None
+
         def _make_eval_agent(checkpoint_stem: Path, eval_env: Any) -> tuple[Agent, str]:
             checkpoint_zip = f"{checkpoint_stem}.zip"
             eval_planner = load_planner(cfg, checkpoint_path=checkpoint_zip, env=eval_env)
@@ -710,6 +713,162 @@ def run_training(cfg: DictConfig) -> None:
             adapter_checkpoint = Agent.adapter_checkpoint_path(checkpoint_stem)
             if adapter_checkpoint.exists():
                 adapter_checkpoint.unlink()
+
+        def _record_async_evaluation(job: EvaluationJob, metrics: dict[str, Any]) -> None:
+            """Persist a completed ordinary validation without gating training."""
+
+            per_episode = metrics.get("per_episode", {})
+            returns = list(per_episode.get("returns", []))
+            fields = {
+                **base_csv_fields,
+                "eval_id": job.eval_id,
+                "eval_type": "intermediate",
+                "scenario_set": "curriculum_eval",
+                "stage": job.stage,
+                "stage_index": job.stage_index,
+                "global_step": job.global_step,
+                "deterministic": bool(cfg.experiment.eval_deterministic),
+            }
+            vector_fields = {
+                "episode_length": list(per_episode.get("episode_length", [])),
+                "success": list(per_episode.get("success", [])),
+                "collision": list(per_episode.get("collision", [])),
+                "out_of_road": list(per_episode.get("out_of_road", [])),
+                "timeout": list(per_episode.get("timeout", [])),
+                "route_completion": list(per_episode.get("route_completion", [])),
+                "top_rule_violation_rate": list(per_episode.get("top_rule_violation_rate", [])),
+                "error_value": list(per_episode.get("error_value", [])),
+                "violated_rules": list(per_episode.get("violated_rules", [])),
+                "violation_pattern": list(per_episode.get("violation_pattern", [])),
+                "env_returns": list(per_episode.get("env_returns", [])),
+                "scalar_rule_returns": list(per_episode.get("scalar_rule_returns", [])),
+                "hybrid_returns": list(per_episode.get("hybrid_returns", [])),
+                "rule_rewards_by_rule": list(per_episode.get("rule_rewards_by_rule", [])),
+                "scenario_metadata": list(per_episode.get("scenario_metadata", [])),
+            }
+            for episode_idx, reward in enumerate(returns):
+                metadata = (
+                    vector_fields["scenario_metadata"][episode_idx]
+                    if episode_idx < len(vector_fields["scenario_metadata"])
+                    and isinstance(vector_fields["scenario_metadata"][episode_idx], dict)
+                    else {}
+                )
+                scenario_seed = job.base_seed + episode_idx if job.base_seed is not None else None
+                recorder.append_row(
+                    "eval_episodes.csv",
+                    {
+                        **fields,
+                        "episode_id": episode_idx + 1,
+                        "scenario_seed": scenario_seed,
+                        "scenario_id": metadata.get("scenario_id", f"seed_{scenario_seed}"),
+                        "reward": float(reward),
+                        "env_reward": _indexed_value(vector_fields["env_returns"], episode_idx),
+                        "scalar_rule_reward": _indexed_value(
+                            vector_fields["scalar_rule_returns"], episode_idx
+                        ),
+                        "hybrid_reward": _indexed_value(
+                            vector_fields["hybrid_returns"], episode_idx
+                        ),
+                        "rule_rewards_by_rule": json.dumps(
+                            _indexed_value(vector_fields["rule_rewards_by_rule"], episode_idx)
+                            or {},
+                            ensure_ascii=True,
+                        ),
+                        "episode_length": _indexed_value(
+                            vector_fields["episode_length"], episode_idx
+                        ),
+                        "success": _indexed_value(vector_fields["success"], episode_idx),
+                        "collision": _indexed_value(vector_fields["collision"], episode_idx),
+                        "out_of_road": _indexed_value(vector_fields["out_of_road"], episode_idx),
+                        "timeout": _indexed_value(vector_fields["timeout"], episode_idx),
+                        "route_completion": _indexed_value(
+                            vector_fields["route_completion"], episode_idx
+                        ),
+                        "top_rule_violation_rate": _indexed_value(
+                            vector_fields["top_rule_violation_rate"], episode_idx
+                        ),
+                        "error_value": _indexed_value(vector_fields["error_value"], episode_idx),
+                        "violated_rules": _indexed_value(
+                            vector_fields["violated_rules"], episode_idx
+                        ),
+                        "violation_pattern": _indexed_value(
+                            vector_fields["violation_pattern"], episode_idx
+                        ),
+                    },
+                )
+            recorder.append_row(
+                "evals.csv",
+                {
+                    **fields,
+                    "eval_episodes": len(returns),
+                    **{
+                        key: metrics.get(key)
+                        for key in (
+                            "mean_reward",
+                            "std_reward",
+                            "mean_env_reward",
+                            "std_env_reward",
+                            "mean_scalar_rule_reward",
+                            "std_scalar_rule_reward",
+                            "mean_hybrid_reward",
+                            "std_hybrid_reward",
+                            "mean_rule_saturation_max",
+                            "collision_rate",
+                            "collision_rate_std",
+                            "out_of_road_rate",
+                            "success_rate",
+                            "success_rate_std",
+                            "route_completion",
+                            "top_rule_violation_rate",
+                            "avg_error_value",
+                            "max_error_value",
+                            "counterexample_rate",
+                            "violated_rules_ratio",
+                            "unique_violation_patterns",
+                        )
+                    },
+                    "promoted": False,
+                    "next_stage": job.stage,
+                },
+            )
+            _append_rule_metrics_rows(
+                recorder,
+                base_fields=base_csv_fields,
+                eval_id=job.eval_id,
+                eval_type="intermediate",
+                scenario_set="curriculum_eval",
+                chunk_id=int(job.metadata.get("chunk_id", 0)),
+                stage=job.stage,
+                stage_index=job.stage_index,
+                global_step=job.global_step,
+                metrics=metrics,
+            )
+            save_intermediate_checkpoints(
+                current_global_step=job.global_step,
+                chunk_id=int(job.metadata.get("chunk_id", 0)),
+                eval_id=job.eval_id,
+                current_stage_name=job.stage,
+                current_stage_index=job.stage_index,
+                metrics=metrics,
+            )
+            eval_logger.info(
+                "Asynchronous evaluation finished | eval_id=%d | step=%d | metrics=%s",
+                job.eval_id,
+                job.global_step,
+                metrics,
+            )
+            log_event(
+                events_log_path,
+                "evaluation_finished",
+                eval_id=job.eval_id,
+                stage=job.stage,
+                global_step=job.global_step,
+                asynchronous=True,
+                metrics=metrics,
+            )
+
+        def _indexed_value(values: list[Any], index: int) -> Any:
+            return values[index] if index < len(values) else None
 
         if resume_enabled:
             agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
@@ -1036,6 +1195,13 @@ def run_training(cfg: DictConfig) -> None:
                         keep_last=int(cfg.checkpoint.get("keep_last_periodic", 4)),
                     )
 
+        if curriculum_manager is None:
+            async_evaluation_manager = AsyncEvaluationManager(
+                checkpoints_dir=checkpoints_dir,
+                on_complete=_record_async_evaluation,
+                start_method=str(cfg.experiment.get("evaluation_start_method", "spawn")),
+            )
+
         ##################
         ###### LOOP ######
         ##################
@@ -1101,6 +1267,16 @@ def run_training(cfg: DictConfig) -> None:
                 log_interval=log_interval,
                 reset_seed_fn=(
                     None if provider_driven_scenarionet else train_reset_seed_for_episode
+                ),
+                monitor_event_poll_callback=(
+                    async_evaluation_manager.drain_event_messages
+                    if async_evaluation_manager is not None
+                    else None
+                ),
+                live_extra_renderables_callback=(
+                    async_evaluation_manager.renderables
+                    if async_evaluation_manager is not None
+                    else None
                 ),
             )
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
@@ -1178,12 +1354,15 @@ def run_training(cfg: DictConfig) -> None:
             if curriculum_manager is not None:
                 curriculum_manager.record_train_steps(actual_chunk_steps)
 
-            # MetaDrive uses a global engine singleton: close training env before creating eval env.
-            scenario_runtime_stats_total = merge_scenario_runtime_stats(
-                scenario_runtime_stats_total,
-                collect_scenario_runtime_stats(env),
-            )
-            env.close()
+            # Staged curriculum retains the synchronous MetaDrive lifecycle. Ordinary
+            # validation keeps the live learner environment open while the evaluator
+            # runs in its own spawned process.
+            if curriculum_manager is not None:
+                scenario_runtime_stats_total = merge_scenario_runtime_stats(
+                    scenario_runtime_stats_total,
+                    collect_scenario_runtime_stats(env),
+                )
+                env.close()
 
             ###### EVALUATION ######
 
@@ -1192,6 +1371,45 @@ def run_training(cfg: DictConfig) -> None:
             if curriculum_manager is not None:
                 eval_env_overrides = curriculum_manager.get_env_config(evaluation=True)
             eval_episode_count = int(cfg.experiment.eval_episodes)
+            if curriculum_manager is None:
+                if eval_episode_count > 0:
+                    eval_env_overrides = apply_eval_scenario_seed_split(
+                        base_run_seed=run_seed,
+                        eval_env_overrides=None,
+                        cfg=cfg,
+                        n_eval_episodes=eval_episode_count,
+                        split="validation",
+                    )
+                    eval_base_seed = eval_base_seed_from_env_overrides(
+                        eval_env_overrides,
+                        cfg,
+                    )
+                    eval_id += 1
+                    log_event(
+                        events_log_path,
+                        "evaluation_started",
+                        eval_id=eval_id,
+                        stage=current_stage_name,
+                        global_step=current_global_step,
+                        episodes=eval_episode_count,
+                        start_seed=eval_base_seed,
+                        asynchronous=True,
+                    )
+                    async_evaluation_manager.enqueue(
+                        agent=agent,
+                        cfg=cfg,
+                        eval_id=eval_id,
+                        global_step=current_global_step,
+                        stage=current_stage_name,
+                        stage_index=current_stage_index,
+                        episode_count=eval_episode_count,
+                        base_seed=eval_base_seed,
+                        env_seed=run_seed + 100_000 + (total_timesteps - remaining),
+                        env_overrides=eval_env_overrides,
+                        workers=evaluation_num_workers(cfg, final=False),
+                        metadata={"chunk_id": chunk_id},
+                    )
+                continue
             if eval_episode_count <= 0:
                 # Explicitly support training-only smoke runs. The training
                 # environment was closed above, so rebuild it for another
@@ -1762,6 +1980,14 @@ def run_training(cfg: DictConfig) -> None:
 
         ###### FINAL EVAL ######
 
+        if async_evaluation_manager is not None:
+            async_evaluation_manager.drain()
+            async_evaluation_manager.close()
+            scenario_runtime_stats_total = merge_scenario_runtime_stats(
+                scenario_runtime_stats_total,
+                collect_scenario_runtime_stats(env),
+            )
+
         # Environment
         env.close()
         final_eval_episode_count = int(
@@ -1869,6 +2095,7 @@ def run_training(cfg: DictConfig) -> None:
             return_episode_metrics=True,
             error_priority_base=float(cfg.reward.get("a", 2.01)),
             show_progress=True,
+            progress_description="Test episodes",
             artifact_recorder_factory=final_eval_artifact_factory,
         )
         final_checkpoint_zip = f"{final_checkpoint_stem}.zip"

@@ -306,6 +306,7 @@ def run_evaluation(cfg: DictConfig) -> None:
             return_episode_metrics=True,
             error_priority_base=float(cfg.reward.get("a", 2.01)),
             show_progress=True,
+            progress_description="Test episodes",
             artifact_recorder_factory=artifact_factory,
         )
 

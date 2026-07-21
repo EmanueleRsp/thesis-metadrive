@@ -4,8 +4,8 @@
 - Date: 2026-07-21
 - Decision owner: thesis repository maintainer
 - Approval evidence: explicit user instruction to implement the agreed
-  evaluation/test parallelization; asynchronous train/evaluation overlap was
-  explicitly deferred.
+  evaluation/test parallelization. Asynchronous train/evaluation overlap is
+  specified separately by ADR-019.
 - Related specification: `RL-BASELINES` v1.0
 - Related protocol: `docs/protocols/live_eval_video_protocol.md`
 - Affected ExecPlan: `docs/implementation/parallel_evaluation_test_v1_exec_plan.md`
@@ -44,8 +44,8 @@ identity of the sequential protocol.
 - Parent-side frame transfer and GIF encoding may become the next throughput
   bottleneck; the implementation must report failures rather than silently
   converting official artifacts into offline replays.
-- Async train/evaluation overlap requires a separate design for immutable
-  snapshots, curriculum gates, resource contention, and failure recovery.
+- Async train/evaluation overlap is governed by ADR-019 and is intentionally
+  not part of this synchronous episode-parallelism decision.
 
 ## Approval Record
 

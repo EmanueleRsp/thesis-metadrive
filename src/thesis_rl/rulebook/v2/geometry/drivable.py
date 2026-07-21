@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from math import isfinite
 
 import shapely
@@ -28,9 +29,7 @@ class DrivableLaneRecord:
         ):
             raise ValueError("Drivable lane polygon must be non-empty and valid")
         if self.polygon_xy is None and (
-            self.lane_width_m is None
-            or not isfinite(self.lane_width_m)
-            or self.lane_width_m <= 0.0
+            self.lane_width_m is None or not isfinite(self.lane_width_m) or self.lane_width_m <= 0.0
         ):
             raise ValueError("Lane without polygon requires a finite, positive lane_width_m")
 
@@ -47,6 +46,20 @@ class DrivableLaneRecord:
         if polygon.is_empty or not polygon.is_valid:
             raise ValueError("Centerline/width lane fallback produced an invalid polygon")
         return polygon
+
+
+@lru_cache(maxsize=128)
+def _union_selected_surfaces(selected: tuple[BaseGeometry, ...]) -> BaseGeometry:
+    """Cache exact unions for a stable lane set within worker processes.
+
+    Rulebook R3 evaluates the same vertically compatible lane layer for many
+    consecutive control steps. Caching only the final Shapely operation keeps
+    the normative union unchanged while avoiding repeated expensive topology
+    work. The bounded cache is process-local, matching the environment worker
+    lifecycle.
+    """
+
+    return shapely.union_all(selected)
 
 
 def drivable_surface_for_ego(
@@ -75,4 +88,9 @@ def drivable_surface_for_ego(
         selected.append(lane.resolved_polygon())
     if not selected:
         return shapely.GeometryCollection()
-    return shapely.union_all(selected)
+    try:
+        return _union_selected_surfaces(tuple(selected))
+    except TypeError:
+        # Preserve compatibility with Shapely geometry implementations that do
+        # not expose a stable hash, without changing the normative result.
+        return shapely.union_all(selected)

@@ -983,6 +983,7 @@ Per ogni fase completata aggiungere:
 | 2026-07-15 | F3 | Contratto `StaticRecordSources`/`StaticRecordAdapter` per provider PG/Waymo espliciti e normalizzazione comune | 36 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | F3 | Report tipizzato di eleggibilità/esclusione per adapter e causa | 36 test F2/F3 mirati passati nel container, Ruff e `git diff --check` verdi |
 | 2026-07-15 | F3 | Converter offline Waymo per fixture vendorizzata verso lane/task-route/map/control canonici | 87 test Rulebook v2 passati nel container, Ruff e `git diff --check` verdi |
+| 2026-07-21 | Performance regression | Memoized exact Shapely unions for repeated vertically compatible lane layers in `drivable_surface_for_ego`; normative geometry unchanged | 33 focused geometry/video tests passed; Ruff lint/format passed; reproduced traceback was a user interrupt inside `shapely.union_all`, not a video-rendering exception |
 | 2026-07-15 | F3 | Converter offline PG source-neutral e test di fail-fast; fixture PG non montata nel container di test | 3 test converter passati, 1 skip per fixture assente, Ruff verde |
 | 2026-07-15 | F3 | Stop-sign statici Waymo/PG: lane controllate, control line e filtro dei punti non risolvibili | 3 test converter passati, 1 skip PG per fixture non montata, Ruff e diff check verdi |
 | 2026-07-15 | F3 | Verifica fixture: nessun campo pairwise priority/junction/roundabout; adapter restituisce catalogo priority vuoto e vehicle-yield resta NOT_APPLICABLE | test Waymo converter passato, Ruff verde |

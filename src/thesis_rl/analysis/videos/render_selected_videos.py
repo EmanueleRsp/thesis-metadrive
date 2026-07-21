@@ -22,6 +22,12 @@ from thesis_rl.runtime.wiring.builders import (
     load_planner,
 )
 from thesis_rl.runtime.execution.seeding import seed_env_spaces, set_global_seed
+from thesis_rl.runtime.io.video_diagnostics import (
+    DiagnosticState,
+    algorithm_name_from_cfg,
+    annotate_diagnostic_frame,
+    diagnostic_geometry,
+)
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -295,10 +301,18 @@ def _update_video_index(index_path: Path, rows: list[dict[str, Any]]) -> None:
 
     by_key: dict[tuple[str, str, str], dict[str, str]] = {}
     for row in existing:
-        key = (str(row.get("eval_id", "")), str(row.get("episode_id", "")), str(row.get("scenario_seed", "")))
+        key = (
+            str(row.get("eval_id", "")),
+            str(row.get("episode_id", "")),
+            str(row.get("scenario_seed", "")),
+        )
         by_key[key] = row
     for row in rows:
-        key = (str(row.get("eval_id", "")), str(row.get("episode_id", "")), str(row.get("scenario_seed", "")))
+        key = (
+            str(row.get("eval_id", "")),
+            str(row.get("episode_id", "")),
+            str(row.get("scenario_seed", "")),
+        )
         if key in by_key:
             for col, value in row.items():
                 by_key[key][str(col)] = str(value)
@@ -318,7 +332,11 @@ def _update_eval_episodes_video_paths(eval_path: Path, rows: list[dict[str, Any]
 
     updates: dict[tuple[str, str, str], dict[str, str]] = {}
     for row in rows:
-        key = (str(row.get("eval_id", "")), str(row.get("episode_id", "")), str(row.get("scenario_seed", "")))
+        key = (
+            str(row.get("eval_id", "")),
+            str(row.get("episode_id", "")),
+            str(row.get("scenario_seed", "")),
+        )
         updates[key] = {
             "video_path": str(row.get("video_path", "")),
             "video_authoritative_path": str(row.get("video_authoritative_path", "")),
@@ -328,11 +346,18 @@ def _update_eval_episodes_video_paths(eval_path: Path, rows: list[dict[str, Any]
         }
 
     for row in data:
-        key = (str(row.get("eval_id", "")), str(row.get("episode_id", "")), str(row.get("scenario_seed", "")))
+        key = (
+            str(row.get("eval_id", "")),
+            str(row.get("episode_id", "")),
+            str(row.get("scenario_seed", "")),
+        )
         if key in updates:
             payload = updates[key]
             row["video_path"] = payload["video_path"]
-            if "video_authoritative_path" in fieldnames and payload["video_authoritative_path"] != "":
+            if (
+                "video_authoritative_path" in fieldnames
+                and payload["video_authoritative_path"] != ""
+            ):
                 row["video_authoritative_path"] = payload["video_authoritative_path"]
             if "video_manifest_path" in fieldnames and payload["video_manifest_path"] != "":
                 row["video_manifest_path"] = payload["video_manifest_path"]
@@ -348,7 +373,10 @@ def _update_eval_episodes_video_paths(eval_path: Path, rows: list[dict[str, Any]
 
 
 def _authoritative_video_entry(run_dir: Path, item: dict[str, Any]) -> dict[str, Any] | None:
-    video_rel = str(item.get("video_authoritative_path", "")).strip() or str(item.get("video_path", "")).strip()
+    video_rel = (
+        str(item.get("video_authoritative_path", "")).strip()
+        or str(item.get("video_path", "")).strip()
+    )
     if not video_rel:
         return None
     video_abs = run_dir / video_rel
@@ -359,7 +387,8 @@ def _authoritative_video_entry(run_dir: Path, item: dict[str, Any]) -> dict[str,
         "episode_id": int(item["episode_id"]),
         "scenario_seed": int(item["scenario_seed"]),
         "video_path": video_rel,
-        "video_authoritative_path": str(item.get("video_authoritative_path", "")).strip() or video_rel,
+        "video_authoritative_path": str(item.get("video_authoritative_path", "")).strip()
+        or video_rel,
         "video_manifest_path": str(item.get("video_manifest_path", "")).strip(),
         "trajectory_log_path": str(item.get("trajectory_log_path", "")).strip(),
         "video_recorded_live": str(item.get("video_recorded_live", "true")).strip().lower(),
@@ -394,13 +423,16 @@ def render_selected_videos(run_dir: Path) -> None:
     _ensure_omegaconf_now_resolver()
     cfg = OmegaConf.load(hydra_cfg_path)
     _sanitize_cfg_for_replay(cfg, run_dir)
-    final_eval_episodes = int(cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes))
+    final_eval_episodes = int(
+        cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)
+    )
     run_seed = int(cfg.get("seed", 0))
     set_global_seed(run_seed)
 
     checkpoint_path = _resolve_replay_checkpoint(run_dir, cfg)
     fps = int(cfg.video.get("fps", 20))
     topdown_cfg = cfg.video.get("topdown", {})
+    algorithm = algorithm_name_from_cfg(cfg)
 
     updated_rows: list[dict[str, Any]] = []
     for item in items:
@@ -437,15 +469,11 @@ def render_selected_videos(run_dir: Path) -> None:
             truncated = False
             frames: list[np.ndarray] = []
             replay_reward_sum = 0.0
-            replay_env_reward_sum = 0.0
-            replay_scalar_rule_reward_sum = 0.0
-            replay_hybrid_reward_sum = 0.0
-            has_scalar_rule_reward = False
-            has_hybrid_reward = False
             replay_success = False
             replay_collision = False
             replay_out_of_road = False
             replay_route_completion = 0.0
+            diagnostic_state = DiagnosticState(algorithm=algorithm)
             ep_rule_min_margin: dict[str, float] = {}
             rule_priority: dict[str, int] = {}
             error_priority_base = float(cfg.reward.get("a", 2.01))
@@ -455,44 +483,24 @@ def render_selected_videos(run_dir: Path) -> None:
                 obs, reward, done, truncated, step_info = env.step(action)
                 step_count += 1
                 replay_reward_sum += float(reward)
-                env_reward_step: float | None = None
-                scalar_rule_step: float | None = None
-                hybrid_step: float | None = None
-                speed_kmh: float | None = None
-                top_rule_name: str | None = None
-                top_rule_margin: float | None = None
                 if isinstance(step_info, dict):
-                    env_reward_val = step_info.get("env_reward")
-                    if isinstance(env_reward_val, (int, float, np.floating)):
-                        env_reward_step = float(env_reward_val)
-                    else:
-                        env_reward_step = float(reward)
-                    replay_env_reward_sum += float(env_reward_step)
-
-                    scalar_rule_val = step_info.get("scalar_rule_reward")
-                    if isinstance(scalar_rule_val, (int, float, np.floating)):
-                        scalar_rule_step = float(scalar_rule_val)
-                        replay_scalar_rule_reward_sum += float(scalar_rule_val)
-                        has_scalar_rule_reward = True
-
-                    hybrid_val = step_info.get("hybrid_reward")
-                    if isinstance(hybrid_val, (int, float, np.floating)):
-                        hybrid_step = float(hybrid_val)
-                        replay_hybrid_reward_sum += float(hybrid_val)
-                        has_hybrid_reward = True
-
-                    speed_val = step_info.get("velocity")
-                    if isinstance(speed_val, (int, float, np.floating)):
-                        speed_kmh = float(speed_val)
-
                     replay_success = replay_success or bool(
                         step_info.get("arrive_dest", False) or step_info.get("success", False)
                     )
                     replay_collision = replay_collision or any(
                         bool(step_info.get(key, False))
-                        for key in ("crash", "crash_vehicle", "crash_object", "crash_building", "crash_human", "collision")
+                        for key in (
+                            "crash",
+                            "crash_vehicle",
+                            "crash_object",
+                            "crash_building",
+                            "crash_human",
+                            "collision",
+                        )
                     )
-                    replay_out_of_road = replay_out_of_road or bool(step_info.get("out_of_road", False))
+                    replay_out_of_road = replay_out_of_road or bool(
+                        step_info.get("out_of_road", False)
+                    )
                     for key in ("route_completion", "route_completion_ratio", "progress"):
                         value = step_info.get(key)
                         if value is not None:
@@ -508,46 +516,38 @@ def render_selected_videos(run_dir: Path) -> None:
                         priorities = meta.get("priorities")
                         if isinstance(names, list) and isinstance(priorities, list):
                             size = min(len(names), len(priorities), len(margins))
-                            if size > 0:
-                                top_rule_name = str(names[0])
-                                top_rule_margin = float(margins[0])
                             for idx in range(size):
                                 name = str(names[idx])
                                 prio = int(priorities[idx])
                                 margin = float(margins[idx])
                                 rule_priority[name] = prio
-                                ep_rule_min_margin[name] = min(ep_rule_min_margin.get(name, float("inf")), margin)
-                else:
-                    replay_env_reward_sum += float(reward)
-
+                                ep_rule_min_margin[name] = min(
+                                    ep_rule_min_margin.get(name, float("inf")), margin
+                                )
+                diagnostic_state.update(float(reward))
                 frame = _render_topdown_frame(env, topdown_cfg)
                 if frame is not None:
-                    line1 = (
-                        f"step={step_count} sel_step={_fmt_num(reward)} sel_sum={_fmt_num(replay_reward_sum)} "
-                        f"env_sum={_fmt_num(replay_env_reward_sum)}"
-                    )
-                    line2 = (
-                        f"route={_fmt_num(replay_route_completion)} speed_kmh={_fmt_num(speed_kmh)} "
-                        f"succ={replay_success} coll={replay_collision} oor={replay_out_of_road}"
-                    )
-                    lines = [line1, line2]
-                    if has_scalar_rule_reward or scalar_rule_step is not None:
-                        lines.append(
-                            f"scalar_step={_fmt_num(scalar_rule_step)} scalar_sum={_fmt_num(replay_scalar_rule_reward_sum)}"
+                    try:
+                        geometry = diagnostic_geometry(env, step_info)
+                    except Exception:
+                        geometry = {}
+                    frames.append(
+                        annotate_diagnostic_frame(
+                            np.asarray(frame),
+                            state=diagnostic_state,
+                            reward=float(reward),
+                            step_info=step_info,
+                            geometry=geometry,
                         )
-                    if has_hybrid_reward or hybrid_step is not None:
-                        lines.append(
-                            f"hybrid_step={_fmt_num(hybrid_step)} hybrid_sum={_fmt_num(replay_hybrid_reward_sum)}"
-                        )
-                    if top_rule_name is not None:
-                        lines.append(f"top_rule={top_rule_name} margin={_fmt_num(top_rule_margin)}")
-                    frames.append(_annotate_telemetry_frame(np.asarray(frame), lines=lines))
+                    )
 
             replay_error_value = 0.0
             if ep_rule_min_margin:
                 p_max = max(rule_priority.get(name, 0) for name in ep_rule_min_margin)
                 for name, min_margin in ep_rule_min_margin.items():
-                    weight = float(error_priority_base) ** float(p_max - int(rule_priority.get(name, 0)))
+                    weight = float(error_priority_base) ** float(
+                        p_max - int(rule_priority.get(name, 0))
+                    )
                     replay_error_value += weight * max(0.0, -float(min_margin))
 
             original_reward = float(item.get("reward", 0.0))
@@ -635,7 +635,9 @@ def render_selected_videos(run_dir: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render GIF videos for selected episodes via offline replay.")
+    parser = argparse.ArgumentParser(
+        description="Render GIF videos for selected episodes via offline replay."
+    )
     parser.add_argument("--run-dir", required=True)
     args = parser.parse_args()
     render_selected_videos(run_dir=Path(args.run_dir))

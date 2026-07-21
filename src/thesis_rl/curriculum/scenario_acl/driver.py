@@ -55,6 +55,7 @@ from thesis_rl.runtime.io.csv_recorder import CSVRecorder
 from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
 from thesis_rl.runtime.io.metadata import update_run_metadata
 from thesis_rl.runtime.io.run_logging import log_event
+from thesis_rl.runtime.async_evaluation import AsyncEvaluationManager, EvaluationJob
 from thesis_rl.sb3_extensions.replay import resolve_transition_replay_config
 from thesis_rl.runtime.wiring.builders import (
     adapter_space_kwargs,
@@ -865,8 +866,70 @@ def _run_scenario_acl_vectorized_training(
         )
         return [("ACL arm probabilities", labels)]
 
+    def record_async_acl_evaluation(job: EvaluationJob, metrics: dict[str, Any]) -> None:
+        """Persist completed ACL diagnostics; the result never feeds ACL selection."""
+
+        recorder.append_row(
+            "evals.csv",
+            {
+                **base_csv_fields,
+                "eval_id": job.eval_id,
+                "eval_type": "intermediate",
+                "scenario_set": f"validation_{_WAYMO_STRATIFIED_SET}",
+                "chunk_id": int(job.metadata.get("chunk_id", 0)),
+                "stage": job.stage,
+                "stage_index": job.stage_index,
+                "global_step": job.global_step,
+                "eval_episodes": job.episode_count,
+                "deterministic": bool(cfg.experiment.eval_deterministic),
+                **{
+                    key: metrics.get(key)
+                    for key in (
+                        "mean_reward",
+                        "std_reward",
+                        "mean_env_reward",
+                        "std_env_reward",
+                        "mean_scalar_rule_reward",
+                        "std_scalar_rule_reward",
+                        "mean_hybrid_reward",
+                        "std_hybrid_reward",
+                        "mean_rule_saturation_max",
+                        "collision_rate",
+                        "collision_rate_std",
+                        "out_of_road_rate",
+                        "success_rate",
+                        "success_rate_std",
+                        "route_completion",
+                        "top_rule_violation_rate",
+                        "avg_error_value",
+                        "max_error_value",
+                        "counterexample_rate",
+                        "violated_rules_ratio",
+                        "unique_violation_patterns",
+                    )
+                },
+                "promoted": False,
+                "next_stage": job.stage,
+            },
+        )
+        log_event(
+            paths.events_log_path,
+            "evaluation_finished",
+            eval_id=job.eval_id,
+            stage=job.stage,
+            global_step=job.global_step,
+            asynchronous=True,
+            metrics=metrics,
+        )
+
+    async_evaluation_manager = AsyncEvaluationManager(
+        checkpoints_dir=paths.checkpoints_dir,
+        on_complete=record_async_acl_evaluation,
+        start_method=str(cfg.experiment.get("evaluation_start_method", "spawn")),
+    )
+
     def run_intermediate_evaluation() -> None:
-        """Run validation evaluation while keeping the subprocess train env alive."""
+        """Queue validation while keeping the subprocess train env alive."""
 
         nonlocal current_eval_id
         eval_episode_count = int(cfg.experiment.eval_episodes)
@@ -880,95 +943,34 @@ def _run_scenario_acl_vectorized_training(
             split="validation",
         )
         eval_env_overrides.update(semantic_env_overrides)
-        eval_env = build_eval_env(
-            cfg,
-            eval_env_overrides,
-            n_eval_episodes=eval_episode_count,
+        current_eval_id += 1
+        log_event(
+            paths.events_log_path,
+            "evaluation_started",
+            eval_id=current_eval_id,
+            stage="scenario_acl_vectorized",
+            global_step=current_global_step,
+            episodes=eval_episode_count,
+            split="validation",
+            asynchronous=True,
+        )
+        async_evaluation_manager.enqueue(
+            agent=agent,
+            cfg=cfg,
+            eval_id=current_eval_id,
+            global_step=current_global_step,
+            stage="scenario_acl_vectorized",
+            stage_index=0,
+            episode_count=eval_episode_count,
+            base_seed=None,
+            env_seed=run_seed + 500_000 + current_chunk_id,
+            env_overrides=eval_env_overrides,
             workers=evaluation_num_workers(cfg, final=False),
             scenario_arm_schedule=tuple(
                 _select_waymo_eval_arm(index) for index in range(eval_episode_count)
             ),
             scenario_source_schedule=("waymo",) * eval_episode_count,
-        )
-        seed_env_spaces(eval_env, run_seed + 500_000 + current_chunk_id)
-        eval_snapshot_stem = paths.checkpoints_dir / "eval_snapshot"
-        agent.save(eval_snapshot_stem)
-        try:
-            eval_agent = Agent(
-                preprocessor=preprocessor,
-                planner=load_planner(
-                    cfg, checkpoint_path=f"{eval_snapshot_stem}.zip", env=eval_env
-                ),
-                adapter=adapter,
-                ema_alpha=float(getattr(agent, "ema_alpha", 0.1)),
-            )
-            current_eval_id += 1
-            log_event(
-                paths.events_log_path,
-                "evaluation_started",
-                eval_id=current_eval_id,
-                stage="scenario_acl_vectorized",
-                global_step=current_global_step,
-                episodes=eval_episode_count,
-                split="validation",
-            )
-            eval_metrics = eval_agent.evaluate(
-                env=eval_env,
-                n_eval_episodes=eval_episode_count,
-                deterministic=bool(cfg.experiment.eval_deterministic),
-                return_episode_metrics=True,
-                error_priority_base=float(cfg.reward.get("a", 2.01)),
-                show_progress=True,
-                before_episode_reset_callback=_configure_waymo_eval_episode,
-            )
-        finally:
-            eval_env.close()
-            Path(f"{eval_snapshot_stem}.zip").unlink(missing_ok=True)
-            Agent.adapter_checkpoint_path(eval_snapshot_stem).unlink(missing_ok=True)
-
-        print_evaluation_summary(
-            title=f"Evaluation {current_eval_id}",
-            metrics=eval_metrics,
-            stage="scenario_acl_vectorized",
-            global_step=current_global_step,
-            episodes=eval_episode_count,
-            base_seed=None,
-            details_path=paths.events_log_path,
-        )
-        log_event(
-            paths.events_log_path,
-            "evaluation_finished",
-            eval_id=current_eval_id,
-            stage="scenario_acl_vectorized",
-            global_step=current_global_step,
-            metrics=eval_metrics,
-        )
-        recorder.append_row(
-            "evals.csv",
-            {
-                **base_csv_fields,
-                "eval_id": current_eval_id,
-                "eval_type": "intermediate",
-                "scenario_set": f"validation_{_WAYMO_STRATIFIED_SET}",
-                "chunk_id": current_chunk_id,
-                "stage": "scenario_acl_vectorized",
-                "stage_index": 0,
-                "global_step": current_global_step,
-                "eval_episodes": eval_episode_count,
-                "deterministic": bool(cfg.experiment.eval_deterministic),
-                "mean_reward": float(eval_metrics.get("mean_reward", 0.0)),
-                "std_reward": float(eval_metrics.get("std_reward", 0.0)),
-                "mean_env_reward": float(eval_metrics.get("mean_env_reward", 0.0)),
-                "std_env_reward": float(eval_metrics.get("std_env_reward", 0.0)),
-                "mean_scalar_rule_reward": eval_metrics.get("mean_scalar_rule_reward"),
-                "std_scalar_rule_reward": eval_metrics.get("std_scalar_rule_reward"),
-                "mean_hybrid_reward": eval_metrics.get("mean_hybrid_reward"),
-                "std_hybrid_reward": eval_metrics.get("std_hybrid_reward"),
-                "collision_rate": float(eval_metrics.get("collision_rate", 0.0)),
-                "out_of_road_rate": float(eval_metrics.get("out_of_road_rate", 0.0)),
-                "success_rate": float(eval_metrics.get("success_rate", 0.0)),
-                "route_completion": float(eval_metrics.get("route_completion", 0.0)),
-            },
+            metadata={"chunk_id": current_chunk_id},
         )
 
     current_observations = initial_observations
@@ -987,6 +989,8 @@ def _run_scenario_acl_vectorized_training(
                 vector_episode_end_callback=vector_episode_end_callback,
                 initial_observations=current_observations,
                 monitor_extra_rows_callback=mab_monitor_rows,
+                monitor_event_poll_callback=async_evaluation_manager.drain_event_messages,
+                live_extra_renderables_callback=async_evaluation_manager.renderables,
             )
             current_observations = summary["last_observations"]
             current_global_step = min(
@@ -1068,6 +1072,9 @@ def _run_scenario_acl_vectorized_training(
             )
     finally:
         env.close()
+
+    async_evaluation_manager.drain()
+    async_evaluation_manager.close()
 
     if not bool(cfg.checkpoint.get("save_final", True)):
         raise ValueError("checkpoint.save_final must be true for scenario_acl training.")
@@ -1151,6 +1158,7 @@ def _run_scenario_acl_vectorized_training(
         return_episode_metrics=True,
         error_priority_base=float(cfg.reward.get("a", 2.01)),
         show_progress=True,
+        progress_description="Test episodes",
         artifact_recorder_factory=artifact_factory,
         before_episode_reset_callback=_configure_waymo_eval_episode,
     )
@@ -1433,6 +1441,65 @@ def run_scenario_acl_training(
         )
         return
 
+    def record_async_acl_evaluation(job: EvaluationJob, metrics: dict[str, Any]) -> None:
+        recorder.append_row(
+            "evals.csv",
+            {
+                **base_csv_fields,
+                "eval_id": job.eval_id,
+                "eval_type": "intermediate",
+                "scenario_set": f"validation_{_WAYMO_STRATIFIED_SET}",
+                "chunk_id": int(job.metadata.get("chunk_id", 0)),
+                "stage": job.stage,
+                "stage_index": job.stage_index,
+                "global_step": job.global_step,
+                "eval_episodes": job.episode_count,
+                "deterministic": bool(cfg.experiment.eval_deterministic),
+                **{
+                    key: metrics.get(key)
+                    for key in (
+                        "mean_reward",
+                        "std_reward",
+                        "mean_env_reward",
+                        "std_env_reward",
+                        "mean_scalar_rule_reward",
+                        "std_scalar_rule_reward",
+                        "mean_hybrid_reward",
+                        "std_hybrid_reward",
+                        "collision_rate",
+                        "collision_rate_std",
+                        "out_of_road_rate",
+                        "success_rate",
+                        "success_rate_std",
+                        "route_completion",
+                        "top_rule_violation_rate",
+                        "avg_error_value",
+                        "max_error_value",
+                        "counterexample_rate",
+                        "violated_rules_ratio",
+                        "unique_violation_patterns",
+                    )
+                },
+                "promoted": False,
+                "next_stage": job.stage,
+            },
+        )
+        log_event(
+            paths.events_log_path,
+            "evaluation_finished",
+            eval_id=job.eval_id,
+            stage=job.stage,
+            global_step=job.global_step,
+            asynchronous=True,
+            metrics=metrics,
+        )
+
+    async_evaluation_manager = AsyncEvaluationManager(
+        checkpoints_dir=paths.checkpoints_dir,
+        on_complete=record_async_acl_evaluation,
+        start_method=str(cfg.experiment.get("evaluation_start_method", "spawn")),
+    )
+
     try:
         remaining = max(0, total_timesteps - current_global_step)
         while remaining > 0:
@@ -1691,6 +1758,8 @@ def run_scenario_acl_training(
                 before_episode_reset_callback=choose_acl_episode,
                 episode_context_callback=episode_context,
                 monitor_extra_rows_callback=mab_monitor_rows,
+                monitor_event_poll_callback=async_evaluation_manager.drain_event_messages,
+                live_extra_renderables_callback=async_evaluation_manager.renderables,
             )
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
             current_global_step = min(total_timesteps, current_global_step + actual_chunk_steps)
@@ -1753,8 +1822,7 @@ def run_scenario_acl_training(
 
             env.close()
 
-            eval_metrics: dict[str, Any]
-            eval_agent: Agent
+            eval_metrics: dict[str, Any] = {}
             eval_env_overrides = apply_eval_scenario_seed_split(
                 base_run_seed=run_seed,
                 eval_env_overrides=None,
@@ -1765,42 +1833,37 @@ def run_scenario_acl_training(
             eval_env_overrides.update(semantic_env_overrides)
             eval_base_seed = None
             eval_episode_count = int(cfg.experiment.eval_episodes)
-            eval_env = build_eval_env(
-                cfg,
-                eval_env_overrides,
-                n_eval_episodes=eval_episode_count,
+            if eval_episode_count <= 0:
+                continue
+            current_eval_id += 1
+            log_event(
+                paths.events_log_path,
+                "evaluation_started",
+                eval_id=current_eval_id,
+                stage="scenario_acl_episode_sampling",
+                global_step=current_global_step,
+                episodes=eval_episode_count,
+                split="validation",
+                asynchronous=True,
+            )
+            async_evaluation_manager.enqueue(
+                agent=agent,
+                cfg=cfg,
+                eval_id=current_eval_id,
+                global_step=current_global_step,
+                stage="scenario_acl_episode_sampling",
+                stage_index=0,
+                episode_count=eval_episode_count,
+                base_seed=eval_base_seed,
+                env_seed=run_seed + 500_000 + current_chunk_id,
+                env_overrides=eval_env_overrides,
                 workers=evaluation_num_workers(cfg, final=False),
                 scenario_arm_schedule=tuple(
                     _select_waymo_eval_arm(index) for index in range(eval_episode_count)
                 ),
                 scenario_source_schedule=("waymo",) * eval_episode_count,
+                metadata={"chunk_id": current_chunk_id},
             )
-            seed_env_spaces(eval_env, run_seed + 500_000 + current_chunk_id)
-
-            eval_snapshot_stem = paths.checkpoints_dir / "eval_snapshot"
-            agent.save(eval_snapshot_stem)
-            eval_agent = Agent(
-                preprocessor=preprocessor,
-                planner=load_planner(
-                    cfg, checkpoint_path=f"{eval_snapshot_stem}.zip", env=eval_env
-                ),
-                adapter=adapter,
-                ema_alpha=ema_alpha_cfg,
-            )
-            current_eval_id += 1
-            eval_metrics = eval_agent.evaluate(
-                env=eval_env,
-                n_eval_episodes=eval_episode_count,
-                deterministic=bool(cfg.experiment.eval_deterministic),
-                base_seed=eval_base_seed,
-                return_episode_metrics=False,
-                error_priority_base=float(cfg.reward.get("a", 2.01)),
-                show_progress=True,
-                before_episode_reset_callback=_configure_waymo_eval_episode,
-            )
-            eval_env.close()
-            Path(f"{eval_snapshot_stem}.zip").unlink(missing_ok=True)
-            Agent.adapter_checkpoint_path(eval_snapshot_stem).unlink(missing_ok=True)
 
             try:
                 chunk_learning_potential = compute_learning_potential(
@@ -1832,55 +1895,58 @@ def run_scenario_acl_training(
             # only its durable snapshot is batched by evaluation chunk.
             _persist_buffer_state(path=artifact_paths["buffer"], buffer=buffer)
 
-            recorder.append_row(
-                "evals.csv",
-                {
-                    **base_csv_fields,
-                    "eval_id": current_eval_id,
-                    "eval_type": "intermediate",
-                    "scenario_set": f"validation_{_WAYMO_STRATIFIED_SET}",
-                    "chunk_id": current_chunk_id,
-                    "stage": (chunk_stage),
-                    "stage_index": -1,
-                    "acl_chunk_mode": chunk_mode,
-                    "acl_episode_modes": ",".join(episode_modes),
-                    "acl_episode_arms": ",".join(episode_arms),
-                    "acl_generate_episodes": chunk_generate_count,
-                    "acl_replay_episodes": chunk_replay_count,
-                    "global_step": current_global_step,
-                    "eval_episodes": int(cfg.experiment.eval_episodes),
-                    "deterministic": bool(cfg.experiment.eval_deterministic),
-                    "mean_reward": float(eval_metrics.get("mean_reward", 0.0)),
-                    "std_reward": float(eval_metrics.get("std_reward", 0.0)),
-                    "mean_env_reward": float(eval_metrics.get("mean_env_reward", 0.0)),
-                    "std_env_reward": float(eval_metrics.get("std_env_reward", 0.0)),
-                    "mean_scalar_rule_reward": eval_metrics.get("mean_scalar_rule_reward"),
-                    "std_scalar_rule_reward": eval_metrics.get("std_scalar_rule_reward"),
-                    "mean_hybrid_reward": eval_metrics.get("mean_hybrid_reward"),
-                    "std_hybrid_reward": eval_metrics.get("std_hybrid_reward"),
-                    "mean_rule_saturation_max": float(
-                        eval_metrics.get("mean_rule_saturation_max", 0.0)
-                    ),
-                    "collision_rate": float(eval_metrics.get("collision_rate", 0.0)),
-                    "collision_rate_std": float(eval_metrics.get("collision_rate_std", 0.0)),
-                    "out_of_road_rate": float(eval_metrics.get("out_of_road_rate", 0.0)),
-                    "success_rate": float(eval_metrics.get("success_rate", 0.0)),
-                    "success_rate_std": float(eval_metrics.get("success_rate_std", 0.0)),
-                    "route_completion": float(eval_metrics.get("route_completion", 0.0)),
-                    "top_rule_violation_rate": float(
-                        eval_metrics.get("top_rule_violation_rate", 0.0)
-                    ),
-                    "avg_error_value": float(eval_metrics.get("avg_error_value", 0.0)),
-                    "max_error_value": float(eval_metrics.get("max_error_value", 0.0)),
-                    "counterexample_rate": float(eval_metrics.get("counterexample_rate", 0.0)),
-                    "violated_rules_ratio": float(eval_metrics.get("violated_rules_ratio", 0.0)),
-                    "unique_violation_patterns": int(
-                        eval_metrics.get("unique_violation_patterns", 0)
-                    ),
-                    "promoted": False,
-                    "next_stage": chunk_stage,
-                },
-            )
+            if eval_metrics:
+                recorder.append_row(
+                    "evals.csv",
+                    {
+                        **base_csv_fields,
+                        "eval_id": current_eval_id,
+                        "eval_type": "intermediate",
+                        "scenario_set": f"validation_{_WAYMO_STRATIFIED_SET}",
+                        "chunk_id": current_chunk_id,
+                        "stage": (chunk_stage),
+                        "stage_index": -1,
+                        "acl_chunk_mode": chunk_mode,
+                        "acl_episode_modes": ",".join(episode_modes),
+                        "acl_episode_arms": ",".join(episode_arms),
+                        "acl_generate_episodes": chunk_generate_count,
+                        "acl_replay_episodes": chunk_replay_count,
+                        "global_step": current_global_step,
+                        "eval_episodes": int(cfg.experiment.eval_episodes),
+                        "deterministic": bool(cfg.experiment.eval_deterministic),
+                        "mean_reward": float(eval_metrics.get("mean_reward", 0.0)),
+                        "std_reward": float(eval_metrics.get("std_reward", 0.0)),
+                        "mean_env_reward": float(eval_metrics.get("mean_env_reward", 0.0)),
+                        "std_env_reward": float(eval_metrics.get("std_env_reward", 0.0)),
+                        "mean_scalar_rule_reward": eval_metrics.get("mean_scalar_rule_reward"),
+                        "std_scalar_rule_reward": eval_metrics.get("std_scalar_rule_reward"),
+                        "mean_hybrid_reward": eval_metrics.get("mean_hybrid_reward"),
+                        "std_hybrid_reward": eval_metrics.get("std_hybrid_reward"),
+                        "mean_rule_saturation_max": float(
+                            eval_metrics.get("mean_rule_saturation_max", 0.0)
+                        ),
+                        "collision_rate": float(eval_metrics.get("collision_rate", 0.0)),
+                        "collision_rate_std": float(eval_metrics.get("collision_rate_std", 0.0)),
+                        "out_of_road_rate": float(eval_metrics.get("out_of_road_rate", 0.0)),
+                        "success_rate": float(eval_metrics.get("success_rate", 0.0)),
+                        "success_rate_std": float(eval_metrics.get("success_rate_std", 0.0)),
+                        "route_completion": float(eval_metrics.get("route_completion", 0.0)),
+                        "top_rule_violation_rate": float(
+                            eval_metrics.get("top_rule_violation_rate", 0.0)
+                        ),
+                        "avg_error_value": float(eval_metrics.get("avg_error_value", 0.0)),
+                        "max_error_value": float(eval_metrics.get("max_error_value", 0.0)),
+                        "counterexample_rate": float(eval_metrics.get("counterexample_rate", 0.0)),
+                        "violated_rules_ratio": float(
+                            eval_metrics.get("violated_rules_ratio", 0.0)
+                        ),
+                        "unique_violation_patterns": int(
+                            eval_metrics.get("unique_violation_patterns", 0)
+                        ),
+                        "promoted": False,
+                        "next_stage": chunk_stage,
+                    },
+                )
 
             history_payload = {
                 "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -2001,6 +2067,9 @@ def run_scenario_acl_training(
                 len(buffer),
             )
 
+        async_evaluation_manager.drain()
+        async_evaluation_manager.close()
+
         if not bool(cfg.checkpoint.get("save_final", True)):
             raise ValueError("checkpoint.save_final must be true for scenario_acl training.")
         agent.save(paths.final_checkpoint_stem)
@@ -2086,6 +2155,7 @@ def run_scenario_acl_training(
             return_episode_metrics=True,
             error_priority_base=float(cfg.reward.get("a", 2.01)),
             show_progress=True,
+            progress_description="Test episodes",
             artifact_recorder_factory=artifact_factory,
             before_episode_reset_callback=_configure_waymo_eval_episode,
         )
