@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
+import pytest
 from gymnasium import Env, spaces
 
-from thesis_rl.runtime.execution.deterministic_subproc_vec_env import DeterministicSubprocVecEnv
+from thesis_rl.runtime.execution.deterministic_subproc_vec_env import (
+    DeterministicSubprocVecEnv,
+    SubprocessWorkerError,
+)
 
 
 class _SeedWindowEnv(Env):
@@ -38,6 +44,26 @@ def _make_env(start_index: int, num_scenarios: int):
         return _SeedWindowEnv(start_index=start_index, num_scenarios=num_scenarios)
 
     return _factory
+
+
+class _FailingStepEnv(_SeedWindowEnv):
+    def step(self, action):
+        _ = action
+        raise ValueError("intentional worker failure")
+
+
+class _AbruptExitEnv(_SeedWindowEnv):
+    def step(self, action):
+        _ = action
+        os._exit(23)
+
+
+def _make_failing_step_env():
+    return _FailingStepEnv(start_index=0, num_scenarios=1)
+
+
+def _make_abrupt_exit_env():
+    return _AbruptExitEnv(start_index=0, num_scenarios=1)
 
 
 def test_deterministic_subproc_vec_env_auto_reset_uses_deterministic_worker_seeds() -> None:
@@ -94,5 +120,44 @@ def test_deterministic_subproc_vec_env_supports_selective_manual_resets() -> Non
         reset = vec_env.reset_slots([1], seeds={1: 21})
         np.testing.assert_array_equal(reset[1][0], np.array([21], dtype=np.float32))
         assert set(vec_env.step_slots({1: np.zeros(1, dtype=np.float32)})) == {1}
+    finally:
+        vec_env.close()
+
+
+def test_worker_python_exception_reports_remote_traceback() -> None:
+    vec_env = DeterministicSubprocVecEnv([_make_failing_step_env], start_method="spawn")
+    try:
+        vec_env.reset()
+        with pytest.raises(SubprocessWorkerError) as error:
+            vec_env.step(np.zeros((1, 1), dtype=np.float32))
+        message = str(error.value)
+        assert "slot=0" in message
+        assert "command='step'" in message
+        assert "type=ValueError" in message
+        assert "intentional worker failure" in message
+        assert "Remote traceback:" in message
+    finally:
+        vec_env.close()
+
+
+def test_reset_response_with_array_observation_is_not_an_error_envelope() -> None:
+    vec_env = DeterministicSubprocVecEnv([_make_env(10, 3)], start_method="spawn")
+    try:
+        observations = vec_env.reset()
+        np.testing.assert_array_equal(observations, np.array([[10]], dtype=np.float32))
+    finally:
+        vec_env.close()
+
+
+def test_worker_eof_reports_slot_and_exit_code() -> None:
+    vec_env = DeterministicSubprocVecEnv([_make_abrupt_exit_env], start_method="spawn")
+    try:
+        vec_env.reset()
+        with pytest.raises(SubprocessWorkerError) as error:
+            vec_env.step(np.zeros((1, 1), dtype=np.float32))
+        message = str(error.value)
+        assert "slot=0" in message
+        assert "command='step'" in message
+        assert "exitcode=" in message
     finally:
         vec_env.close()

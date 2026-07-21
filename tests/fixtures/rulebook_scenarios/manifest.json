@@ -1,0 +1,23 @@
+{
+  "fixtures": [
+    {
+      "file": "red_light.pkl",
+      "id": "red_light",
+      "scenario_id": "rb_syn_red_light_v1",
+      "target_transition": 1
+    },
+    {
+      "file": "crosswalk_pedestrian.pkl",
+      "id": "crosswalk_pedestrian",
+      "scenario_id": "rb_syn_crosswalk_pedestrian_v1",
+      "target_transition": 1
+    },
+    {
+      "file": "vehicle_pedestrian_collision.pkl",
+      "id": "vehicle_pedestrian_collision",
+      "scenario_id": "rb_syn_vehicle_pedestrian_collision_v1",
+      "target_transition": 1
+    }
+  ],
+  "schema_version": "rulebook-synthetic-scenarios-v1"
+}

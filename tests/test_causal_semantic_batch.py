@@ -182,6 +182,26 @@ def test_missing_current_ego_field_fails_closed_instead_of_zero_filling() -> Non
         builder.build(object(), _context(0, ego, (), route, lanes))
 
 
+def test_unprojectable_dynamic_actor_reports_elevation_diagnostics() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 6.0)))
+    lanes = (RouteLaneRecord("lane-0", box(-1.75, -2.0, 11.75, 2.0), route),)
+    ego = replace(_actor("ego", (0.0, 0.0), (5.0, 0.0)), position_z=0.0)
+    actor = replace(_actor("other", (10.0, 0.0)), position_z=2.9)
+    builder = CausalSemanticBatchBuilder(route=route, route_lanes=lanes)
+
+    with pytest.raises(CausalSemanticObservationError) as error:
+        builder.build(_Vehicle(), _context(3, ego, (actor,), route, lanes))
+
+    message = str(error.value)
+    assert "scenario_id='scene'" in message
+    assert "step=3" in message
+    assert "actor_id='other'" in message
+    assert "actor_ego_vertical_delta_m=2.900000" in message
+    assert "nearest_planar_z_m=6.000000" in message
+    assert "minimum_route_vertical_delta_m=3.100000" in message
+    assert "compatible_route_segment_count=0" in message
+
+
 def test_global_translation_preserves_relative_observation() -> None:
     route_a, lanes_a = _route()
     route_b, lanes_b = _route(100.0)

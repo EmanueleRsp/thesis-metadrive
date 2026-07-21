@@ -164,6 +164,19 @@ def test_route_projection_rejects_incompatible_vertical_level() -> None:
         route.project((5.0, 0.0), position_z=3.1)
 
 
+def test_route_projection_diagnostics_report_nearest_and_vertical_feasibility() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 6.0)))
+    diagnostics = route.projection_diagnostics((10.0, 0.0), position_z=2.9)
+    assert diagnostics.nearest_planar_segment_index == 0
+    assert diagnostics.nearest_planar_s_m == pytest.approx(10.0)
+    assert diagnostics.nearest_planar_z_m == pytest.approx(6.0)
+    assert diagnostics.nearest_planar_distance_m == pytest.approx(0.0)
+    assert diagnostics.minimum_vertical_difference_m == pytest.approx(3.1)
+    assert diagnostics.vertically_compatible_segment_count == 0
+    assert diagnostics.route_min_z_m == pytest.approx(0.0)
+    assert diagnostics.route_max_z_m == pytest.approx(6.0)
+
+
 def test_lane_association_rejects_vertical_and_geometric_ties() -> None:
     route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
     lane = RouteLaneRecord(

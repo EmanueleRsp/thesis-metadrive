@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
+import traceback
 import warnings
 from collections import OrderedDict
 from typing import Any, Callable, List, Mapping, Optional, Sequence, Tuple, Type, Union
@@ -35,6 +37,11 @@ except ModuleNotFoundError:  # pragma: no cover
 VecEnvIndices = Union[None, int, Sequence[int], np.ndarray]
 VecEnvObs = Union[np.ndarray, dict[str, np.ndarray], tuple[np.ndarray, ...]]
 VecEnvStepReturn = tuple[VecEnvObs, np.ndarray, np.ndarray, tuple[dict[str, Any], ...]]
+_WORKER_ERROR_MARKER = "__thesis_rl_worker_error__"
+
+
+class SubprocessWorkerError(RuntimeError):
+    """A vector-environment worker failed before completing its command."""
 
 
 class CloudpickleWrapper:
@@ -89,7 +96,12 @@ def _worker(
     auto_reset: bool = True,
 ) -> None:
     parent_remote.close()
-    env = env_fn_wrapper.var()
+    try:
+        env = env_fn_wrapper.var()
+    except Exception as exc:
+        _send_worker_error(remote, command="initialize", error=exc)
+        remote.close()
+        return
     reset_info: dict[str, Any] = {}
     last_reset_seed: Optional[int] = None
     auto_reset_seed: Optional[int] = None
@@ -202,6 +214,26 @@ def _worker(
                 raise NotImplementedError(f"`{cmd}` is not implemented in the worker")
         except EOFError:
             break
+        except Exception as exc:
+            _send_worker_error(remote, command=cmd, error=exc)
+            remote.close()
+            break
+
+
+def _send_worker_error(remote: mp.connection.Connection, *, command: str, error: Exception) -> None:
+    """Best-effort delivery of a Python worker failure to its parent."""
+
+    payload = {
+        "command": str(command),
+        "pid": os.getpid(),
+        "exception_type": type(error).__name__,
+        "exception_message": str(error),
+        "traceback": traceback.format_exc(),
+    }
+    try:
+        remote.send((_WORKER_ERROR_MARKER, payload))
+    except (BrokenPipeError, EOFError, OSError):
+        pass
 
 
 class DeterministicSubprocVecEnv(Sb3VecEnv):
@@ -247,7 +279,7 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
             work_remote.close()
 
         self.remotes[0].send(("get_spaces", None))
-        observation_space, action_space = self.remotes[0].recv()
+        observation_space, action_space = self._receive(0, command="get_spaces")
         super().__init__(self.num_envs, observation_space, action_space)
         self.render_mode = getattr(getattr(env_fns[0], "__self__", None), "render_mode", None)
         self.reset_infos: list[dict[str, Any]] = [{} for _ in range(self.num_envs)]
@@ -272,8 +304,10 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         self.waiting = True
 
     def step_wait(self) -> VecEnvStepReturn:
-        results = [remote.recv() for remote in self.remotes]
-        self.waiting = False
+        try:
+            results = [self._receive(index, command="step") for index in range(self.num_envs)]
+        finally:
+            self.waiting = False
         obs, rews, dones, infos, reset_infos = zip(*results)
         self.reset_infos = list(reset_infos)
         return (
@@ -290,7 +324,7 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
     def reset(self) -> VecEnvObs:
         for env_idx, remote in enumerate(self.remotes):
             remote.send(("reset", (self._seeds[env_idx], self._options[env_idx])))
-        results = [remote.recv() for remote in self.remotes]
+        results = [self._receive(index, command="reset") for index in range(self.num_envs)]
         obs, reset_infos = zip(*results)
         self.reset_infos = list(reset_infos)
         self._reset_seeds()
@@ -303,7 +337,7 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
             raise RuntimeError("ACL selection protocol is available only in acl_mode.")
         index = self._get_indices(slot)[0]
         self.remotes[index].send(("configure_acl_selection", dict(selection)))
-        return self.remotes[index].recv()
+        return self._receive(index, command="configure_acl_selection")
 
     def reset_slots(
         self,
@@ -325,7 +359,7 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
                     ((seeds or {}).get(slot), (options or {}).get(slot)),
                 )
             )
-        return {slot: self.remotes[slot].recv() for slot in selected}
+        return {slot: self._receive(slot, command="reset_slots") for slot in selected}
 
     def step_slots(self, actions: Mapping[int, Any]) -> dict[int, Any]:
         """Step only active workers, preserving manual-reset episode boundaries."""
@@ -333,7 +367,7 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         selected = sorted(int(slot) for slot in actions)
         for slot in selected:
             self.remotes[slot].send(("step", actions[slot]))
-        return {slot: self.remotes[slot].recv() for slot in selected}
+        return {slot: self._receive(slot, command="step") for slot in selected}
 
     def render_slots(
         self,
@@ -349,7 +383,7 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         )
         for slot in selected:
             self.remotes[slot].send(("render", kwargs))
-        return {slot: self.remotes[slot].recv() for slot in selected}
+        return {slot: self._receive(slot, command="render") for slot in selected}
 
     def get_slot_proxy(self, slot: int) -> "VectorEnvSlotProxy":
         """Return a single-worker proxy suitable for callbacks and recorders."""
@@ -360,11 +394,17 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         if self.closed:
             return
         if self.waiting:
-            for remote in self.remotes:
-                remote.recv()
+            for index in range(self.num_envs):
+                try:
+                    self._receive(index, command="step")
+                except SubprocessWorkerError:
+                    pass
             self.waiting = False
         for remote in self.remotes:
-            remote.send(("close", None))
+            try:
+                remote.send(("close", None))
+            except (BrokenPipeError, EOFError, OSError):
+                pass
         for process in self.processes:
             process.join()
         self.closed = True
@@ -377,21 +417,21 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
             return [None for _ in self.remotes]
         for pipe in self.remotes:
             pipe.send(("render", None))
-        outputs = [pipe.recv() for pipe in self.remotes]
+        outputs = [self._receive(index, command="render") for index in range(self.num_envs)]
         return outputs
 
     def get_attr(self, attr_name: str, indices: VecEnvIndices = None) -> List[Any]:
         target_remotes = self._get_target_remotes(indices)
         for remote in target_remotes:
             remote.send(("get_attr", attr_name))
-        return [remote.recv() for remote in target_remotes]
+        return [self._receive(index, command="get_attr") for index in self._get_indices(indices)]
 
     def set_attr(self, attr_name: str, value: Any, indices: VecEnvIndices = None) -> None:
         target_remotes = self._get_target_remotes(indices)
         for remote in target_remotes:
             remote.send(("set_attr", (attr_name, value)))
-        for remote in target_remotes:
-            remote.recv()
+        for index in self._get_indices(indices):
+            self._receive(index, command="set_attr")
 
     def env_method(
         self, method_name: str, *method_args, indices: VecEnvIndices = None, **method_kwargs
@@ -399,7 +439,10 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         target_remotes = self._get_target_remotes(indices)
         for remote in target_remotes:
             remote.send(("env_method", (method_name, method_args, method_kwargs)))
-        return [remote.recv() for remote in target_remotes]
+        return [
+            self._receive(index, command=f"env_method:{method_name}")
+            for index in self._get_indices(indices)
+        ]
 
     def env_is_wrapped(
         self, wrapper_class: Type[gym.Wrapper], indices: VecEnvIndices = None
@@ -407,7 +450,39 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         target_remotes = self._get_target_remotes(indices)
         for remote in target_remotes:
             remote.send(("is_wrapped", wrapper_class))
-        return [bool(remote.recv()) for remote in target_remotes]
+        return [
+            bool(self._receive(index, command="is_wrapped")) for index in self._get_indices(indices)
+        ]
+
+    def _receive(self, index: int, *, command: str) -> Any:
+        """Receive one worker response or raise an actionable fatal error."""
+
+        try:
+            result = self.remotes[index].recv()
+        except EOFError as exc:
+            process = self.processes[index]
+            raise SubprocessWorkerError(
+                "Vector environment worker terminated without a response: "
+                f"slot={index}, command={command!r}, pid={process.pid}, "
+                f"exitcode={process.exitcode}. This usually indicates a native crash, "
+                "signal, OOM kill, or an exception before the worker could report it."
+            ) from exc
+        if (
+            isinstance(result, tuple)
+            and len(result) == 2
+            and isinstance(result[0], str)
+            and result[0] == _WORKER_ERROR_MARKER
+            and isinstance(result[1], Mapping)
+        ):
+            payload = result[1]
+            raise SubprocessWorkerError(
+                "Vector environment worker raised an exception: "
+                f"slot={index}, command={payload.get('command', command)!r}, "
+                f"pid={payload.get('pid')}, type={payload.get('exception_type')}, "
+                f"message={payload.get('exception_message')}\n"
+                f"Remote traceback:\n{payload.get('traceback', '<unavailable>')}"
+            )
+        return result
 
     def _get_indices(self, indices: VecEnvIndices) -> list[int]:
         if indices is None:

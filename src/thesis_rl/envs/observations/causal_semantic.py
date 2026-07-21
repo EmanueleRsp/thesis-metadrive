@@ -20,7 +20,7 @@ from thesis_rl.rulebook.v2.geometry.continuous_sat import (
     OccupancyInterval,
     predict_occupancy_interval,
 )
-from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline, RouteProjection
 from thesis_rl.rulebook.v2.types import (
     ActorClass,
     ActorSnapshot,
@@ -611,7 +611,9 @@ class CausalSemanticBatchBuilder:
             history = history[-self.history_length :]
             first = self.history_length - len(history)
             for history_index, snapshot in enumerate(history, first):
-                payload[slot, history_index] = self._dynamic_features(snapshot, ego, ego_speed_cap)
+                payload[slot, history_index] = self._dynamic_features(
+                    snapshot, ego, ego_speed_cap, context
+                )
                 mask[slot, history_index] = 1.0
         self._last_diagnostics = SemanticOverflowDiagnostics(
             {"dynamic": len(candidates)},
@@ -641,7 +643,11 @@ class CausalSemanticBatchBuilder:
         return _one_hot(3, 5)
 
     def _dynamic_features(
-        self, actor: ActorSnapshot, ego: ActorSnapshot, ego_speed_cap: float
+        self,
+        actor: ActorSnapshot,
+        ego: ActorSnapshot,
+        ego_speed_cap: float,
+        context: CausalSceneContext,
     ) -> np.ndarray:
         relative = _relative_position(actor.position_xy, ego.position_xy, ego.heading_rad)
         relative_velocity = _world_to_ego(
@@ -654,6 +660,8 @@ class CausalSemanticBatchBuilder:
         )
         cpa_valid, t_cpa, d_cpa = self._cpa(actor, ego)
         relative_heading = actor.heading_rad - ego.heading_rad
+        actor_projection = self._route_projection_or_raise(actor, ego, context)
+        ego_projection = self._route_projection_or_raise(ego, ego, context)
         values = [
             _clip(relative[0], 50.0),
             _clip(relative[1], 50.0),
@@ -664,8 +672,8 @@ class CausalSemanticBatchBuilder:
             _clip(dimensions[1], 5.0, lower=0.0),
             *_one_hot(_actor_type_index(actor.actor_class), 4),
             *self._lane_relation(actor, ego, relative[1]),
-            _clip(self._route_s(actor, ego) - self._route_s(ego, ego), 50.0),
-            _clip(self._route_lateral(actor), 50.0, lower=0.0),
+            _clip(actor_projection.s_m - ego_projection.s_m, 50.0),
+            _clip(actor_projection.lateral_distance_m, 50.0, lower=0.0),
             float(cpa_valid),
             _clip(t_cpa, 3.0, lower=0.0),
             _clip(d_cpa, 50.0, lower=0.0),
@@ -673,6 +681,31 @@ class CausalSemanticBatchBuilder:
         if len(values) != 22:
             raise RuntimeError(f"Dynamic feature contract produced {len(values)} values")
         return np.asarray(values, dtype=np.float32)
+
+    def _route_projection_or_raise(
+        self, actor: ActorSnapshot, ego: ActorSnapshot, context: CausalSceneContext
+    ) -> RouteProjection:
+        try:
+            return self.route.project(actor.position_xy, position_z=actor.position_z)
+        except ValueError as error:
+            diagnostics = self.route.projection_diagnostics(
+                actor.position_xy, position_z=actor.position_z
+            )
+            raise CausalSemanticObservationError(
+                "Semantic route projection unavailable: "
+                f"scenario_id={context.snapshot.scenario_id!r}, "
+                f"step={context.snapshot.step_index}, actor_id={actor.actor_id!r}, "
+                f"actor_z_m={actor.position_z:.6f}, ego_id={ego.actor_id!r}, "
+                f"ego_z_m={ego.position_z:.6f}, "
+                f"actor_ego_vertical_delta_m={abs(actor.position_z - ego.position_z):.6f}, "
+                f"nearest_planar_segment_index={diagnostics.nearest_planar_segment_index}, "
+                f"nearest_planar_s_m={diagnostics.nearest_planar_s_m:.6f}, "
+                f"nearest_planar_z_m={diagnostics.nearest_planar_z_m:.6f}, "
+                f"nearest_planar_distance_m={diagnostics.nearest_planar_distance_m:.6f}, "
+                f"minimum_route_vertical_delta_m={diagnostics.minimum_vertical_difference_m:.6f}, "
+                f"compatible_route_segment_count={diagnostics.vertically_compatible_segment_count}, "
+                f"route_z_range_m=({diagnostics.route_min_z_m:.6f}, {diagnostics.route_max_z_m:.6f})"
+            ) from error
 
     def _build_static(
         self, context: CausalSceneContext, ego: ActorSnapshot

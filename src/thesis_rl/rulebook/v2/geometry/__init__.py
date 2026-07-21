@@ -51,6 +51,7 @@ from thesis_rl.rulebook.v2.geometry.lanes import (
 )
 from thesis_rl.rulebook.v2.geometry.route import (
     RoutePolyline,
+    RouteProjectionDiagnostics,
     RouteProjection,
     build_assigned_route_polyline,
 )
@@ -72,6 +73,7 @@ __all__ = [
     "PolylineElevation",
     "RoutePolyline",
     "RouteProjection",
+    "RouteProjectionDiagnostics",
     "build_assigned_route_polyline",
     "RouteLaneRecord",
     "derive_lane_movement_key",

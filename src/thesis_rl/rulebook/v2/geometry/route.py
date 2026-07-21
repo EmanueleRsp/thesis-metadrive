@@ -27,6 +27,20 @@ class RouteProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class RouteProjectionDiagnostics:
+    """Read-only geometry facts for a rejected vertically filtered projection."""
+
+    nearest_planar_segment_index: int
+    nearest_planar_s_m: float
+    nearest_planar_z_m: float
+    nearest_planar_distance_m: float
+    minimum_vertical_difference_m: float | None
+    vertically_compatible_segment_count: int | None
+    route_min_z_m: float
+    route_max_z_m: float
+
+
+@dataclass(frozen=True, slots=True)
 class RoutePolyline:
     """Canonical 3D route with XY arc length and deterministic projections."""
 
@@ -179,6 +193,59 @@ class RoutePolyline:
                 abs(candidate.s_m - previous_s_m),
                 candidate.segment_index,
             ),
+        )
+
+    def projection_diagnostics(
+        self,
+        point_xy: tuple[float, float],
+        *,
+        position_z: float | None = None,
+    ) -> RouteProjectionDiagnostics:
+        """Describe projection feasibility without changing projection selection."""
+
+        if not all(isfinite(value) for value in point_xy):
+            raise ValueError("Route projection XY coordinates must be finite")
+        if position_z is not None and not isfinite(position_z):
+            raise ValueError("Route projection position_z must be finite when supplied")
+
+        candidates: list[tuple[int, float, float, float, float]] = []
+        for index, (first, second) in enumerate(zip(self.points_xyz, self.points_xyz[1:])):
+            length = self._segment_lengths_m[index]
+            tangent = ((second[0] - first[0]) / length, (second[1] - first[1]) / length)
+            offset_x = point_xy[0] - first[0]
+            offset_y = point_xy[1] - first[1]
+            fraction = min(1.0, max(0.0, (offset_x * tangent[0] + offset_y * tangent[1]) / length))
+            projected_x = first[0] + fraction * length * tangent[0]
+            projected_y = first[1] + fraction * length * tangent[1]
+            z_m = first[2] + fraction * (second[2] - first[2])
+            candidates.append(
+                (
+                    index,
+                    fraction,
+                    z_m,
+                    hypot(point_xy[0] - projected_x, point_xy[1] - projected_y),
+                    abs(float(position_z) - z_m) if position_z is not None else 0.0,
+                )
+            )
+        nearest = min(candidates, key=lambda item: (item[3], item[0]))
+        vertical_differences = [item[4] for item in candidates] if position_z is not None else []
+        compatible_count = (
+            sum(item[4] <= VERTICAL_COMPATIBILITY_TOLERANCE_M for item in candidates)
+            if position_z is not None
+            else None
+        )
+        return RouteProjectionDiagnostics(
+            nearest_planar_segment_index=nearest[0],
+            nearest_planar_s_m=self._segment_starts_m[nearest[0]]
+            + nearest[1] * self._segment_lengths_m[nearest[0]],
+            nearest_planar_z_m=nearest[2],
+            nearest_planar_distance_m=nearest[3],
+            minimum_vertical_difference_m=min(vertical_differences)
+            if vertical_differences
+            else None,
+            vertically_compatible_segment_count=compatible_count,
+            route_min_z_m=min(point[2] for point in self.points_xyz),
+            route_max_z_m=max(point[2] for point in self.points_xyz),
         )
 
 

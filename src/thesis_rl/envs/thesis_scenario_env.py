@@ -106,6 +106,17 @@ class ThesisScenarioEnv(ScenarioEnv):
         self._rulebook_v2_requested = False
         self.rulebook_v2_adapter: Any | None = None
 
+    def setup_engine(self) -> None:
+        """Install the thesis-owned source-bounded reactive traffic manager."""
+
+        super().setup_engine()
+        if not self.config["no_traffic"]:
+            from thesis_rl.envs.scenario_traffic_manager import (
+                SourceBoundScenarioTrafficManager,
+            )
+
+            self.engine.update_manager("traffic_manager", SourceBoundScenarioTrafficManager())
+
     def configure_acl_selection(self, selection: Mapping[str, Any]) -> dict[str, Any]:
         """Install parent-owned ACL metadata before the next selective reset."""
         payload = dict(selection)
@@ -625,9 +636,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             # classified boundary-only contact as non-physical, so it must not
             # re-enter the aggregate termination predicate here.
             native_crash = bool(done_info.get(TerminationState.CRASH, False))
-            native_crash_sidewalk = bool(
-                done_info.get(TerminationState.CRASH_SIDEWALK, False)
-            )
+            native_crash_sidewalk = bool(done_info.get(TerminationState.CRASH_SIDEWALK, False))
             done_info[TerminationState.CRASH_SIDEWALK] = False
             collision_without_sidewalk = any(
                 bool(done_info.get(key, False))
