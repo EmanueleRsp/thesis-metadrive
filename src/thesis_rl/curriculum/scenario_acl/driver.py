@@ -1335,7 +1335,6 @@ def run_scenario_acl_training(
     # unfiltered provider once per evaluation chunk so no prior choice leaks.
     env = build_train_env(cfg, semantic_env_overrides)
     seed_env_spaces(env, run_seed)
-    train_env_count = count_envs(env)
 
     preprocessor = build_preprocessor(cfg)
     adapter = build_adapter(cfg, adapter_space_kwargs(env.action_space))
@@ -1359,7 +1358,6 @@ def run_scenario_acl_training(
         planner = load_planner(cfg, checkpoint_path=str(resume_checkpoint_zip), env=env)
     else:
         planner = build_planner(cfg, env, seed=run_seed)
-    planner_device = str(getattr(planner, "device", cfg.device))
     ema_alpha_cfg = (
         float(cfg.agent.planner.algorithm.get("monitor_ema_alpha", 0.1))
         if hasattr(cfg, "agent")
@@ -1393,14 +1391,6 @@ def run_scenario_acl_training(
         cfg=cfg,
         metadata_path=metadata_path,
         hydra_config_path=hydra_config_path,
-        extra_rows=[
-            ("Observation space", str(env.observation_space)),
-            ("Action space", str(env.action_space)),
-            ("Vectorized training envs", str(train_env_count)),
-            ("Planner device", planner_device),
-            ("Curriculum kind", "scenario_acl"),
-            ("Scenario ACL selection", "per episode"),
-        ],
     )
 
     if train_num_envs(cfg) > 1:

@@ -305,15 +305,20 @@ class AsyncEvaluationManager:
 
         self.poll()
         active = self._active
-        current = f"{active.completed}/{active.job.episode_count}" if active else "0/0"
+        progress_state = active or self._last_completed
+        current = (
+            f"{progress_state.completed}/{progress_state.job.episode_count}"
+            if progress_state
+            else "0/0"
+        )
         progress_description = (
-            "Evaluation episodes" if active is None else f"Evaluation episodes ({current})"
+            "Evaluation episodes" if progress_state is None else f"Evaluation episodes ({current})"
         )
         self._progress.update(
             self._progress_task,
             description=progress_description,
-            total=max(active.job.episode_count, 1) if active is not None else 1,
-            completed=active.completed if active is not None else 1,
+            total=max(progress_state.job.episode_count, 1) if progress_state else 1,
+            completed=progress_state.completed if progress_state else 0,
         )
         last = Table(title="Last Completed Evaluation", expand=True)
         last.add_column("Metric", style="cyan", no_wrap=True)

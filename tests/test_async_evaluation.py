@@ -172,3 +172,44 @@ def test_renderables_expose_progress_and_last_complete_monitor(tmp_path, monkeyp
     ]
     assert "Evaluation Queue" not in str(renderables)
     manager.close()
+
+
+def test_renderables_keep_completed_episode_count_after_job_finishes(tmp_path, monkeypatch):
+    def fake_worker(job, output_queue):
+        output_queue.put(("started", job.eval_id, job.episode_count))
+        output_queue.put(("progress", job.eval_id, job.episode_count, job.episode_count))
+        output_queue.put(
+            (
+                "finished",
+                job.eval_id,
+                {
+                    "per_episode": {"returns": [1.0, 2.0]},
+                    "mean_reward": 1.5,
+                },
+            )
+        )
+
+    monkeypatch.setattr(async_module, "_evaluation_worker_main", fake_worker)
+    manager = AsyncEvaluationManager(
+        checkpoints_dir=tmp_path,
+        process_factory=_FakeProcess,
+    )
+    manager.enqueue(
+        agent=_FakeAgent(tmp_path),
+        cfg=_cfg(),
+        eval_id=1,
+        global_step=10,
+        stage="baseline",
+        stage_index=0,
+        episode_count=2,
+        base_seed=100,
+        env_seed=200,
+    )
+
+    manager.renderables()
+
+    task = manager._progress.tasks[0]
+    assert task.completed == 2
+    assert task.total == 2
+    assert task.description == "Evaluation episodes (2/2)"
+    manager.close()

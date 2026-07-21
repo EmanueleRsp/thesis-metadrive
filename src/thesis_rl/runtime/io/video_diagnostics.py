@@ -196,6 +196,8 @@ def diagnostic_geometry(env: Any, step_info: Any) -> dict[str, Any]:
     if type(base).__name__ == "VectorEnvSlotProxy":
         return {}
     renderer = getattr(base, "top_down_renderer", None)
+    if renderer is None:
+        renderer = getattr(getattr(base, "engine", None), "top_down_renderer", None)
     canvas = getattr(renderer, "_frame_canvas", None)
     screen = getattr(renderer, "_screen_canvas", None)
     track_agent = getattr(renderer, "current_track_agent", None)
@@ -205,7 +207,9 @@ def diagnostic_geometry(env: Any, step_info: Any) -> dict[str, Any]:
     if bool(getattr(renderer, "target_agent_heading_up", False)):
         return {}
     screen_width, screen_height = screen.get_size()
-    camera_position = getattr(renderer, "position", None) or getattr(track_agent, "position", None)
+    camera_position = getattr(renderer, "position", None)
+    if camera_position is None and track_agent is not None:
+        camera_position = getattr(track_agent, "position", None)
     if camera_position is None:
         return {}
     camera_pixel = pos2pix(float(camera_position[0]), float(camera_position[1]))
@@ -220,14 +224,20 @@ def diagnostic_geometry(env: Any, step_info: Any) -> dict[str, Any]:
 
     geometry: dict[str, Any] = {}
     context = getattr(base, "causal_scene_context", None)
+    if context is None:
+        context = getattr(getattr(base, "engine", None), "causal_scene_context", None)
     route = getattr(context, "route_polyline", None)
     if route is None:
         adapter = getattr(base, "rulebook_v2_adapter", None)
-        cache = getattr(adapter, "initial_cache", None)
+        cache = getattr(adapter, "cache", None)
+        if cache is None:
+            cache = getattr(adapter, "initial_cache", None)
         route = getattr(cache, "route_polyline", None)
     route_points = getattr(route, "points_xyz", None)
     ego = info.get("ego_state") if isinstance(info.get("ego_state"), Mapping) else {}
     ego_position = _point_xy(_get(ego, "position"))
+    if ego_position is None and track_agent is not None:
+        ego_position = _point_xy(getattr(track_agent, "position", None))
     if route is not None and route_points and ego_position is not None:
         try:
             projection = route.project(ego_position)

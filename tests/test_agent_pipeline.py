@@ -6,9 +6,37 @@ import numpy as np
 import pytest
 
 from thesis_rl.agent.adapters.identity import IdentityAdapter
-from thesis_rl.agent.agent import Agent
+from thesis_rl.agent.agent import Agent, _format_episode_event
 from thesis_rl.agent.types import Transition
 from thesis_rl.agent.preprocessors.identity import IdentityPreprocessor
+
+
+def test_episode_event_format_is_stable_for_scalar_and_vector_slots() -> None:
+    scalar_line = _format_episode_event(
+        episode_number=7,
+        env_index=0,
+        episode_length=12,
+        reward=1.234,
+        reason="time_limit",
+        route_completion=0.5,
+        context={"arm": "A1_traffic", "source": "pg"},
+    )
+    vector_line = _format_episode_event(
+        episode_number=7,
+        env_index=0,
+        episode_length=12,
+        reward=1.234,
+        reason="time_limit",
+        route_completion=0.5,
+        context={"arm": "A1_traffic", "source": "pg"},
+    )
+
+    expected = (
+        "Episode 7 env=0 ended | len=12 reward=1.23 | reason=time_limit "
+        "route_completion=0.50 | arm=A1_traffic source=pg"
+    )
+    assert scalar_line == expected
+    assert vector_line == expected
 
 
 class _DummyLifecycle:

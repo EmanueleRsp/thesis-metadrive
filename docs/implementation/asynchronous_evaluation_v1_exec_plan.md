@@ -7,7 +7,7 @@
 - Authoritative specification: `docs/specifications/rl_baselines_v1_specification.md`
   (`RL-BASELINES`, version `1.0`, `APPROVED`, `Authoritative: YES`)
 - Related ADRs: `ADR-018`, `ADR-019`, `ADR-016`
-- Status: `IMPLEMENTED`
+- Status: `VERIFIED`
 - Created: 2026-07-21
 - Last updated: 2026-07-21
 - Owner: thesis repository maintainer
@@ -38,6 +38,7 @@ resource partitioning between learner and evaluator.
 | `REQ-AE-004` | Evaluation failure terminates the training run. | RL-BASELINES fatal-error contract, ADR-019 |
 | `REQ-AE-005` | Training UI presents current evaluation progress/status and the last complete result alongside training. | ADR-019 |
 | `REQ-AE-006` | Queue is drained before the separate final test starts. | `AC-RLB-028`, ADR-019 |
+| `REQ-AE-007` | The Rich evaluation progress bar counts executed evaluation episodes, including the last completed job when no job is active. | User-approved UI correction, 2026-07-21 |
 
 ## 4. Current Repository Analysis
 
@@ -100,6 +101,7 @@ staged curriculum and retain final test after queue drain.
 | `REQ-AE-004` | `AC-AE-004` | fatal error propagation/drain | `tests/test_async_evaluation.py` | Implemented; focused tests pass |
 | `REQ-AE-005` | `AC-AE-005` | Rich renderable/event callbacks | `tests/test_async_evaluation.py`, smoke | Implemented; smoke visibly passed |
 | `REQ-AE-006` | `AC-AE-006` | training finalization ordering | smoke final evaluation | Implemented; smoke passed |
+| `REQ-AE-007` | `AC-AE-009` | `async_evaluation.py::AsyncEvaluationManager.renderables` | `tests/test_async_evaluation.py::test_renderables_keep_completed_episode_count_after_job_finishes` | Verified |
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -113,6 +115,7 @@ staged curriculum and retain final test after queue drain.
 | `TEST-AE-006` | Unit | learner state ownership | enqueue does not replace/mutate live learner object | `REQ-AE-001` |
 | `TEST-AE-007` | Integration | queue drain/final test | final test starts only after all diagnostics finish | `REQ-AE-006` |
 | `TEST-AE-008` | Regression | existing evaluation callbacks | sequential/parallel metrics and CSV schema remain unchanged | `REQ-AE-001` |
+| `TEST-AE-009` | Regression | completed asynchronous job with two episodes | progress remains `2/2` after the active job is cleared | `REQ-AE-007` |
 
 Commands fixed before production changes:
 
@@ -143,6 +146,8 @@ make smoke
 | 2026-07-21 | Full suite re-run after baseline repairs. | `718 passed, 1 skipped, 1 warning`. | Investigate remaining skip and warning. |
 | 2026-07-21 | Removed the optional-dataset skip and invalid-regex warning. | PG adapter test falls back to its deterministic synthetic fixture when binary PG data is absent; transition replay regex is now a raw string. Full suite: `719 passed`. | Close task. |
 | 2026-07-21 | Simplified the Rich UI according to the approved monitor layout. | Training hides vectorization internals; evaluation exposes only the requested metrics, embeds completed/total episode counts in its progress label, removes the queue panel, and final test progress is labeled `Test episodes`. | Re-run focused and full checks. |
+| 2026-07-21 | User reported that a run with `eval_episodes=2` displayed `1/1` after completion. | The renderer used the fallback `active is None -> 1/1`, although the metrics were aggregated over two episodes. | Use the active job or last completed job as progress state; add `TEST-AE-009`. |
+| 2026-07-21 | Corrected completed-job progress state and added the two-episode regression. | Focused async tests: `4 passed`; Ruff format/check passed; `git diff --check` passed. | Complete final reconciliation. |
 
 ## 12. Deviations
 
@@ -152,11 +157,11 @@ No deviations identified.
 
 | Path | Action | Purpose |
 |---|---|---|
-| `src/thesis_rl/runtime/async_evaluation.py` | Added | FIFO parent coordinator, snapshots, spawned worker, IPC, Rich state |
+| `src/thesis_rl/runtime/async_evaluation.py` | Modified | Preserve completed episode count in Rich state |
 | `src/thesis_rl/agent/agent.py` | Modified | evaluation progress and training Live-layout callbacks |
 | `src/thesis_rl/runtime/loops/train_loop.py` | Modified | ordinary validation queue, result persistence, and drain before final test |
 | `src/thesis_rl/curriculum/scenario_acl/driver.py` | Modified | vectorized and single-env ACL diagnostic queue and drain |
-| `tests/test_async_evaluation.py` | Added | deterministic manager/FIFO/UI/fatal-error regression matrix |
+| `tests/test_async_evaluation.py` | Modified | deterministic manager/FIFO/UI/fatal-error regression matrix and episode-count regression |
 | `docs/decisions/ADR-019-asynchronous-evaluation-queue.md` | Added | approved behavior and invariants |
 | `docs/project_index.md` | Modified | authority and implementation registry |
 
@@ -170,10 +175,14 @@ No deviations identified.
 | `git diff --check` | `PASS` | 2026-07-21 | No whitespace errors |
 | `make smoke` | `PASS` | 2026-07-21 | Async validation completed during training; final test completed separately with 5 episodes |
 | `docker compose run --rm dev python -m pytest -q -rs -W default` | `PASS` | 2026-07-21 | 719 passed; no skipped tests and no warnings |
+| `docker compose run --rm dev python -m pytest -q tests/test_async_evaluation.py` | `PASS` | 2026-07-21 | 4 passed, including `TEST-AE-009` |
+| `docker compose run --rm dev uv run --no-sync ruff format --check src/thesis_rl/runtime/async_evaluation.py tests/test_async_evaluation.py` | `PASS` | 2026-07-21 | Both modified Python files already formatted |
+| `docker compose run --rm dev uv run --no-sync ruff check src/thesis_rl/runtime/async_evaluation.py tests/test_async_evaluation.py` | `PASS` | 2026-07-21 | All checks passed |
+| `git diff --check` | `PASS` | 2026-07-21 | No whitespace errors |
 
 ## 15. Final Reconciliation
 
-Requirements `REQ-AE-001`--`REQ-AE-006` are implemented. Focused tests, the
+Requirements `REQ-AE-001`--`REQ-AE-007` are implemented. Focused tests, the
 end-to-end smoke, and the complete repository suite are verified.
 
 Known limitations: ACL diagnostic CSV persistence records the aggregate row in

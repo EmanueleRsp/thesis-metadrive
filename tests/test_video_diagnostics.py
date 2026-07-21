@@ -117,3 +117,37 @@ def test_geometry_extraction_skips_vector_env_proxy_boundary() -> None:
     proxy = VectorEnvSlotProxy()
     proxy.unwrapped = proxy
     assert diagnostic_geometry(proxy, {}) == {}
+
+
+def test_geometry_extraction_uses_renderer_and_vehicle_fallbacks() -> None:
+    from thesis_rl.runtime.io.video_diagnostics import diagnostic_geometry
+    from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+
+    class Canvas:
+        def pos2pix(self, x, y):
+            return (int(x * 10), int(y * 10))
+
+        def get_size(self):
+            return (200, 200)
+
+    class Vehicle:
+        position = (5.0, 5.0, 0.0)
+
+    class Renderer:
+        _frame_canvas = Canvas()
+        _screen_canvas = Canvas()
+        position = None
+        current_track_agent = Vehicle()
+        target_agent_heading_up = False
+
+    class Context:
+        route_polyline = RoutePolyline(((0.0, 5.0, 0.0), (10.0, 5.0, 0.0)))
+
+    class Env:
+        top_down_renderer = Renderer()
+        causal_scene_context = Context()
+
+    geometry = diagnostic_geometry(Env(), {})
+
+    assert len(geometry["route_past"]) >= 2
+    assert len(geometry["route_future"]) >= 2

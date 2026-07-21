@@ -161,6 +161,73 @@ def test_sb3_ppo_smoke_uses_diagnostic_rollout_override() -> None:
     assert int(resolved_planner_cfg.batch_size) == 8
 
 
+def test_make_run_keeps_shared_pipeline_identical_across_sb3_algorithms() -> None:
+    common_overrides = [
+        "env=scenarionet",
+        "obs=semantic_v2",
+        "agent/planner/encoder=lq",
+        "agent/planner/decoder=mlp_encoded",
+        "reward=scalar_reward",
+        "scalarization=default",
+        "curriculum=scenario_acl_scenarionet",
+        "rulebook.version=4.7-final-implementation-complete",
+        "env.provider.strict=true",
+        "env.provider.allow_fallback=false",
+        "env.provider.source_probability.waymo=0.5",
+        "env.provider.source_probability.pg=0.5",
+        "env.config.num_scenarios=-1",
+        "env.vectorized.enabled=true",
+        "env.vectorized.num_envs=5",
+        "seed=42",
+        "run_profile=smoke",
+        "experiment.name=run",
+        "video.enabled=true",
+    ]
+    shared_paths = (
+        ("env", "name"),
+        ("obs", "name"),
+        ("agent", "planner", "encoder", "name"),
+        ("agent", "planner", "decoder", "name"),
+        ("reward", "name"),
+        ("reward", "behavior"),
+        ("scalarization", "mode"),
+        ("curriculum", "name"),
+        ("env", "provider", "strict"),
+        ("env", "provider", "allow_fallback"),
+        ("env", "vectorized", "enabled"),
+        ("env", "vectorized", "num_envs"),
+        ("seed",),
+        ("experiment", "name"),
+        ("video", "enabled"),
+    )
+
+    configs = {
+        algorithm: _compose(*common_overrides, f"agent/planner/algorithm={algorithm}")
+        for algorithm in ("ppo_sb3", "td3_sb3", "sac_sb3")
+    }
+
+    def value_at(cfg, path: tuple[str, ...]):
+        value = cfg
+        for key in path:
+            value = value[key]
+        return value
+
+    for path in shared_paths:
+        values = {str(value_at(cfg, path)) for cfg in configs.values()}
+        assert len(values) == 1, f"shared Hydra value differs at {'.'.join(path)}: {values}"
+
+    assert bool(configs["ppo_sb3"].agent.planner.algorithm.transition_replay.enabled) is False
+    assert (
+        bool(configs["ppo_sb3"].agent.planner.algorithm.transition_replay.get("prioritized", False))
+        is False
+    )
+    for algorithm in ("td3_sb3", "sac_sb3"):
+        assert bool(configs[algorithm].agent.planner.algorithm.transition_replay.enabled) is True
+        assert (
+            bool(configs[algorithm].agent.planner.algorithm.transition_replay.prioritized) is True
+        )
+
+
 def test_rule_margin_logging_is_enabled_only_for_smoke_by_default() -> None:
     profiles = ("default", "smoke", "fast", "medium", "long", "tune", "thesis")
 

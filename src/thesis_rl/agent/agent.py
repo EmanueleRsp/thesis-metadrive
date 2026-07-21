@@ -51,6 +51,32 @@ class _LiveEventLogHandler(logging.Handler):
             self.handleError(record)
 
 
+def _format_episode_event(
+    *,
+    episode_number: int,
+    env_index: int,
+    episode_length: int,
+    reward: float,
+    reason: str,
+    route_completion: float,
+    context: Mapping[str, Any] | None = None,
+) -> str:
+    """Format the stable completed-episode line used by every train runner."""
+
+    context_suffix = ""
+    if context:
+        rendered_context = " ".join(
+            f"{key}={value}" for key, value in context.items() if value is not None
+        )
+        if rendered_context:
+            context_suffix = f" | {rendered_context}"
+    return (
+        f"Episode {int(episode_number)} env={int(env_index)} ended | "
+        f"len={int(episode_length)} reward={float(reward):.2f} | reason={reason} "
+        f"route_completion={float(route_completion):.2f}{context_suffix}"
+    )
+
+
 class _ParallelEvaluationEpisode:
     """Slot-local evaluation state used by the deterministic vector runner."""
 
@@ -606,17 +632,19 @@ class Agent:
                                 episodes,
                                 episode_metrics,
                             )
-                        context_suffix = ""
+                        episode_context: Mapping[str, Any] | None = None
                         if episode_context_callback is not None:
                             episode_context = episode_context_callback(env, step_info)
-                            if episode_context:
-                                context_suffix = " | " + " ".join(
-                                    f"{key}={value}"
-                                    for key, value in episode_context.items()
-                                    if value is not None
-                                )
                         event_logs.appendleft(
-                            f"Episode {episodes} ended | len={episode_len} reward={episode_scalar_reward:.2f} | reason={reason} route_completion={episode_route_completion:.2f}{context_suffix}"
+                            _format_episode_event(
+                                episode_number=episodes,
+                                env_index=0,
+                                episode_length=episode_len,
+                                reward=episode_scalar_reward,
+                                reason=reason,
+                                route_completion=episode_route_completion,
+                                context=episode_context,
+                            )
                         )
 
                         # Reset episode tracking variables
@@ -1242,21 +1270,16 @@ class Agent:
                             for key, value in dict(payload.get("live_event_context", {})).items()
                             if key not in {"slot", "episode_id"}
                         }
-                        context_suffix = (
-                            " | "
-                            + " ".join(
-                                f"{key}={value}"
-                                for key, value in context.items()
-                                if value is not None
-                            )
-                            if context
-                            else ""
-                        )
                         event_logs.appendleft(
-                            f"Episode {event_number} env={idx} ended | "
-                            f"len={event_length} reward={event_reward:.2f} "
-                            f"| reason={reason} route_completion={event_route_completion:.2f}"
-                            f"{context_suffix}"
+                            _format_episode_event(
+                                episode_number=event_number,
+                                env_index=idx,
+                                episode_length=event_length,
+                                reward=event_reward,
+                                reason=reason,
+                                route_completion=event_route_completion,
+                                context=context,
+                            )
                         )
 
                     actor_loss = float(getattr(lifecycle, "last_actor_loss", float("nan")))

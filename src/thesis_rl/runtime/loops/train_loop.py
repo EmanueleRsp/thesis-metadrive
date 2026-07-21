@@ -23,7 +23,6 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.agent.agent import Agent
-from thesis_rl.agent.planners.core.utils import count_envs
 from thesis_rl.contracts.reward_semantics import build_reward_semantics_identity
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.manager import CurriculumManager
@@ -640,7 +639,6 @@ def run_training(cfg: DictConfig) -> None:
         # Environment
         env = build_train_env(cfg, current_train_overrides)
         seed_env_spaces(env, run_seed)
-        train_env_count = count_envs(env)
         scenario_runtime_stats_total: dict[str, Any] | None = None
 
         # Agent
@@ -667,18 +665,11 @@ def run_training(cfg: DictConfig) -> None:
             planner = load_planner(cfg, checkpoint_path=str(resume_checkpoint_zip), env=env)
         else:
             planner = build_planner(cfg, env, seed=planner_seed)
-        planner_device = str(getattr(planner, "device", cfg.device))
         print_run_setup(
             title="Training Run",
             cfg=cfg,
             metadata_path=metadata_path,
             hydra_config_path=hydra_config_path,
-            extra_rows=[
-                ("Observation space", str(env.observation_space)),
-                ("Action space", str(env.action_space)),
-                ("Vectorized training envs", str(train_env_count)),
-                ("Planner device", planner_device),
-            ],
         )
         # Read EMA alpha from planner config if available
         ema_alpha_cfg = (
