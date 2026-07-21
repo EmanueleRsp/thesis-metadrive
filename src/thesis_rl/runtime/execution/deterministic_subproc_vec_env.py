@@ -86,6 +86,7 @@ def _worker(
     parent_remote: mp.connection.Connection,
     env_fn_wrapper: CloudpickleWrapper,
     acl_mode: bool = False,
+    auto_reset: bool = True,
 ) -> None:
     parent_remote.close()
     env = env_fn_wrapper.var()
@@ -105,7 +106,7 @@ def _worker(
                     info["terminal_observation"] = observation
                     info["terminated"] = bool(terminated)
                     info["truncated"] = bool(truncated)
-                if done and not acl_mode:
+                if done and not acl_mode and auto_reset:
                     start, count = _extract_seed_bounds(env)
                     if start is not None and count is not None and count > 0:
                         provider_env = getattr(env, "unwrapped", env)
@@ -155,7 +156,16 @@ def _worker(
                 observation, reset_info = env.reset(seed=normalized_seed, **maybe_options)
                 remote.send((observation, reset_info))
             elif cmd == "render":
-                remote.send(env.render())
+                render_kwargs = {} if data is None else dict(data)
+                render_env = getattr(env, "unwrapped", env)
+                try:
+                    frame = render_env.render(**render_kwargs)
+                except TypeError as exc:
+                    if "unexpected keyword argument 'mode'" not in str(exc):
+                        raise
+                    render_kwargs.pop("mode", None)
+                    frame = render_env.render(**render_kwargs)
+                remote.send(frame)
             elif cmd == "close":
                 env.close()
                 remote.close()
@@ -194,11 +204,13 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         start_method: Optional[str] = None,
         *,
         acl_mode: bool = False,
+        auto_reset: bool = True,
     ):
         self.waiting = False
         self.closed = False
         self.num_envs = len(env_fns)
         self.acl_mode = bool(acl_mode)
+        self.auto_reset = bool(auto_reset)
 
         if start_method is None:
             forkserver_available = "forkserver" in mp.get_all_start_methods()
@@ -208,7 +220,13 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         self.remotes, self.work_remotes = zip(*[ctx.Pipe() for _ in range(self.num_envs)])
         self.processes: list[mp.Process] = []
         for work_remote, remote, env_fn in zip(self.work_remotes, self.remotes, env_fns):
-            args = (work_remote, remote, CloudpickleWrapper(env_fn), self.acl_mode)
+            args = (
+                work_remote,
+                remote,
+                CloudpickleWrapper(env_fn),
+                self.acl_mode,
+                self.auto_reset,
+            )
             process = ctx.Process(target=_worker, args=args, daemon=True)  # type: ignore[attr-defined]
             process.start()
             self.processes.append(process)
@@ -281,8 +299,10 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         options: Mapping[int, dict[str, Any] | None] | None = None,
     ) -> dict[int, tuple[Any, dict[str, Any]]]:
         """Reset only completed ACL slots after their next selection is installed."""
-        if not self.acl_mode:
-            raise RuntimeError("Selective reset protocol is available only in acl_mode.")
+        if self.auto_reset and not self.acl_mode:
+            raise RuntimeError(
+                "Selective reset protocol requires auto_reset=False or acl_mode=True."
+            )
         selected = [int(slot) for slot in slots]
         for slot in selected:
             self.remotes[slot].send(
@@ -292,6 +312,35 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
                 )
             )
         return {slot: self.remotes[slot].recv() for slot in selected}
+
+    def step_slots(self, actions: Mapping[int, Any]) -> dict[int, Any]:
+        """Step only active workers, preserving manual-reset episode boundaries."""
+
+        selected = sorted(int(slot) for slot in actions)
+        for slot in selected:
+            self.remotes[slot].send(("step", actions[slot]))
+        return {slot: self.remotes[slot].recv() for slot in selected}
+
+    def render_slots(
+        self,
+        render_kwargs: Mapping[str, Any] | None = None,
+        *,
+        slots: Sequence[int] | None = None,
+    ) -> dict[int, Any]:
+        """Render selected workers concurrently and return slot-indexed frames."""
+
+        kwargs = dict(render_kwargs or {})
+        selected = (
+            list(range(self.num_envs)) if slots is None else sorted({int(slot) for slot in slots})
+        )
+        for slot in selected:
+            self.remotes[slot].send(("render", kwargs))
+        return {slot: self.remotes[slot].recv() for slot in selected}
+
+    def get_slot_proxy(self, slot: int) -> "VectorEnvSlotProxy":
+        """Return a single-worker proxy suitable for callbacks and recorders."""
+
+        return VectorEnvSlotProxy(self, int(slot))
 
     def close(self) -> None:
         if self.closed:
@@ -360,6 +409,46 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
 
     def _get_target_remotes(self, indices: VecEnvIndices) -> list[Any]:
         return [self.remotes[i] for i in self._get_indices(indices)]
+
+
+class VectorEnvSlotProxy:
+    """Remote single-slot view used by evaluation callbacks and recorders."""
+
+    def __init__(self, vector_env: DeterministicSubprocVecEnv, slot: int) -> None:
+        object.__setattr__(self, "_vector_env", vector_env)
+        object.__setattr__(self, "_slot", int(slot))
+        object.__setattr__(self, "env", None)
+        object.__setattr__(self, "_rendered_frame", None)
+
+    @property
+    def unwrapped(self) -> "VectorEnvSlotProxy":
+        return self
+
+    def __getattr__(self, name: str) -> Any:
+        return self._vector_env.get_attr(name, indices=self._slot)[0]
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in {"_vector_env", "_slot", "env", "_rendered_frame"}:
+            object.__setattr__(self, name, value)
+            return
+        self._vector_env.set_attr(name, value, indices=self._slot)
+
+    def set_rendered_frame(self, frame: Any) -> None:
+        object.__setattr__(self, "_rendered_frame", frame)
+
+    def consume_rendered_frame(self) -> Any:
+        frame = self._rendered_frame
+        object.__setattr__(self, "_rendered_frame", None)
+        return frame
+
+    def render(self, **kwargs: Any) -> Any:
+        cached = self.consume_rendered_frame()
+        if cached is not None:
+            return cached
+        return self._vector_env.render_slots(kwargs)[self._slot]
+
+    def close(self) -> None:
+        return None
 
 
 def _flatten_obs(

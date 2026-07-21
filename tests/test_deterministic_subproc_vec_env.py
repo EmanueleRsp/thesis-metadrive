@@ -51,7 +51,9 @@ def test_deterministic_subproc_vec_env_auto_reset_uses_deterministic_worker_seed
     try:
         vec_env._seeds = [10, 20]  # type: ignore[attr-defined]
         obs = vec_env.reset()
-        np.testing.assert_array_equal(obs[:, 0].astype(np.int64), np.array([10, 20], dtype=np.int64))
+        np.testing.assert_array_equal(
+            obs[:, 0].astype(np.int64), np.array([10, 20], dtype=np.int64)
+        )
 
         expected = [
             np.array([11, 21], dtype=np.int64),
@@ -64,5 +66,33 @@ def test_deterministic_subproc_vec_env_auto_reset_uses_deterministic_worker_seed
             obs, _rewards, dones, _infos = vec_env.step(actions)
             np.testing.assert_array_equal(dones, np.array([True, True]))
             np.testing.assert_array_equal(obs[:, 0].astype(np.int64), expected_obs)
+    finally:
+        vec_env.close()
+
+
+def test_deterministic_subproc_vec_env_supports_selective_manual_resets() -> None:
+    vec_env = DeterministicSubprocVecEnv(
+        [
+            _make_env(start_index=10, num_scenarios=3),
+            _make_env(start_index=20, num_scenarios=2),
+        ],
+        start_method="spawn",
+        auto_reset=False,
+    )
+    try:
+        initial = vec_env.reset_slots([0, 1], seeds={0: 10, 1: 20})
+        np.testing.assert_array_equal(initial[0][0], np.array([10], dtype=np.float32))
+        np.testing.assert_array_equal(initial[1][0], np.array([20], dtype=np.float32))
+
+        results = vec_env.step_slots(
+            {0: np.zeros(1, dtype=np.float32), 1: np.zeros(1, dtype=np.float32)}
+        )
+        assert set(results) == {0, 1}
+        assert results[0][2] is True
+        assert results[1][2] is True
+
+        reset = vec_env.reset_slots([1], seeds={1: 21})
+        np.testing.assert_array_equal(reset[1][0], np.array([21], dtype=np.float32))
+        assert set(vec_env.step_slots({1: np.zeros(1, dtype=np.float32)})) == {1}
     finally:
         vec_env.close()

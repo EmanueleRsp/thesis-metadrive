@@ -59,6 +59,7 @@ from thesis_rl.sb3_extensions.replay import resolve_transition_replay_config
 from thesis_rl.runtime.wiring.builders import (
     adapter_space_kwargs,
     build_adapter,
+    build_eval_env,
     build_env,
     build_planner,
     build_preprocessor,
@@ -66,6 +67,7 @@ from thesis_rl.runtime.wiring.builders import (
     merge_env_config_with_overrides,
     set_planner_env_if_compatible,
     build_train_env,
+    evaluation_num_workers,
 )
 
 
@@ -878,7 +880,16 @@ def _run_scenario_acl_vectorized_training(
             split="validation",
         )
         eval_env_overrides.update(semantic_env_overrides)
-        eval_env = build_env(cfg, eval_env_overrides)
+        eval_env = build_eval_env(
+            cfg,
+            eval_env_overrides,
+            n_eval_episodes=eval_episode_count,
+            workers=evaluation_num_workers(cfg, final=False),
+            scenario_arm_schedule=tuple(
+                _select_waymo_eval_arm(index) for index in range(eval_episode_count)
+            ),
+            scenario_source_schedule=("waymo",) * eval_episode_count,
+        )
         seed_env_spaces(eval_env, run_seed + 500_000 + current_chunk_id)
         eval_snapshot_stem = paths.checkpoints_dir / "eval_snapshot"
         agent.save(eval_snapshot_stem)
@@ -1082,7 +1093,19 @@ def _run_scenario_acl_vectorized_training(
         split="test",
     )
     final_eval_overrides.update(semantic_env_overrides)
-    final_eval_env = build_env(cfg, final_eval_overrides)
+    final_eval_episode_count = int(
+        cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)
+    )
+    final_eval_env = build_eval_env(
+        cfg,
+        final_eval_overrides,
+        n_eval_episodes=final_eval_episode_count,
+        workers=evaluation_num_workers(cfg, final=True),
+        scenario_arm_schedule=tuple(
+            _select_waymo_eval_arm(index) for index in range(final_eval_episode_count)
+        ),
+        scenario_source_schedule=("waymo",) * final_eval_episode_count,
+    )
     seed_env_spaces(final_eval_env, run_seed + 600_000)
     final_eval_agent = Agent(
         preprocessor=preprocessor,
@@ -1122,9 +1145,7 @@ def _run_scenario_acl_vectorized_training(
     )
     final_metrics = final_eval_agent.evaluate(
         env=final_eval_env,
-        n_eval_episodes=int(
-            cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)
-        ),
+        n_eval_episodes=final_eval_episode_count,
         deterministic=bool(cfg.experiment.eval_deterministic),
         base_seed=None,
         return_episode_metrics=True,
@@ -1743,7 +1764,17 @@ def run_scenario_acl_training(
             )
             eval_env_overrides.update(semantic_env_overrides)
             eval_base_seed = None
-            eval_env = build_env(cfg, eval_env_overrides)
+            eval_episode_count = int(cfg.experiment.eval_episodes)
+            eval_env = build_eval_env(
+                cfg,
+                eval_env_overrides,
+                n_eval_episodes=eval_episode_count,
+                workers=evaluation_num_workers(cfg, final=False),
+                scenario_arm_schedule=tuple(
+                    _select_waymo_eval_arm(index) for index in range(eval_episode_count)
+                ),
+                scenario_source_schedule=("waymo",) * eval_episode_count,
+            )
             seed_env_spaces(eval_env, run_seed + 500_000 + current_chunk_id)
 
             eval_snapshot_stem = paths.checkpoints_dir / "eval_snapshot"
@@ -1759,7 +1790,7 @@ def run_scenario_acl_training(
             current_eval_id += 1
             eval_metrics = eval_agent.evaluate(
                 env=eval_env,
-                n_eval_episodes=int(cfg.experiment.eval_episodes),
+                n_eval_episodes=eval_episode_count,
                 deterministic=bool(cfg.experiment.eval_deterministic),
                 base_seed=eval_base_seed,
                 return_episode_metrics=False,
@@ -1995,7 +2026,19 @@ def run_scenario_acl_training(
         )
         final_eval_env_overrides.update(semantic_env_overrides)
         final_eval_base_seed = None
-        final_eval_env = build_env(cfg, final_eval_env_overrides)
+        final_eval_episode_count = int(
+            cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)
+        )
+        final_eval_env = build_eval_env(
+            cfg,
+            final_eval_env_overrides,
+            n_eval_episodes=final_eval_episode_count,
+            workers=evaluation_num_workers(cfg, final=True),
+            scenario_arm_schedule=tuple(
+                _select_waymo_eval_arm(index) for index in range(final_eval_episode_count)
+            ),
+            scenario_source_schedule=("waymo",) * final_eval_episode_count,
+        )
         seed_env_spaces(final_eval_env, run_seed + 600_000)
         final_eval_agent = Agent(
             preprocessor=preprocessor,
@@ -2037,9 +2080,7 @@ def run_scenario_acl_training(
         )
         final_metrics = final_eval_agent.evaluate(
             env=final_eval_env,
-            n_eval_episodes=int(
-                cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)
-            ),
+            n_eval_episodes=final_eval_episode_count,
             deterministic=bool(cfg.experiment.eval_deterministic),
             base_seed=final_eval_base_seed,
             return_episode_metrics=True,

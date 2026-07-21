@@ -14,7 +14,7 @@ from omegaconf import DictConfig, OmegaConf
 from thesis_rl.agent.adapters.interfaces.base import BaseAdapter
 from thesis_rl.agent.adapters.identity import IdentityAdapter
 from thesis_rl.agent.planners.core.utils import count_envs
-from thesis_rl.envs.factory import make_env
+from thesis_rl.envs.factory import make_env, scenario_evaluation_runtime_indices
 from thesis_rl.envs.wrappers import RuleRewardWrapper
 from thesis_rl.rulebook.v2.wrapper import RulebookV2MonitorWrapper
 from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
@@ -522,9 +522,7 @@ def build_train_env(cfg: DictConfig, env_overrides: dict[str, Any] | None = None
     cfg_plain = OmegaConf.to_container(cfg, resolve=True)
     start_method = str(cfg.env.get("vectorized", {}).get("start_method", "forkserver"))
     env_name = str(cfg.env.get("name", "")).lower()
-    acl_vector_mode = (
-        str(cfg.get("curriculum", {}).get("kind", "")).lower() == "scenario_acl"
-    )
+    acl_vector_mode = str(cfg.get("curriculum", {}).get("kind", "")).lower() == "scenario_acl"
     if acl_vector_mode and start_method != "spawn":
         raise ValueError("Scenario ACL vector execution requires start_method='spawn'.")
     if env_name == "metadrive" and start_method != "spawn":
@@ -578,6 +576,99 @@ def build_train_env(cfg: DictConfig, env_overrides: dict[str, Any] | None = None
         start_method=start_method,
         acl_mode=acl_vector_mode,
     )
+
+
+def evaluation_num_workers(cfg: DictConfig, *, final: bool) -> int:
+    """Resolve the independent process count for validation or final test."""
+
+    key = "test_workers" if final else "eval_workers"
+    configured = int(cfg.experiment.get(key, 1))
+    if configured <= 0:
+        raise ValueError(f"experiment.{key} must be positive, got {configured}.")
+    return configured
+
+
+def build_eval_env(
+    cfg: DictConfig,
+    env_overrides: dict[str, Any] | None,
+    *,
+    n_eval_episodes: int,
+    workers: int,
+    scenario_arm_schedule: tuple[str, ...] | None = None,
+    scenario_source_schedule: tuple[str, ...] | None = None,
+):
+    """Build a manually-reset process vector for deterministic evaluation."""
+
+    episode_count = int(n_eval_episodes)
+    if episode_count <= 0:
+        raise ValueError("n_eval_episodes must be positive.")
+    worker_count = min(max(int(workers), 1), episode_count)
+    if worker_count == 1:
+        return build_env(cfg, env_overrides)
+
+    cfg_plain = OmegaConf.to_container(cfg, resolve=True)
+    start_method = str(cfg.experiment.get("evaluation_start_method", "spawn"))
+    if start_method != "spawn":
+        raise ValueError("Parallel evaluation requires experiment.evaluation_start_method='spawn'.")
+
+    env_name = str(cfg.env.get("name", "")).lower()
+    resolved_env = _attach_observation_group(cfg, cfg.env)
+    if env_overrides:
+        resolved_env = merge_env_config_with_overrides(resolved_env, env_overrides)
+    scenario_indices: tuple[int, ...] | None = None
+    if env_name == "scenarionet":
+        scenario_indices = scenario_evaluation_runtime_indices(
+            resolved_env,
+            episode_count,
+            arm_schedule=scenario_arm_schedule,
+            source_schedule=scenario_source_schedule,
+        )
+
+    def make_thunk(rank: int):
+        worker_overrides = dict(env_overrides or {})
+        if env_name == "scenarionet":
+            # Every evaluator worker sees the complete frozen split and receives
+            # an explicit runtime index from the parent at reset time. It must
+            # not partition or independently sample the provider stream.
+            worker_overrides.update(
+                {
+                    "start_scenario_index": 0,
+                    "worker_index": 0,
+                    "num_workers": 1,
+                    "provider_worker_index": 0,
+                    "provider_worker_count": 1,
+                }
+            )
+        else:
+            configured_count = int(
+                worker_overrides.get("num_scenarios", cfg.env.config.num_scenarios)
+            )
+            worker_overrides["num_scenarios"] = max(configured_count, episode_count)
+
+        def _init():
+            from thesis_rl.runtime.execution.seeding import set_global_seed
+
+            worker_cfg = OmegaConf.create(cfg_plain)
+            set_global_seed(int(worker_cfg.get("seed", 0)) + int(rank))
+            logs_dir = Path(str(worker_cfg.paths.logs_dir))
+            crash_log = logs_dir / f"eval_subproc_worker_{rank}_crash.log"
+            try:
+                env = build_env(worker_cfg, worker_overrides)
+            except Exception:
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                crash_log.write_text(traceback.format_exc(), encoding="utf-8")
+                raise
+            return _CrashLoggingEnvWrapper(env, crash_log)
+
+        return _init
+
+    vector_env = DeterministicSubprocVecEnv(
+        [make_thunk(rank) for rank in range(worker_count)],
+        start_method=start_method,
+        auto_reset=False,
+    )
+    vector_env.evaluation_scenario_indices = scenario_indices
+    return vector_env
 
 
 def set_planner_env_if_compatible(planner: "BasePlanner", env: Any) -> None:

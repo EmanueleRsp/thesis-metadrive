@@ -5,7 +5,7 @@
 This index prevents an apparently newer, exploratory, or implementation-tracking
 document from being mistaken for an approved scientific contract.
 
-- Last repository inspection: 2026-07-20
+- Last repository inspection: 2026-07-21
 - Index status: `CURRENT_WITH_DOCUMENTED_GAPS`
 - Approval evidence: explicit user confirmations recorded on 2026-07-16 and 2026-07-17
 - Rule: repository evidence establishes paths, versions, links, and reported
@@ -79,6 +79,7 @@ root.
 | `decisions/ADR-014-scenarionet-acl-learning-potential-only.md` | `APPROVED` | Explicit user approval on 2026-07-19 | ScenarioNet ACL usefulness equals learning potential; mutation is prohibited; Rulebook curriculum inputs are diagnostic-only |
 | `decisions/ADR-016-scenario-acl-vectorized-execution.md` | `APPROVED` | Explicit user approval of DEC-VEC-001--DEC-VEC-005 and deterministic resume restart policy on 2026-07-20 | Parent-controlled selective reset, fresh-batch uniqueness, per-episode LP provenance, deterministic commit ordering, PPO partial-rollout persistence, and explicit active-slot restart on resume |
 | `decisions/ADR-015-r1-pre-state-centerline-normal.md` | `APPROVED` | Explicit user approval on 2026-07-20 | R1 derives every ego-to-other normal from pre-state canonical-footprint centers, independent of Bullet manifold geometry |
+| `decisions/ADR-018-parallel-evaluation-and-test.md` | `APPROVED` | Explicit user instruction to implement synchronous evaluation/test parallelism on 2026-07-21; async overlap explicitly deferred | Spawned evaluation/test workers, deterministic reset/reduction, ScenarioNet/ACL scheduling, and live video rendering |
 
 ## ExecPlan Registry
 
@@ -93,6 +94,7 @@ root.
 | Semantic observation and encoder v1 | `specifications/observation_v1.1_specification.md`; `specifications/encoder_v1.0_specification.md` | `implementation/semantic_observation_encoder_v1_exec_plan.md` | `IN_PROGRESS`; causal batch builder and committed observation lifecycle now implemented and focused-tested; checkpoint, smoke matrix, and visual reconciliation remain | 2026-07-17 |
 | Scenario ACL | `specifications/automatic_curriculum_learning_v1_specification.md` | `implementation/scenario_acl_implementation_plan.md` | Internal stages v1/v2 reported complete; later stages incomplete/deferred | Date not declared in metadata |
 | Scenario ACL deterministic vectorized execution | `specifications/automatic_curriculum_learning_v1_specification.md` §12/§28; `specifications/scenarionet_integration_v1.1_specification.md` §23 | `implementation/scenario_acl_vectorized_execution_v1_exec_plan.md` | `COMPLETED`; DEC-VEC-001--006 and resume restart policy approved by ADR-016; focused tests, real TD3/PPO fixture smokes, and checkpoint resume passed | 2026-07-20 |
+| Deterministic parallel evaluation and final test | `specifications/rl_baselines_v1_specification.md`; `protocols/live_eval_video_protocol.md` | `implementation/parallel_evaluation_test_v1_exec_plan.md` | `IMPLEMENTED`; spawned validation/test workers, ordered metric reduction, ScenarioNet/ACL sequence preservation, live video integration, focused tests and end-to-end smoke passed; two unrelated full-suite failures remain | 2026-07-21 |
 | ScenarioNet integration v1 | Historical `specifications/scenarionet_integration_v1_specification.md` | `implementation/scenarionet_integration_implementation_plan.md` | `SUPERSEDED`; retain for traceability | 2026-07-15 |
 | ScenarioNet integration v1.1 | `specifications/scenarionet_integration_v1.1_specification.md` | `implementation/scenarionet_integration_spec_v1.1_exec_plan.md` | `IN_PROGRESS` | 2026-07-16 |
 | ScenarioNet existing-source rebuild | `specifications/scenarionet_integration_v1.1_specification.md` | `implementation/scenarionet_existing_source_rebuild_exec_plan.md` | `IMPLEMENTED`; full no-cache eligibility revalidation, split/runtime rebuild, and frozen-index recreation target added | 2026-07-20 |

@@ -17,10 +17,11 @@ from thesis_rl.runtime.io.csv_recorder import CSVRecorder
 from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
 from thesis_rl.runtime.wiring.builders import (
     adapter_space_kwargs,
+    build_eval_env,
     build_adapter,
-    build_env,
     build_preprocessor,
     collect_scenario_runtime_stats,
+    evaluation_num_workers,
     load_planner,
     merge_env_config_with_overrides,
 )
@@ -235,7 +236,12 @@ def run_evaluation(cfg: DictConfig) -> None:
         if not isinstance(resolved_eval_env_config, dict):
             raise TypeError("Resolved eval env config payload must be a mapping.")
 
-        env = build_env(cfg, eval_env_overrides)
+        env = build_eval_env(
+            cfg,
+            eval_env_overrides,
+            n_eval_episodes=eval_episodes,
+            workers=evaluation_num_workers(cfg, final=True),
+        )
         seed_env_spaces(env, run_seed)
         print(f"Observation space: {env.observation_space}")
         print(f"Action space: {env.action_space}")

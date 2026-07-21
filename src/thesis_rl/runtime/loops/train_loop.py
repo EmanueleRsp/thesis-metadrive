@@ -35,12 +35,13 @@ from thesis_rl.curriculum.scenario_acl import (
 from thesis_rl.runtime.wiring.builders import (
     adapter_space_kwargs,
     build_adapter,
-    build_env,
+    build_eval_env,
     build_planner,
     build_preprocessor,
     collect_scenario_runtime_stats,
     merge_scenario_runtime_stats,
     build_train_env,
+    evaluation_num_workers,
     is_vectorized_training_enabled,
     load_planner,
     merge_env_config_with_overrides,
@@ -1210,7 +1211,12 @@ def run_training(cfg: DictConfig) -> None:
             eval_base_seed = eval_base_seed_from_env_overrides(eval_env_overrides, cfg)
 
             # Environment
-            eval_env = build_env(cfg, eval_env_overrides)
+            eval_env = build_eval_env(
+                cfg,
+                eval_env_overrides,
+                n_eval_episodes=eval_episode_count,
+                workers=evaluation_num_workers(cfg, final=False),
+            )
             seed_env_spaces(eval_env, run_seed + 100_000 + (total_timesteps - remaining))
             eval_snapshot_stem = checkpoints_dir / "eval_snapshot"
             agent.save(eval_snapshot_stem)
@@ -1820,7 +1826,12 @@ def run_training(cfg: DictConfig) -> None:
             split="test",
         )
         final_eval_base_seed = eval_base_seed_from_env_overrides(final_eval_env_overrides, cfg)
-        eval_env = build_env(cfg, final_eval_env_overrides)
+        eval_env = build_eval_env(
+            cfg,
+            final_eval_env_overrides,
+            n_eval_episodes=final_eval_episode_count,
+            workers=evaluation_num_workers(cfg, final=True),
+        )
         seed_env_spaces(eval_env, run_seed + 500_000)
         eval_agent, _ = _make_eval_agent(final_checkpoint_stem, eval_env)
 

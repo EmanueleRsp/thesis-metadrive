@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -169,6 +169,135 @@ def _runtime_rulebook_records(catalog: Any, *, split: str | None = None) -> tupl
             f"{scope}; offending records: {sorted(non_eligible)[:5]}"
         )
     return records
+
+
+def scenario_evaluation_runtime_indices(
+    cfg_env: Any,
+    count: int,
+    *,
+    arm_schedule: Sequence[str] | None = None,
+    source_schedule: Sequence[str] | None = None,
+) -> tuple[int, ...]:
+    """Reproduce the sequential ScenarioNet provider sequence for evaluation.
+
+    Evaluation workers must receive explicit runtime indices. Sampling inside
+    independent worker processes would create a different RNG/worker stream and
+    would make the parallel evaluation a different scenario set.
+    """
+
+    if int(count) <= 0:
+        raise ValueError("ScenarioNet evaluation count must be positive.")
+    if arm_schedule is not None and len(arm_schedule) != int(count):
+        raise ValueError("ScenarioNet evaluation arm schedule length must match episode count.")
+    if source_schedule is not None and len(source_schedule) != int(count):
+        raise ValueError("ScenarioNet evaluation source schedule length must match episode count.")
+
+    from thesis_rl.scenarios.catalog import read_scenario_catalog
+    from thesis_rl.scenarios.golden import load_golden_scenario_uids
+    from thesis_rl.scenarios.provider import (
+        ArmUniformScenarioProvider,
+        FixedSequenceScenarioProvider,
+        UniformScenarioProvider,
+    )
+
+    split = str(getattr(cfg_env, "split", "test"))
+    provider_cfg = _to_plain_dict(getattr(cfg_env, "provider", {}))
+    scenario_uids_file = provider_cfg.get("scenario_uids_file")
+    eligible_uids = None
+    if scenario_uids_file not in (None, "", "null"):
+        eligible_uids = load_golden_scenario_uids(str(scenario_uids_file))
+
+    dataset_root = _scenarionet_dataset_root(cfg_env)
+    catalog_path = getattr(cfg_env, "catalog_path", None) or (
+        dataset_root / "catalog" / "scenario_catalog.parquet" if dataset_root else None
+    )
+    if catalog_path is None:
+        raise ValueError(
+            "ScenarioNet evaluation requires env.dataset_root or env.catalog_path."
+        )
+    catalog = read_scenario_catalog(str(catalog_path))
+    records = _runtime_rulebook_records(catalog, split=split)
+    if eligible_uids is not None:
+        catalog_uids = {record.scenario_uid for record in records}
+        missing = sorted(set(eligible_uids).difference(catalog_uids))
+        if missing:
+            raise ValueError(
+                "Scenario UID manifest contains records absent from the evaluation catalog: "
+                f"{missing[:5]}"
+            )
+
+    config = _to_plain_dict(cfg_env.config)
+    start_index = int(config.get("start_scenario_index", 0))
+    num_scenarios = int(config.get("num_scenarios", -1))
+    if num_scenarios > 0:
+        records = tuple(
+            record
+            for record in records
+            if record.runtime_index is not None
+            and start_index <= int(record.runtime_index) < start_index + num_scenarios
+        )
+    if not records:
+        raise ValueError(f"ScenarioNet evaluation has no records for split={split!r}.")
+
+    scenario_arm = provider_cfg.get("arm")
+    kind = str(provider_cfg.get("kind", "uniform")).lower()
+    common = {
+        "strict": bool(provider_cfg.get("strict", True)),
+        "allow_fallback": bool(provider_cfg.get("allow_fallback", False)),
+        "eligible_scenario_uids": eligible_uids,
+    }
+    if kind == "uniform":
+        probabilities = provider_cfg.get("source_probability", {})
+        provider = UniformScenarioProvider(
+            records,
+            global_seed=int(getattr(cfg_env, "global_seed", 0)),
+            source_probabilities={
+                "waymo": float(probabilities.get("waymo", 0.5)),
+                "pg": float(probabilities.get("pg", 0.5)),
+            },
+            default_arm=str(scenario_arm) if scenario_arm is not None else None,
+            **common,
+        )
+    elif kind == "arm_uniform":
+        if scenario_arm is not None:
+            raise ValueError("arm-uniform provider does not accept provider.arm")
+        provider = ArmUniformScenarioProvider(
+            records,
+            global_seed=int(getattr(cfg_env, "global_seed", 0)),
+            **common,
+        )
+    elif kind == "fixed_sequence":
+        sequence_records = records
+        if eligible_uids is not None:
+            record_by_uid = {record.scenario_uid: record for record in records}
+            missing = [uid for uid in eligible_uids if uid not in record_by_uid]
+            if missing:
+                raise ValueError(
+                    "Golden-suite scenario UID is outside the evaluation provider window: "
+                    f"{missing[:5]}"
+                )
+            sequence_records = tuple(record_by_uid[uid] for uid in eligible_uids)
+        provider = FixedSequenceScenarioProvider(
+            sequence_records,
+            repeat=bool(provider_cfg.get("repeat", False)),
+            default_arm=str(scenario_arm) if scenario_arm is not None else None,
+            eligible_scenario_uids=eligible_uids,
+        )
+    else:
+        raise ValueError(f"Unsupported ScenarioNet provider kind: {kind!r}")
+
+    indices: list[int] = []
+    for episode_idx in range(int(count)):
+        record = provider.sample(
+            split=split,
+            worker_id=0,
+            arm=(arm_schedule[episode_idx] if arm_schedule is not None else None),
+            source=(source_schedule[episode_idx] if source_schedule is not None else None),
+        )
+        if record.runtime_index is None:
+            raise ValueError(f"Scenario record has no runtime_index: {record.scenario_uid}")
+        indices.append(int(record.runtime_index))
+    return tuple(indices)
 
 
 def _scenarionet_dataset_root(cfg_env: Any) -> Path | None:

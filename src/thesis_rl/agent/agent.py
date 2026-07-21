@@ -51,6 +51,225 @@ class _LiveEventLogHandler(logging.Handler):
             self.handleError(record)
 
 
+class _ParallelEvaluationEpisode:
+    """Slot-local evaluation state used by the deterministic vector runner."""
+
+    _METADATA_KEYS = (
+        "scenario_uid",
+        "scenario_id",
+        "source",
+        "split",
+        "arm",
+        "scenario_arm",
+        "worker_id",
+        "sampling_mode",
+        "requested_arm",
+        "source_cell_fallback",
+    )
+
+    def __init__(
+        self,
+        *,
+        episode_idx: int,
+        scenario_seed: int | None,
+        reset_info: Any,
+        artifact_recorder: Any | None,
+    ) -> None:
+        self.episode_idx = int(episode_idx)
+        self.scenario_seed = scenario_seed
+        self.artifact_recorder = artifact_recorder
+        self.metadata = {
+            key: reset_info.get(key)
+            for key in self._METADATA_KEYS
+            if isinstance(reset_info, dict) and key in reset_info
+        }
+        self.last_step_info: Any = None
+        self.ep_return = 0.0
+        self.ep_sat_max = 0.0
+        self.ep_collision = False
+        self.ep_out_of_road = False
+        self.ep_success = False
+        self.ep_route_completion = 0.0
+        self.ep_step_count = 0
+        self.ep_top_rule_violating_steps = 0
+        self.ep_rule_min_margin: dict[str, float] = {}
+        self.ep_rule_reward_sum_by_rule: dict[str, float] = {}
+        self.ep_env_return = 0.0
+        self.ep_scalar_rule_return = 0.0
+        self.ep_has_scalar_rule_reward = False
+        self.ep_hybrid_return = 0.0
+        self.ep_has_hybrid_reward = False
+        self.rule_priority_by_name: dict[str, int] = {}
+
+    def observe_step(
+        self,
+        agent: "Agent",
+        *,
+        env: Any,
+        observation: Any,
+        next_observation: Any,
+        action: Any,
+        scalar_reward: Any,
+        done: bool,
+        truncated: bool,
+        step_info: Any,
+    ) -> None:
+        self.last_step_info = step_info
+        self.ep_return += float(scalar_reward)
+        self.ep_step_count += 1
+        if isinstance(step_info, dict):
+            env_reward = step_info.get("env_reward")
+            if isinstance(env_reward, (int, float, np.floating)):
+                self.ep_env_return += float(env_reward)
+            else:
+                self.ep_env_return += float(scalar_reward)
+            scalar_rule_reward = step_info.get("scalar_rule_reward")
+            if isinstance(scalar_rule_reward, (int, float, np.floating)):
+                self.ep_scalar_rule_return += float(scalar_rule_reward)
+                self.ep_has_scalar_rule_reward = True
+            hybrid_reward = step_info.get("hybrid_reward")
+            if isinstance(hybrid_reward, (int, float, np.floating)):
+                self.ep_hybrid_return += float(hybrid_reward)
+                self.ep_has_hybrid_reward = True
+        else:
+            self.ep_env_return += float(scalar_reward)
+
+        sat_summary = agent._extract_saturation_summary(step_info)
+        if sat_summary is not None:
+            _sat_rule, sat_ratio = sat_summary
+            self.ep_sat_max = max(self.ep_sat_max, sat_ratio)
+        self.ep_collision = self.ep_collision or agent._extract_collision(step_info)
+        self.ep_out_of_road = self.ep_out_of_road or agent._extract_out_of_road(step_info)
+        self.ep_success = self.ep_success or agent._extract_success(step_info)
+        self.ep_route_completion = max(
+            self.ep_route_completion, agent._extract_route_completion(step_info)
+        )
+        if agent._has_top_rule_violation(step_info):
+            self.ep_top_rule_violating_steps += 1
+        for rule_name, rule_priority, margin in agent._extract_rule_margins(step_info):
+            self.rule_priority_by_name[rule_name] = int(rule_priority)
+            self.ep_rule_reward_sum_by_rule[rule_name] = float(
+                self.ep_rule_reward_sum_by_rule.get(rule_name, 0.0) + float(margin)
+            )
+            self.ep_rule_min_margin[rule_name] = min(
+                float(self.ep_rule_min_margin.get(rule_name, float("inf"))),
+                float(margin),
+            )
+        if self.artifact_recorder is not None:
+            self.artifact_recorder.record_step(
+                env=env,
+                step_index=self.ep_step_count - 1,
+                observation=observation,
+                next_observation=next_observation,
+                action=np.asarray(action, dtype=np.float32),
+                reward=float(scalar_reward),
+                done=bool(done),
+                truncated=bool(truncated),
+                step_info=step_info,
+            )
+
+    def finalize(
+        self,
+        agent: "Agent",
+        *,
+        done: bool,
+        truncated: bool,
+        error_priority_base: float,
+    ) -> dict[str, Any]:
+        violated_in_episode: list[tuple[str, int]] = []
+        for rule_name, min_margin in self.ep_rule_min_margin.items():
+            if float(min_margin) < 0.0:
+                violated_in_episode.append(
+                    (rule_name, int(self.rule_priority_by_name.get(rule_name, 0)))
+                )
+        violated_in_episode.sort(key=lambda item: (item[1], item[0]))
+        violation_pattern = (
+            "+".join(name for name, _priority in violated_in_episode)
+            if violated_in_episode
+            else "none"
+        )
+        if self.ep_rule_min_margin:
+            p_max = max(
+                int(self.rule_priority_by_name.get(name, 0)) for name in self.ep_rule_min_margin
+            )
+            error_value = sum(
+                float(error_priority_base)
+                ** float(p_max - self.rule_priority_by_name.get(rule_name, 0))
+                * max(0.0, -float(min_margin))
+                for rule_name, min_margin in self.ep_rule_min_margin.items()
+            )
+        else:
+            error_value = 0.0
+
+        episode_top_rule_rate = (
+            self.ep_top_rule_violating_steps / self.ep_step_count if self.ep_step_count > 0 else 0.0
+        )
+        episode_metrics = {
+            "reward": float(self.ep_return),
+            "env_reward": float(self.ep_env_return),
+            "scalar_rule_reward": (
+                float(self.ep_scalar_rule_return) if self.ep_has_scalar_rule_reward else None
+            ),
+            "hybrid_reward": float(self.ep_hybrid_return) if self.ep_has_hybrid_reward else None,
+            "episode_length": int(self.ep_step_count),
+            "success": bool(self.ep_success),
+            "collision": bool(self.ep_collision),
+            "out_of_road": bool(self.ep_out_of_road),
+            "timeout": bool(truncated),
+            "route_completion": float(self.ep_route_completion),
+            "top_rule_violation_rate": float(episode_top_rule_rate),
+            "error_value": float(error_value),
+            "violated_rules": violation_pattern,
+            "violation_pattern": violation_pattern,
+        }
+        artifact_payload = (
+            self.artifact_recorder.finalize_episode(episode_metrics=episode_metrics)
+            if self.artifact_recorder is not None
+            else {}
+        )
+        if isinstance(self.last_step_info, dict):
+            self.metadata.update(
+                {
+                    key: self.last_step_info[key]
+                    for key in self._METADATA_KEYS
+                    if key in self.last_step_info
+                }
+            )
+            self.metadata["termination_reason"] = self.last_step_info.get("termination_reason")
+        self.metadata["terminated"] = bool(done)
+        self.metadata["truncated"] = bool(truncated)
+        return {
+            "episode_idx": self.episode_idx,
+            "reward": float(self.ep_return),
+            "env_reward": float(self.ep_env_return),
+            "scalar_rule_reward": (
+                float(self.ep_scalar_rule_return) if self.ep_has_scalar_rule_reward else None
+            ),
+            "hybrid_reward": float(self.ep_hybrid_return) if self.ep_has_hybrid_reward else None,
+            "episode_length": int(self.ep_step_count),
+            "success": 1.0 if self.ep_success else 0.0,
+            "collision": 1.0 if self.ep_collision else 0.0,
+            "out_of_road": 1.0 if self.ep_out_of_road else 0.0,
+            "route_completion": float(self.ep_route_completion),
+            "top_rule_violation_rate": float(episode_top_rule_rate),
+            "saturation_max": float(self.ep_sat_max),
+            "timeout": 1.0 if truncated else 0.0,
+            "error_value": float(error_value),
+            "violation_pattern": violation_pattern,
+            "violated_rules": violation_pattern,
+            "rule_rewards_by_rule": dict(sorted(self.ep_rule_reward_sum_by_rule.items())),
+            "rule_min_margins": dict(self.ep_rule_min_margin),
+            "rule_priorities": dict(self.rule_priority_by_name),
+            "video_path": artifact_payload.get("video_path"),
+            "video_authoritative_path": artifact_payload.get("video_authoritative_path"),
+            "video_manifest_path": artifact_payload.get("video_manifest_path"),
+            "trajectory_log_path": artifact_payload.get("trajectory_log_path"),
+            "video_recorded_live": bool(artifact_payload.get("video_recorded_live", False)),
+            "replay_warning": artifact_payload.get("replay_warning"),
+            "scenario_metadata": dict(self.metadata),
+        }
+
+
 class Agent:
     """Composable agent that applies preprocessor -> planner -> adapter."""
 
@@ -1155,6 +1374,18 @@ class Agent:
         # Validate `n_eval_episodes`
         if int(n_eval_episodes) <= 0:
             raise ValueError("`n_eval_episodes` must be > 0.")
+        if count_envs(env) > 1:
+            return self._evaluate_parallel(
+                env=env,
+                n_eval_episodes=int(n_eval_episodes),
+                deterministic=deterministic,
+                base_seed=base_seed,
+                return_episode_metrics=return_episode_metrics,
+                error_priority_base=error_priority_base,
+                show_progress=show_progress,
+                artifact_recorder_factory=artifact_recorder_factory,
+                before_episode_reset_callback=before_episode_reset_callback,
+            )
 
         # Initialize episode-level metric trackers
         episode_returns: list[float] = []
@@ -1539,6 +1770,335 @@ class Agent:
                 "video_recorded_live": episode_video_recorded_live,
                 "replay_warning": episode_replay_warnings,
                 "scenario_metadata": episode_scenario_metadata,
+            }
+        return metrics
+
+    def _evaluate_parallel(
+        self,
+        *,
+        env: Any,
+        n_eval_episodes: int,
+        deterministic: bool,
+        base_seed: int | None,
+        return_episode_metrics: bool,
+        error_priority_base: float,
+        show_progress: bool,
+        artifact_recorder_factory: Any | None,
+        before_episode_reset_callback: Callable[[Any, int], None] | None,
+    ) -> dict[str, Any]:
+        """Evaluate active episodes concurrently with deterministic reduction."""
+
+        if not all(callable(getattr(env, name, None)) for name in ("step_slots", "reset_slots")):
+            raise TypeError("Parallel evaluation requires the repository vector environment.")
+        if type(self.preprocessor).__name__ != "IdentityPreprocessor":
+            raise ValueError(
+                "Parallel evaluation currently requires the stateless IdentityPreprocessor."
+            )
+
+        worker_count = int(getattr(env, "num_envs", 0))
+        if worker_count <= 1:
+            raise ValueError("Parallel evaluation requires at least two workers.")
+        scenario_indices = getattr(env, "evaluation_scenario_indices", None)
+        if scenario_indices is not None and len(scenario_indices) != n_eval_episodes:
+            raise ValueError("Evaluation scenario index count does not match episode count.")
+
+        def _scenario_seed(episode_idx: int) -> int | None:
+            if base_seed is None:
+                return None
+            return int(base_seed) + int(episode_idx)
+
+        def _reset_seed(episode_idx: int) -> int | None:
+            if base_seed is not None:
+                return _scenario_seed(episode_idx)
+            if scenario_indices is not None:
+                return int(scenario_indices[episode_idx])
+            return None
+
+        def _render_kwargs(recorder: Any) -> dict[str, Any]:
+            cfg = getattr(recorder, "_topdown_cfg", {})
+            return {
+                "mode": "topdown",
+                "window": bool(cfg.get("window", False)),
+                "screen_record": bool(cfg.get("screen_record", False)),
+                "screen_size": tuple(cfg.get("screen_size", [800, 800])),
+                "scaling": float(cfg.get("scaling", 4)),
+                "semantic_map": bool(cfg.get("semantic_map", False)),
+            }
+
+        self.preprocessor.reset()
+        records: list[dict[str, Any] | None] = [None] * n_eval_episodes
+        active: dict[int, int] = {}
+        observations: dict[int, Any] = {}
+        states: dict[int, _ParallelEvaluationEpisode] = {}
+
+        def _install_episode(slot: int, episode_idx: int) -> None:
+            proxy = env.get_slot_proxy(slot)
+            if before_episode_reset_callback is not None:
+                before_episode_reset_callback(proxy, episode_idx)
+            scenario_seed = _scenario_seed(episode_idx)
+            recorder = (
+                artifact_recorder_factory(
+                    {
+                        "episode_idx": episode_idx,
+                        "episode_id": episode_idx + 1,
+                        "scenario_seed": scenario_seed,
+                        "deterministic": deterministic,
+                    }
+                )
+                if artifact_recorder_factory is not None
+                else None
+            )
+            active[slot] = episode_idx
+            states[slot] = _ParallelEvaluationEpisode(
+                episode_idx=episode_idx,
+                scenario_seed=scenario_seed,
+                reset_info={},
+                artifact_recorder=recorder,
+            )
+
+        initial_count = min(worker_count, n_eval_episodes)
+        for slot in range(initial_count):
+            _install_episode(slot, slot)
+        initial_resets = env.reset_slots(
+            list(range(initial_count)),
+            seeds={slot: _reset_seed(slot) for slot in range(initial_count)},
+        )
+        for slot in range(initial_count):
+            observations[slot], reset_info = initial_resets[slot]
+            state = states[slot]
+            state.metadata = {
+                key: reset_info.get(key)
+                for key in state._METADATA_KEYS
+                if isinstance(reset_info, dict) and key in reset_info
+            }
+
+        progress: Progress | None = None
+        progress_task: Any | None = None
+        if show_progress:
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeRemainingColumn(),
+                transient=True,
+            )
+            progress.start()
+            progress_task = progress.add_task("Evaluation episodes", total=n_eval_episodes)
+
+        next_episode = initial_count
+        try:
+            while active:
+                actions: dict[int, Any] = {}
+                for slot in sorted(active):
+                    action, _ = self.predict(observations[slot], deterministic=deterministic)
+                    actions[slot] = action
+                step_results = env.step_slots(actions)
+
+                render_slots = [
+                    slot for slot in sorted(active) if states[slot].artifact_recorder is not None
+                ]
+                if render_slots:
+                    recorder = states[render_slots[0]].artifact_recorder
+                    frames = env.render_slots(_render_kwargs(recorder), slots=render_slots)
+                    for slot in render_slots:
+                        env.get_slot_proxy(slot).set_rendered_frame(frames[slot])
+
+                completed_slots: list[int] = []
+                for slot in sorted(active):
+                    next_obs, reward, done, info, _reset_info = step_results[slot]
+                    done_flag = bool(done)
+                    truncated = bool(
+                        isinstance(info, dict)
+                        and info.get("truncated", info.get("TimeLimit.truncated", False))
+                    )
+                    terminated = bool(
+                        isinstance(info, dict)
+                        and info.get("terminated", done_flag and not truncated)
+                    )
+                    state = states[slot]
+                    state.observe_step(
+                        self,
+                        env=env.get_slot_proxy(slot),
+                        observation=observations[slot],
+                        next_observation=next_obs,
+                        action=actions[slot],
+                        scalar_reward=reward,
+                        done=terminated,
+                        truncated=truncated,
+                        step_info=info,
+                    )
+                    observations[slot] = next_obs
+                    if done_flag:
+                        episode_idx = active[slot]
+                        records[episode_idx] = state.finalize(
+                            self,
+                            done=terminated,
+                            truncated=truncated,
+                            error_priority_base=error_priority_base,
+                        )
+                        completed_slots.append(slot)
+                        del active[slot]
+                        del states[slot]
+                        observations.pop(slot, None)
+                        if next_episode < n_eval_episodes:
+                            _install_episode(slot, next_episode)
+                            next_episode += 1
+
+                if completed_slots:
+                    reset_slots = [slot for slot in completed_slots if slot in active]
+                    if reset_slots:
+                        reset_results = env.reset_slots(
+                            reset_slots,
+                            seeds={slot: _reset_seed(active[slot]) for slot in reset_slots},
+                        )
+                        for slot in reset_slots:
+                            observations[slot], reset_info = reset_results[slot]
+                            state = states[slot]
+                            state.metadata = {
+                                key: reset_info.get(key)
+                                for key in state._METADATA_KEYS
+                                if isinstance(reset_info, dict) and key in reset_info
+                            }
+                    if progress is not None and progress_task is not None:
+                        progress.update(progress_task, advance=len(completed_slots))
+        finally:
+            if progress is not None:
+                progress.stop()
+
+        if any(record is None for record in records):
+            raise RuntimeError("Parallel evaluation ended without one result per episode.")
+        return self._aggregate_parallel_evaluation(
+            [record for record in records if record is not None],
+            error_priority_base=error_priority_base,
+            return_episode_metrics=return_episode_metrics,
+        )
+
+    def _aggregate_parallel_evaluation(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        error_priority_base: float,
+        return_episode_metrics: bool,
+    ) -> dict[str, Any]:
+        """Reduce ordered slot results with the sequential metric definitions."""
+
+        records = sorted(records, key=lambda record: int(record["episode_idx"]))
+        all_rule_names: set[str] = set()
+        rule_priority_by_name: dict[str, int] = {}
+        per_rule_episode_min_margins: dict[str, list[float]] = {}
+        per_rule_violation_count: dict[str, int] = {}
+        for record in records:
+            priorities = record.get("rule_priorities", {})
+            margins = record.get("rule_min_margins", {})
+            for name, priority in priorities.items():
+                all_rule_names.add(str(name))
+                if str(name) not in rule_priority_by_name:
+                    rule_priority_by_name[str(name)] = int(priority)
+            for name, margin in margins.items():
+                name = str(name)
+                all_rule_names.add(name)
+                per_rule_episode_min_margins.setdefault(name, []).append(float(margin))
+                if float(margin) < 0.0:
+                    per_rule_violation_count[name] = int(per_rule_violation_count.get(name, 0) + 1)
+
+        episode_returns = [float(record["reward"]) for record in records]
+        episode_env_returns = [float(record["env_reward"]) for record in records]
+        episode_scalar_rule_returns = [record.get("scalar_rule_reward") for record in records]
+        episode_hybrid_returns = [record.get("hybrid_reward") for record in records]
+        scalar_available = [value for value in episode_scalar_rule_returns if value is not None]
+        hybrid_available = [value for value in episode_hybrid_returns if value is not None]
+        episode_saturation_max = [float(record.get("saturation_max", 0.0)) for record in records]
+        episode_collision = [float(record["collision"]) for record in records]
+        episode_out_of_road = [float(record["out_of_road"]) for record in records]
+        episode_success = [float(record["success"]) for record in records]
+        episode_route_completion = [float(record["route_completion"]) for record in records]
+        episode_top_rule_rate = [float(record["top_rule_violation_rate"]) for record in records]
+        episode_lengths = [int(record["episode_length"]) for record in records]
+        episode_timeout = [float(record["timeout"]) for record in records]
+        episode_error_values = [float(record["error_value"]) for record in records]
+        episode_patterns = [str(record["violation_pattern"]) for record in records]
+        episode_violated = [str(record["violated_rules"]) for record in records]
+
+        per_rule_rows: list[dict[str, Any]] = []
+        for rule_name in sorted(
+            all_rule_names, key=lambda name: (rule_priority_by_name.get(name, 0), name)
+        ):
+            margins = per_rule_episode_min_margins.get(rule_name, [])
+            violation_count = int(per_rule_violation_count.get(rule_name, 0))
+            per_rule_rows.append(
+                {
+                    "rule_name": rule_name,
+                    "rule_priority": int(rule_priority_by_name.get(rule_name, 0)),
+                    "violated": bool(violation_count > 0),
+                    "violation_rate": float(violation_count / max(len(records), 1)),
+                    "violation_count": violation_count,
+                    "mean_margin": float(np.mean(margins)) if margins else 0.0,
+                    "min_margin": float(np.min(margins)) if margins else 0.0,
+                    "max_margin": float(np.max(margins)) if margins else 0.0,
+                }
+            )
+
+        metrics: dict[str, Any] = {
+            "mean_reward": float(np.mean(episode_returns)),
+            "std_reward": float(np.std(episode_returns)),
+            "mean_env_reward": float(np.mean(episode_env_returns)),
+            "std_env_reward": float(np.std(episode_env_returns)),
+            "mean_scalar_rule_reward": float(np.mean(scalar_available))
+            if scalar_available
+            else None,
+            "std_scalar_rule_reward": float(np.std(scalar_available)) if scalar_available else None,
+            "mean_hybrid_reward": float(np.mean(hybrid_available)) if hybrid_available else None,
+            "std_hybrid_reward": float(np.std(hybrid_available)) if hybrid_available else None,
+            "mean_rule_saturation_max": float(np.mean(episode_saturation_max)),
+            "collision_rate": float(np.mean(episode_collision)),
+            "collision_rate_std": float(np.std(episode_collision)),
+            "out_of_road_rate": float(np.mean(episode_out_of_road)),
+            "success_rate": float(np.mean(episode_success)),
+            "success_rate_std": float(np.std(episode_success)),
+            "route_completion": float(np.mean(episode_route_completion)),
+            "top_rule_violation_rate": float(np.mean(episode_top_rule_rate)),
+            "avg_error_value": float(np.mean(episode_error_values)),
+            "max_error_value": float(np.max(episode_error_values)),
+            "counterexample_rate": float(
+                np.mean([1.0 if pattern != "none" else 0.0 for pattern in episode_patterns])
+            ),
+            "violated_rules_ratio": float(
+                sum(1 for name in all_rule_names if per_rule_violation_count.get(name, 0) > 0)
+            )
+            / float(max(len(all_rule_names), 1)),
+            "unique_violation_patterns": int(len(set(episode_patterns))),
+            "per_rule": per_rule_rows,
+        }
+        if return_episode_metrics:
+            metrics["per_episode"] = {
+                "returns": episode_returns,
+                "env_returns": episode_env_returns,
+                "scalar_rule_returns": episode_scalar_rule_returns,
+                "hybrid_returns": episode_hybrid_returns,
+                "rule_rewards_by_rule": [record["rule_rewards_by_rule"] for record in records],
+                "saturation_max": episode_saturation_max,
+                "collision": episode_collision,
+                "out_of_road": episode_out_of_road,
+                "success": episode_success,
+                "route_completion": episode_route_completion,
+                "top_rule_violation_rate": episode_top_rule_rate,
+                "episode_length": episode_lengths,
+                "timeout": episode_timeout,
+                "error_value": episode_error_values,
+                "violation_pattern": episode_patterns,
+                "violated_rules": episode_violated,
+                "video_path": [record.get("video_path") for record in records],
+                "video_authoritative_path": [
+                    record.get("video_authoritative_path") for record in records
+                ],
+                "video_manifest_path": [record.get("video_manifest_path") for record in records],
+                "trajectory_log_path": [record.get("trajectory_log_path") for record in records],
+                "video_recorded_live": [
+                    bool(record.get("video_recorded_live", False)) for record in records
+                ],
+                "replay_warning": [record.get("replay_warning") for record in records],
+                "scenario_metadata": [record["scenario_metadata"] for record in records],
             }
         return metrics
 

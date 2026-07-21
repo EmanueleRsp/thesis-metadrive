@@ -5,3 +5,9 @@ eval_interval: 25000
 eval_episodes: 50
 final_eval_episodes: 100
 eval_deterministic: true
+# Evaluation workers are independent from the scientific training `n_envs`.
+# The final-test default is lower because live rendering/GIF encoding is CPU and
+# I/O intensive; both values are capped by the number of requested episodes.
+eval_workers: 12
+test_workers: 8
+evaluation_start_method: spawn

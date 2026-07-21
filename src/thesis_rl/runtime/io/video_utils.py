@@ -26,6 +26,11 @@ def render_topdown_frame(env: Any, topdown_cfg: Any) -> Any:
         "semantic_map": bool(topdown_cfg.get("semantic_map", False)),
     }
     base_env = getattr(env, "unwrapped", env)
+    consume_cached = getattr(base_env, "consume_rendered_frame", None)
+    if callable(consume_cached):
+        cached_frame = consume_cached()
+        if cached_frame is not None:
+            return cached_frame
     try:
         return base_env.render(mode="topdown", **kwargs)
     except TypeError as exc:
