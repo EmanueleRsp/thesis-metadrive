@@ -18,6 +18,27 @@ import numpy as np
 SCHEMA_VERSION = "rulebook-synthetic-scenarios-v1"
 TIMESTEP_S = 0.1
 
+FIXTURE_COMPONENTS: dict[str, tuple[str, ...]] = {
+    "red_light": ("signal", "progress"),
+    "yellow_light": ("signal",),
+    "unknown_signal": ("signal",),
+    "crosswalk_pedestrian": ("crosswalk", "ttc", "clearance"),
+    "vehicle_pedestrian_collision": ("collision", "ttc", "clearance"),
+    "vehicle_cyclist_collision": ("collision", "ttc", "clearance"),
+    "vehicle_vehicle_collision": ("collision",),
+    "rss_front_vehicle": ("rss", "ttc", "clearance"),
+    "rss_rear_vehicle": ("rss",),
+    "stop_sign": ("stop",),
+    "wrong_way": ("wrongway", "progress"),
+    "offroad": ("offroad",),
+    "solid_line": ("solid_line",),
+    "dashed_line": ("dashed_line",),
+    "vehicle_yield_pairwise": ("vehicle_yield",),
+    "vehicle_yield_stop": ("vehicle_yield",),
+    "vehicle_yield_roundabout": ("vehicle_yield",),
+    "vehicle_yield_occupied": ("vehicle_yield",),
+}
+
 
 def _array_rows(values: Iterable[tuple[float, float, float]]) -> np.ndarray:
     return np.asarray(tuple(values), dtype=np.float32)
@@ -127,6 +148,18 @@ def yellow_light_scenario() -> dict[str, Any]:
     return scenario
 
 
+def unknown_signal_scenario() -> dict[str, Any]:
+    """An intentionally invalid relevant signal for offline fail-fast coverage."""
+
+    scenario = red_light_scenario()
+    scenario["id"] = "rb_syn_unknown_signal_v1"
+    scenario["metadata"]["scenario_id"] = scenario["id"]
+    scenario["dynamic_map_states"]["lane-ego"]["state"] = {
+        "object_state": np.asarray(["LANE_STATE_UNKNOWN"] * 4)
+    }
+    return scenario
+
+
 def crosswalk_pedestrian_scenario() -> dict[str, Any]:
     """Ego and one live pedestrian approach a route-intersecting crosswalk."""
 
@@ -184,6 +217,22 @@ def vehicle_cyclist_collision_scenario() -> dict[str, Any]:
     return scenario
 
 
+def vehicle_vehicle_collision_scenario() -> dict[str, Any]:
+    """A pre-state separated vehicle crosses into the ego path."""
+
+    scenario = vehicle_pedestrian_collision_scenario()
+    scenario["id"] = "rb_syn_vehicle_vehicle_collision_v1"
+    scenario["metadata"]["scenario_id"] = scenario["id"]
+    pedestrian = scenario["tracks"].pop("pedestrian")
+    pedestrian["type"] = "VEHICLE"
+    pedestrian["metadata"] = {"type": "VEHICLE", "object_id": "other-vehicle"}
+    pedestrian["state"]["length"] = np.full(4, 4.5, dtype=np.float32)
+    pedestrian["state"]["width"] = np.full(4, 2.0, dtype=np.float32)
+    pedestrian["state"]["height"] = np.full(4, 1.5, dtype=np.float32)
+    scenario["tracks"]["other-vehicle"] = pedestrian
+    return scenario
+
+
 def rss_front_vehicle_scenario() -> dict[str, Any]:
     """Ego and a slower front vehicle share one canonical route lane."""
 
@@ -195,6 +244,21 @@ def rss_front_vehicle_scenario() -> dict[str, Any]:
         object_id="front-vehicle",
         object_type="VEHICLE",
         positions=((12.0, 0.0, 0.0), (12.2, 0.0, 0.0), (12.4, 0.0, 0.0), (12.6, 0.0, 0.0)),
+    )
+    return scenario
+
+
+def rss_rear_vehicle_scenario() -> dict[str, Any]:
+    """A same-lane vehicle behind ego, excluded from the RSS front set."""
+
+    scenario = _base_scenario(
+        scenario_id="rb_syn_rss_rear_vehicle_v1",
+        ego_positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0), (3.0, 0.0, 0.0)),
+    )
+    scenario["tracks"]["rear-vehicle"] = _track(
+        object_id="rear-vehicle",
+        object_type="VEHICLE",
+        positions=((-12.0, 0.0, 0.0), (-11.8, 0.0, 0.0), (-11.6, 0.0, 0.0), (-11.4, 0.0, 0.0)),
     )
     return scenario
 
@@ -263,21 +327,119 @@ def dashed_line_scenario() -> dict[str, Any]:
     return scenario
 
 
+def vehicle_yield_pairwise_scenario() -> dict[str, Any]:
+    """Crossing vehicle movements with an explicit, source-bound priority record."""
+
+    scenario = _base_scenario(
+        scenario_id="rb_syn_vehicle_yield_pairwise_v1",
+        ego_positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0), (3.0, 0.0, 0.0)),
+    )
+    scenario["map_features"]["lane-other"] = {
+        "type": "LANE_SURFACE_STREET",
+        "polyline": _array_rows(((10.0, -20.0, 0.0), (10.0, 20.0, 0.0))),
+        "polygon": _array_xy(((8.25, -20.0), (11.75, -20.0), (11.75, 20.0), (8.25, 20.0))),
+        "width": np.full(2, 3.5, dtype=np.float32),
+        "exit_lanes": (),
+    }
+    scenario["tracks"]["other-vehicle"] = _track(
+        object_id="other-vehicle",
+        object_type="VEHICLE",
+        positions=((10.0, 6.0, 0.0), (10.0, 5.5, 0.0), (10.0, 5.0, 0.0), (10.0, 4.5, 0.0)),
+        heading_rad=-np.pi / 2.0,
+    )
+    scenario["metadata"]["rulebook_vehicle_yield"] = {
+        "movement_priorities": [
+            {
+                "ego_movement_key": {
+                    "approach_lane_id": "lane-ego",
+                    "conflict_node_id": "junction:lane-ego->lane-ego",
+                    "exit_lane_id": "lane-ego",
+                },
+                "other_movement_key": {
+                    "approach_lane_id": "lane-other",
+                    "conflict_node_id": "junction:lane-other->lane-other",
+                    "exit_lane_id": "lane-other",
+                },
+                "relation": "other_has_priority",
+            }
+        ],
+        "roundabout_priorities": [],
+    }
+    return scenario
+
+
+def vehicle_yield_stop_scenario() -> dict[str, Any]:
+    """Crossing movements where only the ego approach has a STOP control."""
+
+    scenario = vehicle_yield_pairwise_scenario()
+    scenario["id"] = "rb_syn_vehicle_yield_stop_v1"
+    scenario["metadata"]["scenario_id"] = scenario["id"]
+    scenario["metadata"].pop("rulebook_vehicle_yield")
+    scenario["map_features"]["stop-yield-ego"] = {
+        "type": "STOP_SIGN",
+        "position": np.asarray((9.0, 0.0, 0.0), dtype=np.float32),
+        "lane": ("lane-ego",),
+    }
+    return scenario
+
+
+def vehicle_yield_roundabout_scenario() -> dict[str, Any]:
+    """Validated entry/circulating lane relation, without geometric inference."""
+
+    scenario = vehicle_yield_pairwise_scenario()
+    scenario["id"] = "rb_syn_vehicle_yield_roundabout_v1"
+    scenario["metadata"]["scenario_id"] = scenario["id"]
+    scenario["metadata"]["rulebook_vehicle_yield"] = {
+        "movement_priorities": [],
+        "roundabout_priorities": [
+            {
+                "component_id": "synthetic-roundabout",
+                "entry_lane_id": "lane-ego",
+                "circulating_lane_id": "lane-other",
+            }
+        ],
+    }
+    return scenario
+
+
+def vehicle_yield_occupied_scenario() -> dict[str, Any]:
+    """Other vehicle physically occupies the conflict zone at the live step."""
+
+    scenario = vehicle_yield_pairwise_scenario()
+    scenario["id"] = "rb_syn_vehicle_yield_occupied_v1"
+    scenario["metadata"]["scenario_id"] = scenario["id"]
+    scenario["metadata"].pop("rulebook_vehicle_yield")
+    scenario["tracks"]["other-vehicle"] = _track(
+        object_id="other-vehicle",
+        object_type="VEHICLE",
+        positions=((10.0, 0.0, 0.0),) * 4,
+        heading_rad=-np.pi / 2.0,
+    )
+    return scenario
+
+
 def build_scenarios() -> dict[str, dict[str, Any]]:
     """Return fresh fixture mappings so callers cannot share mutable arrays."""
 
     return {
         "red_light": red_light_scenario(),
         "yellow_light": yellow_light_scenario(),
+        "unknown_signal": unknown_signal_scenario(),
         "crosswalk_pedestrian": crosswalk_pedestrian_scenario(),
         "vehicle_pedestrian_collision": vehicle_pedestrian_collision_scenario(),
         "vehicle_cyclist_collision": vehicle_cyclist_collision_scenario(),
+        "vehicle_vehicle_collision": vehicle_vehicle_collision_scenario(),
         "rss_front_vehicle": rss_front_vehicle_scenario(),
+        "rss_rear_vehicle": rss_rear_vehicle_scenario(),
         "stop_sign": stop_sign_scenario(),
         "wrong_way": wrong_way_scenario(),
         "offroad": offroad_scenario(),
         "solid_line": solid_line_scenario(),
         "dashed_line": dashed_line_scenario(),
+        "vehicle_yield_pairwise": vehicle_yield_pairwise_scenario(),
+        "vehicle_yield_stop": vehicle_yield_stop_scenario(),
+        "vehicle_yield_roundabout": vehicle_yield_roundabout_scenario(),
+        "vehicle_yield_occupied": vehicle_yield_occupied_scenario(),
     }
 
 
@@ -296,6 +458,7 @@ def write_persistent_fixtures(root: Path) -> Path:
                 "file": file_name,
                 "scenario_id": scenario["id"],
                 "target_transition": 1,
+                "components": list(FIXTURE_COMPONENTS[fixture_id]),
             }
         )
     manifest_path = root / "manifest.json"

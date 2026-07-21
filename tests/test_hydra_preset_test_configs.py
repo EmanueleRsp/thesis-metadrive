@@ -34,15 +34,23 @@ def test_curriculum_groups_compose() -> None:
 def test_observation_groups_compose() -> None:
     cfg_lidar = _compose("obs=lidar_state", "reward=monitor_only")
     cfg_semantic = _compose("obs=semantic_state", "reward=monitor_only")
+    cfg_semantic_v3 = _compose("obs=semantic_v3", "reward=monitor_only")
 
     assert str(cfg_lidar.obs.type) == "lidar_state"
     assert str(cfg_semantic.obs.type) == "semantic_state"
+    assert str(cfg_semantic_v3.obs.type) == "semantic_v3"
 
 
 def test_encoder_and_planner_groups_compose() -> None:
     cfg_none_td3 = _compose("agent/planner/encoder=none", "agent/planner/algorithm=td3", "reward=monitor_only")
     cfg_mlp_sac = _compose("agent/planner/encoder=mlp", "agent/planner/algorithm=sac", "reward=monitor_only")
     cfg_lq_ppo = _compose("agent/planner/encoder=lq", "agent/planner/algorithm=ppo", "obs=semantic_state", "reward=monitor_only")
+    cfg_lq_v3_ppo = _compose(
+        "agent/planner/encoder=lq_v3",
+        "agent/planner/algorithm=ppo",
+        "obs=semantic_v3",
+        "reward=monitor_only",
+    )
 
     assert str(cfg_none_td3.agent.planner.encoder.type) == "none"
     assert str(cfg_none_td3.agent.planner.algorithm.name) == "td3"
@@ -50,3 +58,5 @@ def test_encoder_and_planner_groups_compose() -> None:
     assert str(cfg_mlp_sac.agent.planner.algorithm.name) == "sac"
     assert str(cfg_lq_ppo.agent.planner.encoder.type) == "latent_query_v2"
     assert str(cfg_lq_ppo.agent.planner.algorithm.name) == "ppo"
+    assert str(cfg_lq_v3_ppo.agent.planner.encoder.type) == "latent_query_v3"
+    assert str(cfg_lq_v3_ppo.agent.planner.encoder.required_observation_schema) == "1.2-perception-bounded"

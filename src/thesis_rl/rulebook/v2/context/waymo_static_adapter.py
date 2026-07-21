@@ -20,6 +20,7 @@ from thesis_rl.rulebook.v2.context.task_route import build_task_route_record
 from thesis_rl.rulebook.v2.context.static_adapter import (
     StaticAdapterResult,
     normalize_static_records,
+    vehicle_yield_records_from_metadata,
 )
 from thesis_rl.rulebook.v2.geometry.controls import derive_control_line
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord, derive_lane_movement_key
@@ -63,9 +64,7 @@ def _lane_polygon_from_widths(points: np.ndarray, width: Any, *, lane_id: str) -
             width_m / 2.0, cap_style="flat", join_style="mitre"
         )
     if widths.ndim != 2 or widths.shape != (len(points), 2):
-        raise ValueError(
-            f"Waymo lane {lane_id!r} width must have one left/right pair per point"
-        )
+        raise ValueError(f"Waymo lane {lane_id!r} width must have one left/right pair per point")
 
     # ScenarioNet's Waymo converter derives a width independently at every
     # centerline sample. Missing boundary spans remain zero; linearly repair
@@ -234,7 +233,10 @@ def build_waymo_static_adapter_result(
         )
         map_records.append(
             MapFeatureRecord(
-                str(feature_id), feature_class, geometry, float(np.median(points[:, 2] - z_origin_m))
+                str(feature_id),
+                feature_class,
+                geometry,
+                float(np.median(points[:, 2] - z_origin_m)),
             )
         )
     controls: list[TrafficControlRecord] = []
@@ -252,9 +254,7 @@ def build_waymo_static_adapter_result(
             lane = lanes.get(lane_id)
             if lane is None:
                 continue
-            movement = derive_lane_movement_key(
-                lane, assigned_route_lane_ids=route.lane_ids
-            )
+            movement = derive_lane_movement_key(lane, assigned_route_lane_ids=route.lane_ids)
             if movement is None:
                 feature_errors.append(f"movement_key_ambiguous:{feature_id}:{lane_id}")
                 continue
@@ -304,9 +304,7 @@ def build_waymo_static_adapter_result(
                     signal_errors.append(f"signal_sequence_invalid:{physical_id}")
                 elif any(str(state) == "LANE_STATE_UNKNOWN" for state in states):
                     signal_errors.append(f"signal_state_unknown:{physical_id}")
-            movement = derive_lane_movement_key(
-                lane, assigned_route_lane_ids=route.lane_ids
-            )
+            movement = derive_lane_movement_key(lane, assigned_route_lane_ids=route.lane_ids)
             if movement is None:
                 signal_errors.append(f"movement_key_ambiguous:{physical_id}:{lane_id}")
                 continue
@@ -330,15 +328,21 @@ def build_waymo_static_adapter_result(
                     (str(physical_id),),
                 )
             )
+    priority_records, roundabout_records, priority_errors = vehicle_yield_records_from_metadata(
+        metadata
+    )
     result = normalize_static_records(
         scenario_uid=scenario_uid,
         task_route=route,
         route_lanes=tuple(lanes.values()),
         map_features=tuple(map_records),
         traffic_controls=tuple(controls),
-        movement_priority_records=(),
+        movement_priority_records=priority_records,
+        roundabout_priority_records=roundabout_records,
     )
     return replace(
         result,
-        validation_errors=tuple((*result.validation_errors, *feature_errors, *signal_errors)),
+        validation_errors=tuple(
+            (*result.validation_errors, *feature_errors, *signal_errors, *priority_errors)
+        ),
     )

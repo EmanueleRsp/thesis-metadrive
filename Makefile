@@ -310,8 +310,8 @@ run-train:
 	docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev \
 		uv run --no-sync python -m thesis_rl.cli.train \
 		env=scenarionet \
-		obs=semantic_v2 \
-		agent/planner/encoder=lq \
+		obs=semantic_v3 \
+		agent/planner/encoder=lq_v3 \
 		agent/planner/decoder=mlp_encoded \
 		reward=scalar_reward \
 		scalarization=default \

@@ -50,6 +50,9 @@ from thesis_rl.rulebook.v2.types import (
     TrafficControlRecord,
     ApproachControl,
     MovementKey,
+    MovementPriority,
+    MovementPriorityRecord,
+    RoundaboutPriorityRecord,
 )
 
 
@@ -328,6 +331,31 @@ def test_static_adapter_groups_physical_signal_heads_for_one_movement():
     assert result.validation_errors == ()
     assert len(result.traffic_controls) == 1
     assert result.traffic_controls[0].physical_control_ids == ("head-a", "head-b")
+
+
+def test_static_adapter_rejects_vehicle_yield_metadata_for_missing_lanes():
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    task_route = build_task_route_record(
+        scenario_uid="scenario-1",
+        lane_ids=("lane-a",),
+        provenance="pg",
+        source_geometry_bytes=b"map",
+    )
+    lane = RouteLaneRecord("lane-a", Polygon(((0, -2), (10, -2), (10, 2), (0, 2))), route)
+    missing = MovementKey("lane-missing", "node", "lane-missing")
+    result = normalize_static_records(
+        scenario_uid="scenario-1",
+        task_route=task_route,
+        route_lanes=(lane,),
+        map_features=(),
+        traffic_controls=(),
+        movement_priority_records=(
+            MovementPriorityRecord(missing, missing, MovementPriority.OTHER_HAS_PRIORITY),
+        ),
+        roundabout_priority_records=(RoundaboutPriorityRecord("roundabout", "lane-a", "missing"),),
+    )
+    assert "movement_priority_lane_missing:lane-missing" in result.validation_errors
+    assert "roundabout_priority_lane_missing:missing" in result.validation_errors
 
 
 def test_static_record_sources_are_strict_and_normalize_source_neutrally():

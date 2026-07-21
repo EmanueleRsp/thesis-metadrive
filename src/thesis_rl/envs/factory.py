@@ -85,6 +85,24 @@ def _configure_agent_observation(
         env_cfg["agent_observation"] = SemanticStateObservationV2
         return
 
+    if obs_type in {"semantic_v3", "semanticstateobservationv3"}:
+        from thesis_rl.envs.observations.semantic_state_v3 import SemanticStateObservationV3
+
+        env_cfg["agent_observation"] = SemanticStateObservationV3
+        vehicle_cfg = env_cfg.setdefault("vehicle_config", {})
+        lidar_cfg = vehicle_cfg.setdefault("lidar", {})
+        lidar_cfg.update(
+            {
+                "num_lasers": 240,
+                "distance": 50.0,
+                "num_others": 0,
+                "add_others_navi": False,
+                "gaussian_noise": 0.0,
+                "dropout_prob": 0.0,
+            }
+        )
+        return
+
     if obs_type in {"semantic", "semantic_state", "semanticstateobservation"}:
         from thesis_rl.envs.observations.semantic_state import SemanticStateObservation
 
@@ -119,7 +137,7 @@ def _configure_agent_observation(
 
     raise ValueError(
         f"Unsupported observation type '{obs_type}'. Supported values: lidar_state, "
-        "stacked_lidar_state, semantic_state, semantic_v2"
+        "stacked_lidar_state, semantic_state, semantic_v2, semantic_v3"
     )
 
 

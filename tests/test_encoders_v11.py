@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+import pytest
+import torch
+
+from thesis_rl.agent.planners.encoders.factory import build_encoder
+from thesis_rl.agent.planners.encoders.lq_encoder import LatentQueryEncoderV3
+from thesis_rl.agent.planners.encoders.mlp_encoder import FlatMLPEncoder
+from thesis_rl.contracts.observation_schema import SemanticObservationSchemaV12
+
+
+def test_flat_mlp_v11_has_3064_input_and_exact_parameter_count() -> None:
+    encoder = FlatMLPEncoder(input_dim=3064)
+    observation = torch.randn(2, 3064, dtype=torch.float32, requires_grad=True)
+
+    output = encoder(observation)
+    output.square().mean().backward()
+
+    assert output.shape == (2, 256)
+    assert sum(parameter.numel() for parameter in encoder.parameters()) == 2_032_128
+    assert observation.grad is not None and torch.isfinite(observation.grad).all()
+
+
+def test_lq_v11_has_143_tokens_and_21_step_time_embedding() -> None:
+    schema = SemanticObservationSchemaV12()
+    encoder = LatentQueryEncoderV3(schema=schema)
+    flat = torch.zeros(2, schema.flat_dim, dtype=torch.float32)
+    structured = schema.unflatten_torch(flat)
+
+    tokens, mask = encoder.tokenize_structured(structured)
+
+    assert tokens.shape == (2, 143, 64)
+    assert mask.shape == (2, 143)
+    assert mask[:, 5].all() and mask[:, 104].all() and mask[:, 142].all()
+    assert encoder.type_embedding.num_embeddings == 10
+    assert encoder.history_time_embedding.num_embeddings == 21
+    assert torch.count_nonzero(tokens[~mask]).item() == 0
+
+
+def test_lq_v11_is_invariant_to_masked_compliance_payload() -> None:
+    torch.manual_seed(17)
+    schema = SemanticObservationSchemaV12()
+    encoder = LatentQueryEncoderV3(schema=schema)
+    first = torch.zeros(2, schema.flat_dim, dtype=torch.float32, requires_grad=True)
+    second = first.detach().clone()
+    compliance = schema.slices["compliance_history"]
+    second[:, compliance] = torch.randn_like(second[:, compliance])
+
+    first_output = encoder(first)
+    second_output = encoder(second)
+    first_output.sum().backward()
+
+    torch.testing.assert_close(first_output, second_output)
+    assert first.grad is not None and torch.isfinite(first.grad).all()
+
+
+def test_encoder_factory_rejects_cross_version_lq_pairing() -> None:
+    with pytest.raises(ValueError, match="semantic v1.2"):
+        build_encoder({"type": "latent_query_v3"}, input_dim=2541, observation_schema=None)

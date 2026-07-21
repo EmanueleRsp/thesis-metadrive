@@ -1,0 +1,28 @@
+name: semantic_v3
+type: semantic_v3
+
+history_length: 5
+compliance_history_length: 21
+route_tokens: 10
+dynamic_tokens: 16
+dynamic_conflict_reserved_slots: 8
+dynamic_context_reserved_slots: 8
+static_tokens: 8
+traffic_control_tokens: 8
+interaction_tokens: 8
+
+lidar_beams: 240
+lidar_range_m: 50.0
+lidar_height_m: 1.2
+signal_range_m: 80.0
+signal_fov_degrees: 65.0
+signal_camera_height_m: 1.2
+
+dynamic_radius_m: 50.0
+static_radius_m: 50.0
+control_radius_m: 80.0
+interaction_prediction_horizon_s: 3.0
+
+future_ground_truth: forbidden
+other_agent_navigation: forbidden
+future_disambiguation: forbidden

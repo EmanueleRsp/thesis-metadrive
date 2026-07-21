@@ -20,6 +20,7 @@ from thesis_rl.rulebook.v2.context.task_route import build_task_route_record
 from thesis_rl.rulebook.v2.context.static_adapter import (
     StaticAdapterResult,
     normalize_static_records,
+    vehicle_yield_records_from_metadata,
 )
 from thesis_rl.rulebook.v2.geometry.controls import derive_control_line
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord, derive_lane_movement_key
@@ -67,7 +68,9 @@ def _track_samples(
     )
 
 
-def _lane_record(lane_id: str, lane: Mapping[str, Any], *, z_origin_m: float = 0.0) -> RouteLaneRecord:
+def _lane_record(
+    lane_id: str, lane: Mapping[str, Any], *, z_origin_m: float = 0.0
+) -> RouteLaneRecord:
     points = _array_points(lane.get("polyline"))
     centerline = RoutePolyline(
         tuple((float(point[0]), float(point[1]), float(point[2] - z_origin_m)) for point in points)
@@ -173,7 +176,10 @@ def build_pg_static_adapter_result(
         )
         map_records.append(
             MapFeatureRecord(
-                str(feature_id), feature_class, geometry, float(np.median(points[:, 2] - z_origin_m))
+                str(feature_id),
+                feature_class,
+                geometry,
+                float(np.median(points[:, 2] - z_origin_m)),
             )
         )
     controls: list[TrafficControlRecord] = []
@@ -191,9 +197,7 @@ def build_pg_static_adapter_result(
             lane = lanes.get(lane_id)
             if lane is None:
                 continue
-            movement = derive_lane_movement_key(
-                lane, assigned_route_lane_ids=task_route.lane_ids
-            )
+            movement = derive_lane_movement_key(lane, assigned_route_lane_ids=task_route.lane_ids)
             if movement is None:
                 feature_errors.append(f"movement_key_ambiguous:{feature_id}:{lane_id}")
                 continue
@@ -269,15 +273,21 @@ def build_pg_static_adapter_result(
                     (str(physical_id),),
                 )
             )
+    priority_records, roundabout_records, priority_errors = vehicle_yield_records_from_metadata(
+        metadata
+    )
     result = normalize_static_records(
         scenario_uid=scenario_uid,
         task_route=task_route,
         route_lanes=tuple(lanes.values()),
         map_features=tuple(map_records),
         traffic_controls=tuple(controls),
-        movement_priority_records=(),
+        movement_priority_records=priority_records,
+        roundabout_priority_records=roundabout_records,
     )
     return replace(
         result,
-        validation_errors=tuple((*result.validation_errors, *feature_errors, *signal_errors)),
+        validation_errors=tuple(
+            (*result.validation_errors, *feature_errors, *signal_errors, *priority_errors)
+        ),
     )

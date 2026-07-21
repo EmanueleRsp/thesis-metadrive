@@ -16,6 +16,8 @@ from thesis_rl.rulebook.v2.components.controls import signal_group_state
 from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact, RSSCandidate
 from thesis_rl.rulebook.v2.geometry.conflict_zones import (
     MovementCorridor,
+    attach_route_intervals,
+    build_vehicle_conflict_zone_candidates,
     select_first_ahead_or_occupied_zone,
 )
 from thesis_rl.rulebook.v2.geometry.continuous_sat import OccupancyInterval
@@ -40,7 +42,10 @@ from thesis_rl.rulebook.v2.types import (
     EpisodeCache,
     EnvSnapshot,
     MapFeatureClass,
+    MovementPriority,
     RulebookMemory,
+    CacheDelta,
+    ConflictZoneRecord,
 )
 
 
@@ -69,6 +74,7 @@ def build_episode_cache(static_result) -> EpisodeCache:
         map_feature_catalog=static_result.map_features,
         traffic_control_catalog=static_result.traffic_controls,
         movement_priority_records=static_result.movement_priority_records,
+        roundabout_priority_records=getattr(static_result, "roundabout_priority_records", ()),
         route_lanes=static_result.route_lanes,
         route_polyline=route,
     )
@@ -443,6 +449,205 @@ def _crosswalk_inputs(
     }
 
 
+def _approach_control_for_movement(cache: EpisodeCache, movement_key) -> ApproachControl:
+    """Return an explicit control for one unambiguous movement.
+
+    Absence of a control record means ``NONE``; an adapter must expose an
+    unknown source state as ``UNKNOWN`` rather than silently omitting it.
+    Signal operationally suppresses STOP for the same movement.
+    """
+
+    controls = tuple(
+        control for control in cache.traffic_control_catalog if control.movement_key == movement_key
+    )
+    if any(control.control_type is ApproachControl.UNKNOWN for control in controls):
+        return ApproachControl.UNKNOWN
+    if any(control.control_type is ApproachControl.SIGNAL for control in controls):
+        return ApproachControl.SIGNAL
+    if any(control.control_type is ApproachControl.STOP for control in controls):
+        return ApproachControl.STOP
+    return ApproachControl.NONE
+
+
+def _vehicle_yield_inputs(
+    *,
+    pre: EnvSnapshot,
+    post: EnvSnapshot,
+    cache: EpisodeCache,
+    memory: RulebookMemory,
+    route: RoutePolyline,
+    delta_t_s: float,
+    post_front_s: float,
+    approach_speed_mps: float,
+    prediction_horizon_s: float,
+    minimum_history_samples: int,
+    ego_brake_mps2: float | None,
+) -> tuple[dict[str, object], CacheDelta]:
+    """Construct live vehicle-yield inputs without inferring priority from geometry."""
+
+    association = associate_route_lane(
+        position_xy=post.ego.position_xy,
+        position_z=post.ego.position_z,
+        heading_rad=post.ego.heading_rad,
+        route_lanes=cache.route_lanes,
+    )
+    ego_lane = None if association is None else _route_lane(cache, association.lane_id)
+    ego_key = (
+        None
+        if ego_lane is None
+        else derive_lane_movement_key(ego_lane, assigned_route_lane_ids=cache.task_route.lane_ids)
+    )
+    empty = {
+        "zone_id": "__no_vehicle_priority__",
+        "ego_interval": _empty_interval(),
+        "prioritized_intervals": (),
+        "distance_to_entry_m": 0.0,
+        "approach_speed_mps": approach_speed_mps,
+        "delta_t_s": delta_t_s,
+        "ego_occupied": False,
+        "entered_actor_ids": frozenset(),
+        "previous_illegal_entries": memory.vehicle_yield_illegal_entries,
+        "actor_movement_keys": (),
+        "previous_frozen_movement_keys": memory.frozen_actor_movement_keys,
+        "exited_actor_ids": frozenset(),
+        "ego_brake_mps2": ego_brake_mps2,
+    }
+    # The component requires the shared calibrated braking value.  Keeping the
+    # scoped domain empty when the runtime has no calibration preserves the
+    # independent evaluability of the other Rulebook components.
+    if ego_brake_mps2 is None or ego_brake_mps2 <= 0.0:
+        return empty, CacheDelta()
+    if ego_lane is None or ego_key is None:
+        return empty, CacheDelta()
+    ego_corridor = MovementCorridor(
+        movement_key=ego_key,
+        polygon=ego_lane.polygon_xy,
+        elevation_at_xy=PolylineElevation(ego_lane.centerline.points_xyz),
+    )
+    candidates = []
+    actor_lanes: dict[str, RouteLaneRecord] = {}
+    actor_keys: dict[str, object] = {}
+    for actor in post.actors:
+        if actor.actor_class is not ActorClass.VEHICLE:
+            continue
+        actor_association = associate_route_lane(
+            position_xy=actor.position_xy,
+            position_z=actor.position_z,
+            heading_rad=actor.heading_rad,
+            route_lanes=cache.route_lanes,
+        )
+        lane = None if actor_association is None else _route_lane(cache, actor_association.lane_id)
+        movement_key = None if lane is None else derive_lane_movement_key(lane)
+        if lane is None or movement_key is None:
+            continue
+        actor_lanes[actor.actor_id] = lane
+        actor_keys[actor.actor_id] = movement_key
+        other_corridor = MovementCorridor(
+            movement_key=movement_key,
+            polygon=lane.polygon_xy,
+            elevation_at_xy=PolylineElevation(lane.centerline.points_xyz),
+        )
+        candidates.extend(
+            attach_route_intervals(
+                route=route,
+                candidates=build_vehicle_conflict_zone_candidates(
+                    scenario_id=cache.scenario_id,
+                    ego_corridor=ego_corridor,
+                    other_corridor=other_corridor,
+                ),
+            )
+        )
+    selected = select_first_ahead_or_occupied_zone(
+        candidates=tuple(candidates), ego_footprint=post.ego.footprint, ego_front_s_m=post_front_s
+    )
+    if selected is None:
+        return empty, CacheDelta()
+    candidate = selected.candidate
+    zone = candidate.polygon
+    ego_control = _approach_control_for_movement(cache, ego_key)
+    priority_records = {
+        (record.ego_movement_key, record.other_movement_key): record.relation
+        for record in cache.movement_priority_records
+    }
+    prioritized_ids: set[str] = set()
+    for actor in post.actors:
+        movement_key = actor_keys.get(actor.actor_id)
+        if movement_key != candidate.other_movement_key:
+            continue
+        occupied = (
+            actor.footprint.intersects(zone)
+            and abs(actor.position_z - post.ego.position_z) <= VERTICAL_COMPATIBILITY_TOLERANCE_M
+        )
+        other_control = _approach_control_for_movement(cache, movement_key)
+        stop_priority = (
+            ego_control is ApproachControl.STOP and other_control is ApproachControl.NONE
+        )
+        pairwise_priority = (
+            priority_records.get((ego_key, movement_key)) is MovementPriority.OTHER_HAS_PRIORITY
+        )
+        other_lane = actor_lanes[actor.actor_id]
+        roundabout_priority = any(
+            record.entry_lane_id == ego_lane.lane_id
+            and record.circulating_lane_id == other_lane.lane_id
+            for record in cache.roundabout_priority_records
+        )
+        if occupied or stop_priority or pairwise_priority or roundabout_priority:
+            prioritized_ids.add(actor.actor_id)
+    ego_interval, intervals, _ = predict_conflict_zone_occupancy_intervals(
+        ego=post.ego,
+        actors=tuple(actor for actor in post.actors if actor.actor_id in prioritized_ids),
+        histories=memory.actor_motion_histories,
+        sim_time_s=post.sim_time_s,
+        zone=zone,
+        horizon_s=prediction_horizon_s,
+        minimum_history_samples=minimum_history_samples,
+    )
+    if ego_interval is None:
+        return empty, CacheDelta()
+    pre_by_id = {actor.actor_id: actor for actor in pre.actors}
+    ego_occupied = post.ego.footprint.intersects(zone)
+    ego_entered = not pre.ego.footprint.intersects(zone) and ego_occupied
+    exited = frozenset(
+        actor_id
+        for actor_id in prioritized_ids
+        if actor_id in pre_by_id
+        and pre_by_id[actor_id].footprint.intersects(zone)
+        and not next(
+            actor for actor in post.actors if actor.actor_id == actor_id
+        ).footprint.intersects(zone)
+    )
+    record = ConflictZoneRecord(
+        zone_id=candidate.zone_id,
+        polygon=zone,
+        ego_movement_key=candidate.ego_movement_key,
+        other_movement_key=candidate.other_movement_key,
+        route_entry_s_m=selected.route_entry_s_m,
+        route_exit_s_m=selected.route_exit_s_m,
+        elevation_m=post.ego.position_z,
+    )
+    return (
+        {
+            "zone_id": candidate.zone_id,
+            "ego_interval": ego_interval,
+            "prioritized_intervals": tuple(
+                item for item in intervals if item[0] in prioritized_ids
+            ),
+            "distance_to_entry_m": max(0.0, selected.route_entry_s_m - post_front_s),
+            "approach_speed_mps": approach_speed_mps,
+            "delta_t_s": delta_t_s,
+            "ego_occupied": ego_occupied,
+            "entered_actor_ids": frozenset(prioritized_ids) if ego_entered else frozenset(),
+            "previous_illegal_entries": memory.vehicle_yield_illegal_entries,
+            "preexisting": candidate.zone_id in memory.preexisting_ego_occupancy_zone_ids,
+            "actor_movement_keys": tuple(sorted(actor_keys.items())),
+            "previous_frozen_movement_keys": memory.frozen_actor_movement_keys,
+            "exited_actor_ids": exited,
+            "ego_brake_mps2": ego_brake_mps2,
+        },
+        CacheDelta(new_conflict_zones=(record,)),
+    )
+
+
 def evaluate_transition(
     *,
     pre_state: EnvSnapshot,
@@ -604,21 +809,19 @@ def evaluate_transition(
             for lane in cache.route_lanes
         ),
     )
-    vehicle_input = {
-        "zone_id": "__no_vehicle_priority__",
-        "ego_interval": _empty_interval(),
-        "prioritized_intervals": (),
-        "distance_to_entry_m": 0.0,
-        "approach_speed_mps": post_approach_speed_mps,
-        "delta_t_s": delta_t_s,
-        "ego_occupied": False,
-        "entered_actor_ids": frozenset(),
-        "previous_illegal_entries": memory.vehicle_yield_illegal_entries,
-        "actor_movement_keys": (),
-        "previous_frozen_movement_keys": memory.frozen_actor_movement_keys,
-        "exited_actor_ids": frozenset(),
-        "ego_brake_mps2": calibrated_brake_mps2,
-    }
+    vehicle_input, vehicle_cache_delta = _vehicle_yield_inputs(
+        pre=pre_state,
+        post=post_state,
+        cache=cache,
+        memory=memory,
+        route=route,
+        delta_t_s=delta_t_s,
+        post_front_s=post_front_s,
+        approach_speed_mps=post_approach_speed_mps,
+        prediction_horizon_s=config.prediction_horizon_s,
+        minimum_history_samples=config.minimum_history_samples,
+        ego_brake_mps2=calibrated_brake_mps2,
+    )
     component_inputs = {
         "collision": {
             "scenario_id": post_state.scenario_id,
@@ -695,6 +898,7 @@ def evaluate_transition(
         progress_margin=0.0,
         post_state=post_state,
         history_window_s=config.history_window_s,
+        pending_cache_delta=vehicle_cache_delta,
     )
 
 

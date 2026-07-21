@@ -1,7 +1,7 @@
 # Perception-Bounded Semantic Observation V1.2 ExecPlan
 
 **Plan ID:** PLAN-PB-OBS-V1.2  
-**Status:** APPROVED — implementation not started  
+**Status:** IMPLEMENTED — validation complete
 **Specification:** OBS-V1.2 (`APPROVED`, authoritative)  
 **Related specification:** ENC-V1.1 (`APPROVED`, authoritative)  
 **Decision record:** ADR-022  
@@ -258,7 +258,13 @@ Exit criterion: all required checks pass and no unapproved deviation remains.
 | Date | Milestone | Status | Evidence |
 |---|---|---|---|
 | 2026-07-21 | M0 | complete | ADR-022, OBS-V1.2, ENC-V1.1, and this plan created after explicit user approval. |
-| 2026-07-21 | M1–M6 | not started | No production code or tests changed by this planning task. |
+| 2026-07-22 | M1 | complete | Headless PG and bundled Waymo probes confirmed 240 first-hit Bullet rays resolve live MetaDrive IDs; constructed PG barrier and pedestrian VRU colliders are admitted while a farther collinear barrier is hidden. Waymo light-manager mappings resolve physical IDs; a controlled in-FOV pose passes the symbolic 3D light-head ray and a real intervening Bullet box rejects it without RGB. `RouteLaneRecord` and both PG/Waymo adapters expose lane geometry and successors but no adjacent-lane relation; V1.2 therefore emits the approved fail-closed unknown flags. The adapters expose only generic live-static and no complete merge/intersection taxonomy; V1.2 keeps those values unknown except source-confirmed roundabout priority. |
+| 2026-07-21 | M2 | complete | Added separate OBS-V1.2 schema, `semantic_v3` runtime adapter/configuration, and schema/mask regressions; 9 focused tests passed in the reproducible container. |
+| 2026-07-22 | M3 | complete | Added first-hit and symbolic signal adapters plus a V1.2-specific builder path. Dynamic and compliance histories preserve actual-step gaps, persistent slots reuse only actor IDs, and all candidate ranking follows physical admission. |
+| 2026-07-22 | M4 | complete | Route-point widths are resolved only from the polygon containing each sample (otherwise fail fast); control coordinates use the ego frame; unavailable topology and taxonomy are explicitly fail-closed. The interaction regression confirms that only source-confirmed roundabout priority receives a non-unknown category. |
+| 2026-07-22 | M5 | complete | ENC-V1.1 MLP/LQ contracts, an explicit `lq_v3` Hydra configuration, and `semantic_v3` checkpoint-schema identity are implemented and tested. |
+| 2026-07-22 | M6 | complete | Focused regressions, Rulebook v2 check, Ruff and whitespace checks pass. A 32-step provider-backed ScenarioNet smoke completed with `semantic_v3`/`latent_query_v3`, including 32 TD3 updates, checkpoint and replay persistence. |
+| 2026-07-22 | run-default | complete | After explicit user approval, `make run`/`run-train` now selects the implemented OBS-V1.2/ENC-V1.1 pair by default with `obs=semantic_v3` and `agent/planner/encoder=lq_v3`; historical Hydra defaults remain unchanged. |
 
 ## 12. Risks, blockers, and remaining decisions
 
@@ -271,12 +277,18 @@ Exit criterion: all required checks pass and no unapproved deviation remains.
   unknown if source support is insufficient.
 - **Performance:** one 240-beam sweep is expected to be materially cheaper than
   RGB, but M1 must measure it at the actual workload.
+- **Live `ThesisScenarioEnv` smoke:** the current workspace has no canonical
+  ScenarioNet `runtime/<split>` catalog/dataset. The source-backed PG/Waymo
+  preflights run against bundled MetaDrive fixtures, but the final provider/
+  Rulebook/reset rollout remains pending until that existing dataset is made
+  available; no synthetic fallback dataset is permitted.
 - **Ideal semantic tracking:** intentionally remains an idealised research
   assumption after physical detection. A calibrated stochastic tracker is
   deferred and requires a separate approved specification.
 
-There are no unresolved design choices blocking M0. A preflight failure is an
-evidence-based implementation blocker, not an ambiguity in the contract.
+There are no unresolved design choices blocking implementation. A preflight
+failure is an evidence-based implementation blocker, not an ambiguity in the
+contract.
 
 ## 13. Validation record
 
@@ -292,11 +304,211 @@ The arithmetic assertions reported `flat=3064`, `tokens=143`, and
 `mlp_parameters=2032128`; `git diff --check` passed. All M1–M6 commands and
 results must be appended here when executed.
 
+Focused M2 validation completed on 2026-07-21 in the primary Docker environment:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_observation_schema_v12.py tests/test_semantic_state_v3.py
+```
+
+Result: `9 passed in 1.90s`.
+
+Focused M5 validation completed on 2026-07-21:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_encoders_v10.py tests/test_encoders_v11.py \
+  tests/test_observation_schema_v12.py tests/test_semantic_state_v3.py
+```
+
+Result: `19 passed in 3.43s`.
+
+Focused M3 regression validation completed on 2026-07-21:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_perception_bounded_semantic.py
+```
+
+Result: `2 passed in 1.89s`.
+
+Focused code-quality validation completed on 2026-07-21:
+
+```text
+docker compose run --rm dev uv run --no-sync ruff check \
+  src/thesis_rl/contracts/observation_schema.py \
+  src/thesis_rl/envs/factory.py \
+  src/thesis_rl/envs/observations/semantic_state_v3.py \
+  src/thesis_rl/envs/observations/perception.py \
+  src/thesis_rl/envs/observations/causal_semantic.py \
+  src/thesis_rl/envs/thesis_scenario_env.py \
+  src/thesis_rl/agent/planners/encoders/lq_encoder.py \
+  src/thesis_rl/agent/planners/encoders/factory.py \
+  tests/test_observation_schema_v12.py tests/test_semantic_state_v3.py \
+  tests/test_encoders_v11.py tests/test_perception_bounded_semantic.py
+```
+
+Result: `All checks passed!`.
+
+Integrated regression validation completed on 2026-07-21:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_observation_schema_v11.py tests/test_observation_schema_v12.py \
+  tests/test_semantic_state_v2.py tests/test_semantic_state_v3.py \
+  tests/test_encoders_v10.py tests/test_encoders_v11.py \
+  tests/test_checkpointing.py tests/test_causal_semantic_batch.py \
+  tests/test_perception_bounded_semantic.py \
+  tests/test_perception_first_hit_preflight.py
+git diff --check
+```
+
+Result: `49 passed in 4.83s`; whitespace validation passed.
+
+M1 headless first-hit timing probe (100 warm runs after five warm-up sweeps)
+completed on 2026-07-21 without RGB: PG `0.307 ms/sweep`; bundled Waymo
+`0.682 ms/sweep`. These are capability measurements, not thesis throughput
+claims; the provider-driven workload measurement remains pending with the
+canonical dataset.
+
+The controlled-visible-signal preflight exposed and fixed a real adapter bug:
+the Panda3D vector helper must receive one three-value tuple, not three scalar
+arguments. Regression command:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_perception_first_hit_preflight.py
+```
+
+Result after the fix: `4 passed in 3.78s`; focused Ruff and `git diff --check`
+passed.
+
+The source-backed controlled-visible pose establishes the actual light-head
+anchor path. Range, FOV, and fail-closed blocker handling also have deterministic
+adapter regressions. Physical `TrafficBarrier` and `DefaultVehicle` blockers
+between ego and anchor both reject the same previously visible signal.
+
+Additional M1 source-backed probes executed headlessly with the repository
+virtual environment: PG resolved a first-hit `MVehicle`; bundled Waymo resolved
+106 first hits and eight physical light mappings. The public broad-phase return
+from `Lidar.perceive()` was explicitly excluded in favour of
+`DistanceDetector.perceive(Lidar, ...)` first-hit results.
+
+Focused builder/environment regression completed in the primary Docker
+environment:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_causal_semantic_batch.py tests/test_thesis_scenario_env.py \
+  tests/test_observation_schema_v12.py tests/test_semantic_state_v3.py
+```
+
+Result: `53 passed in 2.38s`.
+
+After fixing a duplicate compliance-history method that could have packed
+non-consecutive observations as contiguous frames, the following focused
+integration run completed on 2026-07-21:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_perception_bounded_semantic.py \
+  tests/test_perception_first_hit_preflight.py tests/test_encoders_v11.py \
+  tests/test_checkpointing.py tests/test_thesis_scenario_env.py
+```
+
+Result: `54 passed in 5.38s`.
+
+Additional V1.2 regressions completed on 2026-07-22:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_perception_bounded_semantic.py \
+  tests/test_perception_first_hit_preflight.py
+```
+
+Result: `12 passed in 4.45s`. They cover persistent slot reuse after a
+visibility gap, locally contained route-lane width, explicit failure when a
+route sample has no containing lane, fail-closed unavailable adjacency, and
+the symbolic signal range/FOV/blocker gate. Focused Ruff and `git diff --check`
+passed.
+
+The Waymo physical light-head preflight was extended on 2026-07-22:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_perception_first_hit_preflight.py
+```
+
+Result: `8 passed in 5.77s`. The actual Bullet ray accepts the controlled
+light-head anchor and rejects it after inserting a static barrier or a dynamic
+vehicle along that same line of sight.
+
+Configuration, encoder/checkpoint, and M1 preflight regression completed on
+2026-07-22:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_hydra_preset_test_configs.py tests/test_encoders_v11.py \
+  tests/test_checkpointing.py tests/test_perception_first_hit_preflight.py
+```
+
+Result: `22 passed in 7.44s`. Focused Python Ruff subsequently reported
+`All checks passed!`. The attempted Ruff invocation on a YAML configuration
+was rejected as an invalid file type and was not treated as a code-quality
+result. The subsequent `git diff --check` identified and this update removes a
+trailing whitespace line in this plan.
+
+Integrated V1.1/V1.2 compatibility validation completed on 2026-07-22:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m pytest -q \
+  tests/test_observation_schema_v11.py tests/test_observation_schema_v12.py \
+  tests/test_semantic_state_v2.py tests/test_semantic_state_v3.py \
+  tests/test_encoders_v10.py tests/test_encoders_v11.py \
+  tests/test_checkpointing.py tests/test_causal_semantic_batch.py \
+  tests/test_perception_bounded_semantic.py \
+  tests/test_perception_first_hit_preflight.py \
+  tests/test_hydra_preset_test_configs.py
+```
+
+Result: `64 passed in 9.31s`; the focused Ruff scope reported `All checks
+passed!` and `git diff --check` passed. The expanded M3/M4 subset subsequently
+reported `20 passed in 3.26s`, and the legacy environment regression reported
+`35 passed in 2.16s`.
+
+The repository Rulebook validation command also completed successfully on
+2026-07-22:
+
+```text
+make rulebook-v2-check
+```
+
+It ran the required `tests/test_rulebook_v2_*.py` matrix in the primary Docker
+environment without test failures.
+
+Provider-backed semantic smoke completed on 2026-07-22 against the canonical
+ScenarioNet runtime mounted from `/scratch/e.respino/thesis-metadrive/data`:
+
+```text
+docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.train \
+  --config-name presets/test/smoke_train obs=semantic_v3 \
+  agent/planner/encoder=lq_v3 experiment.total_timesteps=32 \
+  experiment.eval_interval=100000 experiment.final_eval_episodes=1 \
+  planner.td3.learning_starts=1 planner.td3.batch_size=1
+```
+
+Result: successful completion. The run recorded `global_step=32`,
+`update_calls=32`, `n_updates=32`, and persisted `final.zip`,
+`final_replay_buffer.pkl`, and `final_checkpoint_pair.json`. The first attempt
+correctly exposed the missing SB3 bridge allow-list entry for `latent_query_v3`;
+after that regression fix, `tests/test_sb3_extensions.py`, v1.1 encoder and
+checkpoint tests passed (`25 passed in 2.71s`) and focused Ruff passed.
+
 ## 14. Final reconciliation checklist
 
 - [x] User approval recorded in ADR-022.
 - [x] OBS-V1.2 and ENC-V1.1 specify dimensions, causality, masks, and compatibility.
 - [x] Preflight/no-fallback policy is explicit.
-- [ ] M1 source capabilities verified.
-- [ ] M2–M5 implementation and regression tests completed.
-- [ ] M6 checks, smoke, and requirement-to-code-to-test reconciliation completed.
+- [x] M1 source capabilities verified, including explicit source-limited unknowns.
+- [x] M2–M5 implementation and regression tests completed.
+- [x] M6 checks, smoke, and requirement-to-code-to-test reconciliation completed.

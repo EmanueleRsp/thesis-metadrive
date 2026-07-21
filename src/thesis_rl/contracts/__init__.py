@@ -1,5 +1,8 @@
 from thesis_rl.contracts.causal_scene_context import CausalSceneContext
-from thesis_rl.contracts.observation_schema import SemanticObservationSchemaV11
+from thesis_rl.contracts.observation_schema import (
+    SemanticObservationSchemaV11,
+    SemanticObservationSchemaV12,
+)
 from thesis_rl.contracts.observation_spec import ObservationSpec
 from thesis_rl.contracts.reward_semantics import (
     RewardSemanticsCompatibilityError,
@@ -13,6 +16,7 @@ __all__ = [
     "CausalSceneContext",
     "ObservationSpec",
     "SemanticObservationSchemaV11",
+    "SemanticObservationSchemaV12",
     "RewardSemanticsCompatibilityError",
     "assert_reward_semantics_compatible",
     "build_reward_semantics_identity",

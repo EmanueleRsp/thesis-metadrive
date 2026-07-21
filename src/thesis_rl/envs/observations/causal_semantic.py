@@ -14,8 +14,14 @@ from math import atan2, cos, hypot, isfinite, sin
 from typing import Any, Callable, Mapping
 
 import numpy as np
+from shapely.geometry import Point
+from shapely.ops import nearest_points
 from thesis_rl.contracts.causal_scene_context import CausalSceneContext
-from thesis_rl.contracts.observation_schema import SemanticObservationBatch
+from thesis_rl.contracts.observation_schema import (
+    SemanticObservationBatch,
+    SemanticObservationBatchV12,
+)
+from thesis_rl.envs.observations.perception import first_hit_lidar_sweep, mapped_signal_visibility
 from thesis_rl.rulebook.v2.geometry.continuous_sat import (
     OccupancyInterval,
     predict_occupancy_interval,
@@ -63,7 +69,7 @@ class _EgoFrame:
 class _InteractionCandidate:
     zone_id: str
     polygon: Any
-    zone_type_index: int
+    zone_type_index: int | None
     route_entry_s_m: float
     route_exit_s_m: float
     actor: ActorSnapshot
@@ -795,6 +801,162 @@ class CausalSemanticBatchBuilder:
             mask[index] = 1.0
         return payload, mask
 
+    def _visible_signal_state(
+        self, control: TrafficControlRecord, context: CausalSceneContext, vehicle: object
+    ) -> tuple[str, bool]:
+        if control.control_type == ApproachControl.STOP:
+            return "not-signal", True
+        for physical_id in control.physical_control_ids:
+            visibility = mapped_signal_visibility(vehicle, str(physical_id))
+            if not visibility.visible:
+                continue
+            state = str(context.snapshot.signal_states_by_physical_id.get(physical_id, "")).lower()
+            if state:
+                return state, state not in {"unknown", "lane_state_unknown"}
+        return "unknown", False
+
+    def _control_candidates(
+        self, context: CausalSceneContext, ego: ActorSnapshot, current_s: float
+    ) -> list[TrafficControlRecord]:
+        candidates = [
+            control
+            for control in context.traffic_controls
+            if abs(control.route_s_m - current_s) <= self.control_radius_m
+            and abs(control.elevation_m - ego.position_z) <= self.vertical_tolerance_m
+        ]
+        return sorted(
+            candidates,
+            key=lambda control: (
+                control.route_s_m < current_s,
+                max(0.0, control.route_s_m - current_s),
+                abs(control.route_s_m - current_s),
+                control.control_group_id,
+            ),
+        )
+
+    def _build_controls_v12(
+        self, context: CausalSceneContext, ego: ActorSnapshot, current_s: float, vehicle: object
+    ) -> tuple[np.ndarray, np.ndarray, tuple[TrafficControlRecord, str, bool] | None]:
+        candidates = self._control_candidates(context, ego, current_s)
+        payload = np.zeros((8, 17), dtype=np.float32)
+        mask = np.zeros(8, dtype=np.float32)
+        active: tuple[TrafficControlRecord, str, bool] | None = None
+        for index, control in enumerate(candidates[:8]):
+            midpoint = control.control_line.centroid
+            line_coords = list(control.control_line.coords) if hasattr(control.control_line, "coords") else []
+            direction = (
+                atan2(line_coords[-1][1] - line_coords[0][1], line_coords[-1][0] - line_coords[0][0])
+                if len(line_coords) >= 2
+                else 0.0
+            )
+            state, valid = self._visible_signal_state(control, context, vehicle)
+            state_index = {"green": 0, "yellow": 1, "red": 2, "flashing-yellow": 3}.get(state)
+            signal_state = _one_hot(state_index if valid and state_index is not None else 4, 5)
+            governs = ego.live_lane_id in control.controlled_lane_ids
+            if active is None and governs and control.route_s_m >= current_s:
+                active = (control, state, valid)
+            relative = _relative_position((midpoint.x, midpoint.y), ego.position_xy, ego.heading_rad)
+            payload[index] = np.asarray(
+                [
+                    _clip(relative[0], 80.0),
+                    _clip(relative[1], 80.0),
+                    _clip(control.route_s_m - current_s, 80.0),
+                    sin(direction - ego.heading_rad),
+                    cos(direction - ego.heading_rad),
+                    *_one_hot(0 if control.control_type == ApproachControl.SIGNAL else 1, 2),
+                    *signal_state,
+                    float(governs),
+                    float(active is not None and active[0].control_group_id == control.control_group_id),
+                    float(valid),
+                    0.0,
+                    0.0,
+                ],
+                dtype=np.float32,
+            )
+            mask[index] = 1.0
+        return payload, mask, active
+
+    def _active_dashed_key(self, context: CausalSceneContext, ego: ActorSnapshot) -> str | None:
+        candidates: list[tuple[float, str]] = []
+        for feature in context.episode_cache.map_feature_catalog.values():
+            if feature.feature_class != MapFeatureClass.LANE_MARKING_DASHED:
+                continue
+            elevation = feature.elevation_m if feature.elevation_m is not None else ego.position_z
+            if abs(elevation - ego.position_z) > self.vertical_tolerance_m:
+                continue
+            if feature.geometry.intersects(ego.footprint):
+                candidates.append((float(feature.geometry.distance(ego.footprint)), feature.feature_id))
+        return min(candidates)[1] if candidates else None
+
+    def _build_compliance_v12(
+        self,
+        *,
+        context: CausalSceneContext,
+        ego: ActorSnapshot,
+        ego_speed_cap: float,
+        lane_road: np.ndarray,
+        active_control: tuple[TrafficControlRecord, str, bool] | None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        dashed_key = self._active_dashed_key(context, ego)
+        control, state, state_valid = active_control if active_control is not None else (None, "unknown", False)
+        control_key = control.control_group_id if control is not None else None
+        signal_index = {"red": 0, "yellow": 1, "green": 2, "off": 3}.get(
+            state if state_valid else "unknown", 4
+        )
+        control_distance = (
+            _clip(control.route_s_m - self._route_s(ego, ego), 80.0) if control is not None else 0.0
+        )
+        row = np.asarray(
+            [
+                _clip(hypot(*ego.velocity_xy), ego_speed_cap, lower=0.0),
+                float(lane_road[1]), float(lane_road[2]),
+                *lane_road[3:7].tolist(), *lane_road[7:11].tolist(),
+                float(dashed_key is not None),
+                float(dashed_key is not None and dashed_key == self._previous_dashed_key),
+                float(control is not None),
+                float(control_key is not None and control_key == self._previous_control_key),
+                *_one_hot(0 if control and control.control_type == ApproachControl.SIGNAL else 1 if control else None, 2),
+                *_one_hot(signal_index, 5),
+                control_distance,
+                float(control is not None and ego.live_lane_id in control.controlled_lane_ids),
+            ],
+            dtype=np.float32,
+        )
+        if row.shape != (24,):
+            raise RuntimeError("OBS-V1.2 compliance history row must contain 24 values")
+        self._previous_dashed_key = dashed_key
+        self._previous_control_key = control_key
+        if control is not None and state == "yellow" and state_valid:
+            if self._yellow_group_id != control_key:
+                self._yellow_group_id = control_key
+                self._yellow_onset_distance_m = control.route_s_m - self._route_s(ego, ego)
+                self._yellow_onset_speed_mps = hypot(*ego.velocity_xy)
+        else:
+            self._yellow_group_id = None
+            self._yellow_onset_distance_m = 0.0
+            self._yellow_onset_speed_mps = 0.0
+        step = context.snapshot.step_index
+        self._compliance_history.append(row)
+        self._compliance_steps.append(step)
+        history = np.zeros((21, 24), dtype=np.float32)
+        mask = np.zeros(21, dtype=np.float32)
+        expected_steps = range(step - 20, step + 1)
+        by_step = dict(zip(self._compliance_steps, self._compliance_history))
+        for index, source_step in enumerate(expected_steps):
+            source = by_step.get(source_step)
+            if source is not None:
+                history[index] = source
+                mask[index] = 1.0
+        yellow_memory = np.asarray(
+            [
+                float(self._yellow_group_id is not None),
+                _clip(self._yellow_onset_distance_m, 80.0),
+                _clip(self._yellow_onset_speed_mps, ego_speed_cap, lower=0.0),
+            ],
+            dtype=np.float32,
+        )
+        return history, mask, yellow_memory
+
     def _build_lane_road(
         self, context: CausalSceneContext, ego: ActorSnapshot, current_s: float, vehicle: object
     ) -> np.ndarray:
@@ -932,6 +1094,14 @@ class CausalSemanticBatchBuilder:
             horizon_s=self.prediction_horizon_s,
         )
 
+    def _conflict_zone_type_index(
+        self, context: CausalSceneContext, zone: ConflictZoneRecord
+    ) -> int | None:
+        """Return the historical type for V1.1; V1.2 overrides unsupported types."""
+
+        del context, zone
+        return 1
+
     def _build_interactions(
         self, context: CausalSceneContext, ego: ActorSnapshot
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -957,7 +1127,7 @@ class CausalSemanticBatchBuilder:
                     _InteractionCandidate(
                         zone_id=zone.zone_id,
                         polygon=zone.polygon,
-                        zone_type_index=1,
+                        zone_type_index=self._conflict_zone_type_index(context, zone),
                         route_entry_s_m=zone.route_entry_s_m,
                         route_exit_s_m=zone.route_exit_s_m,
                         actor=actor,
@@ -1112,8 +1282,860 @@ class CausalSemanticBatchBuilder:
         )
 
 
+class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
+    """OBS-V1.2 builder with physical admission and ego-owned temporal state.
+
+    The historical builder remains untouched for `semantic_v2`.  This subclass
+    stores measurements only after a first-hit LiDAR admission at their actual
+    simulation step, so a reacquired object cannot fabricate contiguous time
+    history.
+    """
+
+    compliance_history_length = 21
+
+    def __init__(self, *, brake_mps2: float | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        if brake_mps2 is not None and brake_mps2 <= 0.0:
+            raise ValueError("OBS-V1.2 brake_mps2 must be positive when available")
+        self.brake_mps2 = brake_mps2
+        self._v12_actor_cache: dict[str, deque[tuple[int, ActorSnapshot]]] = {}
+        self._visible_actor_ids: frozenset[str] = frozenset()
+        self._compliance_rows: deque[tuple[int, np.ndarray]] = deque(
+            maxlen=self.compliance_history_length
+        )
+        self._yellow_control_id: str | None = None
+        self._yellow_onset_distance_m = 0.0
+        self._yellow_onset_speed_mps = 0.0
+        self._previous_dashed_feature_id: str | None = None
+        self._previous_control_id: str | None = None
+        self._last_compliance_step: int | None = None
+
+    def reset(self) -> None:
+        super().reset()
+        self._v12_actor_cache.clear()
+        self._visible_actor_ids = frozenset()
+        self._compliance_rows.clear()
+        self._yellow_control_id = None
+        self._yellow_onset_distance_m = 0.0
+        self._yellow_onset_speed_mps = 0.0
+        self._previous_dashed_feature_id = None
+        self._previous_control_id = None
+        self._last_compliance_step = None
+
+    def commit_context(self, context: CausalSceneContext, vehicle: object | None = None) -> None:
+        """Commit only currently LiDAR-admitted measurements at their true step."""
+
+        if vehicle is None:
+            # The environment publishes the context before it requests an
+            # observation.  The first cache write is deliberately deferred
+            # until the ego vehicle is available for the physical sweep.
+            return
+        if self._scenario_id != context.snapshot.scenario_id:
+            self.reset()
+            self._scenario_id = context.snapshot.scenario_id
+        step = context.snapshot.step_index
+        if self._last_context_step == step:
+            return
+        sweep = first_hit_lidar_sweep(vehicle)
+        self._visible_actor_ids = sweep.actor_ids
+        ego = context.snapshot.ego
+        for actor in context.snapshot.actors:
+            if actor.actor_id == ego.actor_id or actor.actor_id not in self._visible_actor_ids:
+                continue
+            if abs(actor.position_z - ego.position_z) > self.vertical_tolerance_m:
+                continue
+            history = self._v12_actor_cache.setdefault(
+                actor.actor_id, deque(maxlen=self.history_length)
+            )
+            history.append((step, actor))
+        self._last_context_step = step
+
+    def _context_v12(
+        self, context: CausalSceneContext | None, vehicle: object
+    ) -> CausalSceneContext:
+        selected = context
+        if selected is None and self.context_provider is not None:
+            selected = self.context_provider()
+        if not isinstance(selected, CausalSceneContext):
+            raise CausalSemanticObservationError(
+                "Semantic observation requires an environment-owned committed CausalSceneContext"
+            )
+        if selected.route_polyline is not None and selected.route_polyline != self.route:
+            raise CausalSemanticObservationError("Semantic route differs from committed route geometry")
+        self.commit_context(selected, vehicle)
+        return selected
+
+    def build(
+        self, vehicle: object, context: CausalSceneContext | None = None
+    ) -> SemanticObservationBatchV12:
+        context = self._context_v12(context, vehicle)
+        ego = context.snapshot.ego
+        self._record_ego_frame(vehicle, ego)
+        route_projection = self.route.project(ego.position_xy, position_z=ego.position_z)
+        ego_speed_cap = self.ego_speed_cap_mps or ego.configured_speed_cap_mps
+        if ego_speed_cap is None or ego_speed_cap <= 0.0:
+            raise CausalSemanticObservationError("Ego speed cap is required for semantic normalization")
+
+        ego_history, ego_history_mask = self._build_ego_history(ego, ego_speed_cap)
+        ego_current = np.asarray(
+            [
+                _clip(_dimensions(ego.footprint)[0], 10.0, lower=0.0),
+                _clip(_dimensions(ego.footprint)[1], 5.0, lower=0.0),
+                _clip(route_projection.s_m, max(self.route.length_m, 1.0), lower=0.0),
+            ],
+            dtype=np.float32,
+        )
+        route, route_mask = self._build_route_v12(ego, route_projection.s_m)
+        dynamic, dynamic_mask = self._build_dynamic_v12(context, ego, ego_speed_cap)
+        static, static_mask = self._build_static_v12(context, ego)
+        lane_road = self._build_lane_road(context, ego, route_projection.s_m, vehicle)
+        controls, controls_mask, control_trace = self._build_controls_v12(
+            context, ego, route_projection.s_m, vehicle, ego_speed_cap
+        )
+        interactions, interactions_mask = self._build_interactions(context, ego)
+        compliance_history, compliance_history_mask = self._append_compliance_row(
+            context, ego, lane_road, control_trace, ego_speed_cap
+        )
+        return SemanticObservationBatchV12(
+            ego_history=ego_history,
+            ego_history_mask=ego_history_mask,
+            ego_current=ego_current,
+            route=route,
+            route_mask=route_mask,
+            dynamic=dynamic,
+            dynamic_mask=dynamic_mask,
+            static=static,
+            static_mask=static_mask,
+            lane_road=lane_road,
+            controls=controls,
+            controls_mask=controls_mask,
+            interactions=interactions,
+            interactions_mask=interactions_mask,
+            compliance_history=compliance_history,
+            compliance_history_mask=compliance_history_mask,
+            yellow_onset_memory=self._yellow_memory(ego_speed_cap),
+        )
+
+    def _dynamic_candidates(
+        self, context: CausalSceneContext, ego: ActorSnapshot
+    ) -> list[ActorSnapshot]:
+        return [
+            actor
+            for actor in super()._dynamic_candidates(context, ego)
+            if actor.actor_id in self._visible_actor_ids
+        ]
+
+    def _build_route_v12(self, ego: ActorSnapshot, current_s: float) -> tuple[np.ndarray, np.ndarray]:
+        payload = np.zeros((10, 7), dtype=np.float32)
+        mask = np.zeros(10, dtype=np.float32)
+        for index in range(10):
+            target_s = current_s + (index + 1) * 5.0
+            if target_s > self.route.length_m:
+                continue
+            point = self.route.point_at(target_s)
+            projection = self.route.project(point[:2], position_z=point[2])
+            relative = _relative_position(point[:2], ego.position_xy, ego.heading_rad)
+            route_heading = atan2(projection.tangent_xy[1], projection.tangent_xy[0])
+            lane_id = next(
+                (
+                    lane.lane_id
+                    for lane in self.route_lanes
+                    if lane.polygon_xy.distance(Point(point[:2])) <= 1.0e-6
+                ),
+                None,
+            )
+            if lane_id is None:
+                raise CausalSemanticObservationError(
+                    "No route-lane polygon contains an OBS-V1.2 route sample"
+                )
+            payload[index] = np.asarray(
+                [
+                    _clip(relative[0], 50.0),
+                    _clip(relative[1], 50.0),
+                    sin(route_heading - ego.heading_rad),
+                    cos(route_heading - ego.heading_rad),
+                    _clip(self._route_curvature(target_s), 0.2),
+                    _clip(self._lane_width(lane_id), 6.0, lower=0.0),
+                    _clip(target_s - current_s, 50.0, lower=0.0),
+                ],
+                dtype=np.float32,
+            )
+            mask[index] = 1.0
+        return payload, mask
+
+    def _assign_slots_v12(
+        self, selected: list[tuple[ActorSnapshot, bool]], step: int
+    ) -> dict[int, ActorSnapshot]:
+        current = {actor.actor_id: conflict for actor, conflict in selected}
+        for slot, actor_id in list(self._slot_actor.items()):
+            if actor_id not in current and step - self._slot_last_seen.get(slot, step) >= self.history_length:
+                self._slot_actor.pop(slot, None)
+                self._slot_last_seen.pop(slot, None)
+        assignments: dict[int, ActorSnapshot] = {}
+        used: set[int] = set()
+        for actor, is_conflict in selected:
+            previous = next((slot for slot, actor_id in self._slot_actor.items() if actor_id == actor.actor_id), None)
+            if previous is not None and ((is_conflict and previous < 8) or (not is_conflict and previous >= 8)):
+                assignments[previous] = actor
+                used.add(previous)
+        for actor, is_conflict in selected:
+            if actor in assignments.values():
+                continue
+            preferred = tuple(range(0, 8)) if is_conflict else tuple(range(8, 16))
+            fallback = tuple(range(8, 16)) if is_conflict else tuple(range(0, 8))
+            slot = next((candidate for candidate in (*preferred, *fallback) if candidate not in used), None)
+            if slot is None:
+                raise CausalSemanticObservationError("Dynamic slot assignment exceeded capacity")
+            assignments[slot] = actor
+            used.add(slot)
+        for slot, actor in assignments.items():
+            self._slot_actor[slot] = actor.actor_id
+            self._slot_last_seen[slot] = step
+        return assignments
+
+    def _build_dynamic_v12(
+        self, context: CausalSceneContext, ego: ActorSnapshot, ego_speed_cap: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        candidates = self._dynamic_candidates(context, ego)
+        conflict_ids = self._zone_actor_ids(context, ego)
+        ordered = sorted(candidates, key=lambda actor: self._dynamic_key(actor, ego, conflict_ids))
+        conflicts = [actor for actor in ordered if actor.actor_id in conflict_ids]
+        selected = conflicts[:8] + [actor for actor in ordered if actor not in conflicts[:8]][: 16 - len(conflicts[:8])]
+        slots = self._assign_slots_v12(
+            [(actor, actor.actor_id in conflict_ids) for actor in selected], context.snapshot.step_index
+        )
+        payload = np.zeros((16, 5, 22), dtype=np.float32)
+        mask = np.zeros((16, 5), dtype=np.float32)
+        for slot, actor in slots.items():
+            samples = {step: snapshot for step, snapshot in self._v12_actor_cache.get(actor.actor_id, ())}
+            for history_index, sample_step in enumerate(
+                range(context.snapshot.step_index - self.history_length + 1, context.snapshot.step_index + 1)
+            ):
+                snapshot = samples.get(sample_step)
+                if snapshot is None:
+                    continue
+                payload[slot, history_index] = self._dynamic_features(
+                    snapshot, ego, ego_speed_cap, context
+                )
+                mask[slot, history_index] = 1.0
+        self._last_diagnostics = SemanticOverflowDiagnostics(
+            {"dynamic": len(candidates)},
+            {"dynamic": len(selected)},
+            {"dynamic": max(0, len(candidates) - len(selected))},
+            len(conflicts[8:]),
+            {"dynamic": self._dynamic_key(selected[-1], ego, conflict_ids) if selected else ()},
+            {"dynamic": self._dynamic_key(ordered[len(selected)], ego, conflict_ids) if len(ordered) > len(selected) else ()},
+        )
+        return payload, mask
+
+    def _conflict_zone_type_index(
+        self, context: CausalSceneContext, zone: ConflictZoneRecord
+    ) -> int | None:
+        """Emit only a source-confirmed roundabout type; otherwise unknown.
+
+        Conflict-zone records carry no deterministic merge/intersection
+        taxonomy.  A roundabout priority record does carry lane relations, so
+        it is the sole supported non-crosswalk classification in V1.2.
+        """
+
+        ego_key = zone.ego_movement_key
+        other_key = zone.other_movement_key
+        for record in context.episode_cache.roundabout_priority_records:
+            lanes = {
+                record.entry_lane_id,
+                record.circulating_lane_id,
+            }
+            if {
+                ego_key.approach_lane_id,
+                other_key.approach_lane_id,
+            } <= lanes:
+                return 3
+        return None
+
+    def _build_static_v12(
+        self, context: CausalSceneContext, ego: ActorSnapshot
+    ) -> tuple[np.ndarray, np.ndarray]:
+        candidates: list[tuple[str, tuple[float, float], float, tuple[float, float], int, float, float]] = []
+        for actor in context.snapshot.actors:
+            if actor.actor_class != ActorClass.STATIC_COLLIDABLE or actor.actor_id not in self._visible_actor_ids:
+                continue
+            distance = hypot(actor.position_xy[0] - ego.position_xy[0], actor.position_xy[1] - ego.position_xy[1])
+            if distance <= self.static_radius_m and abs(actor.position_z - ego.position_z) <= self.vertical_tolerance_m:
+                candidates.append(
+                    (
+                        actor.actor_id,
+                        actor.position_xy,
+                        actor.heading_rad,
+                        _dimensions(actor.footprint),
+                        4,  # generic: the live source exposes no confirmed finer taxonomy.
+                        self._route_s(actor, ego),
+                        self._route_lateral(actor),
+                    )
+                )
+        ego_point = Point(ego.position_xy)
+        for feature_id, feature in context.episode_cache.map_feature_catalog.items():
+            if feature.feature_class not in {MapFeatureClass.OTHER_NON_DRIVABLE, MapFeatureClass.ROAD_BOUNDARY}:
+                continue
+            elevation = feature.elevation_m
+            if elevation is not None and abs(elevation - ego.position_z) > self.vertical_tolerance_m:
+                continue
+            _source, closest = nearest_points(feature.geometry, ego_point)
+            position = (float(closest.x), float(closest.y))
+            distance = hypot(position[0] - ego.position_xy[0], position[1] - ego.position_xy[1])
+            if distance > self.static_radius_m:
+                continue
+            projection = self.route.project(position, position_z=elevation or ego.position_z)
+            bounds = feature.geometry.bounds
+            candidates.append(
+                (
+                    str(feature_id),
+                    position,
+                    0.0,
+                    (max(bounds[2] - bounds[0], 0.1), max(bounds[3] - bounds[1], 0.1)),
+                    4,
+                    projection.s_m,
+                    projection.lateral_distance_m,
+                )
+            )
+        candidates.sort(
+            key=lambda item: (
+                not (item[5] >= self._route_s(ego, ego)),
+                abs(item[6]),
+                hypot(item[1][0] - ego.position_xy[0], item[1][1] - ego.position_xy[1]),
+                item[0],
+            )
+        )
+        payload = np.zeros((8, 13), dtype=np.float32)
+        mask = np.zeros(8, dtype=np.float32)
+        for index, (_id, position, heading, dimensions, type_index, route_s, lateral) in enumerate(candidates[:8]):
+            relative = _relative_position(position, ego.position_xy, ego.heading_rad)
+            payload[index] = np.asarray(
+                [
+                    _clip(relative[0], 50.0),
+                    _clip(relative[1], 50.0),
+                    *_heading_sincos(heading - ego.heading_rad),
+                    _clip(dimensions[0], 10.0, lower=0.0),
+                    _clip(dimensions[1], 5.0, lower=0.0),
+                    *_one_hot(type_index, 5),
+                    _clip(route_s - self._route_s(ego, ego), 50.0),
+                    _clip(lateral, 50.0, lower=0.0),
+                ],
+                dtype=np.float32,
+            )
+            mask[index] = 1.0
+        return payload, mask
+
+    def _build_controls_v12(
+        self,
+        context: CausalSceneContext,
+        ego: ActorSnapshot,
+        current_s: float,
+        vehicle: object,
+        ego_speed_cap: float,
+    ) -> tuple[np.ndarray, np.ndarray, tuple[str | None, str, float, bool]]:
+        candidates = [
+            control
+            for control in context.traffic_controls
+            if abs(control.route_s_m - current_s) <= self.control_radius_m
+            and abs(control.elevation_m - ego.position_z) <= self.vertical_tolerance_m
+        ]
+        candidates.sort(
+            key=lambda control: (
+                control.route_s_m < current_s,
+                abs(control.route_s_m - current_s),
+                control.control_group_id,
+            )
+        )
+        signal_ids = tuple(
+            physical_id
+            for control in candidates
+            if control.control_type == ApproachControl.SIGNAL
+            for physical_id in control.physical_control_ids
+        )
+        visible_signals = mapped_signal_visibility(vehicle, signal_ids) if signal_ids else {}
+        payload = np.zeros((8, 17), dtype=np.float32)
+        mask = np.zeros(8, dtype=np.float32)
+        active_trace: tuple[str | None, str, float, bool] = (None, "unknown", 0.0, False)
+        for index, control in enumerate(candidates[:8]):
+            midpoint = control.control_line.centroid
+            relative = _relative_position((midpoint.x, midpoint.y), ego.position_xy, ego.heading_rad)
+            coordinates = list(control.control_line.coords) if hasattr(control.control_line, "coords") else []
+            direction = (
+                atan2(coordinates[-1][1] - coordinates[0][1], coordinates[-1][0] - coordinates[0][0])
+                if len(coordinates) >= 2
+                else 0.0
+            )
+            controls_ego = ego.live_lane_id in control.controlled_lane_ids
+            route_distance = control.route_s_m - current_s
+            state = "not-signal"
+            state_valid = control.control_type == ApproachControl.STOP
+            if control.control_type == ApproachControl.SIGNAL:
+                state_valid = bool(control.physical_control_ids) and all(
+                    visible_signals.get(physical_id, False) for physical_id in control.physical_control_ids
+                )
+                if state_valid:
+                    state = next(
+                        (
+                            str(context.snapshot.signal_states_by_physical_id.get(physical_id, "UNKNOWN")).lower()
+                            for physical_id in control.physical_control_ids
+                        ),
+                        "unknown",
+                    )
+                    state_valid = state in {"green", "yellow", "red", "flashing_yellow", "flashing-yellow"}
+            state_index = {"green": 0, "yellow": 1, "red": 2, "flashing-yellow": 3, "flashing_yellow": 3}.get(state)
+            signal_state = _one_hot(state_index, 5) if state_valid and state_index is not None else [0.0] * 5
+            is_active = bool(controls_ego and route_distance >= 0.0 and active_trace[0] is None)
+            if is_active:
+                active_trace = (control.control_group_id, state, route_distance, controls_ego)
+                self._update_yellow_memory(control.control_group_id, state, route_distance, ego, ego_speed_cap)
+            payload[index] = np.asarray(
+                [
+                    _clip(relative[0], 80.0),
+                    _clip(relative[1], 80.0),
+                    _clip(route_distance, 80.0),
+                    sin(direction - ego.heading_rad),
+                    cos(direction - ego.heading_rad),
+                    *_one_hot(0 if control.control_type == ApproachControl.SIGNAL else 1, 2),
+                    *signal_state,
+                    float(controls_ego),
+                    float(is_active),
+                    float(state_valid),
+                    _clip(self._yellow_onset_distance_m, 80.0, lower=0.0)
+                    if self._yellow_control_id == control.control_group_id
+                    else 0.0,
+                    _clip(self._yellow_required_stop_distance(), 80.0, lower=0.0)
+                    if self._yellow_control_id == control.control_group_id
+                    else 0.0,
+                ],
+                dtype=np.float32,
+            )
+            mask[index] = 1.0
+        if active_trace[0] is None:
+            self._clear_yellow_memory()
+        return payload, mask, active_trace
+
+    def _update_yellow_memory(
+        self,
+        control_id: str,
+        state: str,
+        distance_m: float,
+        ego: ActorSnapshot,
+        ego_speed_cap: float,
+    ) -> None:
+        if state == "yellow":
+            if self._yellow_control_id != control_id:
+                self._yellow_control_id = control_id
+                self._yellow_onset_distance_m = distance_m
+                self._yellow_onset_speed_mps = min(hypot(*ego.velocity_xy), ego_speed_cap)
+            return
+        self._clear_yellow_memory()
+
+    def _clear_yellow_memory(self) -> None:
+        self._yellow_control_id = None
+        self._yellow_onset_distance_m = 0.0
+        self._yellow_onset_speed_mps = 0.0
+
+    def _yellow_required_stop_distance(self) -> float:
+        if self._yellow_control_id is None or self.brake_mps2 is None:
+            return 0.0
+        return self._yellow_onset_speed_mps * self.dt + self._yellow_onset_speed_mps**2 / (2.0 * self.brake_mps2)
+
+    def _yellow_memory(self, ego_speed_cap: float) -> np.ndarray:
+        return np.asarray(
+            [
+                float(self._yellow_control_id is not None),
+                _clip(self._yellow_onset_distance_m, 80.0, lower=0.0),
+                _clip(self._yellow_onset_speed_mps, ego_speed_cap, lower=0.0),
+            ],
+            dtype=np.float32,
+        )
+
+    def _append_timestamped_compliance_row(
+        self,
+        context: CausalSceneContext,
+        ego: ActorSnapshot,
+        lane_road: np.ndarray,
+        control_trace: tuple[str | None, str, float, bool],
+        ego_speed_cap: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Append one actual-step trace row without reading Rulebook memory."""
+
+        dashed_feature_id = next(
+            (
+                feature.feature_id
+                for feature in context.episode_cache.map_feature_catalog.values()
+                if feature.feature_class == MapFeatureClass.LANE_MARKING_DASHED
+                and feature.geometry.intersects(ego.footprint)
+            ),
+            None,
+        )
+        control_id, state, control_distance, controls_ego = control_trace
+        signal_index = {"red": 0, "yellow": 1, "green": 2, "off": 3}.get(state, 4)
+        active_control = control_id is not None
+        row = np.asarray(
+            [
+                _clip(hypot(*ego.velocity_xy), ego_speed_cap, lower=0.0),
+                float(lane_road[1]),
+                float(lane_road[2]),
+                *lane_road[3:7].tolist(),
+                *lane_road[7:11].tolist(),
+                float(dashed_feature_id is not None),
+                float(
+                    dashed_feature_id is not None
+                    and dashed_feature_id == self._previous_dashed_feature_id
+                ),
+                float(active_control),
+                float(control_id is not None and control_id == self._previous_control_id),
+                *_one_hot(0 if state != "not-signal" and active_control else 1 if active_control else None, 2),
+                *_one_hot(signal_index, 5),
+                _clip(control_distance, 80.0),
+                float(controls_ego),
+            ],
+            dtype=np.float32,
+        )
+        if row.shape != (24,):
+            raise RuntimeError("OBS-V1.2 compliance history row must contain 24 values")
+        self._previous_dashed_feature_id = dashed_feature_id
+        self._previous_control_id = control_id
+        self._compliance_rows.append((context.snapshot.step_index, row))
+        history = np.zeros((self.compliance_history_length, 24), dtype=np.float32)
+        mask = np.zeros(self.compliance_history_length, dtype=np.float32)
+        by_step = dict(self._compliance_rows)
+        for index, source_step in enumerate(
+            range(
+                context.snapshot.step_index - self.compliance_history_length + 1,
+                context.snapshot.step_index + 1,
+            )
+        ):
+            source = by_step.get(source_step)
+            if source is not None:
+                history[index] = source
+                mask[index] = 1.0
+        return history, mask
+
+    def _append_compliance_row(
+        self,
+        context: CausalSceneContext,
+        ego: ActorSnapshot,
+        lane_road: np.ndarray,
+        control_trace: tuple[str | None, str, float, bool],
+        ego_speed_cap: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return self._append_timestamped_compliance_row(
+            context, ego, lane_road, control_trace, ego_speed_cap
+        )
+
+    def _active_dashed_feature_id(
+        self, context: CausalSceneContext, ego: ActorSnapshot
+    ) -> str | None:
+        candidates: list[tuple[float, str]] = []
+        for feature in context.episode_cache.map_feature_catalog.values():
+            if feature.feature_class != MapFeatureClass.LANE_MARKING_DASHED:
+                continue
+            elevation = feature.elevation_m if feature.elevation_m is not None else ego.position_z
+            if abs(elevation - ego.position_z) > self.vertical_tolerance_m:
+                continue
+            if feature.geometry.intersects(ego.footprint):
+                candidates.append((feature.geometry.distance(ego.footprint), feature.feature_id))
+        return min(candidates)[1] if candidates else None
+
+
+class PerceptionBoundedSemanticBatchBuilderV12(CausalSemanticBatchBuilder):
+    """Build OBS-V1.2 from current first-hit perception and ego-owned memory."""
+
+    compliance_history_length = 21
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._actor_cache_v12: dict[str, dict[int, ActorSnapshot]] = {}
+        self._visible_actor_ids: frozenset[str] = frozenset()
+        self._compliance_history: deque[np.ndarray] = deque(maxlen=self.compliance_history_length)
+        self._compliance_steps: deque[int] = deque(maxlen=self.compliance_history_length)
+        self._previous_dashed_key: str | None = None
+        self._previous_control_key: str | None = None
+        self._yellow_group_id: str | None = None
+        self._yellow_onset_distance_m: float = 0.0
+        self._yellow_onset_speed_mps: float = 0.0
+
+    def reset(self) -> None:
+        super().reset()
+        self._actor_cache_v12.clear()
+        self._visible_actor_ids = frozenset()
+        self._compliance_history.clear()
+        self._compliance_steps.clear()
+        self._previous_dashed_key = None
+        self._previous_control_key = None
+        self._yellow_group_id = None
+        self._yellow_onset_distance_m = 0.0
+        self._yellow_onset_speed_mps = 0.0
+
+    def commit_context(self, context: CausalSceneContext) -> None:
+        """Defer cache mutation until a vehicle permits physical perception."""
+
+        if self._scenario_id != context.snapshot.scenario_id:
+            self.reset()
+            self._scenario_id = context.snapshot.scenario_id
+
+    def _selected_context(self, context: CausalSceneContext | None) -> CausalSceneContext:
+        selected = context
+        if selected is None and self.context_provider is not None:
+            selected = self.context_provider()
+        if not isinstance(selected, CausalSceneContext):
+            raise CausalSemanticObservationError(
+                "Semantic observation requires an environment-owned committed CausalSceneContext"
+            )
+        if selected.route_polyline is not None and selected.route_polyline != self.route:
+            raise CausalSemanticObservationError("Semantic route differs from committed route geometry")
+        self.commit_context(selected)
+        return selected
+
+    def _commit_perceived_context(self, context: CausalSceneContext, vehicle: object) -> None:
+        step = context.snapshot.step_index
+        if self._last_context_step == step:
+            return
+        sweep = first_hit_lidar_sweep(vehicle)
+        self._visible_actor_ids = sweep.detected_object_ids
+        ego = context.snapshot.ego
+        for actor in context.snapshot.actors:
+            if actor.actor_id == ego.actor_id or actor.actor_id not in self._visible_actor_ids:
+                continue
+            if abs(actor.position_z - ego.position_z) > self.vertical_tolerance_m:
+                continue
+            self._actor_cache_v12.setdefault(actor.actor_id, {})[step] = actor
+        self._last_context_step = step
+
+    def build(
+        self, vehicle: object, context: CausalSceneContext | None = None
+    ) -> SemanticObservationBatchV12:
+        context = self._selected_context(context)
+        self._commit_perceived_context(context, vehicle)
+        ego = context.snapshot.ego
+        self._record_ego_frame(vehicle, ego)
+        route_projection = self.route.project(ego.position_xy, position_z=ego.position_z)
+        ego_speed_cap = self.ego_speed_cap_mps or ego.configured_speed_cap_mps
+        if ego_speed_cap is None or ego_speed_cap <= 0.0:
+            raise CausalSemanticObservationError("Ego speed cap is required for semantic normalization")
+
+        ego_history, ego_history_mask = self._build_ego_history(ego, ego_speed_cap)
+        ego_current = np.asarray(
+            [
+                _clip(_dimensions(ego.footprint)[0], 10.0, lower=0.0),
+                _clip(_dimensions(ego.footprint)[1], 5.0, lower=0.0),
+                _clip(route_projection.s_m, max(self.route.length_m, 1.0), lower=0.0),
+            ],
+            dtype=np.float32,
+        )
+        route, route_mask = self._build_route(ego, route_projection.s_m)
+        dynamic, dynamic_mask = self._build_dynamic(context, ego, ego_speed_cap)
+        static, static_mask = self._build_static(context, ego)
+        lane_road = self._build_lane_road(context, ego, route_projection.s_m, vehicle)
+        controls, controls_mask, active_control = self._build_controls_v12(
+            context, ego, route_projection.s_m, vehicle
+        )
+        interactions, interactions_mask = self._build_interactions(context, ego)
+        compliance_history, compliance_history_mask, yellow_onset_memory = self._build_compliance_v12(
+            context=context,
+            ego=ego,
+            ego_speed_cap=ego_speed_cap,
+            lane_road=lane_road,
+            active_control=active_control,
+        )
+        return SemanticObservationBatchV12(
+            ego_history=ego_history,
+            ego_history_mask=ego_history_mask,
+            ego_current=ego_current,
+            route=route,
+            route_mask=route_mask,
+            dynamic=dynamic,
+            dynamic_mask=dynamic_mask,
+            static=static,
+            static_mask=static_mask,
+            lane_road=lane_road,
+            controls=controls,
+            controls_mask=controls_mask,
+            interactions=interactions,
+            interactions_mask=interactions_mask,
+            compliance_history=compliance_history,
+            compliance_history_mask=compliance_history_mask,
+            yellow_onset_memory=yellow_onset_memory,
+        )
+
+    def _dynamic_candidates(
+        self, context: CausalSceneContext, ego: ActorSnapshot
+    ) -> list[ActorSnapshot]:
+        return [
+            actor
+            for actor in context.snapshot.actors
+            if actor.actor_id != ego.actor_id
+            and actor.actor_class != ActorClass.STATIC_COLLIDABLE
+            and actor.actor_id in self._visible_actor_ids
+            and hypot(
+                actor.position_xy[0] - ego.position_xy[0], actor.position_xy[1] - ego.position_xy[1]
+            )
+            <= self.dynamic_radius_m
+            and abs(actor.position_z - ego.position_z) <= self.vertical_tolerance_m
+        ]
+
+    def _assign_slots(
+        self, selected: list[tuple[ActorSnapshot, bool]], step: int
+    ) -> dict[int, ActorSnapshot]:
+        current = {actor.actor_id: is_conflict for actor, is_conflict in selected}
+        for slot, actor_id in list(self._slot_actor.items()):
+            if actor_id not in current and step - self._slot_last_seen.get(slot, step) >= self.history_length:
+                self._slot_actor.pop(slot, None)
+                self._slot_last_seen.pop(slot, None)
+        assignments: dict[int, ActorSnapshot] = {}
+        occupied: set[int] = set()
+        for actor, is_conflict in selected:
+            previous = next(
+                (slot for slot, value in self._slot_actor.items() if value == actor.actor_id), None
+            )
+            if previous is not None and (
+                (is_conflict and previous < 8) or (not is_conflict and previous >= 8)
+            ):
+                assignments[previous] = actor
+                occupied.add(previous)
+            elif previous is not None:
+                self._slot_actor.pop(previous, None)
+                self._slot_last_seen.pop(previous, None)
+        for actor, is_conflict in selected:
+            if actor.actor_id in {assigned.actor_id for assigned in assignments.values()}:
+                continue
+            preferred = range(0, 8) if is_conflict else range(8, 16)
+            fallback = range(8, 16) if is_conflict else range(0, 8)
+            available = [slot for slot in (*preferred, *fallback) if slot not in occupied]
+            if not available:
+                raise CausalSemanticObservationError("Dynamic slot assignment exceeded capacity")
+            slot = available[0]
+            self._slot_actor[slot] = actor.actor_id
+            assignments[slot] = actor
+            occupied.add(slot)
+        for slot, actor in assignments.items():
+            self._slot_actor[slot] = actor.actor_id
+            self._slot_last_seen[slot] = step
+        return assignments
+
+    def _build_dynamic(
+        self, context: CausalSceneContext, ego: ActorSnapshot, ego_speed_cap: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        candidates = self._dynamic_candidates(context, ego)
+        conflict_ids = self._zone_actor_ids(context, ego)
+        ordered = sorted(candidates, key=lambda actor: self._dynamic_key(actor, ego, conflict_ids))
+        conflicts = [actor for actor in ordered if actor.actor_id in conflict_ids]
+        selected_conflicts = conflicts[:8]
+        selected = selected_conflicts + [
+            actor for actor in ordered if actor not in selected_conflicts
+        ][: max(0, 16 - len(selected_conflicts))]
+        slots = self._assign_slots(
+            [(actor, actor.actor_id in conflict_ids) for actor in selected], context.snapshot.step_index
+        )
+        payload = np.zeros((16, 5, 22), dtype=np.float32)
+        mask = np.zeros((16, 5), dtype=np.float32)
+        step = context.snapshot.step_index
+        for slot, actor in slots.items():
+            history = self._actor_cache_v12.get(actor.actor_id, {})
+            for history_index, source_step in enumerate(range(step - 4, step + 1)):
+                snapshot = history.get(source_step)
+                if snapshot is None:
+                    continue
+                payload[slot, history_index] = self._dynamic_features(
+                    snapshot, ego, ego_speed_cap, context
+                )
+                mask[slot, history_index] = 1.0
+        self._last_diagnostics = SemanticOverflowDiagnostics(
+            {"dynamic": len(candidates)},
+            {"dynamic": len(selected)},
+            {"dynamic": max(0, len(candidates) - len(selected))},
+            sum(actor.actor_id in conflict_ids for actor in conflicts[8:]),
+            {"dynamic": self._dynamic_key(selected[-1], ego, conflict_ids) if selected else ()},
+            {
+                "dynamic": self._dynamic_key(ordered[len(selected)], ego, conflict_ids)
+                if len(ordered) > len(selected)
+                else ()
+            },
+        )
+        return payload, mask
+
+    def _build_static(
+        self, context: CausalSceneContext, ego: ActorSnapshot
+    ) -> tuple[np.ndarray, np.ndarray]:
+        candidates: list[
+            tuple[str, tuple[float, float], float, tuple[float, float], int, float, float]
+        ] = []
+        for actor in context.snapshot.actors:
+            if (
+                actor.actor_class != ActorClass.STATIC_COLLIDABLE
+                or actor.actor_id not in self._visible_actor_ids
+            ):
+                continue
+            distance = hypot(
+                actor.position_xy[0] - ego.position_xy[0], actor.position_xy[1] - ego.position_xy[1]
+            )
+            if distance <= self.static_radius_m and abs(actor.position_z - ego.position_z) <= self.vertical_tolerance_m:
+                candidates.append(
+                    (
+                        actor.actor_id,
+                        actor.position_xy,
+                        actor.heading_rad,
+                        _dimensions(actor.footprint),
+                        3,
+                        self._route_s(actor, ego),
+                        self._route_lateral(actor),
+                    )
+                )
+        for feature_id, feature in context.episode_cache.map_feature_catalog.items():
+            if feature.feature_class not in {MapFeatureClass.OTHER_NON_DRIVABLE, MapFeatureClass.ROAD_BOUNDARY}:
+                continue
+            elevation = feature.elevation_m
+            if elevation is not None and abs(elevation - ego.position_z) > self.vertical_tolerance_m:
+                continue
+            nearest = feature.geometry.interpolate(feature.geometry.project(ego.footprint.centroid))
+            distance = float(feature.geometry.distance(ego.footprint))
+            if distance > self.static_radius_m:
+                continue
+            projection = self.route.project(
+                (nearest.x, nearest.y), position_z=elevation if elevation is not None else ego.position_z
+            )
+            bounds = feature.geometry.bounds
+            candidates.append(
+                (
+                    feature_id,
+                    (nearest.x, nearest.y),
+                    0.0,
+                    (max(bounds[2] - bounds[0], 0.1), max(bounds[3] - bounds[1], 0.1)),
+                    3,
+                    projection.s_m,
+                    projection.lateral_distance_m,
+                )
+            )
+        candidates.sort(
+            key=lambda item: (
+                not (item[5] >= self._route_s(ego, ego)),
+                abs(item[6]),
+                hypot(item[1][0] - ego.position_xy[0], item[1][1] - ego.position_xy[1]),
+                item[0],
+            )
+        )
+        payload = np.zeros((8, 13), dtype=np.float32)
+        mask = np.zeros(8, dtype=np.float32)
+        for index, (_id, position, heading, dimensions, type_index, route_s, lateral) in enumerate(candidates[:8]):
+            relative = _relative_position(position, ego.position_xy, ego.heading_rad)
+            payload[index] = np.asarray(
+                [
+                    _clip(relative[0], 50.0), _clip(relative[1], 50.0),
+                    *_heading_sincos(heading - ego.heading_rad),
+                    _clip(dimensions[0], 10.0, lower=0.0), _clip(dimensions[1], 5.0, lower=0.0),
+                    *_one_hot(type_index, 5), _clip(route_s - self._route_s(ego, ego), 50.0),
+                    _clip(lateral, 50.0, lower=0.0),
+                ], dtype=np.float32
+            )
+            mask[index] = 1.0
+        return payload, mask
+
+
 __all__ = [
     "CausalSemanticBatchBuilder",
     "CausalSemanticObservationError",
+    "PerceptionBoundedSemanticBatchBuilder",
     "SemanticOverflowDiagnostics",
 ]

@@ -52,6 +52,7 @@ Out of scope: Waymo acquisition or redistribution; changing Rulebook formulas, t
 | `DEC-001` | implementation detail | Persistence format | generator only / generator plus small generated pickles | Commit generator, small generated `.pkl` fixtures, and manifest | Reproducibility | Approved by user scope approval 2026-07-21 |
 | `DEC-002` | implementation detail | Source adaptation in test-only path | change runtime policy / isolated adapter or harness | Use `ScenarioOnlineEnv` for live loading and call the Waymo static adapter directly only as schema-compatible test normalization; do not broaden production dataset policy or assert Waymo provenance | Compatibility | Decided 2026-07-21 |
 | `DEC-003` | specification clarification | Exact continuous R3 targets | status only / analytic numeric oracle | Freeze formula-derived expectation with tolerance; request approval only if ambiguity is found | Test oracle | Pending feasibility evidence |
+| `DEC-004` | source contract | The production transition evaluator passed fixed empty inputs to `vehicle_yield`; priority and roundabout facts cannot be inferred from geometry. | implement only occupancy / extend source-bound records for all predicates / leave rule `NOT_APPLICABLE` | Derive movements, zones, occupancy, and STOP-vs-NONE live; require explicit validated metadata for pairwise and roundabout priority, with no fallback. | New source-data contract and ScenarioNet eligibility implications | Approved by user 2026-07-21; ADR-023 |
 
 ## 7. Proposed design
 
@@ -133,6 +134,10 @@ for—the live descriptor cases.
 - 2026-07-21: added and persisted `offroad`, whose ego reference is outside the only canonical route-lane polygon. Its live R3 `offroad` component is applicable with a positive geometric cost, independently of native MetaDrive flags.
 - 2026-07-21: added and persisted `vehicle_cyclist_collision`, derived from the initially separated pedestrian collision geometry but with the live actor typed as `CYCLIST`. The production contact recorder and R1 evaluator report a positive live onset for both VRU classes.
 - 2026-07-21: added and persisted `solid_line` and `dashed_line`. The solid marking intersects the ego canonical footprint and produces positive live R3 cost; the dashed marking is live-evaluable for the timer lifecycle without treating a sub-threshold dwell as a violation.
+- 2026-07-21: added and persisted `rss_rear_vehicle` and `unknown_signal`. The rear vehicle is explicitly excluded from the RSS front-vehicle domain; the relevant UNKNOWN signal is schema-loadable but rejected by the static Rulebook validation with the specified named error instead of being assigned zero cost.
+- 2026-07-21: audit found that `evaluate_transition()` builds `vehicle_input` with a fixed empty interval, no prioritized actors, and no entered actors (`src/thesis_rl/rulebook/v2/transition.py`). Consequently live vehicle-yield can never be applicable. Existing static adapters emit an empty `movement_priority_records` tuple and do not retain roundabout/priority metadata. This is a production conformance gap, not a fixture gap.
+- 2026-07-21: the first full Docker Rulebook regression exposed a NumPy pickle compatibility failure: host-generated fixture pickles referenced `numpy._core.numeric`, unavailable in the pinned container. Fixtures were regenerated with the primary container interpreter; documentation now requires that command for committed artifacts. Full regression then passed.
+- 2026-07-21: implemented live vehicle-yield integration. The transition now derives unambiguous lane movements, 2.5D conflict zones, occupancy intervals, STOP-vs-NONE priority, and lazy cache records from causal snapshots. Explicit pairwise and roundabout priority remain source metadata only. Unit/integration tests exercise all four §7.9 predicates; `vehicle_yield_pairwise` is a persisted MetaDrive descriptor with a live pairwise-priority transition.
 
 ## 12. Deviations
 
@@ -162,10 +167,13 @@ No deviations identified.
 | `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 22 passed after R3 geometric off-road coverage. |
 | `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 26 passed after yellow-signal and cyclist-collision descriptors. |
 | `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 30 passed after solid/dashed road-marking descriptors. |
+| `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 33 passed after rear-RSS and UNKNOWN-signal fail-fast coverage. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_contracts.py tests/test_rulebook_v2_transition.py tests/test_rulebook_v2_vehicle_yield.py tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 74 passed after live vehicle-yield wiring, source-contract validation, and four persisted scoped-predicate fixtures. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_*.py tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 224 passed after container-regenerated fixtures. |
 | `make format-check PYTHON_QUALITY_PATHS="tests/rulebook_scenario_fixtures.py tests/generate_rulebook_scenarios.py tests/test_rulebook_synthetic_scenarios.py"` | PASS | 2026-07-21 | 3 files already formatted. |
 | `make lint PYTHON_QUALITY_PATHS="tests/rulebook_scenario_fixtures.py tests/generate_rulebook_scenarios.py tests/test_rulebook_synthetic_scenarios.py"` | PASS | 2026-07-21 | Ruff reported all checks passed. |
 | `git diff --check` | PASS | 2026-07-21 | No whitespace errors. |
 
 ## 15. Final reconciliation
 
-Not started. The spike is not ready for experimental use until all requirements and acceptance criteria are reconciled.
+Vehicle-yield transition wiring is reconciled: each §7.9 predicate has a deterministic live-transition test, and each predicate has a persistent descriptor fixture. Explicit pairwise and roundabout facts remain source-bound metadata under ADR-023; unannotated ambiguous contexts remain `NOT_APPLICABLE`. The broader fixture plan remains a living record for its already-listed optional matrix expansions.

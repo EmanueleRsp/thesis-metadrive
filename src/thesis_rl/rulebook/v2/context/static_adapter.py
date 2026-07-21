@@ -17,6 +17,9 @@ from thesis_rl.rulebook.v2.types import (
     MapFeatureClass,
     MapFeatureRecord,
     MovementPriorityRecord,
+    MovementPriority,
+    MovementKey,
+    RoundaboutPriorityRecord,
     TaskRouteRecord,
     TrafficControlRecord,
 )
@@ -30,6 +33,7 @@ class StaticAdapterResult:
     map_features: dict[str, MapFeatureRecord]
     traffic_controls: tuple[TrafficControlRecord, ...]
     movement_priority_records: tuple[MovementPriorityRecord, ...] = ()
+    roundabout_priority_records: tuple[RoundaboutPriorityRecord, ...] = ()
     validation_errors: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -43,6 +47,67 @@ class StaticAdapterResult:
             self.task_route.lane_ids,
             {lane.lane_id: lane for lane in self.route_lanes},
         )
+
+
+def vehicle_yield_records_from_metadata(
+    metadata: Mapping[str, object],
+) -> tuple[
+    tuple[MovementPriorityRecord, ...], tuple[RoundaboutPriorityRecord, ...], tuple[str, ...]
+]:
+    """Decode explicit source annotations; malformed records make a scenario ineligible."""
+
+    raw = metadata.get("rulebook_vehicle_yield")
+    if raw is None:
+        return (), (), ()
+    if not isinstance(raw, Mapping):
+        return (), (), ("vehicle_yield_metadata_invalid",)
+
+    def key(value: object) -> MovementKey | None:
+        if not isinstance(value, Mapping):
+            return None
+        fields = ("approach_lane_id", "conflict_node_id", "exit_lane_id")
+        if any(not isinstance(value.get(field), str) or not value[field] for field in fields):
+            return None
+        return MovementKey(*(value[field] for field in fields))
+
+    priorities: list[MovementPriorityRecord] = []
+    roundabouts: list[RoundaboutPriorityRecord] = []
+    errors: list[str] = []
+    raw_priorities = raw.get("movement_priorities", ())
+    if not isinstance(raw_priorities, (list, tuple)):
+        errors.append("vehicle_yield_movement_priorities_invalid")
+    else:
+        for index, item in enumerate(raw_priorities):
+            if not isinstance(item, Mapping):
+                errors.append(f"vehicle_yield_priority_invalid:{index}")
+                continue
+            ego_key = key(item.get("ego_movement_key"))
+            other_key = key(item.get("other_movement_key"))
+            try:
+                relation = MovementPriority(str(item.get("relation")))
+            except ValueError:
+                relation = None
+            if ego_key is None or other_key is None or relation is None:
+                errors.append(f"vehicle_yield_priority_invalid:{index}")
+                continue
+            priorities.append(MovementPriorityRecord(ego_key, other_key, relation))
+    raw_roundabouts = raw.get("roundabout_priorities", ())
+    if not isinstance(raw_roundabouts, (list, tuple)):
+        errors.append("vehicle_yield_roundabout_priorities_invalid")
+    else:
+        for index, item in enumerate(raw_roundabouts):
+            if not isinstance(item, Mapping):
+                errors.append(f"vehicle_yield_roundabout_invalid:{index}")
+                continue
+            values = tuple(
+                item.get(field)
+                for field in ("component_id", "entry_lane_id", "circulating_lane_id")
+            )
+            if any(not isinstance(value, str) or not value for value in values):
+                errors.append(f"vehicle_yield_roundabout_invalid:{index}")
+                continue
+            roundabouts.append(RoundaboutPriorityRecord(*values))
+    return tuple(priorities), tuple(roundabouts), tuple(errors)
 
 
 def validate_reset_contract(
@@ -129,6 +194,7 @@ def normalize_static_records(
     map_features: tuple[MapFeatureRecord, ...],
     traffic_controls: tuple[TrafficControlRecord, ...],
     movement_priority_records: tuple[MovementPriorityRecord, ...] = (),
+    roundabout_priority_records: tuple[RoundaboutPriorityRecord, ...] = (),
 ) -> StaticAdapterResult:
     """Canonicalize adapter output and return typed validation errors, never fallbacks."""
 
@@ -187,6 +253,26 @@ def normalize_static_records(
             logical_boundary_id=feature.logical_boundary_id,
         )
     normalized_controls = _group_signal_controls(traffic_controls)
+    priority_pairs: set[tuple[object, object]] = set()
+    for record in movement_priority_records:
+        pair = (record.ego_movement_key, record.other_movement_key)
+        if pair in priority_pairs:
+            errors.append("duplicate_movement_priority_record")
+        priority_pairs.add(pair)
+        for lane_id in (
+            record.ego_movement_key.approach_lane_id,
+            record.ego_movement_key.exit_lane_id,
+            record.other_movement_key.approach_lane_id,
+            record.other_movement_key.exit_lane_id,
+        ):
+            if lane_id not in route_lane_ids:
+                errors.append(f"movement_priority_lane_missing:{lane_id}")
+    for record in roundabout_priority_records:
+        if not record.component_id or not record.entry_lane_id or not record.circulating_lane_id:
+            errors.append("incomplete_roundabout_priority_record")
+        for lane_id in (record.entry_lane_id, record.circulating_lane_id):
+            if lane_id not in route_lane_ids:
+                errors.append(f"roundabout_priority_lane_missing:{lane_id}")
     control_ids: set[str] = set()
     for control in normalized_controls:
         if not control.control_group_id or control.control_group_id in control_ids:
@@ -209,5 +295,6 @@ def normalize_static_records(
         map_features=normalized_features,
         traffic_controls=normalized_controls,
         movement_priority_records=movement_priority_records,
+        roundabout_priority_records=roundabout_priority_records,
         validation_errors=tuple(errors),
     )

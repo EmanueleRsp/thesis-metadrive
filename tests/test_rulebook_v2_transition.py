@@ -24,6 +24,9 @@ from thesis_rl.rulebook.v2.types import (
     ApproachControl,
     MovementKey,
     TrafficControlRecord,
+    MovementPriority,
+    MovementPriorityRecord,
+    RoundaboutPriorityRecord,
 )
 
 
@@ -176,6 +179,93 @@ def test_transition_rejects_non_positive_simulation_step() -> None:
         assert "timestep" in str(error)
     else:
         raise AssertionError("non-positive timestep must fail fast")
+
+
+def test_transition_vehicle_yield_uses_each_scoped_priority_predicate() -> None:
+    """Live transition wiring must reach the pure evaluator for all §7.9 predicates."""
+
+    cache = _cache()
+    lane_b = RouteLaneRecord(
+        "lane-b",
+        Polygon(((8.0, -10.0), (12.0, -10.0), (12.0, 10.0), (8.0, 10.0))),
+        RoutePolyline(((10.0, -10.0, 0.0), (10.0, 10.0, 0.0))),
+        (),
+    )
+    ego_key = MovementKey("lane-a", "junction:lane-a->lane-a", "lane-a")
+    other_key = MovementKey("lane-b", "junction:lane-b->lane-b", "lane-b")
+    cache = replace(cache, route_lanes=(cache.route_lanes[0], lane_b))
+    pre = _snapshot(0, 0.0, 6.0)
+    post = _snapshot(1, 0.1, 6.5)
+    other = ActorSnapshot(
+        "other",
+        ActorClass.VEHICLE,
+        (10.0, 3.0),
+        0.0,
+        -1.57079632679,
+        (0.0, -2.0),
+        Polygon(((9.0, 2.0), (11.0, 2.0), (11.0, 4.0), (9.0, 4.0))),
+        "lane-b",
+        10.0,
+    )
+    pre = replace(pre, actors=(other,))
+    post = replace(post, actors=(other,))
+    calibration = RulebookTransitionConfig(
+        rss_calibration=RSSCalibrationArtifact("calibration", 4.0),
+        expected_config_hash="calibration",
+    )
+    for cache_variant in (
+        # Explicit pairwise priority.
+        replace(
+            cache,
+            movement_priority_records=(
+                MovementPriorityRecord(ego_key, other_key, MovementPriority.OTHER_HAS_PRIORITY),
+            ),
+        ),
+        # Validated roundabout entry/circulating relation.
+        replace(
+            cache, roundabout_priority_records=(RoundaboutPriorityRecord("r", "lane-a", "lane-b"),)
+        ),
+        # Ego STOP versus an uncontrolled other movement.
+        replace(
+            cache,
+            traffic_control_catalog=(
+                TrafficControlRecord(
+                    "stop",
+                    ApproachControl.STOP,
+                    ("lane-a",),
+                    ego_key,
+                    LineString(((8.0, -2.0), (8.0, 2.0))),
+                    8.0,
+                    0.0,
+                    (),
+                ),
+            ),
+        ),
+    ):
+        result, _memory, cache_delta = evaluate_transition(
+            pre_state=pre,
+            post_state=post,
+            memory=initial_memory_for_snapshot(pre, cache_variant),
+            cache=cache_variant,
+            config=calibration,
+        )
+        assert result.components["vehicle_yield"].applicable
+        assert cache_delta.new_conflict_zones
+
+    # Occupancy alone is also a deterministic priority predicate.
+    occupied = replace(
+        other,
+        position_xy=(10.0, 0.0),
+        footprint=Polygon(((9.0, -1.0), (11.0, -1.0), (11.0, 1.0), (9.0, 1.0))),
+    )
+    result, _memory, _delta = evaluate_transition(
+        pre_state=replace(pre, actors=(occupied,)),
+        post_state=replace(post, actors=(occupied,)),
+        memory=initial_memory_for_snapshot(replace(pre, actors=(occupied,)), cache),
+        cache=cache,
+        config=calibration,
+    )
+    assert result.components["vehicle_yield"].applicable
 
 
 def test_cache_elevation_alignment_preserves_relative_route_shape() -> None:

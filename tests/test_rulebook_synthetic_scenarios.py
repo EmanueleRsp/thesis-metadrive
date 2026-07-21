@@ -23,7 +23,11 @@ from thesis_rl.rulebook.v2.transition import (
     initial_memory_for_snapshot,
     transition_evaluator_factory,
 )
-from rulebook_scenario_fixtures import build_scenarios, write_persistent_fixtures
+from rulebook_scenario_fixtures import (
+    FIXTURE_COMPONENTS,
+    build_scenarios,
+    write_persistent_fixtures,
+)
 
 
 PERSISTED_FIXTURE_ROOT = Path("tests/fixtures/rulebook_scenarios")
@@ -40,7 +44,10 @@ def test_synthetic_descriptors_normalize_with_frozen_assigned_route() -> None:
     for fixture_id, scenario in build_scenarios().items():
         result = build_waymo_static_adapter_result(scenario, scenario_uid=f"synthetic:{fixture_id}")
         assert result.task_route.lane_ids == ("lane-ego",)
-        assert not result.validation_errors
+        if fixture_id == "unknown_signal":
+            assert result.validation_errors == ("signal_state_unknown:lane-ego",)
+        else:
+            assert not result.validation_errors
 
 
 def test_persistent_fixture_generation_is_reloadable(tmp_path: Path) -> None:
@@ -51,6 +58,16 @@ def test_persistent_fixture_generation_is_reloadable(tmp_path: Path) -> None:
         with (tmp_path / item["file"]).open("rb") as handle:
             scenario = pickle.load(handle)
         assert scenario["id"] == item["scenario_id"]
+
+
+def test_synthetic_descriptor_generator_is_byte_deterministic() -> None:
+    first = build_scenarios()
+    second = build_scenarios()
+    assert tuple(first) == tuple(second)
+    for fixture_id in first:
+        assert pickle.dumps(first[fixture_id], protocol=pickle.HIGHEST_PROTOCOL) == pickle.dumps(
+            second[fixture_id], protocol=pickle.HIGHEST_PROTOCOL
+        )
 
 
 def test_checked_in_descriptors_match_the_versioned_generator() -> None:
@@ -68,6 +85,7 @@ def test_checked_in_descriptors_match_the_versioned_generator() -> None:
             checked_in["tracks"]["ego"]["state"]["position"],
             generated[item["id"]]["tracks"]["ego"]["state"]["position"],
         )
+        assert item["components"] == list(FIXTURE_COMPONENTS[item["id"]])
 
 
 @pytest.mark.parametrize("fixture_id", tuple(build_scenarios()))
@@ -86,6 +104,7 @@ def test_descriptors_reset_and_step_in_scenario_online_env(fixture_id: str) -> N
             "store_map": False,
             "reactive_traffic": False,
             "no_light": False,
+            "filter_overlapping_car": False,
         }
     )
     try:
@@ -108,15 +127,21 @@ def test_descriptors_reset_and_step_in_scenario_online_env(fixture_id: str) -> N
         ("yellow_light", "signal", True, False),
         ("crosswalk_pedestrian", "crosswalk", True, True),
         ("vehicle_pedestrian_collision", "collision", False, False),
+        ("vehicle_vehicle_collision", "collision", False, False),
         ("rss_front_vehicle", "rss", True, False),
         ("rss_front_vehicle", "ttc", True, False),
         ("rss_front_vehicle", "clearance", True, False),
+        ("rss_rear_vehicle", "rss", False, False),
         ("stop_sign", "stop", True, False),
         ("red_light", "progress", True, False),
         ("wrong_way", "wrongway", True, False),
         ("offroad", "offroad", True, True),
         ("solid_line", "solid_line", True, True),
         ("dashed_line", "dashed_line", True, False),
+        ("vehicle_yield_pairwise", "vehicle_yield", True, False),
+        ("vehicle_yield_stop", "vehicle_yield", True, False),
+        ("vehicle_yield_roundabout", "vehicle_yield", True, False),
+        ("vehicle_yield_occupied", "vehicle_yield", True, False),
     ),
 )
 def test_descriptors_evaluate_one_live_rulebook_transition(
@@ -142,6 +167,7 @@ def test_descriptors_evaluate_one_live_rulebook_transition(
             "store_map": False,
             "reactive_traffic": False,
             "no_light": False,
+            "filter_overlapping_car": False,
         }
     )
     try:
@@ -188,7 +214,11 @@ def test_descriptors_evaluate_one_live_rulebook_transition(
 
 
 @pytest.mark.parametrize(
-    "fixture_id", ("vehicle_pedestrian_collision", "vehicle_cyclist_collision")
+    "fixture_id",
+    (
+        "vehicle_pedestrian_collision",
+        "vehicle_cyclist_collision",
+    ),
 )
 def test_vru_collision_descriptors_produce_a_live_collision_onset(fixture_id: str) -> None:
     from metadrive.engine.core.collision_callback import collision_callback
@@ -211,6 +241,7 @@ def test_vru_collision_descriptors_produce_a_live_collision_onset(fixture_id: st
             "store_map": False,
             "reactive_traffic": False,
             "no_light": False,
+            "filter_overlapping_car": False,
         }
     )
     try:

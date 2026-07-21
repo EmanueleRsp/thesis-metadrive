@@ -164,8 +164,8 @@ def test_sb3_ppo_smoke_uses_diagnostic_rollout_override() -> None:
 def test_make_run_keeps_shared_pipeline_identical_across_sb3_algorithms() -> None:
     common_overrides = [
         "env=scenarionet",
-        "obs=semantic_v2",
-        "agent/planner/encoder=lq",
+        "obs=semantic_v3",
+        "agent/planner/encoder=lq_v3",
         "agent/planner/decoder=mlp_encoded",
         "reward=scalar_reward",
         "scalarization=default",

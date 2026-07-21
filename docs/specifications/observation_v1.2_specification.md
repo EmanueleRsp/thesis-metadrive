@@ -148,9 +148,11 @@ For each future route point, lane width MUST be taken from the lane containing
 that route point, not from the current ego lane.
 
 Adjacent-lane availability MUST be derived from verified local topology. If the
-source cannot determine an adjacent lane, its field MUST use the documented
-unknown/fail-closed representation; it MUST NOT silently report unavailable
-lanes as known zeros.
+source cannot determine an adjacent lane, both availability fields are `0.0`.
+For OBS-V1.2 this is the documented unknown/fail-closed representation: it
+means “do not assume an adjacent lane is usable”, not “the map established that
+no adjacent lane exists”. It MUST NOT silently report unavailable lanes as
+known zeros.
 
 Conflict zones and priorities are map-derived local semantic predictions. They
 MUST use only perceived dynamic tracks and the assigned ego route. Unknown or

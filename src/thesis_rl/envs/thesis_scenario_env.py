@@ -105,6 +105,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         self._acl_episode_selection: dict[str, Any] = {}
         self._rulebook_v2_requested = False
         self.rulebook_v2_adapter: Any | None = None
+        self._rulebook_v2_brake_mps2: float | None = None
 
     def setup_engine(self) -> None:
         """Install the thesis-owned source-bounded reactive traffic manager."""
@@ -315,7 +316,11 @@ class ThesisScenarioEnv(ScenarioEnv):
                 setter(builder)
         self._causal_semantic_builders = []
         if batch_setters:
-            from thesis_rl.envs.observations.causal_semantic import CausalSemanticBatchBuilder
+            from thesis_rl.envs.observations.causal_semantic import (
+                CausalSemanticBatchBuilder,
+                PerceptionBoundedSemanticBatchBuilder,
+            )
+            from thesis_rl.envs.observations.semantic_state_v3 import SemanticStateObservationV3
 
             static_result = self._build_static_adapter_result(scenario, record)
             # The live Rulebook cache may apply a source-to-simulator elevation
@@ -334,7 +339,12 @@ class ThesisScenarioEnv(ScenarioEnv):
                 if episode_cache is not None
                 else static_result.route_lanes
             )
-            semantic_builder = CausalSemanticBatchBuilder(
+            builder_type = (
+                PerceptionBoundedSemanticBatchBuilder
+                if any(isinstance(observation, SemanticStateObservationV3) for observation in observations.values())
+                else CausalSemanticBatchBuilder
+            )
+            builder_kwargs = dict(
                 route=route,
                 route_lanes=route_lanes,
                 context_provider=lambda: self.causal_scene_context,
@@ -346,6 +356,9 @@ class ThesisScenarioEnv(ScenarioEnv):
                 prediction_horizon_s=3.0,
                 vertical_tolerance_m=3.0,
             )
+            if builder_type is PerceptionBoundedSemanticBatchBuilder:
+                builder_kwargs["brake_mps2"] = self._rulebook_v2_brake_mps2
+            semantic_builder = builder_type(**builder_kwargs)
             self._causal_semantic_builders.append(semantic_builder)
             for setter in batch_setters:
                 setter(semantic_builder)
@@ -468,6 +481,9 @@ class ThesisScenarioEnv(ScenarioEnv):
         transition_config = RulebookTransitionConfig(
             rss_calibration=calibration,
             expected_config_hash="" if calibration is None else calibration.config_hash,
+        )
+        self._rulebook_v2_brake_mps2 = (
+            None if calibration is None else calibration.ego_min_brake_mps2
         )
         self.rulebook_v2_adapter = RulebookV2Adapter(
             snapshotter=snapshotter.capture,

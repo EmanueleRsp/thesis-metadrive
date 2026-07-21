@@ -6,7 +6,10 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from thesis_rl.contracts.observation_schema import SemanticObservationSchemaV11
+from thesis_rl.contracts.observation_schema import (
+    SemanticObservationSchemaV11,
+    SemanticObservationSchemaV12,
+)
 
 
 class CheckpointCompatibilityError(ValueError):
@@ -309,8 +312,12 @@ def build_checkpoint_manifest(
     """Build a manifest and infer the approved semantic schema identity."""
 
     normalized_type = str(observation_type)
-    if normalized_type == "semantic_v2":
-        schema = SemanticObservationSchemaV11()
+    if normalized_type in {"semantic_v2", "semantic_v3"}:
+        schema = (
+            SemanticObservationSchemaV11()
+            if normalized_type == "semantic_v2"
+            else SemanticObservationSchemaV12()
+        )
         schema_version = (
             schema.version if observation_schema_version is None else observation_schema_version
         )

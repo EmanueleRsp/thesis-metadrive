@@ -145,6 +145,22 @@ def test_build_sb3_specs_accepts_canonical_latent_query_encoder_alias() -> None:
     )
 
 
+def test_build_sb3_specs_accepts_perception_bounded_latent_query_encoder() -> None:
+    pytest.importorskip("stable_baselines3")
+
+    policy_spec, _algorithm_spec = build_sb3_specs_from_configs(
+        "td3_sb3",
+        {"policy": "MlpPolicy", "policy_kwargs": {}},
+        encoder_cfg={"type": "latent_query_v3", "output_dim": 256},
+        decoder_cfg={"name": "td3_sb3", "type": "mlp"},
+        obs_cfg={"type": "semantic_v3"},
+    )
+
+    assert policy_spec.policy_kwargs["features_extractor_kwargs"]["cfg_encoder"]["type"] == (
+        "latent_query_v3"
+    )
+
+
 def test_build_sb3_specs_from_configs_builds_ppo_decoder_arch_for_both_heads() -> None:
     policy_spec, _algorithm_spec = build_sb3_specs_from_configs(
         "ppo_sb3",

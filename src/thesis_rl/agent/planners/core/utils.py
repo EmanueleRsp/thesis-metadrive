@@ -10,7 +10,10 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 
 from thesis_rl.agent.planners.encoders.factory import build_encoder
-from thesis_rl.contracts.observation_schema import SemanticObservationSchemaV11
+from thesis_rl.contracts.observation_schema import (
+    SemanticObservationSchemaV11,
+    SemanticObservationSchemaV12,
+)
 
 
 def to_plain_dict(cfg: Any) -> dict[str, Any]:
@@ -86,10 +89,11 @@ def build_encoder_for_env(cfg_encoder: Any, cfg_obs: Any, obs_dim: int):
     enc_cfg = to_plain_dict(cfg_encoder)
     enc_type = str(enc_cfg.get("type", "none")).lower()
     obs_cfg = to_plain_dict(cfg_obs)
+    observation_type = str(obs_cfg.get("type", "")).lower()
     observation_schema = (
         SemanticObservationSchemaV11()
-        if str(obs_cfg.get("type", "")).lower() in {"semantic", "semantic_state", "semantic_v2"}
-        else None
+        if observation_type in {"semantic", "semantic_state", "semantic_v2"}
+        else SemanticObservationSchemaV12() if observation_type == "semantic_v3" else None
     )
     if enc_type == "none":
         enc_cfg["output_dim"] = obs_dim

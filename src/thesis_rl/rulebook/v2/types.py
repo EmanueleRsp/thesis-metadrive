@@ -203,6 +203,19 @@ class MovementPriorityRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RoundaboutPriorityRecord:
+    """Validated entry/circulating lane relation for one roundabout component.
+
+    The record is source-bound metadata: topology alone must never infer a
+    roundabout priority relation.
+    """
+
+    component_id: str
+    entry_lane_id: str
+    circulating_lane_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class ConflictZoneRecord:
     zone_id: str
     polygon: BaseGeometry
@@ -296,6 +309,7 @@ class EpisodeCache:
     )
     traffic_control_catalog: tuple[TrafficControlRecord, ...] = ()
     movement_priority_records: tuple[MovementPriorityRecord, ...] = ()
+    roundabout_priority_records: tuple[RoundaboutPriorityRecord, ...] = ()
     route_lanes: tuple["RouteLaneRecord", ...] = ()
     route_polyline: "RoutePolyline | None" = None
 

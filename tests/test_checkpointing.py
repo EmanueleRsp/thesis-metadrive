@@ -12,6 +12,7 @@ from thesis_rl.contracts.checkpoint_manifest import (
     CheckpointCompatibilityError,
     build_checkpoint_manifest,
 )
+from thesis_rl.contracts.observation_schema import SemanticObservationSchemaV12
 from thesis_rl.sb3_extensions.checkpointing import (
     LATEST_FILENAME,
     load_checkpoint_generation,
@@ -36,6 +37,28 @@ def _manifest(*, observation_type: str = "semantic_v2", flat_dim: int = 2541):
         git_commit="project-commit",
         seed=42,
     )
+
+
+def test_checkpoint_manifest_infers_v12_identity_for_semantic_v3() -> None:
+    manifest = build_checkpoint_manifest(
+        observation_type="semantic_v3",
+        flat_dim=3064,
+        raw_token_count=143,
+        encoder_type="latent_query_v3",
+        encoder_config={"output_dim": 256, "depth": 4},
+        features_dim=256,
+        share_features_extractor=False,
+        ppo_ortho_init=None,
+        algorithm="td3_sb3",
+        sb3_version="test",
+        sb3_commit="test",
+        git_commit="test",
+        seed=7,
+    )
+
+    assert manifest.observation_schema_version == "1.2-perception-bounded"
+    assert manifest.flat_dim == 3064
+    assert manifest.raw_token_count == 143
 
 
 def _save_model(path: Path) -> None:
@@ -105,6 +128,34 @@ def test_checkpoint_compatibility_rejects_scalarization_identity_change() -> Non
         from thesis_rl.contracts.checkpoint_manifest import assert_checkpoint_compatible
 
         assert_checkpoint_compatible(manifest, changed)
+
+
+def test_semantic_v3_manifest_uses_v12_schema_identity_and_rejects_v2() -> None:
+    v3 = build_checkpoint_manifest(
+        observation_type="semantic_v3",
+        flat_dim=3064,
+        raw_token_count=143,
+        encoder_type="latent_query_v3",
+        encoder_config={"output_dim": 256, "depth": 4},
+        encoder_architecture_version="1.1-perception-bounded",
+        features_dim=256,
+        share_features_extractor=False,
+        ppo_ortho_init=None,
+        algorithm="td3_sb3",
+        sb3_version="2.9.0",
+        sb3_commit="sb3-commit",
+        git_commit="project-commit",
+        seed=42,
+    )
+    v2 = _manifest()
+
+    assert v3.observation_schema_version == SemanticObservationSchemaV12.version
+    assert v3.observation_schema_fingerprint == SemanticObservationSchemaV12().fingerprint_sha256()
+    assert v3.raw_token_count == 143
+    with pytest.raises(CheckpointCompatibilityError, match="observation_schema_version"):
+        from thesis_rl.contracts.checkpoint_manifest import assert_checkpoint_compatible
+
+        assert_checkpoint_compatible(v2, v3)
 
 
 def test_stale_or_torn_latest_pointer_is_rejected(tmp_path: Path) -> None:

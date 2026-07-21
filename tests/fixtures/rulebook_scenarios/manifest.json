@@ -1,69 +1,175 @@
 {
   "fixtures": [
     {
+      "components": [
+        "signal",
+        "progress"
+      ],
       "file": "red_light.pkl",
       "id": "red_light",
       "scenario_id": "rb_syn_red_light_v1",
       "target_transition": 1
     },
     {
+      "components": [
+        "signal"
+      ],
       "file": "yellow_light.pkl",
       "id": "yellow_light",
       "scenario_id": "rb_syn_yellow_light_v1",
       "target_transition": 1
     },
     {
+      "components": [
+        "signal"
+      ],
+      "file": "unknown_signal.pkl",
+      "id": "unknown_signal",
+      "scenario_id": "rb_syn_unknown_signal_v1",
+      "target_transition": 1
+    },
+    {
+      "components": [
+        "crosswalk",
+        "ttc",
+        "clearance"
+      ],
       "file": "crosswalk_pedestrian.pkl",
       "id": "crosswalk_pedestrian",
       "scenario_id": "rb_syn_crosswalk_pedestrian_v1",
       "target_transition": 1
     },
     {
+      "components": [
+        "collision",
+        "ttc",
+        "clearance"
+      ],
       "file": "vehicle_pedestrian_collision.pkl",
       "id": "vehicle_pedestrian_collision",
       "scenario_id": "rb_syn_vehicle_pedestrian_collision_v1",
       "target_transition": 1
     },
     {
+      "components": [
+        "collision",
+        "ttc",
+        "clearance"
+      ],
       "file": "vehicle_cyclist_collision.pkl",
       "id": "vehicle_cyclist_collision",
       "scenario_id": "rb_syn_vehicle_cyclist_collision_v1",
       "target_transition": 1
     },
     {
+      "components": [
+        "collision"
+      ],
+      "file": "vehicle_vehicle_collision.pkl",
+      "id": "vehicle_vehicle_collision",
+      "scenario_id": "rb_syn_vehicle_vehicle_collision_v1",
+      "target_transition": 1
+    },
+    {
+      "components": [
+        "rss",
+        "ttc",
+        "clearance"
+      ],
       "file": "rss_front_vehicle.pkl",
       "id": "rss_front_vehicle",
       "scenario_id": "rb_syn_rss_front_vehicle_v1",
       "target_transition": 1
     },
     {
+      "components": [
+        "rss"
+      ],
+      "file": "rss_rear_vehicle.pkl",
+      "id": "rss_rear_vehicle",
+      "scenario_id": "rb_syn_rss_rear_vehicle_v1",
+      "target_transition": 1
+    },
+    {
+      "components": [
+        "stop"
+      ],
       "file": "stop_sign.pkl",
       "id": "stop_sign",
       "scenario_id": "rb_syn_stop_sign_v1",
       "target_transition": 1
     },
     {
+      "components": [
+        "wrongway",
+        "progress"
+      ],
       "file": "wrong_way.pkl",
       "id": "wrong_way",
       "scenario_id": "rb_syn_wrong_way_v1",
       "target_transition": 1
     },
     {
+      "components": [
+        "offroad"
+      ],
       "file": "offroad.pkl",
       "id": "offroad",
       "scenario_id": "rb_syn_offroad_v1",
       "target_transition": 1
     },
     {
+      "components": [
+        "solid_line"
+      ],
       "file": "solid_line.pkl",
       "id": "solid_line",
       "scenario_id": "rb_syn_solid_line_v1",
       "target_transition": 1
     },
     {
+      "components": [
+        "dashed_line"
+      ],
       "file": "dashed_line.pkl",
       "id": "dashed_line",
       "scenario_id": "rb_syn_dashed_line_v1",
+      "target_transition": 1
+    },
+    {
+      "components": [
+        "vehicle_yield"
+      ],
+      "file": "vehicle_yield_pairwise.pkl",
+      "id": "vehicle_yield_pairwise",
+      "scenario_id": "rb_syn_vehicle_yield_pairwise_v1",
+      "target_transition": 1
+    },
+    {
+      "components": [
+        "vehicle_yield"
+      ],
+      "file": "vehicle_yield_stop.pkl",
+      "id": "vehicle_yield_stop",
+      "scenario_id": "rb_syn_vehicle_yield_stop_v1",
+      "target_transition": 1
+    },
+    {
+      "components": [
+        "vehicle_yield"
+      ],
+      "file": "vehicle_yield_roundabout.pkl",
+      "id": "vehicle_yield_roundabout",
+      "scenario_id": "rb_syn_vehicle_yield_roundabout_v1",
+      "target_transition": 1
+    },
+    {
+      "components": [
+        "vehicle_yield"
+      ],
+      "file": "vehicle_yield_occupied.pkl",
+      "id": "vehicle_yield_occupied",
+      "scenario_id": "rb_syn_vehicle_yield_occupied_v1",
       "target_transition": 1
     }
   ],
