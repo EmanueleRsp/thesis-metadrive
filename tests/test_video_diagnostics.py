@@ -91,3 +91,14 @@ def test_reward_state_accumulates_selected_reward_only() -> None:
         state.update(reward)
     assert state.step == 3
     assert state.cumulative_reward == 1.0
+
+
+def test_geometry_extraction_skips_vector_env_proxy_boundary() -> None:
+    from thesis_rl.runtime.io.video_diagnostics import diagnostic_geometry
+
+    class VectorEnvSlotProxy:
+        unwrapped = None
+
+    proxy = VectorEnvSlotProxy()
+    proxy.unwrapped = proxy
+    assert diagnostic_geometry(proxy, {}) == {}

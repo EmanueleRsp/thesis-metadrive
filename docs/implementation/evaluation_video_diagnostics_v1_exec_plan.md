@@ -207,6 +207,7 @@ make smoke
 | 2026-07-21 | Route/actor geometry is available only in environment-specific forms. | wrapper `ego_state`, `neighbors`, Rulebook cache | use optional geometry adapter and safe omission |
 | 2026-07-21 | Implemented shared panel and optional exact route/target/actor overlays. | Focused suite `14 passed`; Ruff format/lint passed | final reconciliation; smoke remains unverified |
 | 2026-07-21 | End-to-end smoke built and completed its first 1,000-step chunk, then made no observable progress in the second chunk. | `make smoke` interrupted with exit 130 after read-only `docker top`/logs checks | report smoke as not verified; retain focused evidence |
+| 2026-07-21 | Parallel final evaluation attempted to pickle MetaDrive `top_down_renderer` through `VectorEnvSlotProxy` while extracting optional geometry. | Attached traceback: worker `get_attr` failed on `edge_lane` pickling; panel frame transport itself was unaffected | skip world-geometry extraction across the parent proxy boundary; retain panel and worker-rendered frame |
 
 ## 12. Deviations
 

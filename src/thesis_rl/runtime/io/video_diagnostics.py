@@ -170,6 +170,13 @@ def diagnostic_geometry(env: Any, step_info: Any) -> dict[str, Any]:
 
     info = step_info if isinstance(step_info, Mapping) else {}
     base = getattr(env, "unwrapped", env)
+    # Parallel evaluation records frames in the parent process through a
+    # VectorEnvSlotProxy. Its __getattr__ forwards values over a pipe; asking
+    # for the live TopDownRenderer would therefore try to pickle a MetaDrive
+    # lane object. The worker has already rendered the frame, so retain the
+    # panel and omit optional world overlays in this process boundary.
+    if type(base).__name__ == "VectorEnvSlotProxy":
+        return {}
     renderer = getattr(base, "top_down_renderer", None)
     canvas = getattr(renderer, "_frame_canvas", None)
     screen = getattr(renderer, "_screen_canvas", None)
