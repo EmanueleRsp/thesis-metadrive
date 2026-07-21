@@ -70,6 +70,11 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         self.beta_progress_env_steps = 0
         self.rng = np.random.default_rng(seed)
         self.raw_priorities = np.zeros((self.buffer_size, self.n_envs), dtype=np.float64)
+        # The specification assigns an unseen transition the exact current raw
+        # maximum (or 1.0 for an empty buffer).  Tracking its multiplicity avoids
+        # scanning the entire allocation at every vector insertion.
+        self._current_max_raw_priority = 1.0
+        self._current_max_count = 0
         self._tree = _SumTree(self.buffer_size * self.n_envs)
         if not (0.0 <= self.alpha <= 1.0):
             raise ValueError("PER alpha must be in [0, 1].")
@@ -92,13 +97,38 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         value = float(raw_priority)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("PER raw priority must be finite and positive.")
-        self.raw_priorities.flat[int(flat_index)] = value
-        self._tree.set(int(flat_index), value**self.alpha)
+        index = int(flat_index)
+        previous = float(self.raw_priorities.flat[index])
+        self.raw_priorities.flat[index] = value
+        self._update_current_max(previous, value)
+        self._tree.set(index, value**self.alpha)
+
+    def _update_current_max(self, previous: float, value: float) -> None:
+        if value > self._current_max_raw_priority:
+            self._current_max_raw_priority = value
+            self._current_max_count = 1
+            return
+        if value == self._current_max_raw_priority:
+            if previous != self._current_max_raw_priority:
+                self._current_max_count += 1
+            return
+        if previous != self._current_max_raw_priority:
+            return
+        self._current_max_count -= 1
+        if self._current_max_count > 0:
+            return
+        self._current_max_raw_priority = float(np.max(self.raw_priorities))
+        self._current_max_count = int(
+            np.count_nonzero(self.raw_priorities == self._current_max_raw_priority)
+        )
+
+    def _insertion_priority(self) -> float:
+        return self._current_max_raw_priority if self._current_max_count > 0 else 1.0
 
     def add(self, *args: Any, **kwargs: Any) -> None:
         storage_index = int(self.pos)
         super().add(*args, **kwargs)
-        maximum = float(np.max(self.raw_priorities)) if np.any(self.raw_priorities > 0.0) else 1.0
+        maximum = self._insertion_priority()
         for env_index in range(self.n_envs):
             self._set_raw_priority(storage_index * self.n_envs + env_index, maximum)
 

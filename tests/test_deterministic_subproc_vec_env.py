@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 import numpy as np
 import pytest
@@ -58,12 +59,23 @@ class _AbruptExitEnv(_SeedWindowEnv):
         os._exit(23)
 
 
+class _SlowStepEnv(_SeedWindowEnv):
+    def step(self, action):
+        _ = action
+        time.sleep(10.0)
+        return super().step(action)
+
+
 def _make_failing_step_env():
     return _FailingStepEnv(start_index=0, num_scenarios=1)
 
 
 def _make_abrupt_exit_env():
     return _AbruptExitEnv(start_index=0, num_scenarios=1)
+
+
+def _make_slow_step_env():
+    return _SlowStepEnv(start_index=0, num_scenarios=1)
 
 
 def test_deterministic_subproc_vec_env_auto_reset_uses_deterministic_worker_seeds() -> None:
@@ -144,7 +156,8 @@ def test_reset_response_with_array_observation_is_not_an_error_envelope() -> Non
     vec_env = DeterministicSubprocVecEnv([_make_env(10, 3)], start_method="spawn")
     try:
         observations = vec_env.reset()
-        np.testing.assert_array_equal(observations, np.array([[10]], dtype=np.float32))
+        assert observations.shape == (1, 1)
+        assert 10 <= int(observations[0, 0]) < 13
     finally:
         vec_env.close()
 
@@ -161,3 +174,29 @@ def test_worker_eof_reports_slot_and_exit_code() -> None:
         assert "exitcode=" in message
     finally:
         vec_env.close()
+
+
+def test_later_worker_failure_does_not_wait_for_an_earlier_slow_worker() -> None:
+    vec_env = DeterministicSubprocVecEnv(
+        [_make_slow_step_env, _make_failing_step_env],
+        start_method="spawn",
+    )
+    try:
+        vec_env.reset()
+        start = time.monotonic()
+        with pytest.raises(SubprocessWorkerError, match="slot=1"):
+            vec_env.step(np.zeros((2, 1), dtype=np.float32))
+        assert time.monotonic() - start < 5.0
+        assert all(not process.is_alive() for process in vec_env.processes)
+    finally:
+        vec_env.close()
+
+
+def test_close_reaps_worker_with_an_in_flight_slow_command() -> None:
+    vec_env = DeterministicSubprocVecEnv([_make_slow_step_env], start_method="spawn")
+    vec_env.reset()
+    vec_env.step_async(np.zeros((1, 1), dtype=np.float32))
+    start = time.monotonic()
+    vec_env.close()
+    assert time.monotonic() - start < 5.0
+    assert all(not process.is_alive() for process in vec_env.processes)

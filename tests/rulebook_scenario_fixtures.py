@@ -113,6 +113,20 @@ def red_light_scenario() -> dict[str, Any]:
     return scenario
 
 
+def yellow_light_scenario() -> dict[str, Any]:
+    """A green-to-yellow transition for frozen signal-obligation coverage."""
+
+    scenario = red_light_scenario()
+    scenario["id"] = "rb_syn_yellow_light_v1"
+    scenario["metadata"]["scenario_id"] = scenario["id"]
+    scenario["dynamic_map_states"]["lane-ego"]["state"] = {
+        "object_state": np.asarray(
+            ["LANE_STATE_GO", "LANE_STATE_CAUTION", "LANE_STATE_CAUTION", "LANE_STATE_STOP"]
+        )
+    }
+    return scenario
+
+
 def crosswalk_pedestrian_scenario() -> dict[str, Any]:
     """Ego and one live pedestrian approach a route-intersecting crosswalk."""
 
@@ -155,13 +169,115 @@ def vehicle_pedestrian_collision_scenario() -> dict[str, Any]:
     return scenario
 
 
+def vehicle_cyclist_collision_scenario() -> dict[str, Any]:
+    """A pre-state separated cyclist crosses into the ego path."""
+
+    scenario = vehicle_pedestrian_collision_scenario()
+    scenario["id"] = "rb_syn_vehicle_cyclist_collision_v1"
+    scenario["metadata"]["scenario_id"] = scenario["id"]
+    pedestrian = scenario["tracks"].pop("pedestrian")
+    pedestrian["type"] = "CYCLIST"
+    pedestrian["metadata"] = {"type": "CYCLIST", "object_id": "cyclist"}
+    pedestrian["state"]["length"] = np.full(4, 1.8, dtype=np.float32)
+    pedestrian["state"]["width"] = np.full(4, 0.6, dtype=np.float32)
+    scenario["tracks"]["cyclist"] = pedestrian
+    return scenario
+
+
+def rss_front_vehicle_scenario() -> dict[str, Any]:
+    """Ego and a slower front vehicle share one canonical route lane."""
+
+    scenario = _base_scenario(
+        scenario_id="rb_syn_rss_front_vehicle_v1",
+        ego_positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0), (3.0, 0.0, 0.0)),
+    )
+    scenario["tracks"]["front-vehicle"] = _track(
+        object_id="front-vehicle",
+        object_type="VEHICLE",
+        positions=((12.0, 0.0, 0.0), (12.2, 0.0, 0.0), (12.4, 0.0, 0.0), (12.6, 0.0, 0.0)),
+    )
+    return scenario
+
+
+def stop_sign_scenario() -> dict[str, Any]:
+    """A route-associated stop sign with geometry sufficient for a canonical line."""
+
+    scenario = _base_scenario(
+        scenario_id="rb_syn_stop_sign_v1",
+        ego_positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0), (3.0, 0.0, 0.0)),
+    )
+    scenario["map_features"]["stop-main"] = {
+        "type": "STOP_SIGN",
+        "position": np.asarray((10.0, 0.0, 0.0), dtype=np.float32),
+        "lane": ("lane-ego",),
+    }
+    return scenario
+
+
+def wrong_way_scenario() -> dict[str, Any]:
+    """A reversed ego route reference for the R3 wrong-way applicability path."""
+
+    scenario = _base_scenario(
+        scenario_id="rb_syn_wrong_way_v1",
+        ego_positions=((3.0, 0.0, 0.0), (2.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    )
+    scenario["tracks"]["ego"] = _track(
+        object_id="ego",
+        object_type="VEHICLE",
+        positions=((3.0, 0.0, 0.0), (2.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        heading_rad=np.pi,
+    )
+    return scenario
+
+
+def offroad_scenario() -> dict[str, Any]:
+    """Ego starts outside the only route-lane drivable polygon."""
+
+    return _base_scenario(
+        scenario_id="rb_syn_offroad_v1",
+        ego_positions=((1.0, 5.0, 0.0), (2.0, 5.0, 0.0), (3.0, 5.0, 0.0), (4.0, 5.0, 0.0)),
+    )
+
+
+def solid_line_scenario() -> dict[str, Any]:
+    """A solid centre marking intersecting the ego's canonical footprint."""
+
+    scenario = _base_scenario(
+        scenario_id="rb_syn_solid_line_v1",
+        ego_positions=((1.0, 0.0, 0.0), (2.0, 0.0, 0.0), (3.0, 0.0, 0.0), (4.0, 0.0, 0.0)),
+    )
+    scenario["map_features"]["solid-centre"] = {
+        "type": "ROAD_LINE_SOLID_SINGLE_WHITE",
+        "polyline": _array_rows(((0.0, 0.0, 0.0), (50.0, 0.0, 0.0))),
+    }
+    return scenario
+
+
+def dashed_line_scenario() -> dict[str, Any]:
+    """A dashed marking retained across live transitions for timer coverage."""
+
+    scenario = solid_line_scenario()
+    scenario["id"] = "rb_syn_dashed_line_v1"
+    scenario["metadata"]["scenario_id"] = scenario["id"]
+    scenario["map_features"]["solid-centre"]["type"] = "ROAD_LINE_BROKEN_SINGLE_WHITE"
+    return scenario
+
+
 def build_scenarios() -> dict[str, dict[str, Any]]:
     """Return fresh fixture mappings so callers cannot share mutable arrays."""
 
     return {
         "red_light": red_light_scenario(),
+        "yellow_light": yellow_light_scenario(),
         "crosswalk_pedestrian": crosswalk_pedestrian_scenario(),
         "vehicle_pedestrian_collision": vehicle_pedestrian_collision_scenario(),
+        "vehicle_cyclist_collision": vehicle_cyclist_collision_scenario(),
+        "rss_front_vehicle": rss_front_vehicle_scenario(),
+        "stop_sign": stop_sign_scenario(),
+        "wrong_way": wrong_way_scenario(),
+        "offroad": offroad_scenario(),
+        "solid_line": solid_line_scenario(),
+        "dashed_line": dashed_line_scenario(),
     }
 
 

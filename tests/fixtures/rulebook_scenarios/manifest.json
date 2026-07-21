@@ -7,6 +7,12 @@
       "target_transition": 1
     },
     {
+      "file": "yellow_light.pkl",
+      "id": "yellow_light",
+      "scenario_id": "rb_syn_yellow_light_v1",
+      "target_transition": 1
+    },
+    {
       "file": "crosswalk_pedestrian.pkl",
       "id": "crosswalk_pedestrian",
       "scenario_id": "rb_syn_crosswalk_pedestrian_v1",
@@ -16,6 +22,48 @@
       "file": "vehicle_pedestrian_collision.pkl",
       "id": "vehicle_pedestrian_collision",
       "scenario_id": "rb_syn_vehicle_pedestrian_collision_v1",
+      "target_transition": 1
+    },
+    {
+      "file": "vehicle_cyclist_collision.pkl",
+      "id": "vehicle_cyclist_collision",
+      "scenario_id": "rb_syn_vehicle_cyclist_collision_v1",
+      "target_transition": 1
+    },
+    {
+      "file": "rss_front_vehicle.pkl",
+      "id": "rss_front_vehicle",
+      "scenario_id": "rb_syn_rss_front_vehicle_v1",
+      "target_transition": 1
+    },
+    {
+      "file": "stop_sign.pkl",
+      "id": "stop_sign",
+      "scenario_id": "rb_syn_stop_sign_v1",
+      "target_transition": 1
+    },
+    {
+      "file": "wrong_way.pkl",
+      "id": "wrong_way",
+      "scenario_id": "rb_syn_wrong_way_v1",
+      "target_transition": 1
+    },
+    {
+      "file": "offroad.pkl",
+      "id": "offroad",
+      "scenario_id": "rb_syn_offroad_v1",
+      "target_transition": 1
+    },
+    {
+      "file": "solid_line.pkl",
+      "id": "solid_line",
+      "scenario_id": "rb_syn_solid_line_v1",
+      "target_transition": 1
+    },
+    {
+      "file": "dashed_line.pkl",
+      "id": "dashed_line",
+      "scenario_id": "rb_syn_dashed_line_v1",
       "target_transition": 1
     }
   ],

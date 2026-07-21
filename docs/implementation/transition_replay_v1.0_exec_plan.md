@@ -9,7 +9,7 @@
 - Specification authority: `APPROVED`; `Authoritative: YES`
 - Plan status: `IN_PROGRESS`
 - Created: 2026-07-17
-- Last updated: 2026-07-17
+- Last updated: 2026-07-21
 - Branch: `scenarionet-implementation`
 - Related ADRs: `docs/decisions/ADR-011-rulebook-scalarization-v1.md`
 - Related specifications: `docs/specifications/rulebook_v4.7_specification.md`, `docs/specifications/rulebook_scalarization_v1.0_specification.md`, `docs/specifications/observation_v1.1_specification.md`, `docs/specifications/encoder_v1.0_specification.md`, `docs/specifications/automatic_curriculum_learning_v1_specification.md`
@@ -281,6 +281,23 @@ is provisioned.
 - [ ] M8 — Reconcile every requirement/criterion, update index status, and review final diff.
 
 ## 11. Progress And Findings Log
+
+### 2026-07-21 — PER insertion-maximum performance regression
+
+- A performance inspection of live vectorized SAC/TD3 runs verified that
+  `PrioritizedNStepReplayBuffer.add()` performs both `np.any` and `np.max` over
+  the complete `raw_priorities` allocation for every vector insertion. This is
+  avoidable work and is especially material for multi-million-address buffers.
+- User explicitly approved a semantics-preserving optimization. The approved
+  contract requires the exact current maximum raw priority for new transitions
+  (REQ-013 / AC-016); it does not require a full-array scan on every insertion.
+- Planned implementation: retain an exact maximum value and its multiplicity.
+  Update both with every leaf replacement and rescan only if replacement removes
+  the last leaf at the maximum. This preserves ring-overwrite, duplicate-max,
+  and vectorized-address semantics while avoiding the unconditional scans.
+- Mandatory regression: after a sequence of inserts, priority updates, and
+  overwrites, the tracked maximum must equal the reference maximum computed
+  from `raw_priorities`, and newly inserted leaves must receive it.
 
 ### 2026-07-17 — Approval and handoff
 

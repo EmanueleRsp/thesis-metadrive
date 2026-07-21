@@ -87,7 +87,7 @@ Planned commands: focused pytest for the fixture test file; focused Ruff lint an
 
 - [x] M1 — inspect source-adapter boundary and select test-only fixture API. `ScenarioOnlineEnv` loads descriptors in memory; the existing Waymo static adapter provides schema-compatible static normalization without a runtime source-policy change.
 - [ ] M2 — implement and persist descriptors plus manifest; run schema and headless smoke checks. The initial three descriptors, generated manifest, schema validation, static normalization, and one real `ScenarioOnlineEnv` reset/step are implemented; live Rulebook-v4.7 transition assertions remain.
-- [ ] M3 — connect Rulebook v4.7 and establish formula-backed expected outcomes; resolve `DEC-003` if needed. The red-light descriptor now captures live pre/post snapshots, normalizes static geometry, and evaluates a complete v4.7 transition with the mandated calibrated-braking input. Formula-specific outcome assertions and remaining families are pending.
+- [ ] M3 — connect Rulebook v4.7 and establish formula-backed expected outcomes; resolve `DEC-003` if needed. All initial descriptors now capture live pre/post snapshots, normalize static geometry, and evaluate a complete v4.7 transition with the mandated calibrated-braking input. The crosswalk/pedestrian case is applicable and has a positive deterministic cost; formula-specific oracle values and remaining families are pending.
 - [ ] M4 — run regressions/quality checks, review diff, and reconcile this plan.
 
 ### Planned full-suite coverage after the feasibility spike
@@ -126,6 +126,13 @@ for—the live descriptor cases.
 - 2026-07-21: mapped the complete post-spike scenario families to the mandatory Rulebook v4.7 matrix (§§15.0–15.11). Unit-level conformance remains necessary for numerical and transactional fault paths that cannot be causally isolated in a live simulator rollout.
 - 2026-07-21: implemented the initial three persistent descriptors and their generator. `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` passed (5 tests): schema, static normalization, generation/reload, checked-in consistency, and headless reset/step. MetaDrive requires lane polygons in XY and accesses `metadata.dataset`; both are generator invariants.
 - 2026-07-21: completed the first live Rulebook transition integration: a fixed-red synthetic descriptor is loaded by `ScenarioOnlineEnv`, captured by the production live snapshot adapters, evaluated with the production transition factory, and returns a complete evaluable signal component. The test uses a local explicit `RSSCalibrationArtifact` because the approved signal formula requires calibrated braking; it does not create or alter a calibration artifact.
+- 2026-07-21: extended live loading and Rulebook-transition coverage to all initial descriptors. The crosswalk/pedestrian transition is applicable and yields a strictly positive crosswalk cost; the collision descriptor currently verifies the no-onset baseline before physical contact-specific scenarios are added.
+- 2026-07-21: installed the production MetaDrive collision callback recorder in the synthetic vehicle/pedestrian fixture. Over a live rollout, its onset records produce a strictly positive R1 collision cost through the production transition evaluator. The test advances cache and memory transactionally between steps and does not teleport either actor.
+- 2026-07-21: added and persisted `rss_front_vehicle`, a same-lane slower front-vehicle descriptor. Its live Rulebook transition makes RSS, TTC, and clearance applicable, providing the first integrated R2 family fixture.
+- 2026-07-21: added and persisted `stop_sign` and `wrong_way`. The stop feature is converted by the static adapter into the canonical Rulebook control line and is applicable in a live transition; the reversed-reference fixture makes the `wrongway` component applicable. The existing red-light route also validates the live R4 progress component.
+- 2026-07-21: added and persisted `offroad`, whose ego reference is outside the only canonical route-lane polygon. Its live R3 `offroad` component is applicable with a positive geometric cost, independently of native MetaDrive flags.
+- 2026-07-21: added and persisted `vehicle_cyclist_collision`, derived from the initially separated pedestrian collision geometry but with the live actor typed as `CYCLIST`. The production contact recorder and R1 evaluator report a positive live onset for both VRU classes.
+- 2026-07-21: added and persisted `solid_line` and `dashed_line`. The solid marking intersects the ego canonical footprint and produces positive live R3 cost; the dashed marking is live-evaluable for the timer lifecycle without treating a sub-threshold dwell as a violation.
 
 ## 12. Deviations
 
@@ -148,6 +155,13 @@ No deviations identified.
 | `git status --short` | PASS | 2026-07-21 | Existing unrelated changes found and will be preserved. |
 | `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 5 passed. |
 | `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 6 passed after the live Rulebook transition test was added. |
+| `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 10 passed after all initial descriptors received live loading and transition coverage. |
+| `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 11 passed after live R1 pedestrian-collision onset coverage. |
+| `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 15 passed after the R2 front-vehicle descriptor and component checks. |
+| `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 20 passed after R3 stop/wrong-way and R4 progress live-component coverage. |
+| `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 22 passed after R3 geometric off-road coverage. |
+| `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 26 passed after yellow-signal and cyclist-collision descriptors. |
+| `PYTHONPATH=src pytest -q tests/test_rulebook_synthetic_scenarios.py` | PASS | 2026-07-21 | 30 passed after solid/dashed road-marking descriptors. |
 | `make format-check PYTHON_QUALITY_PATHS="tests/rulebook_scenario_fixtures.py tests/generate_rulebook_scenarios.py tests/test_rulebook_synthetic_scenarios.py"` | PASS | 2026-07-21 | 3 files already formatted. |
 | `make lint PYTHON_QUALITY_PATHS="tests/rulebook_scenario_fixtures.py tests/generate_rulebook_scenarios.py tests/test_rulebook_synthetic_scenarios.py"` | PASS | 2026-07-21 | Ruff reported all checks passed. |
 | `git diff --check` | PASS | 2026-07-21 | No whitespace errors. |
