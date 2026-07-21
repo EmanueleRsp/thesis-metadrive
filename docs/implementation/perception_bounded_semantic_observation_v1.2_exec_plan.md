@@ -504,6 +504,13 @@ correctly exposed the missing SB3 bridge allow-list entry for `latent_query_v3`;
 after that regression fix, `tests/test_sb3_extensions.py`, v1.1 encoder and
 checkpoint tests passed (`25 passed in 2.71s`) and focused Ruff passed.
 
+Runtime regression completed on 2026-07-22 after ScenarioNet exposed a
+repaired `MultiPolygon` conflict-zone geometry. `_vertical_overlap_compatible`
+now samples every polygonal component instead of assuming `.exterior` exists
+on the top-level geometry. The focused Rulebook geometry suite passed (`26
+passed in 0.18s`), and the 32-step semantic-v3/LQ-v3 smoke completed without
+the worker exception.
+
 ## 14. Final reconciliation checklist
 
 - [x] User approval recorded in ADR-022.

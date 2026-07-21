@@ -25,6 +25,7 @@ from thesis_rl.rulebook.v2.geometry.conflict_zones import (
     attach_route_intervals,
     build_crosswalk_conflict_zone_candidates,
     build_vehicle_conflict_zone_candidates,
+    _vertical_overlap_compatible,
     select_first_ahead_or_occupied_zone,
 )
 from thesis_rl.rulebook.v2.geometry.footprint import (
@@ -310,6 +311,16 @@ def test_conflict_zone_candidates_are_wkb_ordered_stable_and_vertical_filtered()
     assert not build_vehicle_conflict_zone_candidates(
         scenario_id="scenario", ego_corridor=ego, other_corridor=elevated_other
     )
+
+
+def test_vertical_overlap_accepts_repaired_multipolygon() -> None:
+    geometry = shapely.MultiPolygon(
+        (
+            Polygon(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+            Polygon(((2.0, 0.0), (3.0, 0.0), (3.0, 1.0), (2.0, 1.0))),
+        )
+    )
+    assert _vertical_overlap_compatible(geometry, lambda _x, _y: 0.0, lambda _x, _y: 0.0)
 
 
 def test_conflict_zone_selection_prefers_occupied_then_first_ahead_along_route() -> None:

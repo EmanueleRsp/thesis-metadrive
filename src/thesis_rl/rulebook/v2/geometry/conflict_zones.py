@@ -86,10 +86,18 @@ def _vertical_overlap_compatible(
     first_elevation: ElevationAtXY,
     second_elevation: ElevationAtXY,
 ) -> bool:
-    vertices = [Point(xy) for xy in polygon.exterior.coords[:-1]]
-    for interior in polygon.interiors:
-        vertices.extend(Point(xy) for xy in interior.coords[:-1])
-    points = [polygon.representative_point(), *vertices]
+    # Geometry repair/canonicalization can legitimately return a MultiPolygon
+    # even when the original corridor intersection was a single polygon.  Do
+    # not assume a scalar ``.exterior`` here: sample every polygonal component
+    # (including holes) for the vertical compatibility check.
+    points: list[Point] = []
+    for component in _polygonal_components(polygon):
+        points.append(component.representative_point())
+        points.extend(Point(xy) for xy in component.exterior.coords[:-1])
+        for interior in component.interiors:
+            points.extend(Point(xy) for xy in interior.coords[:-1])
+    if not points:
+        return False
     return all(
         vertically_compatible_at_xy(
             first_elevation_at_xy=first_elevation,

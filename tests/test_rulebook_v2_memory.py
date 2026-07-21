@@ -71,6 +71,27 @@ def test_cache_merge_and_apply_reject_conflicting_geometry_without_mutation() ->
         merge_cache_deltas((delta, CacheDelta((_zone("zone-a", 2.0),))))
 
 
+def test_cache_accepts_equivalent_geometry_from_a_distinct_shapely_object() -> None:
+    route = TaskRouteRecord("scenario", ("lane",), "pg", "adapter", "hash")
+    cache = EpisodeCache("scenario", route)
+    first = _zone("zone-a")
+    second = ConflictZoneRecord(
+        zone_id=first.zone_id,
+        polygon=Polygon(tuple(first.polygon.exterior.coords)),
+        ego_movement_key=first.ego_movement_key,
+        other_movement_key=first.other_movement_key,
+        route_entry_s_m=first.route_entry_s_m + 0.25,
+        route_exit_s_m=first.route_exit_s_m + 0.25,
+        elevation_m=first.elevation_m + 1.0,
+    )
+
+    merged = merge_cache_deltas((CacheDelta((first,)), CacheDelta((second,))))
+    applied = apply_cache_delta(cache, merged)
+
+    assert applied.conflict_zones["zone-a"] == first
+    assert apply_cache_delta(applied, CacheDelta((second,))) == applied
+
+
 def test_cache_overlay_exposes_pending_zones_without_committing_them() -> None:
     cache = EpisodeCache("scenario", TaskRouteRecord("scenario", ("lane",), "pg", "adapter", "hash"))
     overlay = EpisodeCacheOverlay(cache, CacheDelta((_zone("pending"),)))

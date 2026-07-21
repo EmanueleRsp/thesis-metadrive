@@ -192,10 +192,7 @@ def merge_cache_deltas(deltas: tuple[CacheDelta, ...]) -> CacheDelta:
             if existing is None:
                 merged[zone.zone_id] = zone
                 continue
-            if (
-                canonical_geometry_wkb(existing.polygon) != canonical_geometry_wkb(zone.polygon)
-                or existing != zone
-            ):
+            if not _conflict_zone_equivalent(existing, zone):
                 raise ValueError(f"Conflicting geometries for conflict zone ID: {zone.zone_id}")
     return CacheDelta(new_conflict_zones=tuple(cast(Any, merged.values())))
 
@@ -206,7 +203,15 @@ def apply_cache_delta(cache: EpisodeCache, delta: CacheDelta) -> EpisodeCache:
     zones = dict(cache.conflict_zones)
     for zone in delta.new_conflict_zones:
         existing = zones.get(zone.zone_id)
-        if existing is not None and existing != zone:
-            raise ValueError(f"Committed conflict zone cannot be modified: {zone.zone_id}")
+        if existing is not None:
+            if not _conflict_zone_equivalent(existing, zone):
+                raise ValueError(f"Committed conflict zone cannot be modified: {zone.zone_id}")
+            continue
         zones[zone.zone_id] = zone
     return replace(cache, conflict_zones=zones)
+
+
+def _conflict_zone_equivalent(left: Any, right: Any) -> bool:
+    """Compare conflict-zone records using the canonical geometry contract."""
+
+    return canonical_geometry_wkb(left.polygon) == canonical_geometry_wkb(right.polygon)
