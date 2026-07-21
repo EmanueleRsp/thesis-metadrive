@@ -5,8 +5,8 @@
 - Feature: ScenarioNet out-of-road termination and Rulebook lane geometry
 - Plan ID: `BUG-SN-BOUNDARY-001`
 - Authoritative specification: `docs/specifications/scenarionet_integration_v1.1_specification.md`, `SCENARIONET-INTEGRATION` v1.1, `APPROVED`; `docs/specifications/rulebook_v4.7_specification.md`, Rulebook v4.7, `APPROVED`
-- Status: `IMPLEMENTED`
-- Date: 2026-07-20
+- Status: `IN_PROGRESS`
+- Date: 2026-07-21
 - Related ADRs: `docs/decisions/ADR-001-scenarionet-v1-1-dataset-policy.md`
 
 ## 2. Objective and scope
@@ -22,6 +22,7 @@ normative union of drivable lane surfaces.
 | ID | Requirement | Specification section |
 |---|---|---|
 | `REQ-BOUNDARY-001` | Boundary-only contact/continuous-line crossing is non-terminal; physical road exit remains terminal. | §20.1–§20.2 |
+| `REQ-BOUNDARY-002` | A fully off-surface ego footprint is terminal even when ScenarioNet emits no road-edge contact. | §20.1–§20.2; `rulebook_v4.7_specification.md` §2.9.4 |
 | `REQ-RULEBOOK-OFFROAD-001` | Off-road area is computed against correctly reconstructed vertically compatible drivable lane polygons. | `rulebook_v4.7_specification.md` §2.9.4 |
 
 ## 4. Current repository analysis
@@ -51,6 +52,9 @@ normative union of drivable lane surfaces.
 - `ROAD_EDGE_BOUNDARY` alone does not imply `physical_out_of_road`.
 - `ROAD_EDGE_SIDEWALK` or `GUARDRAIL` implies physical exit.
 - Route-relative lateral deviation alone is not a physical exit.
+- An ego footprint entirely outside the canonical, vertically compatible
+  Rulebook drivable surface is a physical exit even if ScenarioNet has emitted
+  no road-edge contact for that control step.
 - Route-navigation values (`current_lateral`, `dist_to_left_side`,
   `dist_to_right_side`, `on_lane`) are diagnostics only and never establish a
   physical exit in ScenarioNet.
@@ -82,12 +86,19 @@ recompute the derived `CRASH` key, and then recompute aggregate termination.
 Preserve a pre-existing generic crash when it is not derived from the sidewalk
 flag.
 
+For Rulebook-v2 ScenarioNet episodes, the shared predicate additionally uses
+the current canonical live ego footprint and the cache's vertically compatible
+drivable-lane union. Only an outside area equal to the whole footprint within
+the Rulebook area epsilon is terminal; partial off-road occupancy remains a
+Rulebook violation without changing termination semantics.
+
 ## 8. Traceability
 
 | Requirement | Acceptance criteria | Implementation | Tests | Status |
 |---|---|---|---|---|
 | `REQ-BOUNDARY-001` | `ROAD_EDGE_BOUNDARY` and reference-lane deviation do not terminate; sidewalk/guardrail do | `src/thesis_rl/envs/scene_context.py`, `src/thesis_rl/envs/thesis_scenario_env.py` | Focused boundary, shared-predicate, physical-contact, reference-lane, and collision regressions in `tests/test_thesis_scenario_env.py` | In progress |
 | `REQ-RULEBOOK-OFFROAD-001` | A Waymo asymmetric left/right width generates the full asymmetric lane polygon | `src/thesis_rl/rulebook/v2/context/waymo_static_adapter.py` | `tests/test_rulebook_v2_waymo_adapter.py::test_waymo_adapter_uses_per_side_widths_without_halving_them_again` | In progress |
+| `REQ-BOUNDARY-002` | A fully off-surface live footprint remains terminal without native contact | `src/thesis_rl/envs/scene_context.py` | Full-footprint geometric-exit regression in `tests/test_thesis_scenario_env.py` | Implemented and deterministically verified |
 
 ## 9. Test strategy
 
@@ -110,6 +121,7 @@ Mandatory matrix frozen before the production edit:
 | `TEST-BOUNDARY-006` | Integration-oriented unit | Shared native predicate | boundary probe through `_is_out_of_road` | native reward/cost predicate is false | `REQ-BOUNDARY-001` |
 | `TEST-BOUNDARY-007` | Regression | Route deviation on road | `current_lateral=5.0`, positive native side distances | `done=False` and `out_of_road=False` | `REQ-BOUNDARY-001` |
 | `TEST-RULEBOOK-OFFROAD-001` | Unit | ScenarioNet/Waymo asymmetric lane width | left/right widths `(2.0 m, 1.0 m)` | polygon spans `[-1.0 m, +2.0 m]`, not a halved median buffer | `REQ-RULEBOOK-OFFROAD-001` |
+| `TEST-BOUNDARY-008` | Regression | Missing native road-edge contact | valid live ego footprint wholly outside canonical Rulebook surface, no contacts | physical exit and `out_of_road` are true | `REQ-BOUNDARY-002` |
 
 ## 10. Milestones
 
@@ -121,8 +133,8 @@ Mandatory matrix frozen before the production edit:
   evaluation artifacts, and Waymo adapter suite with test-process-only import
   stubs: `52 passed`.
 - [ ] M4 — Run the affected ScenarioNet evaluation in the provisioned runtime
-  and confirm that its terminal trajectory has `out_of_road=false` until a
-  physical sidewalk/guardrail contact occurs.
+  and confirm that a boundary-only trajectory remains non-terminal, while a
+  fully off-surface trajectory terminates even if `contact_results` is empty.
 
 ## 11. Progress and findings log
 
@@ -160,6 +172,13 @@ Mandatory matrix frozen before the production edit:
   assigned route `("128",)`, and no validation errors. Its lane `128` area
   changed from `125.257 m²` under the old narrowed construction to `636.538 m²`
   under the per-side reconstruction.
+- `2026-07-21`: Live run `20260721_070110` exposed the complementary false
+  negative. Its timeout trajectories have empty native contacts and
+  `physical_out_of_road=false`, while the Rulebook evaluates the same live
+  footprint with `outside_area_m2 == ego_area_m2`. Added the canonical
+  full-footprint geometric proof, and persisted its boolean and areas through
+  Rulebook diagnostics and final-evaluation trajectories. Focused equivalent
+  tests passed (`53 passed`); a new live evaluation remains required for M4.
 
 ## 12. Deviations
 
@@ -180,6 +199,13 @@ No deviations identified.
 | `tests/test_rulebook_v2_wrapper.py` | Modified | Verify termination flags and road-boundary diagnostics cross the Rulebook wrapper |
 | `tests/test_eval_artifacts.py` | Modified | Verify termination and road-boundary diagnostics are persisted |
 | `conf/video/default.yaml` | Modified | Enable trajectory logs for final-evaluation auditability |
+| `src/thesis_rl/envs/scene_context.py` | Modified | Add the missing-contact full-footprint geometric proof |
+| `src/thesis_rl/envs/thesis_scenario_env.py` | Modified | Pass the environment to road-geometry diagnostics |
+| `src/thesis_rl/rulebook/v2/wrapper.py` | Modified | Persist geometric-exit diagnostics in Rulebook transition logs |
+| `src/thesis_rl/runtime/io/eval_artifacts.py` | Modified | Persist geometric-exit diagnostics in trajectory JSONL |
+| `tests/test_thesis_scenario_env.py` | Modified | Regress full-footprint exit without native contact |
+| `tests/test_rulebook_v2_wrapper.py` | Modified | Regress Rulebook diagnostic propagation |
+| `tests/test_eval_artifacts.py` | Modified | Regress trajectory diagnostic persistence |
 
 ## 14. Validation results
 
@@ -191,6 +217,7 @@ No deviations identified.
 | Exact failing-scenario static adapter | PASS | 2026-07-20 | `waymo:training_20s:3976d7f407ac1ca2` built with 77 lane records, assigned lane `128`, and no validation errors |
 | Focused Ruff | NOT_RUN | 2026-07-20 | `uv run --no-sync` could not spawn Ruff because `.venv` lacks it; Docker socket is inaccessible |
 | `git diff --check` | PASS | 2026-07-20 | No whitespace errors |
+| Focused equivalent suite | PASS | 2026-07-21 | `53 passed`: environment, Rulebook wrapper, evaluation artifacts, and Waymo adapter with process-only `omegaconf`/`rich` compatibility stubs |
 
 ## 15. Final reconciliation
 
@@ -229,3 +256,11 @@ expected result is no out-of-road termination for the recorded terminal state.
   added native road-boundary diagnostics to Rulebook and JSONL records. The
   next live evaluation will therefore identify the exact termination source
   instead of requiring visual inference from the GIF alone.
+- `2026-07-21`: Live run `20260721_070110` exposed the complementary false
+  negative. Its final-evaluation timeout episodes have empty native contacts
+  and `physical_out_of_road=false`, but the Rulebook evaluates the same live
+  footprint with `outside_area_m2 == ego_area_m2`. ScenarioNet therefore does
+  not reliably produce a `ROAD_EDGE_*` contact after the vehicle has left the
+  mapped road. The shared physical predicate must add the canonical Rulebook
+  full-footprint geometric proof while retaining contact classification and
+  excluding route-relative navigation diagnostics.

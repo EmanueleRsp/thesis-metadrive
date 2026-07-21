@@ -252,6 +252,9 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
                     "dist_to_right_side",
                     "on_lane",
                     "contact_results",
+                    "geometric_full_footprint_exit",
+                    "geometric_outside_area_m2",
+                    "geometric_ego_area_m2",
                     "terminated",
                     "truncated",
                 )

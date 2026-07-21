@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import gymnasium as gym
 import pytest
 from shapely.geometry import Polygon
@@ -105,14 +107,18 @@ def test_wrapper_exposes_native_termination_and_truncation_flags() -> None:
         assert (info["terminated"], info["truncated"]) == (terminated, truncated)
 
 
-def test_wrapper_preserves_physical_road_diagnostics() -> None:
+def test_wrapper_preserves_physical_road_diagnostics(tmp_path) -> None:
     route = TaskRouteRecord("s", ("lane",), "pg", "v2", "hash")
     cache = EpisodeCache("s", route)
+    log_path = tmp_path / "rule_margins.jsonl"
 
     wrapped = RulebookV2MonitorWrapper(
         _Env(
             step_info={
                 "physical_out_of_road": False,
+                "geometric_full_footprint_exit": False,
+                "geometric_outside_area_m2": 0.0,
+                "geometric_ego_area_m2": 8.0,
                 "route_lateral": 5.0,
                 "dist_to_left_side": 3.0,
                 "dist_to_right_side": 3.0,
@@ -128,6 +134,7 @@ def test_wrapper_preserves_physical_road_diagnostics() -> None:
         ),
         initial_memory=RulebookMemory(),
         initial_cache=cache,
+        rule_margin_log_path=str(log_path),
     )
     wrapped.reset()
     _observation, _reward, _terminated, _truncated, info = wrapped.step(0)
@@ -135,6 +142,9 @@ def test_wrapper_preserves_physical_road_diagnostics() -> None:
     assert info["route_lateral"] == 5.0
     assert info["dist_to_right_side"] == 3.0
     assert info["contact_results"] == ["ROAD_EDGE_BOUNDARY"]
+    payload = json.loads(log_path.read_text(encoding="utf-8"))
+    assert payload["termination"]["geometric_full_footprint_exit"] is False
+    assert payload["termination"]["geometric_outside_area_m2"] == 0.0
 
 
 def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation(tmp_path):

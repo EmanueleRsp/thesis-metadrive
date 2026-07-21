@@ -16,6 +16,7 @@ class SceneContextAdapter:
     _ROAD_EDGE_BOUNDARY = "ROAD_EDGE_BOUNDARY"
     _ROAD_EDGE_SIDEWALK = "ROAD_EDGE_SIDEWALK"
     _GUARDRAIL = "GUARDRAIL"
+    _FULL_FOOTPRINT_EPSILON_M2 = 1.0e-4
 
     def get_ego_vehicle(self, env: Any, vehicle_id: str | None = None) -> Any:
         agents = getattr(env, "agents", {})
@@ -66,25 +67,70 @@ class SceneContextAdapter:
             if self._ROAD_EDGE_BOUNDARY not in contacts:
                 return True
 
+        geometry_exit, _, _ = self._rulebook_full_footprint_exit(env)
+        if geometry_exit:
+            return True
+
         # ``navigation.current_lateral``, ``dist_to_*_side``, and ``on_lane``
         # all derive from ``current_ref_lanes`` in ScenarioNet's
         # TrajectoryNavigation. They describe deviation from the assigned
         # reference route, rather than physical contact with the road edge.
-        # They remain diagnostics only: physical exit is established solely by
-        # the native sidewalk/guardrail contact primitives above.
+        # They remain diagnostics only: physical exit is established by native
+        # sidewalk/guardrail contacts or by the canonical full-footprint
+        # Rulebook geometry above.
         return False
 
-    def get_physical_road_diagnostics(self, vehicle: Any) -> dict[str, Any]:
+    def _rulebook_full_footprint_exit(self, env: Any) -> tuple[bool, float | None, float | None]:
+        """Return the Rulebook-backed full-footprint road-exit classification.
+
+        ScenarioNet does not always emit a road-edge contact after the ego has
+        left its mapped road.  The Rulebook adapter already owns the canonical
+        live footprint and vertically compatible drivable surface, so reuse
+        that exact geometry rather than inferring an exit from route-relative
+        navigation fields.
+        """
+
+        adapter = getattr(env, "rulebook_v2_adapter", None)
+        snapshotter = getattr(adapter, "snapshotter", None)
+        cache = getattr(adapter, "initial_cache", None)
+        if not callable(snapshotter) or cache is None:
+            return False, None, None
+
+        from thesis_rl.rulebook.v2.geometry.drivable import (
+            DrivableLaneRecord,
+            drivable_surface_for_ego,
+        )
+
+        ego = snapshotter(env).ego
+        surface = drivable_surface_for_ego(
+            ego_footprint=ego.footprint,
+            ego_position_xy=ego.position_xy,
+            ego_position_z=ego.position_z,
+            lanes=tuple(
+                DrivableLaneRecord(lane.lane_id, lane.centerline, lane.polygon_xy, None)
+                for lane in cache.route_lanes
+            ),
+        )
+        ego_area = float(ego.footprint.area)
+        outside_area = float(ego.footprint.difference(surface).area)
+        fully_outside = outside_area >= ego_area - self._FULL_FOOTPRINT_EPSILON_M2
+        return fully_outside, outside_area, ego_area
+
+    def get_physical_road_diagnostics(self, env: Any, vehicle: Any) -> dict[str, Any]:
         """Return native values needed to audit physical-road termination."""
 
         navigation = getattr(vehicle, "navigation", None)
         contacts = getattr(vehicle, "contact_results", ()) or ()
+        geometry_exit, outside_area, ego_area = self._rulebook_full_footprint_exit(env)
         return {
             "route_lateral": getattr(navigation, "current_lateral", None),
             "dist_to_left_side": getattr(vehicle, "dist_to_left_side", None),
             "dist_to_right_side": getattr(vehicle, "dist_to_right_side", None),
             "on_lane": getattr(vehicle, "on_lane", None),
             "contact_results": sorted(str(value) for value in contacts),
+            "geometric_full_footprint_exit": geometry_exit,
+            "geometric_outside_area_m2": outside_area,
+            "geometric_ego_area_m2": ego_area,
         }
 
     def get_native_out_of_road(self, env: Any, vehicle: Any) -> bool:

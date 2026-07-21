@@ -206,6 +206,9 @@ def test_trajectory_log_preserves_termination_diagnostics(tmp_path: Path, monkey
             "crash_sidewalk": False,
             "out_of_road": False,
             "physical_out_of_road": False,
+            "geometric_full_footprint_exit": False,
+            "geometric_outside_area_m2": 0.0,
+            "geometric_ego_area_m2": 8.0,
             "crossed_continuous_line": True,
             "termination_reason": None,
             "route_lateral": 5.0,
@@ -221,6 +224,8 @@ def test_trajectory_log_preserves_termination_diagnostics(tmp_path: Path, monkey
     trajectory_path = run_dir / "videos/final_eval/eval_0003/episode_0002.trajectory.jsonl"
     row = json.loads(trajectory_path.read_text(encoding="utf-8"))
     assert row["info"]["physical_out_of_road"] is False
+    assert row["info"]["geometric_full_footprint_exit"] is False
+    assert row["info"]["geometric_outside_area_m2"] == 0.0
     assert row["info"]["crossed_continuous_line"] is True
     assert row["info"]["route_lateral"] == 5.0
     assert row["info"]["dist_to_right_side"] == 3.0

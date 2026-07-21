@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from shapely.geometry import box
 
 from thesis_rl.envs.scene_context import SceneContextAdapter
 from thesis_rl.envs import thesis_scenario_env as thesis_env_module
@@ -68,6 +69,60 @@ def test_scene_context_does_not_treat_reference_lane_distance_as_road_exit() -> 
     env = SimpleNamespace(config={"max_lateral_dist": 4.0})
 
     assert adapter.is_physically_out_of_road(env, vehicle) is False
+
+
+def test_scene_context_terminates_full_rulebook_geometric_exit_without_contact() -> None:
+    adapter = SceneContextAdapter()
+    ego = SimpleNamespace(
+        footprint=box(10.0, 10.0, 12.0, 12.0),
+        position_xy=(11.0, 11.0),
+        position_z=0.0,
+    )
+    lane = SimpleNamespace(
+        lane_id="lane-a",
+        centerline=SimpleNamespace(project=lambda _position: SimpleNamespace(z_m=0.0)),
+        polygon_xy=box(-2.0, -2.0, 2.0, 2.0),
+    )
+    env = SimpleNamespace(
+        rulebook_v2_adapter=SimpleNamespace(
+            snapshotter=lambda _env: SimpleNamespace(ego=ego),
+            initial_cache=SimpleNamespace(route_lanes=(lane,)),
+        )
+    )
+    vehicle = SimpleNamespace(crash_sidewalk=False, contact_results=())
+
+    assert adapter.is_physically_out_of_road(env, vehicle) is True
+    diagnostics = adapter.get_physical_road_diagnostics(env, vehicle)
+    assert diagnostics["geometric_full_footprint_exit"] is True
+    assert diagnostics["geometric_outside_area_m2"] == pytest.approx(4.0)
+    assert diagnostics["geometric_ego_area_m2"] == pytest.approx(4.0)
+
+
+def test_scene_context_does_not_terminate_partial_rulebook_geometric_exit() -> None:
+    adapter = SceneContextAdapter()
+    ego = SimpleNamespace(
+        footprint=box(1.0, -1.0, 3.0, 1.0),
+        position_xy=(2.0, 0.0),
+        position_z=0.0,
+    )
+    lane = SimpleNamespace(
+        lane_id="lane-a",
+        centerline=SimpleNamespace(project=lambda _position: SimpleNamespace(z_m=0.0)),
+        polygon_xy=box(-2.0, -2.0, 2.0, 2.0),
+    )
+    env = SimpleNamespace(
+        rulebook_v2_adapter=SimpleNamespace(
+            snapshotter=lambda _env: SimpleNamespace(ego=ego),
+            initial_cache=SimpleNamespace(route_lanes=(lane,)),
+        )
+    )
+    vehicle = SimpleNamespace(crash_sidewalk=False, contact_results=())
+
+    assert adapter.is_physically_out_of_road(env, vehicle) is False
+    diagnostics = adapter.get_physical_road_diagnostics(env, vehicle)
+    assert diagnostics["geometric_full_footprint_exit"] is False
+    assert diagnostics["geometric_outside_area_m2"] == pytest.approx(2.0)
+    assert diagnostics["geometric_ego_area_m2"] == pytest.approx(4.0)
 
 
 @pytest.mark.parametrize(

@@ -665,7 +665,7 @@ class ThesisScenarioEnv(ScenarioEnv):
 
         done_info["crossed_continuous_line"] = bool(line_only)
         done_info["physical_out_of_road"] = bool(physical_out)
-        done_info.update(self.scene_context.get_physical_road_diagnostics(vehicle))
+        done_info.update(self.scene_context.get_physical_road_diagnostics(self, vehicle))
         done_info["termination_reason"] = self.scene_context.get_termination_reason(
             self, vehicle, done_info
         )
