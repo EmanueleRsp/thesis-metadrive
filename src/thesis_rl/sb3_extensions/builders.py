@@ -178,7 +178,18 @@ def validate_sb3_bridge_configs(
             f"encoder type '{encoder_type}' requires observation config for the "
             "SB3 feature-extractor bridge"
         )
-    if encoder_type not in {"none", "mlp", "lq", "latent_query_v2", "lq_v3", "latent_query_v3"}:
+    if encoder_type not in {
+        "none",
+        "mlp",
+        "lq",
+        "latent_query_v2",
+        "lq_v3",
+        "latent_query_v3",
+        "lq_v3_lite",
+        "latent_query_v3_lite",
+        "lq_v3_micro",
+        "latent_query_v3_micro",
+    }:
         errors.append(
             f"encoder type '{encoder_type}' is not supported by the current SB3 "
             "feature-extractor bridge"

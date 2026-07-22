@@ -23,6 +23,63 @@ def test_per_sum_tree_uses_float64_and_prefix_sampling() -> None:
     assert tree.find_prefix(5.5) == 2
 
 
+def test_per_batched_prefix_sampling_matches_scalar_traversal_at_boundaries() -> None:
+    tree = _SumTree(7)
+    priorities = np.array([0.25, 1.75, 0.0, 3.5, 2.0, 0.5, 4.0], dtype=np.float64)
+    for index, priority in enumerate(priorities):
+        tree.set(index, float(priority))
+    masses = np.array(
+        [0.0, 0.25, 0.250000000001, 1.0, 2.0, 5.5, tree.total - 1.0e-12],
+        dtype=np.float64,
+    )
+
+    expected = np.asarray([tree.find_prefix(float(mass)) for mass in masses], dtype=np.int64)
+
+    assert np.array_equal(tree.find_prefix_batch(masses), expected)
+
+
+def test_per_batched_priority_update_matches_scalar_reduced_updates() -> None:
+    buffer = PrioritizedNStepReplayBuffer(
+        buffer_size=8,
+        observation_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+        action_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+        device="cpu",
+        n_envs=1,
+        n_steps=1,
+        gamma=0.99,
+        beta_anneal_steps=10,
+    )
+    reference = PrioritizedNStepReplayBuffer(
+        buffer_size=8,
+        observation_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+        action_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+        device="cpu",
+        n_envs=1,
+        n_steps=1,
+        gamma=0.99,
+        beta_anneal_steps=10,
+    )
+    observation = np.zeros((1, 1), dtype=np.float32)
+    action = np.zeros((1, 1), dtype=np.float32)
+    for _ in range(5):
+        for replay in (buffer, reference):
+            replay.add(observation, observation, action, np.zeros(1), np.zeros(1, dtype=bool), [{}])
+
+    indices = np.array([4, 1, 4, 2, 1, 0], dtype=np.int64)
+    priorities = np.array([0.5, 2.0, 3.0, 1.5, 4.0, 0.75], dtype=np.float64)
+    buffer.update_priorities(indices, priorities)
+    reduced: dict[int, float] = {}
+    for index, priority in zip(indices, priorities, strict=True):
+        reduced[int(index)] = max(reduced.get(int(index), 0.0), float(priority) + reference.epsilon)
+    for index, priority in reduced.items():
+        reference._set_raw_priority(index, priority)
+
+    assert np.array_equal(buffer.raw_priorities, reference.raw_priorities)
+    assert np.array_equal(buffer._tree.tree, reference._tree.tree)
+    assert buffer._current_max_raw_priority == reference._current_max_raw_priority
+    assert buffer._current_max_count == reference._current_max_count
+
+
 def test_per_requires_positive_beta_horizon() -> None:
     with pytest.raises(ValueError, match="beta_anneal_steps"):
         resolve_transition_replay_config(

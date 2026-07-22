@@ -45,6 +45,18 @@ def set_global_seed(seed: int) -> None:
         pass
 
 
+def configure_parent_torch_threads(num_threads: int | None) -> None:
+    """Apply an explicit parent-only PyTorch CPU-thread cap before training."""
+
+    if num_threads is None:
+        return
+    if int(num_threads) <= 0:
+        raise ValueError("Parent PyTorch thread count must be positive")
+    count = int(num_threads)
+    torch.set_num_threads(count)
+    torch.set_num_interop_threads(count)
+
+
 def seed_env_spaces(env: Any, seed: int) -> None:
     action_space = getattr(env, "action_space", None)
     if action_space is not None and hasattr(action_space, "seed"):

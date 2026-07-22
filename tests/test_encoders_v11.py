@@ -4,7 +4,11 @@ import pytest
 import torch
 
 from thesis_rl.agent.planners.encoders.factory import build_encoder
-from thesis_rl.agent.planners.encoders.lq_encoder import LatentQueryEncoderV3
+from thesis_rl.agent.planners.encoders.lq_encoder import (
+    LatentQueryEncoderV3,
+    LatentQueryEncoderV3Lite,
+    LatentQueryEncoderV3Micro,
+)
 from thesis_rl.agent.planners.encoders.mlp_encoder import FlatMLPEncoder
 from thesis_rl.contracts.observation_schema import SemanticObservationSchemaV12
 
@@ -52,6 +56,24 @@ def test_lq_v11_is_invariant_to_masked_compliance_payload() -> None:
 
     torch.testing.assert_close(first_output, second_output)
     assert first.grad is not None and torch.isfinite(first.grad).all()
+
+
+def test_lq_v3_lite_preserves_semantic_io_contract() -> None:
+    schema = SemanticObservationSchemaV12()
+    encoder = LatentQueryEncoderV3Lite(schema=schema)
+    output = encoder(torch.zeros(2, schema.flat_dim, dtype=torch.float32))
+
+    assert output.shape == (2, 256)
+    assert torch.isfinite(output).all()
+
+
+def test_lq_v3_micro_preserves_semantic_io_contract() -> None:
+    schema = SemanticObservationSchemaV12()
+    encoder = LatentQueryEncoderV3Micro(schema=schema)
+    output = encoder(torch.zeros(2, schema.flat_dim, dtype=torch.float32))
+
+    assert output.shape == (2, 256)
+    assert torch.isfinite(output).all()
 
 
 def test_encoder_factory_rejects_cross_version_lq_pairing() -> None:

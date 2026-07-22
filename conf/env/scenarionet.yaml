@@ -49,6 +49,9 @@ config:
   success_route_completion_threshold: 0.95
   minimum_success_route_length_m: 10.0
   log_level: 50
+  # Diagnostic-only switch. It is false for every normal/scientific profile;
+  # true measures the upper-bound throughput impact of removing vehicle-yield.
+  rulebook_v2_disable_vehicle_yield_for_benchmark: false
 
 episode_control:
   extra_steps_after_scenario: 50
@@ -72,6 +75,14 @@ vectorized:
   enabled: false
   num_envs: 1
   start_method: spawn
+  # Optional per-worker PyTorch thread limit. Null preserves the library default;
+  # diagnostic throughput profiles may set a positive value explicitly.
+  worker_num_threads: null
+  # Optional pre-spawn cap for NumPy/BLAS/OpenMP worker pools. This is separate
+  # from PyTorch because these libraries can initialize while a spawned child is
+  # importing modules, before the worker function can run. Null preserves every
+  # inherited library default; use only as an explicit throughput diagnostic.
+  worker_library_num_threads: null
 
 policy_mode:
   enabled: false

@@ -1,0 +1,6 @@
+name: mlp_encoded_lite_diagnostic
+type: mlp
+hidden_layers: [128, 128]
+activation: relu
+dropout: 0.0
+layer_norm: false

@@ -16,6 +16,8 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 from rich.table import Table
 
+from thesis_rl.runtime.execution.numeric_threads import start_process_with_numeric_thread_limit
+
 
 class AsyncEvaluationError(RuntimeError):
     """Raised when an asynchronous evaluation cannot produce a complete result."""
@@ -136,12 +138,14 @@ class AsyncEvaluationManager:
         on_complete: Callable[[EvaluationJob, dict[str, Any]], None] | None = None,
         process_factory: Callable[..., mp.Process] | None = None,
         start_method: str = "spawn",
+        numeric_library_num_threads: int | None = None,
     ) -> None:
         if start_method not in mp.get_all_start_methods():
             raise ValueError(f"Unsupported asynchronous evaluation start method: {start_method}")
         self._ctx = mp.get_context(start_method)
         self._queue = self._ctx.Queue()
         self._process_factory = process_factory or self._ctx.Process
+        self._numeric_library_num_threads = numeric_library_num_threads
         self._checkpoints_dir = checkpoints_dir / "async_eval"
         self._on_complete = on_complete
         self._pending: deque[_JobState] = deque()
@@ -374,7 +378,7 @@ class AsyncEvaluationManager:
         )
         state.process = process
         self._active = state
-        process.start()
+        start_process_with_numeric_thread_limit(process, self._numeric_library_num_threads)
         self._event_messages.append(
             f"[EVAL] Started evaluation {state.job.eval_id} | step={state.job.global_step}"
         )

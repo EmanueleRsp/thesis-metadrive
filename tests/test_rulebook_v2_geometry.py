@@ -501,6 +501,48 @@ def test_deterministic_decomposition_handles_concavity_and_hole() -> None:
         assert shapely.union_all(triangles).area == pytest.approx(polygon.area)
 
 
+def test_deterministic_decomposition_handles_multiple_holes() -> None:
+    """A valid multi-hole zone must not exhaust ears after bridge insertion."""
+
+    polygon = Polygon(
+        ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)),
+        holes=(
+            ((1.0, 1.0), (1.0, 1.6), (1.6, 1.6), (1.6, 1.0)),
+            ((1.0, 6.0), (1.0, 6.6), (1.6, 6.6), (1.6, 6.0)),
+        ),
+    )
+
+    triangles = deterministic_convex_decomposition(polygon)
+    repeated = deterministic_convex_decomposition(polygon)
+
+    assert all(polygon.covers(triangle) and triangle.area > 0.0 for triangle in triangles)
+    assert shapely.union_all(triangles).area == pytest.approx(polygon.area)
+    assert [triangle.wkb for triangle in triangles] == [triangle.wkb for triangle in repeated]
+
+
+def test_deterministic_decomposition_recovers_from_single_hole_ear_exhaustion() -> None:
+    """A valid concave shell with one hole can exhaust the local ear predicate."""
+
+    polygon = Polygon(
+        ((0.0, 0.0), (4.0, 0.0), (8.0, 0.0), (8.0, 8.0), (4.0, 8.0), (0.0, 8.0), (0.0, 4.0)),
+        holes=(((3.0, 1.0), (3.0, 7.0), (3.2, 7.0), (3.2, 1.0)),),
+    )
+
+    triangles = deterministic_convex_decomposition(polygon)
+    repeated = deterministic_convex_decomposition(polygon)
+
+    assert all(polygon.covers(triangle) and triangle.area > 0.0 for triangle in triangles)
+    assert shapely.union_all(triangles).area == pytest.approx(polygon.area)
+    assert [triangle.wkb for triangle in triangles] == [triangle.wkb for triangle in repeated]
+
+
+def test_deterministic_decomposition_rejects_invalid_geometry_before_recovery() -> None:
+    invalid = Polygon(((0.0, 0.0), (2.0, 2.0), (0.0, 2.0), (2.0, 0.0)))
+
+    with pytest.raises(ValueError, match="valid, non-empty polygon"):
+        deterministic_convex_decomposition(invalid)
+
+
 def test_merge_corridors_produce_a_single_stable_conflict_component() -> None:
     ego = MovementCorridor(
         MovementKey("merge-ego", "merge-node", "main-out"),

@@ -63,6 +63,7 @@ class RulebookTransitionConfig:
     prediction_horizon_s: float = 3.0
     history_window_s: float = 0.5
     minimum_history_samples: int = 3
+    disable_vehicle_yield_for_benchmark: bool = False
 
 
 def build_episode_cache(static_result) -> EpisodeCache:
@@ -574,6 +575,7 @@ def _vehicle_yield_inputs(
     pending_pair_records: dict[tuple[object, object], VehicleConflictPairRecord] = {}
     actor_lanes: dict[str, RouteLaneRecord] = {}
     actor_keys: dict[str, object] = {}
+    seen_pair_keys: set[tuple[object, object]] = set()
     for actor in post.actors:
         if actor.actor_class is not ActorClass.VEHICLE:
             continue
@@ -594,6 +596,9 @@ def _vehicle_yield_inputs(
         actor_lanes[actor.actor_id] = lane
         actor_keys[actor.actor_id] = movement_key
         pair_key = (ego_key, movement_key)
+        if pair_key in seen_pair_keys:
+            continue
+        seen_pair_keys.add(pair_key)
         cached_pair = cache.vehicle_conflict_pairs.get(pair_key) or pending_pair_records.get(
             pair_key
         )
@@ -913,23 +918,27 @@ def evaluate_transition(
         ),
     )
     drivable_seconds = time.perf_counter() - phase_started
-    phase_started = time.perf_counter()
-    vehicle_input, vehicle_cache_delta = _vehicle_yield_inputs(
-        pre=pre_state,
-        post=post_state,
-        cache=cache,
-        memory=memory,
-        route=route,
-        delta_t_s=delta_t_s,
-        post_front_s=post_front_s,
-        approach_speed_mps=post_approach_speed_mps,
-        prediction_horizon_s=config.prediction_horizon_s,
-        minimum_history_samples=config.minimum_history_samples,
-        ego_brake_mps2=calibrated_brake_mps2,
-        ego_association=post_ego_association,
-        actor_associations=post_actor_associations,
-    )
-    vehicle_yield_seconds = time.perf_counter() - phase_started
+    vehicle_input = None
+    vehicle_cache_delta = CacheDelta()
+    vehicle_yield_seconds = 0.0
+    if not config.disable_vehicle_yield_for_benchmark:
+        phase_started = time.perf_counter()
+        vehicle_input, vehicle_cache_delta = _vehicle_yield_inputs(
+            pre=pre_state,
+            post=post_state,
+            cache=cache,
+            memory=memory,
+            route=route,
+            delta_t_s=delta_t_s,
+            post_front_s=post_front_s,
+            approach_speed_mps=post_approach_speed_mps,
+            prediction_horizon_s=config.prediction_horizon_s,
+            minimum_history_samples=config.minimum_history_samples,
+            ego_brake_mps2=calibrated_brake_mps2,
+            ego_association=post_ego_association,
+            actor_associations=post_actor_associations,
+        )
+        vehicle_yield_seconds = time.perf_counter() - phase_started
     phase_started = time.perf_counter()
     rss_candidates = _rss_candidates(
         ego=pre_state.ego,
@@ -995,7 +1004,6 @@ def evaluate_transition(
         "signal": signal_input,
         "stop": stop_input,
         "crosswalk": crosswalk_input,
-        "vehicle_yield": vehicle_input,
         "progress": {
             "pre_ego": pre_state.ego,
             "post_ego": post_state.ego,
@@ -1004,6 +1012,11 @@ def evaluate_transition(
             "delta_t_s": delta_t_s,
         },
     }
+    excluded_components = frozenset()
+    if config.disable_vehicle_yield_for_benchmark:
+        excluded_components = frozenset({"vehicle_yield"})
+    else:
+        component_inputs["vehicle_yield"] = vehicle_input
     phase_started = time.perf_counter()
     result, next_memory, cache_delta = evaluate_registered_transition(
         memory=memory,
@@ -1013,6 +1026,7 @@ def evaluate_transition(
         post_state=post_state,
         history_window_s=config.history_window_s,
         pending_cache_delta=vehicle_cache_delta,
+        excluded_normative_components=excluded_components,
     )
     registry_seconds = time.perf_counter() - phase_started
     return (

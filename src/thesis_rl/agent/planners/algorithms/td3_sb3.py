@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +58,9 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         self._policy: Any | None = None
         self._action_noise: Any | None = None
         self._last_buffer_actions: np.ndarray | None = None
+        self._diagnostic_mixed_precision = bool(
+            self.cfg_planner.get("diagnostic_mixed_precision", False)
+        )
 
     def _sync_action_noise(self) -> None:
         self.model.action_noise = self._build_action_noise(self.env, self.cfg_planner)
@@ -441,20 +445,22 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         dones_tensor = torch.as_tensor(
             dones, dtype=torch.float32, device=self.model.device
         ).reshape(-1, 1)
-        next_obs = torch.as_tensor(
-            next_observations, dtype=torch.float32, device=self.model.device
-        )
+        next_obs = torch.as_tensor(next_observations, dtype=torch.float32, device=self.model.device)
         with torch.no_grad():
             noise = torch.randn_like(actions) * self.model.target_policy_noise
             noise = noise.clamp(-self.model.target_noise_clip, self.model.target_noise_clip)
             next_actions = (self.model.actor_target(next_obs) + noise).clamp(-1, 1)
-            target_q = torch.cat(self.model.critic_target(next_obs, next_actions), dim=1).min(
-                dim=1, keepdim=True
-            ).values
-            current_q = torch.cat(self.model.critic(obs, actions), dim=1).min(
-                dim=1, keepdim=True
-            ).values
-            residuals = rewards_tensor + (1.0 - dones_tensor) * self.model.gamma * target_q - current_q
+            target_q = (
+                torch.cat(self.model.critic_target(next_obs, next_actions), dim=1)
+                .min(dim=1, keepdim=True)
+                .values
+            )
+            current_q = (
+                torch.cat(self.model.critic(obs, actions), dim=1).min(dim=1, keepdim=True).values
+            )
+            residuals = (
+                rewards_tensor + (1.0 - dones_tensor) * self.model.gamma * target_q - current_q
+            )
         return residuals.detach().cpu().numpy().reshape(-1)
 
     def maybe_update(
@@ -487,11 +493,52 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
             )
 
         grad_steps = int(self.model.gradient_steps)
-        self.model.train(
-            gradient_steps=grad_steps,
-            batch_size=int(self.model.batch_size),
-        )
+        train_replay_sample_seconds = 0.0
+        train_per_priority_seconds = 0.0
+        replay_sample = self.replay_buffer.sample
+        update_priorities = getattr(self.replay_buffer, "update_priorities", None)
 
+        def timed_sample(*args, **kwargs):
+            nonlocal train_replay_sample_seconds
+            started = time.perf_counter()
+            try:
+                return replay_sample(*args, **kwargs)
+            finally:
+                train_replay_sample_seconds += time.perf_counter() - started
+
+        def timed_update_priorities(*args, **kwargs):
+            nonlocal train_per_priority_seconds
+            started = time.perf_counter()
+            try:
+                return update_priorities(*args, **kwargs)
+            finally:
+                train_per_priority_seconds += time.perf_counter() - started
+
+        self.replay_buffer.sample = timed_sample
+        if callable(update_priorities):
+            self.replay_buffer.update_priorities = timed_update_priorities
+        train_started = time.perf_counter()
+        try:
+            if self._diagnostic_mixed_precision:
+                if torch.device(self.model.device).type != "cuda":
+                    raise ValueError("TD3 mixed-precision diagnostic requires a CUDA device.")
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    self.model.train(
+                        gradient_steps=grad_steps,
+                        batch_size=int(self.model.batch_size),
+                    )
+            else:
+                self.model.train(
+                    gradient_steps=grad_steps,
+                    batch_size=int(self.model.batch_size),
+                )
+        finally:
+            self.replay_buffer.sample = replay_sample
+            if callable(update_priorities):
+                self.replay_buffer.update_priorities = update_priorities
+        train_seconds = time.perf_counter() - train_started
+
+        learning_potential_started = time.perf_counter()
         replay_data = self.replay_buffer.sample(
             int(self.model.batch_size), env=self.model._vec_normalize_env
         )
@@ -525,6 +572,7 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         from thesis_rl.curriculum.scenario_acl.usefulness import compute_td3_learning_potential
 
         learning_potential = compute_td3_learning_potential(td_residuals)
+        learning_potential_seconds = time.perf_counter() - learning_potential_started
 
         logger_values = self.model.logger.name_to_value
         self.last_actor_loss = float(logger_values.get("train/actor_loss", float("nan")))
@@ -537,6 +585,10 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
             "update_calls": 1,
             "gradient_steps": max(grad_steps, 0),
             "learning_potential": learning_potential,
+            "timing_td3_train_seconds": train_seconds,
+            "timing_td3_train_replay_sample_seconds": train_replay_sample_seconds,
+            "timing_td3_train_per_priority_seconds": train_per_priority_seconds,
+            "timing_acl_replay_learning_potential_seconds": learning_potential_seconds,
         }
 
     def to_buffer_action(self, env_action: np.ndarray) -> np.ndarray:

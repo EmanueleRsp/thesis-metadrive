@@ -927,6 +927,11 @@ def _run_scenario_acl_vectorized_training(
         checkpoints_dir=paths.checkpoints_dir,
         on_complete=record_async_acl_evaluation,
         start_method=str(cfg.experiment.get("evaluation_start_method", "spawn")),
+        numeric_library_num_threads=(
+            None
+            if cfg.env.get("vectorized", {}).get("worker_library_num_threads") is None
+            else int(cfg.env.get("vectorized", {}).get("worker_library_num_threads"))
+        ),
     )
 
     def run_intermediate_evaluation() -> None:
@@ -1516,6 +1521,11 @@ def run_scenario_acl_training(
         checkpoints_dir=paths.checkpoints_dir,
         on_complete=record_async_acl_evaluation,
         start_method=str(cfg.experiment.get("evaluation_start_method", "spawn")),
+        numeric_library_num_threads=(
+            None
+            if cfg.env.get("vectorized", {}).get("worker_library_num_threads") is None
+            else int(cfg.env.get("vectorized", {}).get("worker_library_num_threads"))
+        ),
     )
 
     try:

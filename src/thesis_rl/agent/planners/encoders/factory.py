@@ -5,10 +5,18 @@ from __future__ import annotations
 from typing import Any
 
 from thesis_rl.agent.planners.encoders.base import BaseEncoder
-from thesis_rl.agent.planners.encoders.lq_encoder import LatentQueryEncoderV2, LatentQueryEncoderV3
+from thesis_rl.agent.planners.encoders.lq_encoder import (
+    LatentQueryEncoderV2,
+    LatentQueryEncoderV3,
+    LatentQueryEncoderV3Lite,
+    LatentQueryEncoderV3Micro,
+)
 from thesis_rl.agent.planners.encoders.mlp_encoder import FlatMLPEncoder
 from thesis_rl.agent.planners.encoders.none_encoder import NoneEncoder
-from thesis_rl.contracts.observation_schema import SemanticObservationSchemaV11, SemanticObservationSchemaV12
+from thesis_rl.contracts.observation_schema import (
+    SemanticObservationSchemaV11,
+    SemanticObservationSchemaV12,
+)
 
 
 def _get(config: Any, key: str, default: Any = None) -> Any:
@@ -74,6 +82,38 @@ def build_encoder(
             latent_dim=int(_get(cfg_encoder, "latent_dim", 128)),
             output_dim=int(_get(cfg_encoder, "output_dim", 256)),
             depth=int(_get(cfg_encoder, "depth", 4)),
+            num_heads=int(_get(cfg_encoder, "num_heads", 4)),
+            ff_dim=int(_get(cfg_encoder, "ff_dim", 256)),
+            pooling=str(_get(cfg_encoder, "pooling", "mean")),
+        )
+    if encoder_type in {"latent_query_v3_lite", "lq_v3_lite"}:
+        if not isinstance(observation_schema, SemanticObservationSchemaV12) or input_dim != 3064:
+            raise ValueError(
+                "LatentQueryEncoderV3Lite requires semantic v1.2 observation schema and D=3064."
+            )
+        return LatentQueryEncoderV3Lite(
+            schema=observation_schema,
+            token_dim=int(_get(cfg_encoder, "token_dim", 64)),
+            num_latents=int(_get(cfg_encoder, "num_latents", 8)),
+            latent_dim=int(_get(cfg_encoder, "latent_dim", 128)),
+            output_dim=int(_get(cfg_encoder, "output_dim", 256)),
+            depth=int(_get(cfg_encoder, "depth", 2)),
+            num_heads=int(_get(cfg_encoder, "num_heads", 4)),
+            ff_dim=int(_get(cfg_encoder, "ff_dim", 256)),
+            pooling=str(_get(cfg_encoder, "pooling", "mean")),
+        )
+    if encoder_type in {"latent_query_v3_micro", "lq_v3_micro"}:
+        if not isinstance(observation_schema, SemanticObservationSchemaV12) or input_dim != 3064:
+            raise ValueError(
+                "LatentQueryEncoderV3Micro requires semantic v1.2 observation schema and D=3064."
+            )
+        return LatentQueryEncoderV3Micro(
+            schema=observation_schema,
+            token_dim=int(_get(cfg_encoder, "token_dim", 64)),
+            num_latents=int(_get(cfg_encoder, "num_latents", 4)),
+            latent_dim=int(_get(cfg_encoder, "latent_dim", 128)),
+            output_dim=int(_get(cfg_encoder, "output_dim", 256)),
+            depth=int(_get(cfg_encoder, "depth", 1)),
             num_heads=int(_get(cfg_encoder, "num_heads", 4)),
             ff_dim=int(_get(cfg_encoder, "ff_dim", 256)),
             pooling=str(_get(cfg_encoder, "pooling", "mean")),

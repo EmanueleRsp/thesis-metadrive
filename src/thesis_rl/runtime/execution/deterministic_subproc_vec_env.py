@@ -14,6 +14,8 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from thesis_rl.runtime.execution.numeric_threads import start_process_with_numeric_thread_limit
+
 try:
     from stable_baselines3.common.vec_env.base_vec_env import VecEnv as Sb3VecEnv
 except ModuleNotFoundError:  # pragma: no cover
@@ -97,8 +99,16 @@ def _worker(
     env_fn_wrapper: CloudpickleWrapper,
     acl_mode: bool = False,
     auto_reset: bool = True,
+    torch_num_threads: int | None = None,
 ) -> None:
     parent_remote.close()
+    if torch_num_threads is not None:
+        if torch_num_threads <= 0:
+            raise ValueError("Worker PyTorch thread count must be positive")
+        import torch
+
+        torch.set_num_threads(torch_num_threads)
+        torch.set_num_interop_threads(torch_num_threads)
     try:
         env = env_fn_wrapper.var()
     except Exception as exc:
@@ -262,12 +272,16 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         *,
         acl_mode: bool = False,
         auto_reset: bool = True,
+        torch_num_threads: int | None = None,
+        numeric_library_num_threads: int | None = None,
     ):
         self.waiting = False
         self.closed = False
         self.num_envs = len(env_fns)
         self.acl_mode = bool(acl_mode)
         self.auto_reset = bool(auto_reset)
+        self.torch_num_threads = torch_num_threads
+        self.numeric_library_num_threads = numeric_library_num_threads
 
         if start_method is None:
             forkserver_available = "forkserver" in mp.get_all_start_methods()
@@ -283,9 +297,10 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
                 CloudpickleWrapper(env_fn),
                 self.acl_mode,
                 self.auto_reset,
+                self.torch_num_threads,
             )
             process = ctx.Process(target=_worker, args=args, daemon=True)  # type: ignore[attr-defined]
-            process.start()
+            start_process_with_numeric_thread_limit(process, self.numeric_library_num_threads)
             self.processes.append(process)
             work_remote.close()
 

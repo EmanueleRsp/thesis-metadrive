@@ -1377,11 +1377,13 @@ class Agent:
 
         lifecycle.end_training()
         self.adapter.end_training()
+        for name, value in getattr(lifecycle, "update_timing_seconds", {}).items():
+            phase_seconds[f"learner_detail_{name}"] = float(value)
         elapsed = max(time.time() - start_time, 1e-9)
         timed_phase_seconds = sum(
             value
             for name, value in phase_seconds.items()
-            if not name.startswith(("worker_", "rulebook_"))
+            if not name.startswith(("worker_", "rulebook_", "learner_detail_"))
         )
         phase_seconds["unattributed"] = max(0.0, elapsed - timed_phase_seconds)
         ep_len_final_mean = float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0

@@ -15,6 +15,9 @@ action_noise_type: normal
 action_noise_sigma: 0.1
 action_noise_mean: 0.0
 monitor_ema_alpha: 0.1
+# Diagnostic-only: AMP changes numerical execution and must remain false for
+# every scientific profile.
+diagnostic_mixed_precision: false
 policy_kwargs:
   net_arch: [256, 256]
   share_features_extractor: false

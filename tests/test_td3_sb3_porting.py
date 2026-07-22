@@ -76,8 +76,12 @@ def test_td3_sb3_network_is_flat_mlp_without_layer_norm(env) -> None:
     assert isinstance(planner.actor.encoder, NoneEncoder)
     assert isinstance(planner.critic.encoder, NoneEncoder)
 
-    actor_linears = [module for module in planner.actor.decoder.net if isinstance(module, nn.Linear)]
-    critic_linears = [module for module in planner.critic.decoder_q1.net if isinstance(module, nn.Linear)]
+    actor_linears = [
+        module for module in planner.actor.decoder.net if isinstance(module, nn.Linear)
+    ]
+    critic_linears = [
+        module for module in planner.critic.decoder_q1.net if isinstance(module, nn.Linear)
+    ]
 
     assert [(layer.in_features, layer.out_features) for layer in actor_linears] == [
         (planner.obs_dim, 400),
@@ -112,7 +116,9 @@ def test_td3_predict_is_noise_free_even_when_exploration_noise_is_configured(env
     assert np.allclose(action_1, action_2)
 
 
-def test_td3_act_train_separates_random_warmup_from_post_warmup_action_noise(env, monkeypatch) -> None:
+def test_td3_act_train_separates_random_warmup_from_post_warmup_action_noise(
+    env, monkeypatch
+) -> None:
     planner = _build_planner(
         env,
         cfg_planner={"learning_starts": 5, "action_noise_mean": 0.25, "action_noise_sigma": 0.0},

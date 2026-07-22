@@ -59,6 +59,7 @@ from thesis_rl.runtime.io.run_logging import (
 from thesis_rl.runtime.async_evaluation import AsyncEvaluationManager, EvaluationJob
 from thesis_rl.runtime.execution.seeding import (
     apply_eval_scenario_seed_split,
+    configure_parent_torch_threads,
     eval_base_seed_from_env_overrides,
     seed_env_spaces,
     set_global_seed,
@@ -557,6 +558,11 @@ def run_training(cfg: DictConfig) -> None:
     try:
         run_seed = int(cfg.seed)
         set_global_seed(run_seed)
+        runtime_cfg = cfg.get("runtime", {})
+        parent_torch_threads = runtime_cfg.get("parent_torch_num_threads")
+        configure_parent_torch_threads(
+            None if parent_torch_threads is None else int(parent_torch_threads)
+        )
         resume_cfg = cfg.checkpoint.get("resume", {})
         resume_enabled = bool(resume_cfg.get("enabled", False))
         resume_run_dir_cfg = resume_cfg.get("run_dir")
@@ -1191,6 +1197,11 @@ def run_training(cfg: DictConfig) -> None:
                 checkpoints_dir=checkpoints_dir,
                 on_complete=_record_async_evaluation,
                 start_method=str(cfg.experiment.get("evaluation_start_method", "spawn")),
+                numeric_library_num_threads=(
+                    None
+                    if cfg.env.get("vectorized", {}).get("worker_library_num_threads") is None
+                    else int(cfg.env.get("vectorized", {}).get("worker_library_num_threads"))
+                ),
             )
 
         ##################

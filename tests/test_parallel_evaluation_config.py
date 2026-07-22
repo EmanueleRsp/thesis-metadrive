@@ -79,6 +79,32 @@ def test_parallel_evaluation_caps_workers_to_episode_count(monkeypatch) -> None:
     assert captured["kwargs"] == {"start_method": "spawn", "auto_reset": False}
 
 
+def test_parallel_evaluation_forwards_explicit_worker_thread_limits(monkeypatch) -> None:
+    cfg = _cfg()
+    cfg.env.vectorized = {
+        "worker_num_threads": 2,
+        "worker_library_num_threads": 3,
+    }
+    captured: dict[str, object] = {}
+
+    class _FakeVector:
+        def __init__(self, env_fns, **kwargs) -> None:
+            captured["worker_count"] = len(env_fns)
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(builders, "DeterministicSubprocVecEnv", _FakeVector)
+    result = builders.build_eval_env(cfg, None, n_eval_episodes=2, workers=12)
+
+    assert isinstance(result, _FakeVector)
+    assert captured["worker_count"] == 2
+    assert captured["kwargs"] == {
+        "start_method": "spawn",
+        "auto_reset": False,
+        "torch_num_threads": 2,
+        "numeric_library_num_threads": 3,
+    }
+
+
 def test_scenarionet_sequence_helper_honors_acl_schedule(monkeypatch) -> None:
     records = tuple(
         SimpleNamespace(

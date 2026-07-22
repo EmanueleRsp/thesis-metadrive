@@ -66,6 +66,17 @@ class _SlowStepEnv(_SeedWindowEnv):
         return super().step(action)
 
 
+class _NumericThreadEnvironmentEnv(_SeedWindowEnv):
+    def reset(self, *, seed: int | None = None, options: dict | None = None):
+        observation, _info = super().reset(seed=seed, options=options)
+        return observation, {
+            "numeric_thread_environment": {
+                key: os.environ.get(key)
+                for key in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+            }
+        }
+
+
 def _make_failing_step_env():
     return _FailingStepEnv(start_index=0, num_scenarios=1)
 
@@ -76,6 +87,10 @@ def _make_abrupt_exit_env():
 
 def _make_slow_step_env():
     return _SlowStepEnv(start_index=0, num_scenarios=1)
+
+
+def _make_numeric_thread_environment_env():
+    return _NumericThreadEnvironmentEnv(start_index=0, num_scenarios=1)
 
 
 def test_deterministic_subproc_vec_env_auto_reset_uses_deterministic_worker_seeds() -> None:
@@ -200,3 +215,27 @@ def test_close_reaps_worker_with_an_in_flight_slow_command() -> None:
     vec_env.close()
     assert time.monotonic() - start < 5.0
     assert all(not process.is_alive() for process in vec_env.processes)
+
+
+def test_numeric_library_thread_limit_is_inherited_before_spawn_and_restored(monkeypatch) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "11")
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "12")
+    monkeypatch.delenv("MKL_NUM_THREADS", raising=False)
+    vec_env = DeterministicSubprocVecEnv(
+        [_make_numeric_thread_environment_env],
+        start_method="spawn",
+        numeric_library_num_threads=3,
+    )
+    try:
+        vec_env.reset()
+        inherited = vec_env.reset_infos[0]["numeric_thread_environment"]
+        assert inherited == {
+            "OMP_NUM_THREADS": "3",
+            "OPENBLAS_NUM_THREADS": "3",
+            "MKL_NUM_THREADS": "3",
+        }
+        assert os.environ["OMP_NUM_THREADS"] == "11"
+        assert os.environ["OPENBLAS_NUM_THREADS"] == "12"
+        assert "MKL_NUM_THREADS" not in os.environ
+    finally:
+        vec_env.close()

@@ -28,6 +28,29 @@ class _SumTree:
             self.tree[node] += delta
             node //= 2
 
+    def set_batch(self, indices: np.ndarray, values: np.ndarray) -> None:
+        """Set distinct leaves and propagate their summed deltas by tree level."""
+
+        leaf_indices = np.asarray(indices, dtype=np.int64).reshape(-1)
+        leaf_values = np.asarray(values, dtype=np.float64).reshape(-1)
+        if len(leaf_indices) != len(leaf_values):
+            raise ValueError("Sum-tree batch indices and values must have matching lengths.")
+        if len(leaf_indices) == 0:
+            return
+        if len(np.unique(leaf_indices)) != len(leaf_indices):
+            raise ValueError("Sum-tree batch indices must be distinct.")
+        nodes = leaf_indices + self.capacity
+        deltas = leaf_values - self.tree[nodes]
+        self.tree[nodes] = leaf_values
+        nodes //= 2
+        while len(nodes) > 0 and np.any(nodes):
+            parents, inverse = np.unique(nodes, return_inverse=True)
+            parent_deltas = np.zeros(len(parents), dtype=np.float64)
+            np.add.at(parent_deltas, inverse, deltas)
+            self.tree[parents] += parent_deltas
+            nodes = parents // 2
+            deltas = parent_deltas
+
     def find_prefix(self, mass: float) -> int:
         node = 1
         value = float(mass)
@@ -39,6 +62,24 @@ class _SumTree:
                 value -= self.tree[left]
                 node = left + 1
         return node - self.capacity
+
+    def find_prefix_batch(self, masses: np.ndarray) -> np.ndarray:
+        """Resolve independent prefix masses with the scalar traversal rules.
+
+        Every lane takes the same fixed tree depth, so the node decisions can
+        be evaluated as NumPy vectors without changing the float64 comparison,
+        subtraction, or tie behavior of :meth:`find_prefix`.
+        """
+
+        values = np.asarray(masses, dtype=np.float64).copy()
+        nodes = np.ones(values.shape, dtype=np.int64)
+        while nodes.size and int(nodes.flat[0]) < self.capacity:
+            left_nodes = nodes * 2
+            left_values = self.tree[left_nodes]
+            choose_left = values <= left_values
+            values = np.where(choose_left, values, values - left_values)
+            nodes = np.where(choose_left, left_nodes, left_nodes + 1)
+        return nodes - self.capacity
 
 
 class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
@@ -103,6 +144,42 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         self._update_current_max(previous, value)
         self._tree.set(index, value**self.alpha)
 
+    def _set_raw_priorities_batch(
+        self, flat_indices: np.ndarray, raw_priorities: np.ndarray
+    ) -> None:
+        """Apply distinct valid raw priorities with equivalent max bookkeeping."""
+
+        indices = np.asarray(flat_indices, dtype=np.int64).reshape(-1)
+        values = np.asarray(raw_priorities, dtype=np.float64).reshape(-1)
+        if len(indices) != len(values):
+            raise ValueError("PER batch indices and priorities must have matching lengths.")
+        if len(indices) == 0:
+            return
+        if len(np.unique(indices)) != len(indices):
+            raise ValueError("PER batch indices must be distinct after reduction.")
+        if np.any(~np.isfinite(values)) or np.any(values <= 0.0):
+            raise ValueError("PER raw priority must be finite and positive.")
+
+        previous = self.raw_priorities.flat[indices].copy()
+        previous_max = self._current_max_raw_priority
+        remaining_max_count = self._current_max_count - int(
+            np.count_nonzero(previous == previous_max)
+        )
+        retained_max_count = remaining_max_count + int(np.count_nonzero(values == previous_max))
+        self.raw_priorities.flat[indices] = values
+        highest_new = float(np.max(values))
+        if highest_new > previous_max:
+            self._current_max_raw_priority = highest_new
+            self._current_max_count = int(np.count_nonzero(values == highest_new))
+        elif retained_max_count > 0:
+            self._current_max_count = retained_max_count
+        else:
+            self._current_max_raw_priority = float(np.max(self.raw_priorities))
+            self._current_max_count = int(
+                np.count_nonzero(self.raw_priorities == self._current_max_raw_priority)
+            )
+        self._tree.set_batch(indices, values**self.alpha)
+
     def _update_current_max(self, previous: float, value: float) -> None:
         if value > self._current_max_raw_priority:
             self._current_max_raw_priority = value
@@ -141,14 +218,11 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             raise ValueError("PER total priority mass must be finite and positive.")
         bounds = np.linspace(0.0, total, int(batch_size) + 1)
         masses = self.rng.uniform(bounds[:-1], bounds[1:])
-        flat_indices = np.asarray([self._tree.find_prefix(mass) for mass in masses], dtype=np.int64)
+        flat_indices = self._tree.find_prefix_batch(masses)
         flat_indices %= active_count
         storage_indices = flat_indices // self.n_envs
         env_indices = flat_indices % self.n_envs
-        probabilities = np.asarray(
-            [self._tree.tree[int(index) + self._tree.capacity] / total for index in flat_indices],
-            dtype=np.float64,
-        )
+        probabilities = self._tree.tree[flat_indices + self._tree.capacity] / total
         beta = self.current_beta()
         weights = (active_count * probabilities) ** (-beta)
         weights /= max(float(np.max(weights)), 1.0e-12)
@@ -281,11 +355,10 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         raw_priorities = np.asarray(priorities, dtype=np.float64).reshape(-1)
         if len(flat_indices) != len(raw_priorities):
             raise ValueError("PER priority indices and values must have matching lengths.")
-        reduced: dict[int, float] = {}
-        for index, priority in zip(flat_indices, raw_priorities, strict=True):
-            value = float(priority) + self.epsilon
-            if not np.isfinite(value) or value <= 0.0:
-                raise ValueError("PER updated priority must be finite and positive.")
-            reduced[int(index)] = max(reduced.get(int(index), 0.0), value)
-        for index, priority in reduced.items():
-            self._set_raw_priority(index, priority)
+        values = raw_priorities + self.epsilon
+        if np.any(~np.isfinite(values)) or np.any(values <= 0.0):
+            raise ValueError("PER updated priority must be finite and positive.")
+        unique_indices, inverse = np.unique(flat_indices, return_inverse=True)
+        reduced_values = np.zeros(len(unique_indices), dtype=np.float64)
+        np.maximum.at(reduced_values, inverse, values)
+        self._set_raw_priorities_batch(unique_indices, reduced_values)

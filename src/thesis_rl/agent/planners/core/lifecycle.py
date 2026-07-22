@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, Protocol
 
 import numpy as np
@@ -41,6 +42,7 @@ class _DelegatingLifecycle:
         self.last_learning_rate = float("nan")
         self.last_learning_potential = float("nan")
         self.learning_potential_values: list[float] = []
+        self.update_timing_seconds: Counter[str] = Counter()
         self.chunk_timesteps: int | None = None
         self.global_total_timesteps: int | None = None
         self.global_steps_done: int = 0
@@ -64,6 +66,7 @@ class _DelegatingLifecycle:
         self.last_learning_rate = float("nan")
         self.last_learning_potential = float("nan")
         self.learning_potential_values = []
+        self.update_timing_seconds = Counter()
         self.chunk_timesteps = int(chunk_timesteps)
         self.global_total_timesteps = global_total_timesteps
         self.global_steps_done = int(global_steps_done)
@@ -182,6 +185,15 @@ class _DelegatingLifecycle:
             self.learning_potential_values.append(self.last_learning_potential)
         self.update_count += int(metrics.get("update_calls", 0))
         self.gradient_step_count += int(metrics.get("gradient_steps", 0))
+        for metric_name, metric_value in metrics.items():
+            if not metric_name.startswith("timing_") or not metric_name.endswith("_seconds"):
+                continue
+            value = float(metric_value)
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(
+                    f"Lifecycle timing metric {metric_name} must be finite and non-negative."
+                )
+            self.update_timing_seconds[metric_name.removeprefix("timing_")] += value
 
     def to_buffer_action(self, env_action: np.ndarray) -> np.ndarray:
         return self.backend.to_buffer_action(np.asarray(env_action, dtype=np.float32))

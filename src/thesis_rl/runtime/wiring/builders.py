@@ -586,6 +586,16 @@ def build_train_env(cfg: DictConfig, env_overrides: dict[str, Any] | None = None
         [make_thunk(rank) for rank in range(num_envs)],
         start_method=start_method,
         acl_mode=acl_vector_mode,
+        torch_num_threads=(
+            None
+            if cfg.env.get("vectorized", {}).get("worker_num_threads") is None
+            else int(cfg.env.get("vectorized", {}).get("worker_num_threads"))
+        ),
+        numeric_library_num_threads=(
+            None
+            if cfg.env.get("vectorized", {}).get("worker_library_num_threads") is None
+            else int(cfg.env.get("vectorized", {}).get("worker_library_num_threads"))
+        ),
     )
 
 
@@ -673,10 +683,19 @@ def build_eval_env(
 
         return _init
 
+    vector_kwargs: dict[str, Any] = {
+        "start_method": start_method,
+        "auto_reset": False,
+    }
+    worker_threads = cfg.env.get("vectorized", {}).get("worker_num_threads")
+    if worker_threads is not None:
+        vector_kwargs["torch_num_threads"] = int(worker_threads)
+    library_worker_threads = cfg.env.get("vectorized", {}).get("worker_library_num_threads")
+    if library_worker_threads is not None:
+        vector_kwargs["numeric_library_num_threads"] = int(library_worker_threads)
     vector_env = DeterministicSubprocVecEnv(
         [make_thunk(rank) for rank in range(worker_count)],
-        start_method=start_method,
-        auto_reset=False,
+        **vector_kwargs,
     )
     vector_env.evaluation_scenario_indices = scenario_indices
     return vector_env

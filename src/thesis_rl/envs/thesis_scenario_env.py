@@ -64,6 +64,7 @@ class ThesisScenarioEnv(ScenarioEnv):
                 # converted Waymo SDC tracks are stationary or near-stationary.
                 "success_route_completion_threshold": 0.95,
                 "minimum_success_route_length_m": 10.0,
+                "rulebook_v2_disable_vehicle_yield_for_benchmark": False,
             }
         )
         return config
@@ -486,6 +487,9 @@ class ThesisScenarioEnv(ScenarioEnv):
         transition_config = RulebookTransitionConfig(
             rss_calibration=calibration,
             expected_config_hash="" if calibration is None else calibration.config_hash,
+            disable_vehicle_yield_for_benchmark=bool(
+                self.config.get("rulebook_v2_disable_vehicle_yield_for_benchmark", False)
+            ),
         )
         self._rulebook_v2_brake_mps2 = (
             None if calibration is None else calibration.ego_min_brake_mps2

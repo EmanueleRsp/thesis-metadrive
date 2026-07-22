@@ -258,6 +258,8 @@ class LatentQueryEncoderV3(BaseEncoder):
     """The approved 143-token, four-block perception-bounded LQ encoder."""
 
     observation_schema_version = SemanticObservationSchemaV12.version
+    _expected_num_latents = 16
+    _expected_depth = 4
 
     def __init__(
         self,
@@ -275,8 +277,15 @@ class LatentQueryEncoderV3(BaseEncoder):
         super().__init__()
         if schema.version != SemanticObservationSchemaV12.version:
             raise ValueError(f"LQ v3 requires schema {SemanticObservationSchemaV12.version}.")
-        if token_dim != 64 or num_latents != 16 or latent_dim != 128 or depth != 4:
-            raise ValueError("LatentQueryEncoderV3 only supports the frozen v1.1 core architecture.")
+        if (
+            token_dim != 64
+            or num_latents != self._expected_num_latents
+            or latent_dim != 128
+            or depth != self._expected_depth
+        ):
+            raise ValueError(
+                "LatentQueryEncoderV3 only supports the frozen v1.1 core architecture."
+            )
         if num_heads != 4 or ff_dim != 256 or output_dim != 256 or pooling != "mean":
             raise ValueError("LatentQueryEncoderV3 received a non-core architecture setting.")
         self.schema = schema
@@ -343,7 +352,9 @@ class LatentQueryEncoderV3(BaseEncoder):
         ego_history = ego_history + self.history_time_embedding(
             self._indices(5, device=device, start=16)
         ).view(1, 5, -1)
-        ego_current = self._type(self.ego_current_projection(observation.ego_current).unsqueeze(1), 1)
+        ego_current = self._type(
+            self.ego_current_projection(observation.ego_current).unsqueeze(1), 1
+        )
         route = self._type(self.route_projection(observation.route), 2)
         route = route + self.route_slot_embedding(self._indices(10, device=device)).view(1, 10, -1)
         dynamic = self._type(self.dynamic_projection(observation.dynamic), 3)
@@ -358,26 +369,43 @@ class LatentQueryEncoderV3(BaseEncoder):
         static = static + self.static_slot_embedding(self._indices(8, device=device)).view(1, 8, -1)
         lane_road = self._type(self.lane_road_projection(observation.lane_road).unsqueeze(1), 5)
         controls = self._type(self.controls_projection(observation.controls), 6)
-        controls = controls + self.control_slot_embedding(self._indices(8, device=device)).view(1, 8, -1)
+        controls = controls + self.control_slot_embedding(self._indices(8, device=device)).view(
+            1, 8, -1
+        )
         interactions = self._type(self.interactions_projection(observation.interactions), 7)
         interactions = interactions + self.interaction_slot_embedding(
             self._indices(8, device=device)
         ).view(1, 8, -1)
-        compliance = self._type(self.compliance_history_projection(observation.compliance_history), 8)
-        compliance = compliance + self.history_time_embedding(self._indices(21, device=device)).view(
-            1, 21, -1
+        compliance = self._type(
+            self.compliance_history_projection(observation.compliance_history), 8
         )
+        compliance = compliance + self.history_time_embedding(
+            self._indices(21, device=device)
+        ).view(1, 21, -1)
         yellow = self._type(
             self.yellow_onset_memory_projection(observation.yellow_onset_memory).unsqueeze(1), 9
         )
         tokens = torch.cat(
-            (ego_history, ego_current, route, dynamic, static, lane_road, controls, interactions, compliance, yellow),
+            (
+                ego_history,
+                ego_current,
+                route,
+                dynamic,
+                static,
+                lane_road,
+                controls,
+                interactions,
+                compliance,
+                yellow,
+            ),
             dim=1,
         )
         valid_mask = torch.cat(
             (
                 observation.ego_history_mask,
-                torch.ones((batch_size, 1), dtype=observation.ego_history_mask.dtype, device=device),
+                torch.ones(
+                    (batch_size, 1), dtype=observation.ego_history_mask.dtype, device=device
+                ),
                 observation.route_mask,
                 observation.dynamic_mask.reshape(batch_size, 80),
                 observation.static_mask,
@@ -385,7 +413,9 @@ class LatentQueryEncoderV3(BaseEncoder):
                 observation.controls_mask,
                 observation.interactions_mask,
                 observation.compliance_history_mask,
-                torch.ones((batch_size, 1), dtype=observation.compliance_history_mask.dtype, device=device),
+                torch.ones(
+                    (batch_size, 1), dtype=observation.compliance_history_mask.dtype, device=device
+                ),
             ),
             dim=1,
         ).bool()
@@ -402,3 +432,67 @@ class LatentQueryEncoderV3(BaseEncoder):
         for block in self.blocks:
             latents = block(latents, scene_memory, ~valid_mask)
         return self.output_projection(latents.mean(dim=1))
+
+
+class LatentQueryEncoderV3Lite(LatentQueryEncoderV3):
+    """Diagnostic-only reduced LQ stack with unchanged semantic I/O dimensions."""
+
+    _expected_num_latents = 8
+    _expected_depth = 2
+
+    def __init__(
+        self,
+        *,
+        schema: SemanticObservationSchemaV12,
+        token_dim: int = 64,
+        num_latents: int = 8,
+        latent_dim: int = 128,
+        output_dim: int = 256,
+        depth: int = 2,
+        num_heads: int = 4,
+        ff_dim: int = 256,
+        pooling: str = "mean",
+    ) -> None:
+        super().__init__(
+            schema=schema,
+            token_dim=token_dim,
+            num_latents=num_latents,
+            latent_dim=latent_dim,
+            output_dim=output_dim,
+            depth=depth,
+            num_heads=num_heads,
+            ff_dim=ff_dim,
+            pooling=pooling,
+        )
+
+
+class LatentQueryEncoderV3Micro(LatentQueryEncoderV3Lite):
+    """Diagnostic-only minimal LQ stack with unchanged semantic I/O dimensions."""
+
+    _expected_num_latents = 4
+    _expected_depth = 1
+
+    def __init__(
+        self,
+        *,
+        schema: SemanticObservationSchemaV12,
+        token_dim: int = 64,
+        num_latents: int = 4,
+        latent_dim: int = 128,
+        output_dim: int = 256,
+        depth: int = 1,
+        num_heads: int = 4,
+        ff_dim: int = 256,
+        pooling: str = "mean",
+    ) -> None:
+        super().__init__(
+            schema=schema,
+            token_dim=token_dim,
+            num_latents=num_latents,
+            latent_dim=latent_dim,
+            output_dim=output_dim,
+            depth=depth,
+            num_heads=num_heads,
+            ff_dim=ff_dim,
+            pooling=pooling,
+        )

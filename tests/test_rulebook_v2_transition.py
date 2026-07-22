@@ -100,6 +100,28 @@ def test_transition_invokes_complete_registry_and_keeps_vehicle_yield_not_applic
     assert cache_delta.new_conflict_zones == ()
 
 
+def test_transition_benchmark_can_skip_vehicle_yield_input_construction(monkeypatch) -> None:
+    cache = _cache()
+    pre = _snapshot(0, 0.0, 1.0)
+    post = _snapshot(1, 0.1, 1.1)
+    memory = initial_memory_for_snapshot(pre, cache)
+
+    def unexpected_vehicle_yield(**_kwargs):
+        raise AssertionError("vehicle-yield construction must be skipped")
+
+    monkeypatch.setattr(transition_module, "_vehicle_yield_inputs", unexpected_vehicle_yield)
+    result, _, cache_delta = evaluate_transition(
+        pre_state=pre,
+        post_state=post,
+        memory=memory,
+        cache=cache,
+        config=RulebookTransitionConfig(disable_vehicle_yield_for_benchmark=True),
+    )
+
+    assert "vehicle_yield" not in result.components
+    assert cache_delta.diagnostic_timing_seconds["vehicle_yield"] == 0.0
+
+
 def test_transition_evaluates_contact_onset_from_post_snapshot() -> None:
     cache = _cache()
     pre = _snapshot(0, 0.0, 1.0)
@@ -360,7 +382,9 @@ def test_vehicle_conflict_pair_cache_reuses_complete_canonical_candidates(
         expected_config_hash="calibration",
     )
     calls = 0
+    candidate_counts: list[int] = []
     original = transition_module.build_vehicle_conflict_zone_candidates
+    original_select = transition_module.select_first_ahead_or_occupied_zone
 
     def counted(*args, **kwargs):
         nonlocal calls
@@ -368,6 +392,12 @@ def test_vehicle_conflict_pair_cache_reuses_complete_canonical_candidates(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(transition_module, "build_vehicle_conflict_zone_candidates", counted)
+
+    def count_candidates(*args, **kwargs):
+        candidate_counts.append(len(kwargs["candidates"]))
+        return original_select(*args, **kwargs)
+
+    monkeypatch.setattr(transition_module, "select_first_ahead_or_occupied_zone", count_candidates)
     first, memory, delta = evaluate_transition(
         pre_state=pre,
         post_state=post,
@@ -388,6 +418,7 @@ def test_vehicle_conflict_pair_cache_reuses_complete_canonical_candidates(
     )
 
     assert calls == 1  # one local pair build despite two actors on the same movement
+    assert candidate_counts == [1, 1]
     assert len(cached.vehicle_conflict_pairs) == 1
     assert (
         first.components["vehicle_yield"].raw["zone_id"]

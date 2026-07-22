@@ -72,6 +72,56 @@ def test_sac_sb3_builds_collects_and_updates(env) -> None:
     assert planner.model.num_timesteps >= 1
 
 
+def test_td3_sb3_reports_train_and_acl_replay_timings(env) -> None:
+    pytest.importorskip("stable_baselines3")
+    planner = Sb3Td3PlannerBackend.build(
+        env=env,
+        cfg_planner=OmegaConf.create(
+            {
+                "policy": "MlpPolicy",
+                "learning_starts": 0,
+                "batch_size": 8,
+                "buffer_size": 128,
+                "train_freq": 1,
+                "gradient_steps": 1,
+                "learning_rate": 1e-3,
+                "gamma": 0.99,
+                "tau": 0.005,
+                "action_noise_type": "normal",
+                "action_noise_sigma": 0.1,
+                "action_noise_mean": 0.0,
+            }
+        ),
+        device="cpu",
+        seed=123,
+    )
+    lifecycle = planner.get_lifecycle()
+    lifecycle.begin_training(chunk_timesteps=1, global_total_timesteps=1, global_steps_done=0)
+
+    obs, _ = env.reset(seed=123)
+    action = lifecycle.act(np.asarray(obs, dtype=np.float32), deterministic=False)
+    next_obs, reward, terminated, truncated, info = env.step(action)
+    lifecycle.observe_transition(
+        Transition(
+            observation=np.asarray(obs, dtype=np.float32),
+            env_action=np.asarray(action, dtype=np.float32),
+            buffer_action=lifecycle.to_buffer_action(np.asarray(action, dtype=np.float32)),
+            scalar_reward=float(reward),
+            terminated=bool(terminated),
+            truncated=bool(truncated),
+            next_observation=np.asarray(next_obs, dtype=np.float32),
+            terminal_observation=np.asarray(next_obs, dtype=np.float32)
+            if (terminated or truncated)
+            else None,
+            info=dict(info),
+        )
+    )
+    lifecycle.maybe_update()
+
+    assert lifecycle.update_timing_seconds["td3_train_seconds"] > 0.0
+    assert lifecycle.update_timing_seconds["acl_replay_learning_potential_seconds"] > 0.0
+
+
 def test_ppo_sb3_builds_collects_and_updates(env) -> None:
     pytest.importorskip("stable_baselines3")
     planner = Sb3PpoPlannerBackend.build(
@@ -171,8 +221,13 @@ def test_sac_sb3_builds_with_thesis_mlp_encoder_bridge(env) -> None:
     )
 
     assert planner.model.policy.features_extractor is None
-    assert planner.model.actor.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
-    assert planner.model.critic.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
+    assert (
+        planner.model.actor.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
+    )
+    assert (
+        planner.model.critic.features_extractor.__class__.__name__
+        == "ThesisEncoderFeatureExtractor"
+    )
 
 
 def test_ppo_sb3_builds_with_thesis_mlp_encoder_bridge(env) -> None:
@@ -221,7 +276,10 @@ def test_ppo_sb3_builds_with_thesis_mlp_encoder_bridge(env) -> None:
         seed=123,
     )
 
-    assert planner.model.policy.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
+    assert (
+        planner.model.policy.features_extractor.__class__.__name__
+        == "ThesisEncoderFeatureExtractor"
+    )
 
 
 def test_td3_sb3_builds_with_thesis_mlp_encoder_bridge(env) -> None:
@@ -271,5 +329,10 @@ def test_td3_sb3_builds_with_thesis_mlp_encoder_bridge(env) -> None:
     )
 
     assert planner.model.policy.features_extractor is None
-    assert planner.model.actor.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
-    assert planner.model.critic.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
+    assert (
+        planner.model.actor.features_extractor.__class__.__name__ == "ThesisEncoderFeatureExtractor"
+    )
+    assert (
+        planner.model.critic.features_extractor.__class__.__name__
+        == "ThesisEncoderFeatureExtractor"
+    )

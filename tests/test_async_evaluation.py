@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,14 @@ class _FakeAgent:
         self.saved.append(stem)
         stem.parent.mkdir(parents=True, exist_ok=True)
         stem.with_suffix(".zip").write_text("snapshot", encoding="utf-8")
+
+
+class _EnvironmentCapturingProcess(_FakeProcess):
+    observed_openblas_threads: str | None = None
+
+    def start(self):
+        type(self).observed_openblas_threads = os.environ.get("OPENBLAS_NUM_THREADS")
+        super().start()
 
 
 def _cfg():
@@ -212,4 +221,33 @@ def test_renderables_keep_completed_episode_count_after_job_finishes(tmp_path, m
     assert task.completed == 2
     assert task.total == 2
     assert task.description == "Evaluation episodes (2/2)"
+    manager.close()
+
+
+def test_async_evaluator_inherits_numeric_thread_limit_before_spawn(tmp_path, monkeypatch) -> None:
+    def fake_worker(job, output_queue):
+        output_queue.put(("finished", job.eval_id, {"per_episode": {"returns": [1.0]}}))
+
+    monkeypatch.setattr(async_module, "_evaluation_worker_main", fake_worker)
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "17")
+    _EnvironmentCapturingProcess.observed_openblas_threads = None
+    manager = AsyncEvaluationManager(
+        checkpoints_dir=tmp_path,
+        process_factory=_EnvironmentCapturingProcess,
+        numeric_library_num_threads=2,
+    )
+    manager.enqueue(
+        agent=_FakeAgent(tmp_path),
+        cfg=_cfg(),
+        eval_id=1,
+        global_step=10,
+        stage="baseline",
+        stage_index=0,
+        episode_count=1,
+        base_seed=100,
+        env_seed=200,
+    )
+    manager.drain()
+    assert _EnvironmentCapturingProcess.observed_openblas_threads == "2"
+    assert os.environ["OPENBLAS_NUM_THREADS"] == "17"
     manager.close()

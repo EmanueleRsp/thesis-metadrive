@@ -61,7 +61,9 @@ def _make_transition(
         terminated=bool(terminated),
         truncated=bool(truncated),
         next_observation=np.asarray(next_obs, dtype=np.float32),
-        terminal_observation=np.asarray(terminal_obs, dtype=np.float32) if terminal_obs is not None else None,
+        terminal_observation=np.asarray(terminal_obs, dtype=np.float32)
+        if terminal_obs is not None
+        else None,
         info={},
     )
 
@@ -87,7 +89,9 @@ def test_lifecycle_training_loop_collects_replay(cfg_planner, env):
     for _ in range(40):
         action = lifecycle.act(obs, deterministic=False)
         next_obs, reward, terminated, truncated, _ = env.step(action)
-        transition = _make_transition(lifecycle, obs, action, reward, terminated, truncated, next_obs)
+        transition = _make_transition(
+            lifecycle, obs, action, reward, terminated, truncated, next_obs
+        )
         lifecycle.observe_transition(transition)
         lifecycle.maybe_update()
         obs = next_obs

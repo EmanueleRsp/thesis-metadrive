@@ -5,10 +5,11 @@ PYTHON_QUALITY_PATHS ?= src tests scripts
 # The final integration run is intentionally explicit about the learner. All
 # values are Hydra config names under conf/agent/planner/algorithm/.
 ALGORITHM ?=
+ENCODER ?= lq_v3
 RUN_PROFILE ?= smoke
 RUN_NAME ?= run
 RUN_OVERRIDES ?=
-NUM_ENVS ?= 5
+NUM_ENVS ?= 20
 SEED ?= 42
 RUN_ALGORITHM_CONFIGS := ppo ppo_sb3 sac sac_sb3 td3 td3_sb3
 RUN_PROFILE_CONFIGS := default fast medium long thesis tune smoke
@@ -311,7 +312,7 @@ run-train:
 		uv run --no-sync python -m thesis_rl.cli.train \
 		env=scenarionet \
 		obs=semantic_v3 \
-		agent/planner/encoder=lq_v3 \
+		agent/planner/encoder=$(ENCODER) \
 		agent/planner/decoder=mlp_encoded \
 		reward=scalar_reward \
 		scalarization=default \

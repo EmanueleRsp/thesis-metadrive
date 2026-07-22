@@ -89,6 +89,7 @@ def evaluate_registered_transition(
     post_state: EnvSnapshot | None = None,
     history_window_s: float = 0.5,
     registry: RulebookV2Registry = DEFAULT_RULEBOOK_V2_REGISTRY,
+    excluded_normative_components: frozenset[str] = frozenset(),
 ):
     """Invoke every normative evaluator through the fixed registry.
 
@@ -97,10 +98,17 @@ def evaluate_registered_transition(
     when its domain is absent so it can return an explicit
     ``NOT_APPLICABLE`` result.
     """
+    invalid_exclusions = excluded_normative_components.difference({"vehicle_yield"})
+    if invalid_exclusions:
+        raise ValueError(f"Unsupported diagnostic component exclusions: {invalid_exclusions!r}")
     normative_names = tuple(
         component.name
         for component in registry.components
-        if component.normative_output and component.name != "progress"
+        if (
+            component.normative_output
+            and component.name != "progress"
+            and component.name not in excluded_normative_components
+        )
     )
     supplied = set(component_inputs)
     missing = tuple(name for name in normative_names if name not in supplied)

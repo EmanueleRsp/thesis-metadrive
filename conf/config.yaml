@@ -27,6 +27,11 @@ defaults:
 seed: 42
 device: auto
 
+runtime:
+  # Null preserves PyTorch's process-wide default. Positive values are an
+  # explicit diagnostic cap for the learner/parent process only.
+  parent_torch_num_threads: null
+
 # Explicit authoritative Rulebook selector used by the final scalar pipeline.
 rulebook:
   version: 4.7-final-implementation-complete

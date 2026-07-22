@@ -70,6 +70,32 @@ def _bridge_hole(
     raise ValueError("Polygon hole has no visible deterministic bridge")
 
 
+def _constrained_components_after_ear_exhaustion(polygon: Polygon) -> tuple[Polygon, ...]:
+    """Return a checked deterministic triangulation when ear clipping exhausts.
+
+    A valid concave ring or a bridged hole can exhaust the local ear predicate,
+    even though the input polygon has a well-defined interior.  This is not a
+    data-validation failure.  GEOS's constrained triangulation operates on the
+    original boundaries, preserving every hole rather than treating a bridge as
+    drivable area.  The coverage check below makes this a geometry-equivalent
+    recovery, not a simplification or approximation.
+    """
+
+    triangles = tuple(
+        triangle
+        for triangle in shapely.constrained_delaunay_triangles(polygon).geoms
+        if triangle.geom_type == "Polygon"
+        and triangle.area > AREA_EPSILON_M2
+        and polygon.covers(triangle)
+    )
+    if not triangles:
+        raise ValueError("Constrained decomposition produced no non-degenerate triangles")
+    covered = shapely.union_all(triangles)
+    if not polygon.covers(covered) or polygon.symmetric_difference(covered).area > AREA_EPSILON_M2:
+        raise ValueError("Constrained decomposition does not cover the input polygon")
+    return tuple(sorted(triangles, key=lambda tri: (tri.centroid.x, tri.centroid.y, tri.area)))
+
+
 def deterministic_convex_decomposition(polygon: BaseGeometry) -> tuple[Polygon, ...]:
     """Bridge holes then ear-clip with the frozen lexicographic ear tie-break."""
 
@@ -118,7 +144,7 @@ def deterministic_convex_decomposition(polygon: BaseGeometry) -> tuple[Polygon, 
                 continue
             ears.append(((current[0], current[1], current_index), position, triangle))
         if not ears:
-            raise ValueError("Deterministic ear clipping found no valid ear")
+            return _constrained_components_after_ear_exhaustion(polygon)
         _, position, triangle = min(ears, key=lambda ear: ear[0])
         triangles.append(triangle)
         indices.pop(position)
