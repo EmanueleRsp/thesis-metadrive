@@ -28,6 +28,7 @@ from thesis_rl.rulebook.v2.geometry.conflict_zones import (
     _vertical_overlap_compatible,
     select_first_ahead_or_occupied_zone,
 )
+from thesis_rl.rulebook.v2.geometry import conflict_zones
 from thesis_rl.rulebook.v2.geometry.footprint import (
     front_bumper_segment,
     oriented_bounding_box,
@@ -39,8 +40,9 @@ from thesis_rl.rulebook.v2.geometry.lanes import (
     bumper_to_bumper_gap,
     derive_lane_movement_key,
     footprint_route_coordinates,
+    _lane_coverage_polygon,
 )
-from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+from thesis_rl.rulebook.v2.geometry.route import GEOMETRY_EPSILON_M, RoutePolyline
 from thesis_rl.rulebook.v2.geometry.vertical import vertically_compatible_at_xy
 from thesis_rl.rulebook.v2.types import MovementKey
 
@@ -69,6 +71,34 @@ def test_lane_movement_key_uses_unique_successor_or_assigned_route() -> None:
     )
     assert resolved is not None
     assert resolved.exit_lane_id == "right"
+
+
+def test_lane_association_reuses_the_exact_tolerance_envelope() -> None:
+    polygon = Polygon(((0.0, -1.0), (10.0, -1.0), (10.0, 1.0), (0.0, 1.0)))
+    _lane_coverage_polygon.cache_clear()
+    first = _lane_coverage_polygon(polygon)
+    second = _lane_coverage_polygon(polygon)
+    assert first.equals(second)
+    assert _lane_coverage_polygon.cache_info().hits == 1
+
+
+def test_lane_association_keeps_points_inside_the_frozen_buffered_bounds() -> None:
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    lane = RouteLaneRecord(
+        "lane-a",
+        Polygon(((0.0, -1.0), (10.0, -1.0), (10.0, 1.0), (0.0, 1.0))),
+        route,
+    )
+
+    association = associate_route_lane(
+        position_xy=(10.0 + GEOMETRY_EPSILON_M * 0.5, 0.0),
+        position_z=0.0,
+        heading_rad=0.0,
+        route_lanes=(lane,),
+    )
+
+    assert association is not None
+    assert association.lane_id == "lane-a"
 
 
 def test_canonical_wkb_and_synthetic_id_ignore_ring_orientation_and_small_noise() -> None:
@@ -311,6 +341,51 @@ def test_conflict_zone_candidates_are_wkb_ordered_stable_and_vertical_filtered()
     assert not build_vehicle_conflict_zone_candidates(
         scenario_id="scenario", ego_corridor=ego, other_corridor=elevated_other
     )
+
+
+def test_conflict_zone_filters_a_collapsed_derived_component_but_not_source_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A post-boolean sliver is no zone; invalid source corridors still fail."""
+
+    ego = MovementCorridor(
+        MovementKey("ego-in", "node", "ego-out"),
+        Polygon(((0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0))),
+        lambda _x, _y: 0.0,
+    )
+    other = MovementCorridor(
+        MovementKey("other-in", "node", "other-out"),
+        Polygon(((1.0, -1.0), (2.0, -1.0), (2.0, 3.0), (1.0, 3.0))),
+        lambda _x, _y: 0.0,
+    )
+    original = conflict_zones.canonicalize_geometry
+    calls = 0
+
+    def collapse_only_derived(geometry: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise CanonicalGeometryError("Geometry collapsed to empty after precision snapping.")
+        return original(geometry)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(conflict_zones, "canonicalize_geometry", collapse_only_derived)
+    assert (
+        build_vehicle_conflict_zone_candidates(
+            scenario_id="scenario", ego_corridor=ego, other_corridor=other
+        )
+        == ()
+    )
+
+    with pytest.raises(CanonicalGeometryError, match="empty"):
+        build_vehicle_conflict_zone_candidates(
+            scenario_id="scenario",
+            ego_corridor=MovementCorridor(
+                ego.movement_key,
+                Polygon(),
+                ego.elevation_at_xy,
+            ),
+            other_corridor=other,
+        )
 
 
 def test_vertical_overlap_accepts_repaired_multipolygon() -> None:

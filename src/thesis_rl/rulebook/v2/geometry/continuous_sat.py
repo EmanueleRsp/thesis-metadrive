@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from math import hypot, isfinite
 from typing import Iterable
 
@@ -10,6 +11,7 @@ import shapely
 from shapely.affinity import translate
 from shapely.geometry import Point, Polygon
 from shapely.geometry.base import BaseGeometry
+from shapely.prepared import prep
 
 
 AREA_EPSILON_M2 = 1.0e-4
@@ -27,13 +29,18 @@ class OccupancyInterval:
 
 
 def _signed_area(vertices: list[tuple[float, float]]) -> float:
-    return sum(
-        first[0] * second[1] - second[0] * first[1]
-        for first, second in zip(vertices, vertices[1:] + vertices[:1])
-    ) / 2.0
+    return (
+        sum(
+            first[0] * second[1] - second[0] * first[1]
+            for first, second in zip(vertices, vertices[1:] + vertices[:1])
+        )
+        / 2.0
+    )
 
 
-def _normalized_ring(coordinates: Iterable[tuple[float, float]], *, ccw: bool) -> list[tuple[float, float]]:
+def _normalized_ring(
+    coordinates: Iterable[tuple[float, float]], *, ccw: bool
+) -> list[tuple[float, float]]:
     ring = [(float(x), float(y)) for x, y, *_ in coordinates]
     if ring[0] == ring[-1]:
         ring.pop()
@@ -77,6 +84,8 @@ def deterministic_convex_decomposition(polygon: BaseGeometry) -> tuple[Polygon, 
     for hole in holes:
         merged = _bridge_hole(merged, hole, polygon)
     indices = list(range(len(merged)))
+    vertex_points = tuple(Point(vertex) for vertex in merged)
+    prepared_polygon = prep(polygon)
     triangles: list[Polygon] = []
     while len(indices) > 3:
         ears: list[tuple[tuple[float, float, int], int, Polygon]] = []
@@ -92,10 +101,17 @@ def deterministic_convex_decomposition(polygon: BaseGeometry) -> tuple[Polygon, 
                 current[1] - previous[1]
             ) * (following[0] - current[0])
             triangle = Polygon((previous, current, following))
-            if cross <= 0.0 or triangle.area <= AREA_EPSILON_M2 or not polygon.covers(triangle):
+            if (
+                cross <= 0.0
+                or triangle.area <= AREA_EPSILON_M2
+                or not prepared_polygon.covers(triangle)
+            ):
                 continue
+            min_x, min_y, max_x, max_y = triangle.bounds
             if any(
-                triangle.contains(Point(merged[other_index]))
+                min_x <= merged[other_index][0] <= max_x
+                and min_y <= merged[other_index][1] <= max_y
+                and triangle.contains(vertex_points[other_index])
                 for other_index in indices
                 if other_index not in {previous_index, current_index, next_index}
             ):
@@ -112,6 +128,22 @@ def deterministic_convex_decomposition(polygon: BaseGeometry) -> tuple[Polygon, 
     if not triangles:
         raise ValueError("Convex decomposition produced no non-degenerate triangles")
     return tuple(sorted(triangles, key=lambda tri: (tri.centroid.x, tri.centroid.y, tri.area)))
+
+
+@lru_cache(maxsize=512)
+def _cached_deterministic_convex_decomposition(polygon: BaseGeometry) -> tuple[Polygon, ...]:
+    """Reuse the exact convex components of immutable conflict-zone geometry."""
+
+    return deterministic_convex_decomposition(polygon)
+
+
+def _convex_components(polygon: BaseGeometry) -> tuple[Polygon, ...]:
+    """Use the bounded cache where the installed Shapely geometry is hashable."""
+
+    try:
+        return _cached_deterministic_convex_decomposition(polygon)
+    except TypeError:
+        return deterministic_convex_decomposition(polygon)
 
 
 def _sat_interval(
@@ -146,7 +178,11 @@ def _sat_interval(
 
 
 def predict_occupancy_interval(
-    *, actor_footprint: Polygon, actor_velocity_xy: tuple[float, float], zone: Polygon, horizon_s: float
+    *,
+    actor_footprint: Polygon,
+    actor_velocity_xy: tuple[float, float],
+    zone: Polygon,
+    horizon_s: float,
 ) -> OccupancyInterval | None:
     """Return `NO_INTERVAL` as ``None`` or the selected finite/open interval."""
 
@@ -156,8 +192,8 @@ def predict_occupancy_interval(
         raise ValueError("Actor velocity must be finite")
     intervals = [
         interval
-        for actor_triangle in deterministic_convex_decomposition(actor_footprint)
-        for zone_triangle in deterministic_convex_decomposition(zone)
+        for actor_triangle in _convex_components(actor_footprint)
+        for zone_triangle in _convex_components(zone)
         if (interval := _sat_interval(actor_triangle, actor_velocity_xy, zone_triangle, horizon_s))
         is not None
     ]
@@ -170,10 +206,11 @@ def predict_occupancy_interval(
             merged.append([start, end])
         else:
             merged[-1][1] = max(merged[-1][1], end)
-    selected = next((interval for interval in merged if interval[0] <= 0.0 <= interval[1]), merged[0])
+    selected = next(
+        (interval for interval in merged if interval[0] <= 0.0 <= interval[1]), merged[0]
+    )
     if selected[1] >= horizon_s - INTERVAL_EPSILON_S and translate(
-        actor_footprint,
-        actor_velocity_xy[0] * horizon_s, actor_velocity_xy[1] * horizon_s
+        actor_footprint, actor_velocity_xy[0] * horizon_s, actor_velocity_xy[1] * horizon_s
     ).intersects(zone):
         return OccupancyInterval(selected[0], None)
     return OccupancyInterval(selected[0], selected[1])

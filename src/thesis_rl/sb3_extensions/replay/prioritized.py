@@ -161,6 +161,73 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
     def set_beta_progress(self, env_steps: int) -> None:
         self.beta_progress_env_steps = max(int(env_steps), 0)
 
+    def __getstate__(self) -> dict[str, Any]:
+        """Persist only written replay rows until the ring is full.
+
+        SB3 allocates every replay row at construction.  Pickling that full
+        allocation for a short smoke/resume checkpoint is pure I/O overhead:
+        zero-filled, not-yet-addressable rows cannot influence sampling.  The
+        active prefix and all scalar/RNG state are sufficient to recreate the
+        exact buffer and priority tree on load.
+        """
+
+        state = dict(self.__dict__)
+        active_count = self._active_count()
+        state["_thesis_sparse_replay_version"] = 1
+        state["_thesis_sparse_replay_capacity"] = int(self.buffer_size)
+        state["_thesis_sparse_replay_active_count"] = int(active_count)
+        if not self.full:
+            for name in (
+                "observations",
+                "next_observations",
+                "actions",
+                "rewards",
+                "dones",
+                "timeouts",
+                "raw_priorities",
+            ):
+                values = np.asarray(state[name])
+                state[name] = values[:active_count].copy()
+        # It is deterministically derived from raw priorities and should not
+        # duplicate a multi-megabyte allocation in every checkpoint.
+        state.pop("_tree", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore an exact sparse replay checkpoint produced by ``__getstate__``."""
+
+        version = state.pop("_thesis_sparse_replay_version", None)
+        if version is None:
+            self.__dict__.update(state)
+            return
+        if version != 1:
+            raise ValueError(f"Unsupported sparse replay persistence version: {version}")
+        capacity = int(state.pop("_thesis_sparse_replay_capacity"))
+        active_count = int(state.pop("_thesis_sparse_replay_active_count"))
+        if active_count < 0 or active_count > capacity:
+            raise ValueError("Sparse replay checkpoint has an invalid active row count.")
+        self.__dict__.update(state)
+        if not bool(self.full):
+            for name in (
+                "observations",
+                "next_observations",
+                "actions",
+                "rewards",
+                "dones",
+                "timeouts",
+                "raw_priorities",
+            ):
+                persisted = np.asarray(getattr(self, name))
+                restored = np.zeros((capacity, *persisted.shape[1:]), dtype=persisted.dtype)
+                restored[:active_count] = persisted
+                setattr(self, name, restored)
+        self.buffer_size = capacity
+        self._tree = _SumTree(self.buffer_size * self.n_envs)
+        active_priorities = self.raw_priorities[: self._active_count()].reshape(-1)
+        for index, priority in enumerate(active_priorities):
+            if float(priority) > 0.0:
+                self._tree.set(index, float(priority) ** self.alpha)
+
     def sample(self, batch_size: int, env: Any = None):
         from stable_baselines3.common.type_aliases import ReplayBufferSamples
 

@@ -11,11 +11,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from math import cos, isfinite, sin
+import time
 
 from thesis_rl.rulebook.v2.components.controls import signal_group_state
 from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact, RSSCandidate
 from thesis_rl.rulebook.v2.geometry.conflict_zones import (
+    ConflictZoneCandidate,
     MovementCorridor,
+    RouteConflictZoneCandidate,
     attach_route_intervals,
     build_vehicle_conflict_zone_candidates,
     select_first_ahead_or_occupied_zone,
@@ -26,6 +29,7 @@ from thesis_rl.rulebook.v2.geometry.drivable import DrivableLaneRecord, drivable
 from thesis_rl.rulebook.v2.geometry.elevation import PolylineElevation
 from thesis_rl.rulebook.v2.geometry.footprint import swept_front_bumper
 from thesis_rl.rulebook.v2.geometry.lanes import (
+    LaneAssociation,
     RouteLaneRecord,
     associate_route_lane,
     bumper_to_bumper_gap,
@@ -46,6 +50,7 @@ from thesis_rl.rulebook.v2.types import (
     RulebookMemory,
     CacheDelta,
     ConflictZoneRecord,
+    VehicleConflictPairRecord,
 )
 
 
@@ -176,19 +181,48 @@ def _route_lane(cache: EpisodeCache, lane_id: str | None) -> RouteLaneRecord | N
     return next((lane for lane in cache.route_lanes if lane.lane_id == lane_id), None)
 
 
+def _snapshot_lane_associations(
+    snapshot: EnvSnapshot,
+    route_lanes: tuple[RouteLaneRecord, ...],
+) -> tuple[LaneAssociation | None, dict[str, LaneAssociation | None]]:
+    """Associate every live vehicle once for all Rulebook components of a snapshot."""
+
+    ego_association = associate_route_lane(
+        position_xy=snapshot.ego.position_xy,
+        position_z=snapshot.ego.position_z,
+        heading_rad=snapshot.ego.heading_rad,
+        route_lanes=route_lanes,
+    )
+    actor_associations = {
+        actor.actor_id: associate_route_lane(
+            position_xy=actor.position_xy,
+            position_z=actor.position_z,
+            heading_rad=actor.heading_rad,
+            route_lanes=route_lanes,
+        )
+        for actor in snapshot.actors
+        if actor.actor_class is ActorClass.VEHICLE
+    }
+    return ego_association, actor_associations
+
+
 def _rss_candidates(
     *,
     ego: ActorSnapshot,
     actors: tuple[ActorSnapshot, ...],
     route,
     route_lanes: tuple[RouteLaneRecord, ...],
+    ego_association: LaneAssociation | None = None,
+    actor_associations: dict[str, LaneAssociation | None] | None = None,
 ) -> tuple[RSSCandidate, ...]:
-    ego_lane = associate_route_lane(
-        position_xy=ego.position_xy,
-        position_z=ego.position_z,
-        heading_rad=ego.heading_rad,
-        route_lanes=route_lanes,
-    )
+    ego_lane = ego_association
+    if ego_lane is None:
+        ego_lane = associate_route_lane(
+            position_xy=ego.position_xy,
+            position_z=ego.position_z,
+            heading_rad=ego.heading_rad,
+            route_lanes=route_lanes,
+        )
     if ego_lane is None:
         return ()
     ego_heading = (cos(ego.heading_rad), sin(ego.heading_rad))
@@ -199,11 +233,15 @@ def _rss_candidates(
     for actor in actors:
         if actor.actor_class is not ActorClass.VEHICLE:
             continue
-        actor_lane = associate_route_lane(
-            position_xy=actor.position_xy,
-            position_z=actor.position_z,
-            heading_rad=actor.heading_rad,
-            route_lanes=route_lanes,
+        actor_lane = (
+            actor_associations.get(actor.actor_id)
+            if actor_associations is not None
+            else associate_route_lane(
+                position_xy=actor.position_xy,
+                position_z=actor.position_z,
+                heading_rad=actor.heading_rad,
+                route_lanes=route_lanes,
+            )
         )
         if actor_lane is None or actor_lane.lane_id != ego_lane.lane_id:
             continue
@@ -293,6 +331,7 @@ def _crosswalk_inputs(
     post_front_s: float,
     prediction_horizon_s: float,
     minimum_history_samples: int,
+    ego_association: LaneAssociation | None = None,
 ):
     from thesis_rl.rulebook.v2.geometry.conflict_zones import (
         build_crosswalk_conflict_zone_candidates,
@@ -304,12 +343,14 @@ def _crosswalk_inputs(
         for feature in cache.map_feature_catalog.values()
         if feature.feature_class is MapFeatureClass.CROSSWALK
     )
-    association = associate_route_lane(
-        position_xy=post.ego.position_xy,
-        position_z=post.ego.position_z,
-        heading_rad=post.ego.heading_rad,
-        route_lanes=cache.route_lanes,
-    )
+    association = ego_association
+    if association is None:
+        association = associate_route_lane(
+            position_xy=post.ego.position_xy,
+            position_z=post.ego.position_z,
+            heading_rad=post.ego.heading_rad,
+            route_lanes=cache.route_lanes,
+        )
     lane = None if association is None else _route_lane(cache, association.lane_id)
     if not crosswalks or lane is None:
         return {
@@ -482,15 +523,19 @@ def _vehicle_yield_inputs(
     prediction_horizon_s: float,
     minimum_history_samples: int,
     ego_brake_mps2: float | None,
+    ego_association: LaneAssociation | None = None,
+    actor_associations: dict[str, LaneAssociation | None] | None = None,
 ) -> tuple[dict[str, object], CacheDelta]:
     """Construct live vehicle-yield inputs without inferring priority from geometry."""
 
-    association = associate_route_lane(
-        position_xy=post.ego.position_xy,
-        position_z=post.ego.position_z,
-        heading_rad=post.ego.heading_rad,
-        route_lanes=cache.route_lanes,
-    )
+    association = ego_association
+    if association is None:
+        association = associate_route_lane(
+            position_xy=post.ego.position_xy,
+            position_z=post.ego.position_z,
+            heading_rad=post.ego.heading_rad,
+            route_lanes=cache.route_lanes,
+        )
     ego_lane = None if association is None else _route_lane(cache, association.lane_id)
     ego_key = (
         None
@@ -525,16 +570,22 @@ def _vehicle_yield_inputs(
         elevation_at_xy=PolylineElevation(ego_lane.centerline.points_xyz),
     )
     candidates = []
+    new_pair_records: list[VehicleConflictPairRecord] = []
+    pending_pair_records: dict[tuple[object, object], VehicleConflictPairRecord] = {}
     actor_lanes: dict[str, RouteLaneRecord] = {}
     actor_keys: dict[str, object] = {}
     for actor in post.actors:
         if actor.actor_class is not ActorClass.VEHICLE:
             continue
-        actor_association = associate_route_lane(
-            position_xy=actor.position_xy,
-            position_z=actor.position_z,
-            heading_rad=actor.heading_rad,
-            route_lanes=cache.route_lanes,
+        actor_association = (
+            actor_associations.get(actor.actor_id)
+            if actor_associations is not None
+            else associate_route_lane(
+                position_xy=actor.position_xy,
+                position_z=actor.position_z,
+                heading_rad=actor.heading_rad,
+                route_lanes=cache.route_lanes,
+            )
         )
         lane = None if actor_association is None else _route_lane(cache, actor_association.lane_id)
         movement_key = None if lane is None else derive_lane_movement_key(lane)
@@ -542,26 +593,64 @@ def _vehicle_yield_inputs(
             continue
         actor_lanes[actor.actor_id] = lane
         actor_keys[actor.actor_id] = movement_key
+        pair_key = (ego_key, movement_key)
+        cached_pair = cache.vehicle_conflict_pairs.get(pair_key) or pending_pair_records.get(
+            pair_key
+        )
+        if cached_pair is not None:
+            candidates.extend(
+                RouteConflictZoneCandidate(
+                    candidate=ConflictZoneCandidate(
+                        zone_id=record.zone_id,
+                        component_index=record.component_index,
+                        polygon=record.polygon,
+                        ego_movement_key=record.ego_movement_key,
+                        other_movement_key=record.other_movement_key,
+                    ),
+                    route_entry_s_m=record.route_entry_s_m,
+                    route_exit_s_m=record.route_exit_s_m,
+                )
+                for record in cached_pair.candidates
+            )
+            continue
         other_corridor = MovementCorridor(
             movement_key=movement_key,
             polygon=lane.polygon_xy,
             elevation_at_xy=PolylineElevation(lane.centerline.points_xyz),
         )
-        candidates.extend(
-            attach_route_intervals(
-                route=route,
-                candidates=build_vehicle_conflict_zone_candidates(
-                    scenario_id=cache.scenario_id,
-                    ego_corridor=ego_corridor,
-                    other_corridor=other_corridor,
-                ),
-            )
+        pair_candidates = attach_route_intervals(
+            route=route,
+            candidates=build_vehicle_conflict_zone_candidates(
+                scenario_id=cache.scenario_id,
+                ego_corridor=ego_corridor,
+                other_corridor=other_corridor,
+            ),
         )
+        candidates.extend(pair_candidates)
+        pair_record = VehicleConflictPairRecord(
+            ego_movement_key=ego_key,
+            other_movement_key=movement_key,
+            candidates=tuple(
+                ConflictZoneRecord(
+                    zone_id=item.candidate.zone_id,
+                    polygon=item.candidate.polygon,
+                    ego_movement_key=item.candidate.ego_movement_key,
+                    other_movement_key=item.candidate.other_movement_key,
+                    route_entry_s_m=item.route_entry_s_m,
+                    route_exit_s_m=item.route_exit_s_m,
+                    elevation_m=post.ego.position_z,
+                    component_index=item.candidate.component_index,
+                )
+                for item in pair_candidates
+            ),
+        )
+        pending_pair_records[pair_key] = pair_record
+        new_pair_records.append(pair_record)
     selected = select_first_ahead_or_occupied_zone(
         candidates=tuple(candidates), ego_footprint=post.ego.footprint, ego_front_s_m=post_front_s
     )
     if selected is None:
-        return empty, CacheDelta()
+        return empty, CacheDelta(new_vehicle_conflict_pairs=tuple(new_pair_records))
     candidate = selected.candidate
     zone = candidate.polygon
     ego_control = _approach_control_for_movement(cache, ego_key)
@@ -603,7 +692,7 @@ def _vehicle_yield_inputs(
         minimum_history_samples=minimum_history_samples,
     )
     if ego_interval is None:
-        return empty, CacheDelta()
+        return empty, CacheDelta(new_vehicle_conflict_pairs=tuple(new_pair_records))
     pre_by_id = {actor.actor_id: actor for actor in pre.actors}
     ego_occupied = post.ego.footprint.intersects(zone)
     ego_entered = not pre.ego.footprint.intersects(zone) and ego_occupied
@@ -624,6 +713,7 @@ def _vehicle_yield_inputs(
         route_entry_s_m=selected.route_entry_s_m,
         route_exit_s_m=selected.route_exit_s_m,
         elevation_m=post.ego.position_z,
+        component_index=candidate.component_index,
     )
     return (
         {
@@ -644,7 +734,10 @@ def _vehicle_yield_inputs(
             "exited_actor_ids": exited,
             "ego_brake_mps2": ego_brake_mps2,
         },
-        CacheDelta(new_conflict_zones=(record,)),
+        CacheDelta(
+            new_conflict_zones=(record,),
+            new_vehicle_conflict_pairs=tuple(new_pair_records),
+        ),
     )
 
 
@@ -678,6 +771,12 @@ def evaluate_transition(
     )
     pre_by_id = {actor.actor_id: actor for actor in pre_state.actors}
     actors = tuple(post_state.actors)
+    post_ego_association, post_actor_associations = _snapshot_lane_associations(
+        post_state, cache.route_lanes
+    )
+    pre_ego_association, pre_actor_associations = _snapshot_lane_associations(
+        pre_state, cache.route_lanes
+    )
 
     signal_pre = _selected_control(
         cache.traffic_control_catalog,
@@ -772,6 +871,7 @@ def evaluate_transition(
         "resolved_group_ids": memory.resolved_stop_group_ids,
         "crossing": stop_distances[2],
     }
+    phase_started = time.perf_counter()
     crosswalk_input = _crosswalk_inputs(
         pre=pre_state,
         post=post_state,
@@ -782,7 +882,9 @@ def evaluate_transition(
         post_front_s=post_front_s,
         prediction_horizon_s=config.prediction_horizon_s,
         minimum_history_samples=config.minimum_history_samples,
+        ego_association=post_ego_association,
     )
+    crosswalk_seconds = time.perf_counter() - phase_started
     crosswalk_input["ego_brake_mps2"] = calibrated_brake_mps2
     solid_boundaries = tuple(
         feature
@@ -800,6 +902,7 @@ def evaluate_transition(
         and abs(feature.elevation_m - post_state.ego.position_z)
         <= VERTICAL_COMPATIBILITY_TOLERANCE_M
     )
+    phase_started = time.perf_counter()
     drivable = drivable_surface_for_ego(
         ego_footprint=post_state.ego.footprint,
         ego_position_xy=post_state.ego.position_xy,
@@ -809,6 +912,8 @@ def evaluate_transition(
             for lane in cache.route_lanes
         ),
     )
+    drivable_seconds = time.perf_counter() - phase_started
+    phase_started = time.perf_counter()
     vehicle_input, vehicle_cache_delta = _vehicle_yield_inputs(
         pre=pre_state,
         post=post_state,
@@ -821,7 +926,20 @@ def evaluate_transition(
         prediction_horizon_s=config.prediction_horizon_s,
         minimum_history_samples=config.minimum_history_samples,
         ego_brake_mps2=calibrated_brake_mps2,
+        ego_association=post_ego_association,
+        actor_associations=post_actor_associations,
     )
+    vehicle_yield_seconds = time.perf_counter() - phase_started
+    phase_started = time.perf_counter()
+    rss_candidates = _rss_candidates(
+        ego=pre_state.ego,
+        actors=pre_state.actors,
+        route=route,
+        route_lanes=cache.route_lanes,
+        ego_association=pre_ego_association,
+        actor_associations=pre_actor_associations,
+    )
+    rss_candidates_seconds = time.perf_counter() - phase_started
     component_inputs = {
         "collision": {
             "scenario_id": post_state.scenario_id,
@@ -836,12 +954,7 @@ def evaluate_transition(
         "rss": {
             "scenario_id": post_state.scenario_id,
             "step_index": post_state.step_index,
-            "candidates": _rss_candidates(
-                ego=pre_state.ego,
-                actors=pre_state.actors,
-                route=route,
-                route_lanes=cache.route_lanes,
-            ),
+            "candidates": rss_candidates,
             "calibration": config.rss_calibration,
             "expected_config_hash": config.expected_config_hash,
         },
@@ -891,7 +1004,8 @@ def evaluate_transition(
             "delta_t_s": delta_t_s,
         },
     }
-    return evaluate_registered_transition(
+    phase_started = time.perf_counter()
+    result, next_memory, cache_delta = evaluate_registered_transition(
         memory=memory,
         component_inputs=component_inputs,
         raw_progress_m=0.0,
@@ -899,6 +1013,21 @@ def evaluate_transition(
         post_state=post_state,
         history_window_s=config.history_window_s,
         pending_cache_delta=vehicle_cache_delta,
+    )
+    registry_seconds = time.perf_counter() - phase_started
+    return (
+        result,
+        next_memory,
+        replace(
+            cache_delta,
+            diagnostic_timing_seconds={
+                "crosswalk": crosswalk_seconds,
+                "drivable": drivable_seconds,
+                "vehicle_yield": vehicle_yield_seconds,
+                "rss_candidates": rss_candidates_seconds,
+                "registry": registry_seconds,
+            },
+        ),
     )
 
 

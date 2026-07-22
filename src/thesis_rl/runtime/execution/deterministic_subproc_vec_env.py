@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
+import time
 import traceback
 import warnings
 from collections import OrderedDict
@@ -112,12 +113,20 @@ def _worker(
         try:
             cmd, data = remote.recv()
             if cmd == "step":
+                step_started = time.perf_counter()
                 observation, reward, terminated, truncated, info = env.step(data)
+                environment_step_seconds = time.perf_counter() - step_started
+                enrich_started = time.perf_counter()
                 from thesis_rl.runtime.io.video_diagnostics import enrich_step_info_from_env
 
                 info = enrich_step_info_from_env(env, info)
+                enrich_seconds = time.perf_counter() - enrich_started
                 done = bool(terminated or truncated)
                 info = dict(info)
+                info["_thesis_worker_timing_seconds"] = {
+                    "wrapped_env_step": environment_step_seconds,
+                    "video_info_enrichment": enrich_seconds,
+                }
                 info["TimeLimit.truncated"] = bool(truncated and not terminated)
                 if done:
                     info["terminal_observation"] = observation

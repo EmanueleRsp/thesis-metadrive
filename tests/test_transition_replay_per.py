@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pickle
+
 import numpy as np
 import pytest
 from gymnasium import spaces
@@ -63,3 +65,44 @@ def test_per_insertion_priority_tracks_exact_maximum_across_updates_and_overwrit
 
     assert np.all(buffer.raw_priorities[0] == pytest.approx(4.0))
     assert buffer._insertion_priority() == pytest.approx(float(np.max(buffer.raw_priorities)))
+
+
+def test_per_sparse_persistence_restores_active_rows_without_serializing_capacity() -> None:
+    buffer = PrioritizedNStepReplayBuffer(
+        buffer_size=1_000,
+        observation_space=spaces.Box(-1.0, 1.0, shape=(128,), dtype=np.float32),
+        action_space=spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32),
+        device="cpu",
+        n_envs=2,
+        n_steps=1,
+        gamma=0.99,
+        beta_anneal_steps=10,
+        seed=7,
+    )
+    observation = np.arange(256, dtype=np.float32).reshape(2, 128)
+    action = np.zeros((2, 2), dtype=np.float32)
+    for reward in (1.0, 2.0, 3.0):
+        buffer.add(
+            observation,
+            observation + reward,
+            action,
+            np.full(2, reward, dtype=np.float32),
+            np.zeros(2, dtype=bool),
+            [{}, {}],
+        )
+    buffer.update_priorities(np.array([0, 1, 2]), np.array([2.0, 3.0, 4.0]))
+
+    payload = pickle.dumps(buffer, protocol=pickle.HIGHEST_PROTOCOL)
+    restored = pickle.loads(payload)
+
+    assert len(payload) < 20_000
+    assert restored.buffer_size == buffer.buffer_size
+    assert restored.pos == buffer.pos
+    assert restored.full is buffer.full
+    assert np.array_equal(restored.observations, buffer.observations)
+    assert np.array_equal(restored.next_observations, buffer.next_observations)
+    assert np.array_equal(restored.raw_priorities, buffer.raw_priorities)
+    assert restored._tree.tree == pytest.approx(buffer._tree.tree)
+    assert restored.sample(4).indices.cpu().numpy() == pytest.approx(
+        buffer.sample(4).indices.cpu().numpy()
+    )

@@ -186,6 +186,8 @@ def merge_cache_deltas(deltas: tuple[CacheDelta, ...]) -> CacheDelta:
     """Merge pending zones after canonical byte-equivalence validation."""
 
     merged: dict[str, Any] = {}
+    pair_records: dict[tuple[Any, Any], Any] = {}
+    timings: dict[str, float] = {}
     for delta in deltas:
         for zone in delta.new_conflict_zones:
             existing = merged.get(zone.zone_id)
@@ -194,7 +196,21 @@ def merge_cache_deltas(deltas: tuple[CacheDelta, ...]) -> CacheDelta:
                 continue
             if not _conflict_zone_equivalent(existing, zone):
                 raise ValueError(f"Conflicting geometries for conflict zone ID: {zone.zone_id}")
-    return CacheDelta(new_conflict_zones=tuple(cast(Any, merged.values())))
+        for pair in getattr(delta, "new_vehicle_conflict_pairs", ()):
+            key = (pair.ego_movement_key, pair.other_movement_key)
+            existing_pair = pair_records.get(key)
+            if existing_pair is None:
+                pair_records[key] = pair
+                continue
+            if existing_pair != pair:
+                raise ValueError("Conflicting cached vehicle conflict-zone pair.")
+        for name, value in getattr(delta, "diagnostic_timing_seconds", {}).items():
+            timings[str(name)] = timings.get(str(name), 0.0) + float(value)
+    return CacheDelta(
+        new_conflict_zones=tuple(cast(Any, merged.values())),
+        new_vehicle_conflict_pairs=tuple(cast(Any, pair_records.values())),
+        diagnostic_timing_seconds=timings,
+    )
 
 
 def apply_cache_delta(cache: EpisodeCache, delta: CacheDelta) -> EpisodeCache:
@@ -208,7 +224,16 @@ def apply_cache_delta(cache: EpisodeCache, delta: CacheDelta) -> EpisodeCache:
                 raise ValueError(f"Committed conflict zone cannot be modified: {zone.zone_id}")
             continue
         zones[zone.zone_id] = zone
-    return replace(cache, conflict_zones=zones)
+    pairs = dict(cache.vehicle_conflict_pairs)
+    for pair in getattr(delta, "new_vehicle_conflict_pairs", ()):
+        key = (pair.ego_movement_key, pair.other_movement_key)
+        existing_pair = pairs.get(key)
+        if existing_pair is not None:
+            if existing_pair != pair:
+                raise ValueError("Committed vehicle conflict-zone pair cannot be modified.")
+            continue
+        pairs[key] = pair
+    return replace(cache, conflict_zones=zones, vehicle_conflict_pairs=pairs)
 
 
 def _conflict_zone_equivalent(left: Any, right: Any) -> bool:

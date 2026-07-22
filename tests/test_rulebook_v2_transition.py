@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from shapely.geometry import LineString, Polygon
 
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
@@ -13,6 +14,8 @@ from thesis_rl.rulebook.v2.transition import (
     evaluate_transition,
     initial_memory_for_snapshot,
 )
+from thesis_rl.rulebook.v2 import transition as transition_module
+from thesis_rl.rulebook.v2.memory import apply_cache_delta
 from thesis_rl.rulebook.v2.types import (
     ActorClass,
     ActorSnapshot,
@@ -128,6 +131,52 @@ def test_transition_evaluates_contact_onset_from_post_snapshot() -> None:
     )
     assert result.components["collision"].raw["new_collision"] is True
     assert result.components["collision"].applicable is True
+
+
+def test_transition_reuses_lane_associations_across_rulebook_components(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Crosswalk, vehicle-yield and RSS share each snapshot's associations exactly."""
+
+    cache = _cache()
+    pre = _snapshot(0, 0.0, 1.0)
+    other = ActorSnapshot(
+        "other",
+        ActorClass.VEHICLE,
+        (3.0, 0.0),
+        0.0,
+        0.0,
+        (1.0, 0.0),
+        Polygon(((2.0, -1.0), (4.0, -1.0), (4.0, 1.0), (2.0, 1.0))),
+        "lane-a",
+        10.0,
+    )
+    pre = replace(pre, actors=(other,))
+    post = replace(_snapshot(1, 0.1, 1.1), actors=(other,))
+    memory = initial_memory_for_snapshot(pre, cache)
+    original = transition_module.associate_route_lane
+    calls = 0
+
+    def counted_association(**kwargs):
+        nonlocal calls
+        calls += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(transition_module, "associate_route_lane", counted_association)
+
+    result, _, _ = evaluate_transition(
+        pre_state=pre,
+        post_state=post,
+        memory=memory,
+        cache=cache,
+        config=RulebookTransitionConfig(
+            rss_calibration=RSSCalibrationArtifact("calibration", 4.0),
+            expected_config_hash="calibration",
+        ),
+    )
+
+    assert result.complete_evaluation
+    assert calls == 4  # ego + one vehicle for each of pre/post snapshots
 
 
 def test_transition_penalizes_a_red_signal_crossed_during_step() -> None:
@@ -266,6 +315,84 @@ def test_transition_vehicle_yield_uses_each_scoped_priority_predicate() -> None:
         config=calibration,
     )
     assert result.components["vehicle_yield"].applicable
+
+
+def test_vehicle_conflict_pair_cache_reuses_complete_canonical_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _cache()
+    lane_b = RouteLaneRecord(
+        "lane-b",
+        Polygon(((8.0, -10.0), (12.0, -10.0), (12.0, 10.0), (8.0, 10.0))),
+        RoutePolyline(((10.0, -10.0, 0.0), (10.0, 10.0, 0.0))),
+        (),
+    )
+    ego_key = MovementKey("lane-a", "junction:lane-a->lane-a", "lane-a")
+    other_key = MovementKey("lane-b", "junction:lane-b->lane-b", "lane-b")
+    cache = replace(
+        cache,
+        route_lanes=(cache.route_lanes[0], lane_b),
+        movement_priority_records=(
+            MovementPriorityRecord(ego_key, other_key, MovementPriority.OTHER_HAS_PRIORITY),
+        ),
+    )
+    other = ActorSnapshot(
+        "other",
+        ActorClass.VEHICLE,
+        (10.0, 3.0),
+        0.0,
+        -1.57079632679,
+        (0.0, -2.0),
+        Polygon(((9.0, 2.0), (11.0, 2.0), (11.0, 4.0), (9.0, 4.0))),
+        "lane-b",
+        10.0,
+    )
+    other_same_movement = replace(
+        other,
+        actor_id="other-same-movement",
+        position_xy=(10.0, 5.0),
+        footprint=Polygon(((9.0, 4.0), (11.0, 4.0), (11.0, 6.0), (9.0, 6.0))),
+    )
+    pre = replace(_snapshot(0, 0.0, 6.0), actors=(other, other_same_movement))
+    post = replace(_snapshot(1, 0.1, 6.5), actors=(other, other_same_movement))
+    config = RulebookTransitionConfig(
+        rss_calibration=RSSCalibrationArtifact("calibration", 4.0),
+        expected_config_hash="calibration",
+    )
+    calls = 0
+    original = transition_module.build_vehicle_conflict_zone_candidates
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(transition_module, "build_vehicle_conflict_zone_candidates", counted)
+    first, memory, delta = evaluate_transition(
+        pre_state=pre,
+        post_state=post,
+        memory=initial_memory_for_snapshot(pre, cache),
+        cache=cache,
+        config=config,
+    )
+    cached = apply_cache_delta(cache, delta)
+    second_post = replace(
+        post, step_index=2, sim_time_s=0.2, ego=replace(post.ego, position_xy=(7.0, 0.0))
+    )
+    second, _memory, _delta = evaluate_transition(
+        pre_state=post,
+        post_state=second_post,
+        memory=memory,
+        cache=cached,
+        config=config,
+    )
+
+    assert calls == 1  # one local pair build despite two actors on the same movement
+    assert len(cached.vehicle_conflict_pairs) == 1
+    assert (
+        first.components["vehicle_yield"].raw["zone_id"]
+        == second.components["vehicle_yield"].raw["zone_id"]
+    )
 
 
 def test_cache_elevation_alignment_preserves_relative_route_shape() -> None:

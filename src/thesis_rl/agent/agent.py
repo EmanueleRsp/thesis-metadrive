@@ -438,7 +438,6 @@ class Agent:
         ema_alpha = float(getattr(self, "ema_alpha", 0.1))
         ema_actor_loss: float = float("nan")
         ema_critic_loss: float = float("nan")
-
         monitor_title = "Training Monitor"
         if stage_name:
             monitor_title = f"Training Monitor ({stage_name})"
@@ -975,6 +974,21 @@ class Agent:
         ema_alpha = float(getattr(self, "ema_alpha", 0.1))
         ema_actor_loss: float = float("nan")
         ema_critic_loss: float = float("nan")
+        phase_seconds = {
+            "observation": 0.0,
+            "encoder_action": 0.0,
+            "env_step": 0.0,
+            "transition_collection": 0.0,
+            "learner_update": 0.0,
+            "logging_callback": 0.0,
+            "worker_wrapped_env_step": 0.0,
+            "worker_video_info_enrichment": 0.0,
+            "rulebook_snapshot": 0.0,
+            "rulebook_evaluator": 0.0,
+            "rulebook_scalarization": 0.0,
+            "rulebook_observation_refresh": 0.0,
+            "rulebook_info_and_diagnostics": 0.0,
+        }
 
         def _preprocess_batch(batch: np.ndarray) -> np.ndarray:
             return np.stack([self.preprocessor(item) for item in batch]).astype(np.float32)
@@ -1034,14 +1048,43 @@ class Agent:
                 redirect_stderr=False,
             ) as live:
                 while collected_steps < chunk_timesteps:
+                    iteration_started = time.perf_counter()
+                    iteration_accounted_seconds = 0.0
+                    phase_started = time.perf_counter()
                     processed_obs = _preprocess_batch(np.asarray(obs))
+                    phase_elapsed = time.perf_counter() - phase_started
+                    phase_seconds["observation"] += phase_elapsed
+                    iteration_accounted_seconds += phase_elapsed
+                    phase_started = time.perf_counter()
                     planner_output, buffer_actions = lifecycle.act_batch(
                         processed_obs,
                         deterministic=deterministic,
                     )
                     actions = _adapt_batch(planner_output)
+                    phase_elapsed = time.perf_counter() - phase_started
+                    phase_seconds["encoder_action"] += phase_elapsed
+                    iteration_accounted_seconds += phase_elapsed
+                    phase_started = time.perf_counter()
                     next_obs, rewards, dones, infos = env.step(actions)
+                    phase_elapsed = time.perf_counter() - phase_started
+                    phase_seconds["env_step"] += phase_elapsed
+                    iteration_accounted_seconds += phase_elapsed
+                    phase_started = time.perf_counter()
                     infos = [dict(info) for info in infos]
+                    for info in infos:
+                        worker_timing = info.get("_thesis_worker_timing_seconds", {})
+                        if isinstance(worker_timing, Mapping):
+                            phase_seconds["worker_wrapped_env_step"] += float(
+                                worker_timing.get("wrapped_env_step", 0.0)
+                            )
+                            phase_seconds["worker_video_info_enrichment"] += float(
+                                worker_timing.get("video_info_enrichment", 0.0)
+                            )
+                        rulebook_timing = info.get("_thesis_rulebook_timing_seconds", {})
+                        if isinstance(rulebook_timing, Mapping):
+                            for name, value in rulebook_timing.items():
+                                phase_seconds.setdefault(f"rulebook_{name}", 0.0)
+                                phase_seconds[f"rulebook_{name}"] += float(value)
                     rewards = np.asarray(rewards, dtype=np.float32)
                     dones = np.asarray(dones, dtype=bool)
                     for info in infos:
@@ -1130,8 +1173,15 @@ class Agent:
                         terminated=terminated,
                         truncated=truncated,
                     )
+                    phase_elapsed = time.perf_counter() - phase_started
+                    phase_seconds["transition_collection"] += phase_elapsed
+                    iteration_accounted_seconds += phase_elapsed
+                    phase_started = time.perf_counter()
                     lifecycle.maybe_update()
                     self.adapter.maybe_update()
+                    phase_elapsed = time.perf_counter() - phase_started
+                    phase_seconds["learner_update"] += phase_elapsed
+                    iteration_accounted_seconds += phase_elapsed
 
                     collected_steps += n_envs
                     done_indices = np.flatnonzero(dones)
@@ -1315,6 +1365,10 @@ class Agent:
                         )
                         live.update(Group(progress, _table(), *extra_renderables, _logs_panel()))
                     obs = next_obs
+                    phase_seconds["logging_callback"] += max(
+                        0.0,
+                        time.perf_counter() - iteration_started - iteration_accounted_seconds,
+                    )
         finally:
             for logger, original_level, original_propagate in monitor_logger_restore_state:
                 logger.removeHandler(monitor_log_handler)
@@ -1324,6 +1378,12 @@ class Agent:
         lifecycle.end_training()
         self.adapter.end_training()
         elapsed = max(time.time() - start_time, 1e-9)
+        timed_phase_seconds = sum(
+            value
+            for name, value in phase_seconds.items()
+            if not name.startswith(("worker_", "rulebook_"))
+        )
+        phase_seconds["unattributed"] = max(0.0, elapsed - timed_phase_seconds)
         ep_len_final_mean = float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0
         ep_len_final_std = float(np.std(recent_episode_lens)) if recent_episode_lens else 0.0
         ep_len_ci_95 = (
@@ -1384,6 +1444,7 @@ class Agent:
             "n_updates": int(getattr(lifecycle, "gradient_step_count", 0)),
             "fps": float(collected_steps / elapsed),
             "elapsed_seconds": float(elapsed),
+            "phase_seconds": {name: float(value) for name, value in phase_seconds.items()},
             "chunk_steps_actual": int(collected_steps),
             "train_reset_seed_first": reset_seeds_used[0] if reset_seeds_used else None,
             "train_reset_seed_last": reset_seeds_used[-1] if reset_seeds_used else None,

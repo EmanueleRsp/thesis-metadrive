@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -155,7 +156,10 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
             raise RuntimeError("RulebookV2MonitorWrapper.step called before reset")
         pre_snapshot = self._pre_snapshot
         observation, reward, terminated, truncated, info = self.env.step(action)
+        phase_started = time.perf_counter()
         post_snapshot = self._snapshotter(self.env)
+        snapshot_seconds = time.perf_counter() - phase_started
+        phase_started = time.perf_counter()
         result, next_memory, cache_delta = self._transition_evaluator(
             pre_state=pre_snapshot,
             post_state=post_snapshot,
@@ -163,19 +167,25 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
             cache=self._cache,
         )
         next_cache = apply_cache_delta(self._cache, cache_delta)
+        evaluator_seconds = time.perf_counter() - phase_started
         scalarization_result: ScalarizationResult | None = None
+        phase_started = time.perf_counter()
         if self._scalarizer is not None:
             if not result.complete_evaluation:
                 raise RuntimeError("Rulebook v2 scalarization requires complete_evaluation=True.")
             scalarization_result = self._scalarizer(result.margins)
+        scalarization_seconds = time.perf_counter() - phase_started
         # Commit only after evaluator and cache validation complete.
         self._memory = next_memory
         self._cache = next_cache
         self._pre_snapshot = post_snapshot
         self._publish_causal_context(post_snapshot)
         refresh = getattr(self.env.unwrapped, "_refresh_causal_observation", None)
+        phase_started = time.perf_counter()
         if callable(refresh):
             observation = refresh(observation)
+        observation_refresh_seconds = time.perf_counter() - phase_started
+        phase_started = time.perf_counter()
         info_dict = dict(info) if isinstance(info, Mapping) else {}
         info_dict["terminated"] = bool(terminated)
         info_dict["truncated"] = bool(truncated)
@@ -211,6 +221,18 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
             result=result,
             scalarization_result=scalarization_result,
         )
+        info_seconds = time.perf_counter() - phase_started
+        info_dict["_thesis_rulebook_timing_seconds"] = {
+            "snapshot": snapshot_seconds,
+            "evaluator": evaluator_seconds,
+            "scalarization": scalarization_seconds,
+            "observation_refresh": observation_refresh_seconds,
+            "info_and_diagnostics": info_seconds,
+            **{
+                f"transition_{name}": float(value)
+                for name, value in getattr(cache_delta, "diagnostic_timing_seconds", {}).items()
+            },
+        }
         return observation, reward, terminated, truncated, info_dict
 
     def _append_diagnostics(

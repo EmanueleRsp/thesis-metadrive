@@ -56,6 +56,7 @@ def collect_scenario_runtime_stats(env: Any) -> dict[str, Any] | None:
         "steps_by_source_arm": {},
         "episodes_by_source_arm": {},
         "termination_reasons": Counter(),
+        "timing_seconds": Counter(),
     }
     for stats in raw_stats:
         if not isinstance(stats, dict):
@@ -71,6 +72,11 @@ def collect_scenario_runtime_stats(env: Any) -> dict[str, Any] | None:
             values = stats.get(key, {})
             if isinstance(values, dict):
                 merged[key].update({str(name): int(count) for name, count in values.items()})
+        timing_values = stats.get("timing_seconds", {})
+        if isinstance(timing_values, dict):
+            merged["timing_seconds"].update(
+                {str(name): float(value) for name, value in timing_values.items()}
+            )
         for key in ("resets_by_source_arm", "steps_by_source_arm", "episodes_by_source_arm"):
             values = stats.get(key, {})
             if isinstance(values, dict):
@@ -108,6 +114,11 @@ def merge_scenario_runtime_stats(
         if isinstance(values, dict):
             for name, count in values.items():
                 target[str(name)] = int(target.get(str(name), 0)) + int(count)
+    timing_target = accumulated.setdefault("timing_seconds", {})
+    timing_values = current.get("timing_seconds", {})
+    if isinstance(timing_target, dict) and isinstance(timing_values, dict):
+        for name, value in timing_values.items():
+            timing_target[str(name)] = float(timing_target.get(str(name), 0.0)) + float(value)
     for key in ("resets_by_source_arm", "steps_by_source_arm", "episodes_by_source_arm"):
         target = accumulated.setdefault(key, {})
         values = current.get(key, {})

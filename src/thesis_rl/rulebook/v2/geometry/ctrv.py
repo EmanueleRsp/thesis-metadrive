@@ -8,6 +8,7 @@ from math import ceil, cos, isfinite, pi, sin
 
 from shapely.affinity import rotate, translate
 from shapely.geometry import Polygon
+from shapely.prepared import prep
 
 from thesis_rl.rulebook.v2.geometry.continuous_sat import (
     OccupancyInterval,
@@ -165,6 +166,7 @@ def predict_rotating_occupancy_interval(
         raise ValueError("CTRV occupancy requires valid non-empty polygons")
     count = max(1, int(ceil(horizon_s / max_step_s)))
     grid = tuple(horizon_s * index / count for index in range(count + 1))
+    prepared_zone = prep(zone)
 
     def overlaps(offset_s: float) -> bool:
         predicted = propagate_ctrv_footprint(
@@ -175,7 +177,7 @@ def predict_rotating_occupancy_interval(
             yaw_rate_rad_s=yaw_rate_rad_s,
             offset_s=offset_s,
         )
-        return bool(predicted.intersects(zone))
+        return bool(prepared_zone.intersects(predicted))
 
     states = tuple(overlaps(offset_s) for offset_s in grid)
     intervals: list[tuple[float, float | None]] = []

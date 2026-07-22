@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 import math
+import time
 from typing import Any
 
 from thesis_rl.envs.scene_context import SceneContextAdapter
@@ -100,6 +101,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             "episodes_by_source_arm": Counter(),
             "termination_reasons": Counter(),
         }
+        self._runtime_timing_seconds = {"reset": 0.0, "step": 0.0, "observation": 0.0}
         self._last_sampling_metadata: dict[str, Any] = {}
         self._acl_selection: dict[str, Any] | None = None
         self._acl_episode_selection: dict[str, Any] = {}
@@ -341,7 +343,10 @@ class ThesisScenarioEnv(ScenarioEnv):
             )
             builder_type = (
                 PerceptionBoundedSemanticBatchBuilder
-                if any(isinstance(observation, SemanticStateObservationV3) for observation in observations.values())
+                if any(
+                    isinstance(observation, SemanticStateObservationV3)
+                    for observation in observations.values()
+                )
                 else CausalSemanticBatchBuilder
             )
             builder_kwargs = dict(
@@ -506,6 +511,7 @@ class ThesisScenarioEnv(ScenarioEnv):
     def _refresh_causal_observation(self, previous_observation: object) -> object:
         """Rebuild only observation payloads after the causal commit boundary."""
 
+        started = time.perf_counter()
         observations = getattr(getattr(self, "agent_manager", None), "observations", {})
         agents = getattr(self, "agents", {})
         if not observations or not agents:
@@ -519,6 +525,7 @@ class ThesisScenarioEnv(ScenarioEnv):
                 rebuilt[vehicle_id] = observation.observe(vehicle)
         if not rebuilt:
             return previous_observation
+        self._runtime_timing_seconds["observation"] += time.perf_counter() - started
         return rebuilt if getattr(self, "is_multi_agent", False) else next(iter(rebuilt.values()))
 
     def _get_reset_return(self, reset_info):
@@ -742,6 +749,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         return payload
 
     def reset(self, seed: int | None = None, **kwargs):
+        started = time.perf_counter()
         observation, info = super().reset(seed=seed, **kwargs)
         info = dict(info)
         metadata = self._scenario_metadata()
@@ -753,9 +761,11 @@ class ThesisScenarioEnv(ScenarioEnv):
         self._runtime_stats["resets"] += 1
         self._runtime_stats["resets_by_source"][source] += 1
         self._runtime_stats["resets_by_source_arm"][(source, arm)] += 1
+        self._runtime_timing_seconds["reset"] += time.perf_counter() - started
         return observation, info
 
     def step(self, action):
+        started = time.perf_counter()
         observation, reward, terminated, truncated, info = super().step(action)
         info = dict(info)
         self._attach_route_metrics(info)
@@ -785,6 +795,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             self._runtime_stats["episodes_by_arm"][arm] += 1
             self._runtime_stats["episodes_by_source_arm"][(source, arm)] += 1
             self._runtime_stats["termination_reasons"][reason] += 1
+        self._runtime_timing_seconds["step"] += time.perf_counter() - started
         return observation, reward, terminated, truncated, info
 
     def get_runtime_stats(self) -> dict[str, Any]:
@@ -798,6 +809,9 @@ class ThesisScenarioEnv(ScenarioEnv):
             "steps_by_source": dict(self._runtime_stats["steps_by_source"]),
             "episodes_by_arm": dict(self._runtime_stats["episodes_by_arm"]),
             "termination_reasons": dict(self._runtime_stats["termination_reasons"]),
+            "timing_seconds": {
+                name: float(value) for name, value in self._runtime_timing_seconds.items()
+            },
         }
         for key in ("resets_by_source_arm", "steps_by_source_arm", "episodes_by_source_arm"):
             result[key] = {

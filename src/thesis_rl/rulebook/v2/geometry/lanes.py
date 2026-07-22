@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from math import atan2, isfinite, sin, cos
 
 from shapely.geometry import Point
@@ -15,6 +16,23 @@ from thesis_rl.rulebook.v2.types import MovementKey
 LANE_ANGLE_EQUIVALENCE_EPSILON_RAD = 1.0e-6
 LANE_LATERAL_EQUIVALENCE_EPSILON_M = 1.0e-3
 SIGNED_DISTANCE_EPSILON_M = 5.0e-2
+
+
+@lru_cache(maxsize=1024)
+def _lane_coverage_polygon(polygon: BaseGeometry) -> BaseGeometry:
+    """Return the frozen lane-association tolerance envelope once per geometry."""
+
+    return polygon.buffer(GEOMETRY_EPSILON_M)
+
+
+def _covers_lane_position(polygon: BaseGeometry, position_xy: tuple[float, float]) -> bool:
+    """Use cached coverage geometry without requiring Shapely hash support."""
+
+    try:
+        envelope = _lane_coverage_polygon(polygon)
+    except TypeError:
+        envelope = polygon.buffer(GEOMETRY_EPSILON_M)
+    return envelope.covers(Point(position_xy))
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,8 +109,17 @@ def associate_route_lane(
     if not all(isfinite(value) for value in (*position_xy, position_z, heading_rad)):
         raise ValueError("Lane association pose must be finite")
     candidates: list[LaneAssociation] = []
+    position_x, position_y = position_xy
     for lane in route_lanes:
-        if not lane.polygon_xy.buffer(GEOMETRY_EPSILON_M).covers(Point(position_xy)):
+        min_x, min_y, max_x, max_y = lane.polygon_xy.bounds
+        if (
+            position_x < min_x - GEOMETRY_EPSILON_M
+            or position_x > max_x + GEOMETRY_EPSILON_M
+            or position_y < min_y - GEOMETRY_EPSILON_M
+            or position_y > max_y + GEOMETRY_EPSILON_M
+        ):
+            continue
+        if not _covers_lane_position(lane.polygon_xy, position_xy):
             continue
         try:
             projection = lane.centerline.project(position_xy, position_z=position_z)
@@ -101,7 +128,9 @@ def associate_route_lane(
                 continue
             raise
         tangent_heading = atan2(projection.tangent_xy[1], projection.tangent_xy[0])
-        misalignment = abs(atan2(sin(heading_rad - tangent_heading), cos(heading_rad - tangent_heading)))
+        misalignment = abs(
+            atan2(sin(heading_rad - tangent_heading), cos(heading_rad - tangent_heading))
+        )
         candidates.append(
             LaneAssociation(
                 lane_id=lane.lane_id,
@@ -132,7 +161,8 @@ def associate_route_lane(
 
 
 def footprint_route_coordinates(
-    footprint: BaseGeometry, route: RoutePolyline, *, position_z: float) -> FootprintRouteCoordinates:
+    footprint: BaseGeometry, route: RoutePolyline, *, position_z: float
+) -> FootprintRouteCoordinates:
     """Project center then vertices on its local route branch as required by §2.9.2."""
 
     if footprint.is_empty or not footprint.is_valid:

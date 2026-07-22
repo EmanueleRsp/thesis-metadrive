@@ -10,7 +10,11 @@ from typing import Iterable, Protocol
 from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
 
-from thesis_rl.rulebook.v2.geometry.canonical import canonical_geometry_wkb, canonicalize_geometry
+from thesis_rl.rulebook.v2.geometry.canonical import (
+    CanonicalGeometryError,
+    canonical_geometry_wkb,
+    canonicalize_geometry,
+)
 from thesis_rl.rulebook.v2.geometry.route import GEOMETRY_EPSILON_M, RoutePolyline
 from thesis_rl.rulebook.v2.geometry.vertical import ElevationAtXY, vertically_compatible_at_xy
 from thesis_rl.rulebook.v2.types import MovementKey
@@ -169,12 +173,24 @@ def build_vehicle_conflict_zone_candidates(
 
     if not scenario_id:
         raise ValueError("scenario_id must be non-empty")
-    overlap = ego_corridor.polygon.intersection(other_corridor.polygon)
+    # RULEBOOK-V4.7 §2.8 requires canonical movement corridors before the
+    # boolean operation.  In particular, snapping only a post-intersection
+    # sliver can turn an otherwise valid derived component into an empty
+    # geometry and incorrectly make an ordinary no-zone case fatal.
+    ego_polygon = canonicalize_geometry(ego_corridor.polygon)
+    other_polygon = canonicalize_geometry(other_corridor.polygon)
+    overlap = ego_polygon.intersection(other_polygon)
     components: list[BaseGeometry] = []
     for component in _polygonal_components(overlap):
         if component.area <= OFFROAD_AREA_EPSILON_M2:
             continue
-        canonical = canonicalize_geometry(component)
+        try:
+            canonical = canonicalize_geometry(component)
+        except CanonicalGeometryError:
+            # Both source corridors have already passed canonical validation.
+            # A component which disappears only after the derived boolean
+            # result is snapped is not a valid conflict zone (§2.8.2).
+            continue
         if _vertical_overlap_compatible(
             canonical,
             ego_corridor.elevation_at_xy,
@@ -212,12 +228,17 @@ def build_crosswalk_conflict_zone_candidates(
 
     if not scenario_id or not crosswalk_id:
         raise ValueError("scenario_id and crosswalk_id must be non-empty")
-    overlap = ego_corridor.polygon.intersection(crosswalk_polygon)
+    ego_polygon = canonicalize_geometry(ego_corridor.polygon)
+    canonical_crosswalk = canonicalize_geometry(crosswalk_polygon)
+    overlap = ego_polygon.intersection(canonical_crosswalk)
     components: list[BaseGeometry] = []
     for component in _polygonal_components(overlap):
         if component.area <= OFFROAD_AREA_EPSILON_M2:
             continue
-        canonical = canonicalize_geometry(component)
+        try:
+            canonical = canonicalize_geometry(component)
+        except CanonicalGeometryError:
+            continue
         if _vertical_overlap_compatible(
             canonical,
             ego_corridor.elevation_at_xy,
@@ -261,7 +282,10 @@ def route_interval_for_zone(
                 1.0,
                 max(
                     0.0,
-                    ((x - first[0]) * (second[0] - first[0]) + (y - first[1]) * (second[1] - first[1]))
+                    (
+                        (x - first[0]) * (second[0] - first[0])
+                        + (y - first[1]) * (second[1] - first[1])
+                    )
                     / (length * length),
                 ),
             )

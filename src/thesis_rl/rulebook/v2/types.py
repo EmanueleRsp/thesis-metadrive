@@ -224,6 +224,16 @@ class ConflictZoneRecord:
     route_entry_s_m: float
     route_exit_s_m: float
     elevation_m: float
+    component_index: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class VehicleConflictPairRecord:
+    """Complete static vehicle-zone catalogue for one ordered movement pair."""
+
+    ego_movement_key: MovementKey
+    other_movement_key: MovementKey
+    candidates: tuple[ConflictZoneRecord, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +305,8 @@ class MemoryDelta:
 @dataclass(frozen=True, slots=True)
 class CacheDelta:
     new_conflict_zones: tuple[ConflictZoneRecord, ...] = ()
+    new_vehicle_conflict_pairs: tuple[VehicleConflictPairRecord, ...] = ()
+    diagnostic_timing_seconds: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +315,14 @@ class EpisodeCache:
     task_route: TaskRouteRecord
     conflict_zones: Mapping[str, ConflictZoneRecord] = field(
         default_factory=lambda: cast(Mapping[str, ConflictZoneRecord], freeze_mapping())
+    )
+    vehicle_conflict_pairs: Mapping[tuple[MovementKey, MovementKey], VehicleConflictPairRecord] = (
+        field(
+            default_factory=lambda: cast(
+                Mapping[tuple[MovementKey, MovementKey], VehicleConflictPairRecord],
+                freeze_mapping(),
+            )
+        )
     )
     map_feature_catalog: Mapping[str, MapFeatureRecord] = field(
         default_factory=lambda: cast(Mapping[str, MapFeatureRecord], freeze_mapping())
@@ -315,6 +335,9 @@ class EpisodeCache:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "conflict_zones", freeze_mapping(self.conflict_zones))
+        object.__setattr__(
+            self, "vehicle_conflict_pairs", freeze_mapping(self.vehicle_conflict_pairs)
+        )
         object.__setattr__(self, "map_feature_catalog", freeze_mapping(self.map_feature_catalog))
 
 
