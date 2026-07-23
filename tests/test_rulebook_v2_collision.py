@@ -65,15 +65,17 @@ def test_persistent_contact_is_not_a_new_collision_and_static_has_zero_velocity(
     assert result.status.value == "not_applicable"
 
 
-def test_missing_dynamic_pre_state_and_invalid_cap_fail_fast() -> None:
-    with pytest.raises(RulebookEvaluationError, match="no pre-state"):
-        evaluate_collision_impact(
-            scenario_id="scenario", step_index=1,
-            ego_configured_speed_cap_mps=10.0, pre_actors_by_id={},
-            pre_ego=_ego((1.0, 0.0)),
-            onset_records=(_onset("other"),), previous_contact_ids=frozenset(),
-            post_active_contact_ids=frozenset({"other"}),
-        )
+def test_missing_dynamic_pre_state_is_ignored_for_first_frame() -> None:
+    result, memory_delta, _ = evaluate_collision_impact(
+        scenario_id="scenario", step_index=1,
+        ego_configured_speed_cap_mps=10.0, pre_actors_by_id={},
+        pre_ego=_ego((1.0, 0.0)),
+        onset_records=(_onset("other"),), previous_contact_ids=frozenset(),
+        post_active_contact_ids=frozenset({"other"}),
+    )
+    assert result.status.value == "not_applicable"
+    assert result.diagnostics["ignored_missing_pre_state_actor_ids"] == ("other",)
+    assert memory_delta.writes[0] == ("previous_contact_ids", frozenset({"other"}))
     with pytest.raises(RulebookEvaluationError, match="speed normalization cap"):
         evaluate_collision_impact(
             scenario_id="scenario", step_index=1,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 import shapely
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import LineString, Point, Polygon
 
 from thesis_rl.rulebook.v2.geometry.canonical import (
     CanonicalGeometryError,
@@ -17,6 +17,7 @@ from thesis_rl.rulebook.v2.geometry.drivable import (
 )
 from thesis_rl.rulebook.v2.geometry.controls import derive_control_line
 from thesis_rl.rulebook.v2.geometry.continuous_sat import (
+    CONSTRAINED_DECOMPOSITION_VERTEX_THRESHOLD,
     deterministic_convex_decomposition,
     predict_occupancy_interval,
 )
@@ -25,10 +26,12 @@ from thesis_rl.rulebook.v2.geometry.conflict_zones import (
     attach_route_intervals,
     build_crosswalk_conflict_zone_candidates,
     build_vehicle_conflict_zone_candidates,
+    route_interval_for_zone,
     _vertical_overlap_compatible,
     select_first_ahead_or_occupied_zone,
 )
 from thesis_rl.rulebook.v2.geometry import conflict_zones
+from thesis_rl.rulebook.v2.geometry import continuous_sat
 from thesis_rl.rulebook.v2.geometry.footprint import (
     front_bumper_segment,
     oriented_bounding_box,
@@ -439,6 +442,67 @@ def test_conflict_zone_selection_prefers_occupied_then_first_ahead_along_route()
     )
     assert occupied is not None
     assert occupied.route_entry_s_m == pytest.approx(4.99)
+
+
+def test_route_interval_skips_far_segments_without_changing_interval() -> None:
+    route = RoutePolyline(
+        tuple((float(index), 100.0, 0.0) for index in range(1000))
+        + ((1000.0, 1.0, 0.0), (1001.0, 1.0, 0.0))
+    )
+    polygon = Polygon(((1000.2, 0.0), (1000.8, 0.0), (1000.8, 2.0), (1000.2, 2.0)))
+    interval = route_interval_for_zone(route=route, polygon=polygon)
+    assert interval is not None
+    assert interval[0] == pytest.approx(route._segment_starts_m[-1] + 0.19)
+    assert interval[1] == pytest.approx(route._segment_starts_m[-1] + 0.81)
+
+
+def test_large_polygon_uses_exact_constrained_decomposition() -> None:
+    polygon = Point(0.0, 0.0).buffer(
+        10.0, quad_segs=CONSTRAINED_DECOMPOSITION_VERTEX_THRESHOLD
+    )
+    components = deterministic_convex_decomposition(polygon)
+    covered = shapely.union_all(components)
+    assert polygon.covers(covered)
+    assert polygon.symmetric_difference(covered).area <= 1.0e-4
+
+
+def test_vehicle_conflict_bounds_rejects_disjoint_canonical_corridors() -> None:
+    ego = MovementCorridor(
+        MovementKey("ego-in", "node", "ego-out"),
+        Polygon(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        lambda _x, _y: 0.0,
+    )
+    other = MovementCorridor(
+        MovementKey("other-in", "node", "other-out"),
+        Polygon(((10.0, 10.0), (11.0, 10.0), (11.0, 11.0), (10.0, 11.0))),
+        lambda _x, _y: 0.0,
+    )
+    assert build_vehicle_conflict_zone_candidates(
+        scenario_id="scenario", ego_corridor=ego, other_corridor=other
+    ) == ()
+
+
+def test_occupancy_bounds_rejects_unreachable_zone_before_sat(monkeypatch) -> None:
+    actor = Polygon(((0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (0.0, 1.0)))
+    zone = Polygon(((20.0, 0.0), (21.0, 0.0), (21.0, 1.0), (20.0, 1.0)))
+    calls = 0
+
+    def count_sat(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return None
+
+    monkeypatch.setattr(continuous_sat, "_sat_interval", count_sat)
+    assert (
+        predict_occupancy_interval(
+            actor_footprint=actor,
+            actor_velocity_xy=(1.0, 0.0),
+            zone=zone,
+            horizon_s=3.0,
+        )
+        is None
+    )
+    assert calls == 0
 
 
 def test_crosswalk_zone_uses_its_own_namespace_and_no_other_movement_key() -> None:

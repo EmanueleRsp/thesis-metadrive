@@ -851,6 +851,7 @@ class Agent:
         monitor_extra_rows_callback: Callable[[], list[tuple[str, str]]] | None = None,
         monitor_event_poll_callback: Callable[[], list[str]] | None = None,
         live_extra_renderables_callback: Callable[[], list[Any]] | None = None,
+        slow_step_callback: Callable[[int, Mapping[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Train with a vectorized env, counting total collected transitions.
 
@@ -981,6 +982,8 @@ class Agent:
             "transition_collection": 0.0,
             "learner_update": 0.0,
             "logging_callback": 0.0,
+            "acl_reset_callback": 0.0,
+            "worker_reset": 0.0,
             "worker_wrapped_env_step": 0.0,
             "worker_video_info_enrichment": 0.0,
             "rulebook_snapshot": 0.0,
@@ -1071,7 +1074,7 @@ class Agent:
                     iteration_accounted_seconds += phase_elapsed
                     phase_started = time.perf_counter()
                     infos = [dict(info) for info in infos]
-                    for info in infos:
+                    for worker_id, info in enumerate(infos):
                         worker_timing = info.get("_thesis_worker_timing_seconds", {})
                         if isinstance(worker_timing, Mapping):
                             phase_seconds["worker_wrapped_env_step"] += float(
@@ -1085,6 +1088,14 @@ class Agent:
                             for name, value in rulebook_timing.items():
                                 phase_seconds.setdefault(f"rulebook_{name}", 0.0)
                                 phase_seconds[f"rulebook_{name}"] += float(value)
+                            if slow_step_callback is not None:
+                                slow_step_callback(
+                                    global_steps_done + collected_steps,
+                                    {
+                                        "worker_id": int(worker_id),
+                                        "info": info,
+                                    },
+                                )
                     rewards = np.asarray(rewards, dtype=np.float32)
                     dones = np.asarray(dones, dtype=bool)
                     for info in infos:
@@ -1287,11 +1298,28 @@ class Agent:
                                 "ACL vector environment requires "
                                 "vector_episode_end_callback for parent-controlled reset."
                             )
+                        reset_started = time.perf_counter()
                         reset_observations = vector_episode_end_callback(
                             env,
                             done_indices.tolist(),
                             acl_episode_payloads,
                         )
+                        phase_seconds["acl_reset_callback"] += time.perf_counter() - reset_started
+                        reset_infos = getattr(env, "reset_infos", ())
+                        for idx in done_indices.tolist():
+                            if idx >= len(reset_infos) or not isinstance(reset_infos[idx], Mapping):
+                                continue
+                            worker_timing = reset_infos[idx].get(
+                                "_thesis_worker_timing_seconds", {}
+                            )
+                            if isinstance(worker_timing, Mapping):
+                                phase_seconds["worker_reset"] += float(worker_timing.get("reset", 0.0))
+                            reset_timing = reset_infos[idx].get("_thesis_reset_timing_seconds", {})
+                            if isinstance(reset_timing, Mapping):
+                                for name, seconds in reset_timing.items():
+                                    key = f"reset_{name}"
+                                    phase_seconds.setdefault(key, 0.0)
+                                    phase_seconds[key] += float(seconds)
                         if set(int(idx) for idx in reset_observations) != set(
                             int(idx) for idx in done_indices.tolist()
                         ):

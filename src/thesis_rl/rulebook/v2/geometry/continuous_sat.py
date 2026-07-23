@@ -16,6 +16,12 @@ from shapely.prepared import prep
 
 AREA_EPSILON_M2 = 1.0e-4
 INTERVAL_EPSILON_S = 1.0e-6
+# Lexicographic ear clipping is retained for ordinary small geometries because
+# it is simple and stable.  Its repeated all-vertex ear search is cubic,
+# however, and becomes intractable for a real ScenarioNet-derived conflict
+# zone with hundreds of boundary vertices.  Above this exact-geometry threshold
+# use GEOS constrained triangulation and verify its coverage below.
+CONSTRAINED_DECOMPOSITION_VERTEX_THRESHOLD = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +112,9 @@ def deterministic_convex_decomposition(polygon: BaseGeometry) -> tuple[Polygon, 
         (_normalized_ring(interior.coords, ccw=False) for interior in polygon.interiors),
         key=lambda hole: min(hole),
     )
+    vertex_count = len(outer) + sum(len(hole) for hole in holes)
+    if vertex_count > CONSTRAINED_DECOMPOSITION_VERTEX_THRESHOLD:
+        return _constrained_components_after_ear_exhaustion(polygon)
     merged = outer
     for hole in holes:
         merged = _bridge_hole(merged, hole, polygon)
@@ -203,6 +212,36 @@ def _sat_interval(
     return max(0.0, lower), min(horizon_s, upper)
 
 
+def _swept_bounds_overlap(
+    *,
+    polygon: Polygon,
+    velocity_xy: tuple[float, float],
+    horizon_s: float,
+    bounds: tuple[float, float, float, float],
+) -> bool:
+    """Return whether a constant-velocity polygon can reach ``bounds``.
+
+    The swept AABB is conservative: it contains the polygon at every time in
+    the closed prediction horizon.  A disjoint result therefore proves that a
+    SAT comparison cannot contribute an occupancy interval.
+    """
+
+    min_x, min_y, max_x, max_y = polygon.bounds
+    displacement_x = velocity_xy[0] * horizon_s
+    displacement_y = velocity_xy[1] * horizon_s
+    swept_min_x = min(min_x, min_x + displacement_x)
+    swept_max_x = max(max_x, max_x + displacement_x)
+    swept_min_y = min(min_y, min_y + displacement_y)
+    swept_max_y = max(max_y, max_y + displacement_y)
+    other_min_x, other_min_y, other_max_x, other_max_y = bounds
+    return not (
+        swept_max_x < other_min_x
+        or swept_min_x > other_max_x
+        or swept_max_y < other_min_y
+        or swept_min_y > other_max_y
+    )
+
+
 def predict_occupancy_interval(
     *,
     actor_footprint: Polygon,
@@ -216,10 +255,25 @@ def predict_occupancy_interval(
         raise ValueError("Occupancy horizon must be finite and positive")
     if not all(isfinite(value) for value in actor_velocity_xy):
         raise ValueError("Actor velocity must be finite")
+    if not _swept_bounds_overlap(
+        polygon=actor_footprint,
+        velocity_xy=actor_velocity_xy,
+        horizon_s=horizon_s,
+        bounds=zone.bounds,
+    ):
+        return None
+    actor_components = _convex_components(actor_footprint)
+    zone_components = _convex_components(zone)
     intervals = [
         interval
-        for actor_triangle in _convex_components(actor_footprint)
-        for zone_triangle in _convex_components(zone)
+        for actor_triangle in actor_components
+        for zone_triangle in zone_components
+        if _swept_bounds_overlap(
+            polygon=actor_triangle,
+            velocity_xy=actor_velocity_xy,
+            horizon_s=horizon_s,
+            bounds=zone_triangle.bounds,
+        )
         if (interval := _sat_interval(actor_triangle, actor_velocity_xy, zone_triangle, horizon_s))
         is not None
     ]

@@ -526,6 +526,7 @@ def _vehicle_yield_inputs(
     ego_brake_mps2: float | None,
     ego_association: LaneAssociation | None = None,
     actor_associations: dict[str, LaneAssociation | None] | None = None,
+    diagnostic_timing_seconds: dict[str, float] | None = None,
 ) -> tuple[dict[str, object], CacheDelta]:
     """Construct live vehicle-yield inputs without inferring priority from geometry."""
 
@@ -576,6 +577,8 @@ def _vehicle_yield_inputs(
     actor_lanes: dict[str, RouteLaneRecord] = {}
     actor_keys: dict[str, object] = {}
     seen_pair_keys: set[tuple[object, object]] = set()
+    actor_scan_started = time.perf_counter()
+    pair_geometry_seconds = 0.0
     for actor in post.actors:
         if actor.actor_class is not ActorClass.VEHICLE:
             continue
@@ -623,6 +626,7 @@ def _vehicle_yield_inputs(
             polygon=lane.polygon_xy,
             elevation_at_xy=PolylineElevation(lane.centerline.points_xyz),
         )
+        pair_geometry_started = time.perf_counter()
         pair_candidates = attach_route_intervals(
             route=route,
             candidates=build_vehicle_conflict_zone_candidates(
@@ -631,6 +635,7 @@ def _vehicle_yield_inputs(
                 other_corridor=other_corridor,
             ),
         )
+        pair_geometry_seconds += time.perf_counter() - pair_geometry_started
         candidates.extend(pair_candidates)
         pair_record = VehicleConflictPairRecord(
             ego_movement_key=ego_key,
@@ -651,9 +656,17 @@ def _vehicle_yield_inputs(
         )
         pending_pair_records[pair_key] = pair_record
         new_pair_records.append(pair_record)
+    if diagnostic_timing_seconds is not None:
+        diagnostic_timing_seconds["vehicle_yield_actor_scan"] = time.perf_counter() - actor_scan_started
+        diagnostic_timing_seconds["vehicle_yield_pair_geometry"] = pair_geometry_seconds
+    selection_started = time.perf_counter()
     selected = select_first_ahead_or_occupied_zone(
         candidates=tuple(candidates), ego_footprint=post.ego.footprint, ego_front_s_m=post_front_s
     )
+    if diagnostic_timing_seconds is not None:
+        diagnostic_timing_seconds["vehicle_yield_zone_selection"] = (
+            time.perf_counter() - selection_started
+        )
     if selected is None:
         return empty, CacheDelta(new_vehicle_conflict_pairs=tuple(new_pair_records))
     candidate = selected.candidate
@@ -663,6 +676,7 @@ def _vehicle_yield_inputs(
         (record.ego_movement_key, record.other_movement_key): record.relation
         for record in cache.movement_priority_records
     }
+    priority_started = time.perf_counter()
     prioritized_ids: set[str] = set()
     for actor in post.actors:
         movement_key = actor_keys.get(actor.actor_id)
@@ -687,6 +701,11 @@ def _vehicle_yield_inputs(
         )
         if occupied or stop_priority or pairwise_priority or roundabout_priority:
             prioritized_ids.add(actor.actor_id)
+    if diagnostic_timing_seconds is not None:
+        diagnostic_timing_seconds["vehicle_yield_priority_selection"] = (
+            time.perf_counter() - priority_started
+        )
+    occupancy_started = time.perf_counter()
     ego_interval, intervals, _ = predict_conflict_zone_occupancy_intervals(
         ego=post.ego,
         actors=tuple(actor for actor in post.actors if actor.actor_id in prioritized_ids),
@@ -696,6 +715,10 @@ def _vehicle_yield_inputs(
         horizon_s=prediction_horizon_s,
         minimum_history_samples=minimum_history_samples,
     )
+    if diagnostic_timing_seconds is not None:
+        diagnostic_timing_seconds["vehicle_yield_occupancy_prediction"] = (
+            time.perf_counter() - occupancy_started
+        )
     if ego_interval is None:
         return empty, CacheDelta(new_vehicle_conflict_pairs=tuple(new_pair_records))
     pre_by_id = {actor.actor_id: actor for actor in pre.actors}
@@ -921,6 +944,7 @@ def evaluate_transition(
     vehicle_input = None
     vehicle_cache_delta = CacheDelta()
     vehicle_yield_seconds = 0.0
+    vehicle_yield_diagnostic_timing: dict[str, float] = {}
     if not config.disable_vehicle_yield_for_benchmark:
         phase_started = time.perf_counter()
         vehicle_input, vehicle_cache_delta = _vehicle_yield_inputs(
@@ -937,6 +961,7 @@ def evaluate_transition(
             ego_brake_mps2=calibrated_brake_mps2,
             ego_association=post_ego_association,
             actor_associations=post_actor_associations,
+            diagnostic_timing_seconds=vehicle_yield_diagnostic_timing,
         )
         vehicle_yield_seconds = time.perf_counter() - phase_started
     phase_started = time.perf_counter()
@@ -1038,6 +1063,7 @@ def evaluate_transition(
                 "crosswalk": crosswalk_seconds,
                 "drivable": drivable_seconds,
                 "vehicle_yield": vehicle_yield_seconds,
+                **vehicle_yield_diagnostic_timing,
                 "rss_candidates": rss_candidates_seconds,
                 "registry": registry_seconds,
             },

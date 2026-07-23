@@ -78,6 +78,10 @@ class _OtherVehicle(_Vehicle):
     id = "other-runtime"
 
 
+class ScenarioTrafficLight:
+    id = "traffic-light-runtime"
+
+
 class _Node:
     def __init__(self, obj):
         self.obj = obj
@@ -474,3 +478,17 @@ def test_metadrive_contact_rejects_contacts_without_ego():
         contact_onset_from_metadrive_contact(
             ContactWithoutEgo(), _Env(), object_from_node=_object_from_node
         )
+
+
+def test_metadrive_contact_classifies_scenario_traffic_light_as_static_collision():
+    class TrafficLightContact(_Contact):
+        def __init__(self):
+            self.node0 = _Node(_Vehicle())
+            self.node1 = _Node(ScenarioTrafficLight())
+            self.manifold_point = _Manifold()
+
+    record = contact_onset_from_metadrive_contact(
+        TrafficLightContact(), _Env(), object_from_node=_object_from_node
+    )
+    assert record.actor_id == "traffic-light-runtime"
+    assert record.actor_class is ActorClass.STATIC_COLLIDABLE

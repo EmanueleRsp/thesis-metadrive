@@ -118,6 +118,7 @@ def _worker(
     reset_info: dict[str, Any] = {}
     last_reset_seed: Optional[int] = None
     auto_reset_seed: Optional[int] = None
+    worker_step_index = 0
 
     while True:
         try:
@@ -136,7 +137,9 @@ def _worker(
                 info["_thesis_worker_timing_seconds"] = {
                     "wrapped_env_step": environment_step_seconds,
                     "video_info_enrichment": enrich_seconds,
+                    "worker_step_index": worker_step_index,
                 }
+                worker_step_index += 1
                 info["TimeLimit.truncated"] = bool(truncated and not terminated)
                 if done:
                     info["terminal_observation"] = observation
@@ -177,7 +180,13 @@ def _worker(
             elif cmd == "reset_slots":
                 seed_arg, options_arg = data
                 maybe_options = {"options": options_arg} if options_arg else {}
+                reset_started = time.perf_counter()
                 observation, reset_info = env.reset(seed=seed_arg, **maybe_options)
+                reset_info = dict(reset_info)
+                worker_timing = dict(reset_info.get("_thesis_worker_timing_seconds", {}))
+                worker_timing["reset"] = time.perf_counter() - reset_started
+                reset_info["_thesis_worker_timing_seconds"] = worker_timing
+                worker_step_index = 0
                 remote.send((observation, reset_info))
             elif cmd == "reset":
                 seed_arg, options_arg = data
@@ -190,6 +199,7 @@ def _worker(
                     last_reset_seed = int(normalized_seed)
                     auto_reset_seed = int(normalized_seed)
                 observation, reset_info = env.reset(seed=normalized_seed, **maybe_options)
+                worker_step_index = 0
                 remote.send((observation, reset_info))
             elif cmd == "render":
                 render_kwargs = {} if data is None else dict(data)
@@ -386,7 +396,10 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
                 "reset_slots",
                 ((seeds or {}).get(slot), (options or {}).get(slot)),
             )
-        return self._receive_many(selected, command="reset_slots")
+        responses = self._receive_many(selected, command="reset_slots")
+        for slot, (_observation, reset_info) in responses.items():
+            self.reset_infos[slot] = dict(reset_info)
+        return responses
 
     def step_slots(self, actions: Mapping[int, Any]) -> dict[int, Any]:
         """Step only active workers, preserving manual-reset episode boundaries."""

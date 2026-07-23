@@ -146,6 +146,7 @@ def test_deterministic_subproc_vec_env_supports_selective_manual_resets() -> Non
 
         reset = vec_env.reset_slots([1], seeds={1: 21})
         np.testing.assert_array_equal(reset[1][0], np.array([21], dtype=np.float32))
+        assert vec_env.reset_infos[1]["_thesis_worker_timing_seconds"]["reset"] >= 0.0
         assert set(vec_env.step_slots({1: np.zeros(1, dtype=np.float32)})) == {1}
     finally:
         vec_env.close()

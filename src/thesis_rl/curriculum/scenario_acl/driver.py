@@ -855,8 +855,28 @@ def _run_scenario_acl_vectorized_training(
         )
 
         coordinator.clear_completed(done_indices)
+        selection_started = time.perf_counter()
         selected = select_batch(done_indices)
+        selection_seconds = time.perf_counter() - selection_started
+        reset_started = time.perf_counter()
         reset_results = coordinator.configure_and_reset(vector_env, selected)
+        reset_wall_seconds = time.perf_counter() - reset_started
+        for slot in sorted(done_indices):
+            selection = selected[int(slot)]
+            reset_info = dict(reset_results[int(slot)][1])
+            worker_timing = reset_info.get("_thesis_worker_timing_seconds", {})
+            reset_timing = reset_info.get("_thesis_reset_timing_seconds", {})
+            log_event(
+                paths.events_log_path,
+                "scenario_acl_reset_timing",
+                worker_id=int(slot),
+                episode_id=int(selection.episode_id),
+                scenario_id=selection.scenario_uid,
+                selection_seconds=float(selection_seconds),
+                reset_wall_seconds=float(reset_wall_seconds),
+                worker_timing=(dict(worker_timing) if isinstance(worker_timing, dict) else {}),
+                reset_timing=(dict(reset_timing) if isinstance(reset_timing, dict) else {}),
+            )
         return {slot: reset_results[slot][0] for slot in done_indices}
 
     def mab_monitor_rows() -> list[tuple[str, str]]:
@@ -979,6 +999,29 @@ def _run_scenario_acl_vectorized_training(
             metadata={"chunk_id": current_chunk_id},
         )
 
+    def log_slow_vector_step(global_step: int, payload: dict[str, Any]) -> None:
+        """Persist only unusually slow worker steps for immediate diagnosis."""
+
+        info = dict(payload.get("info", {}))
+        worker_timing = info.get("_thesis_worker_timing_seconds", {})
+        if not isinstance(worker_timing, dict):
+            return
+        wrapped_seconds = float(worker_timing.get("wrapped_env_step", 0.0))
+        if wrapped_seconds < 1.0:
+            return
+        rulebook_timing = info.get("_thesis_rulebook_timing_seconds", {})
+        log_event(
+            paths.events_log_path,
+            "scenario_acl_slow_step",
+            global_step=int(global_step),
+            worker_id=int(payload.get("worker_id", -1)),
+            worker_step_index=worker_timing.get("worker_step_index"),
+            scenario_id=info.get("scenario_id"),
+            acl_episode_id=info.get("acl_episode_id"),
+            wrapped_env_step_seconds=wrapped_seconds,
+            rulebook_timing=(dict(rulebook_timing) if isinstance(rulebook_timing, dict) else {}),
+        )
+
     current_observations = initial_observations
     try:
         while current_global_step < total_timesteps:
@@ -997,6 +1040,7 @@ def _run_scenario_acl_vectorized_training(
                 monitor_extra_rows_callback=mab_monitor_rows,
                 monitor_event_poll_callback=async_evaluation_manager.drain_event_messages,
                 live_extra_renderables_callback=async_evaluation_manager.renderables,
+                slow_step_callback=log_slow_vector_step,
             )
             current_observations = summary["last_observations"]
             current_global_step = min(

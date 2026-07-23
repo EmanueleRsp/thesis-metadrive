@@ -179,6 +179,18 @@ def build_vehicle_conflict_zone_candidates(
     # geometry and incorrectly make an ordinary no-zone case fatal.
     ego_polygon = canonicalize_geometry(ego_corridor.polygon)
     other_polygon = canonicalize_geometry(other_corridor.polygon)
+    ego_min_x, ego_min_y, ego_max_x, ego_max_y = ego_polygon.bounds
+    other_min_x, other_min_y, other_max_x, other_max_y = other_polygon.bounds
+    # Exact broad phase after canonical validation: disjoint axis-aligned
+    # bounds imply a disjoint polygon intersection.  Keeping validation ahead
+    # of this rejection preserves the Rulebook's invalid-geometry contract.
+    if (
+        ego_max_x < other_min_x
+        or ego_min_x > other_max_x
+        or ego_max_y < other_min_y
+        or ego_min_y > other_max_y
+    ):
+        return ()
     overlap = ego_polygon.intersection(other_polygon)
     components: list[BaseGeometry] = []
     for component in _polygonal_components(overlap):
@@ -272,8 +284,24 @@ def route_interval_for_zone(
     if polygon.is_empty or not polygon.is_valid:
         raise ValueError("Conflict-zone polygon must be non-empty and valid")
     buffered_zone = polygon.buffer(GEOMETRY_EPSILON_M)
+    zone_min_x, zone_min_y, zone_max_x, zone_max_y = buffered_zone.bounds
     route_coordinates: list[float] = []
     for index, (first, second) in enumerate(zip(route.points_xyz, route.points_xyz[1:])):
+        # This is an exact broad-phase rejection: a segment whose AABB does not
+        # overlap the buffered zone cannot intersect it.  Avoiding construction
+        # and GEOS intersection for the usual far-away route segments is
+        # particularly important for long ScenarioNet polylines.
+        segment_min_x = min(first[0], second[0])
+        segment_max_x = max(first[0], second[0])
+        segment_min_y = min(first[1], second[1])
+        segment_max_y = max(first[1], second[1])
+        if (
+            segment_max_x < zone_min_x
+            or segment_min_x > zone_max_x
+            or segment_max_y < zone_min_y
+            or segment_min_y > zone_max_y
+        ):
+            continue
         segment = LineString(((first[0], first[1]), (second[0], second[1])))
         intersection = segment.intersection(buffered_zone)
         length = route._segment_lengths_m[index]

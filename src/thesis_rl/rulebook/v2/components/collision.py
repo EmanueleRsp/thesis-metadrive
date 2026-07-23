@@ -87,10 +87,15 @@ def evaluate_collision_impact(
         )
 
     actor_costs: list[tuple[str, float, float, tuple[float, float]]] = []
+    missing_pre_state_ids: list[str] = []
     for actor_id, records in onset_by_actor.items():
         actor = pre_actors_by_id.get(actor_id)
         if actor is None:
-            _fail(scenario_id, step_index, f"dynamic actor {actor_id!r} has no pre-state")
+            # Actors may appear between two simulator snapshots.  They cannot
+            # contribute a pre-state closing-speed estimate on this transition;
+            # the transition memory will include them from the current snapshot.
+            missing_pre_state_ids.append(actor_id)
+            continue
         assert actor is not None
         if actor.actor_class == ActorClass.STATIC_COLLIDABLE:
             other_velocity = (0.0, 0.0)
@@ -132,6 +137,23 @@ def evaluate_collision_impact(
         actor_costs.append(
             (actor_id, raw_speed**2, max(COLLISION_FLOOR, bounded_ratio**2), (normal_x, normal_y))
         )
+    if not actor_costs:
+        return (
+            RuleComponentResult(
+                name="collision",
+                cost=0.0,
+                raw={"new_collision": False, "actors": ()},
+                applicable=False,
+                evaluable=True,
+                status=ComponentStatus.NOT_APPLICABLE,
+                diagnostics={
+                    "new_collision": False,
+                    "ignored_missing_pre_state_actor_ids": tuple(sorted(missing_pre_state_ids)),
+                },
+            ),
+            MemoryDelta("collision", (("previous_contact_ids", post_active_contact_ids),)),
+            CacheDelta(),
+        )
     worst_actor, raw, cost, _ = max(actor_costs, key=lambda item: (item[2], item[0]))
     result = RuleComponentResult(
         name="collision",
@@ -156,6 +178,7 @@ def evaluate_collision_impact(
         status=ComponentStatus.VIOLATED,
         diagnostics={
             "onset_actor_ids": tuple(sorted(onset_by_actor)),
+            "ignored_missing_pre_state_actor_ids": tuple(sorted(missing_pre_state_ids)),
             "normal_source": "pre_state_canonical_footprint_centers",
         },
     )

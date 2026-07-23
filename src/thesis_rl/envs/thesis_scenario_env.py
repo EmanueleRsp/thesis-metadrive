@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
+from contextlib import contextmanager
 import math
 import time
 from typing import Any
@@ -103,6 +104,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             "termination_reasons": Counter(),
         }
         self._runtime_timing_seconds = {"reset": 0.0, "step": 0.0, "observation": 0.0}
+        self._active_reset_timing_seconds: dict[str, float] | None = None
         self._last_sampling_metadata: dict[str, Any] = {}
         self._acl_selection: dict[str, Any] | None = None
         self._acl_episode_selection: dict[str, Any] = {}
@@ -206,12 +208,78 @@ class ThesisScenarioEnv(ScenarioEnv):
         self.config["assigned_route_lane_ids"] = lane_ids
         self.config["assigned_route_source"] = getattr(record, "assigned_route_source", None)
 
-    def _reset_global_seed(self, force_seed=None):
-        provider_seed = self._select_provider_seed(force_seed)
-        if provider_seed is not None:
-            self.seed(provider_seed)
+    def _record_reset_phase(self, name: str, seconds: float) -> None:
+        if self._active_reset_timing_seconds is not None:
+            self._active_reset_timing_seconds[name] = (
+                self._active_reset_timing_seconds.get(name, 0.0) + float(seconds)
+            )
+
+    @contextmanager
+    def _profile_existing_engine_reset(self):
+        """Measure manager phases for an already initialized MetaDrive engine."""
+
+        engine = getattr(self, "engine", None)
+        managers = getattr(engine, "_managers", None)
+        if engine is None or not isinstance(managers, Mapping):
+            yield
             return
-        super()._reset_global_seed(force_seed)
+
+        sentinel = object()
+        restored: list[tuple[object, str, object]] = []
+        wrapped: set[tuple[int, str]] = set()
+
+        def wrap(target: object, label: str, method_name: str) -> None:
+            key = (id(target), method_name)
+            method = getattr(target, method_name, None)
+            if key in wrapped or not callable(method):
+                return
+            wrapped.add(key)
+            original_attribute = getattr(target, "__dict__", {}).get(method_name, sentinel)
+
+            def measured(
+                *args: object,
+                _method: Any = method,
+                _label: str = label,
+                _method_name: str = method_name,
+                **kwargs: object,
+            ) -> object:
+                started = time.perf_counter()
+                try:
+                    return _method(*args, **kwargs)
+                finally:
+                    self._record_reset_phase(
+                        f"engine_{_method_name}.{_label}", time.perf_counter() - started
+                    )
+
+            setattr(target, method_name, measured)
+            restored.append((target, method_name, original_attribute))
+
+        for manager_name, manager in managers.items():
+            for method_name in ("before_reset", "reset", "after_reset"):
+                wrap(manager, str(manager_name), method_name)
+        terrain = getattr(engine, "terrain", None)
+        if terrain is not None:
+            for method_name in ("before_reset", "reset", "after_reset"):
+                wrap(terrain, "terrain", method_name)
+        try:
+            yield
+        finally:
+            for target, method_name, original_attribute in reversed(restored):
+                if original_attribute is sentinel:
+                    delattr(target, method_name)
+                else:
+                    setattr(target, method_name, original_attribute)
+
+    def _reset_global_seed(self, force_seed=None):
+        started = time.perf_counter()
+        try:
+            provider_seed = self._select_provider_seed(force_seed)
+            if provider_seed is not None:
+                self.seed(provider_seed)
+                return
+            super()._reset_global_seed(force_seed)
+        finally:
+            self._record_reset_phase("scenario_selection", time.perf_counter() - started)
 
     def _inject_assigned_route_metadata_into_scenario(self) -> None:
         """Attach frozen catalog route metadata without reading SDC samples."""
@@ -537,11 +605,22 @@ class ThesisScenarioEnv(ScenarioEnv):
         # scenario is accessed. Injecting route metadata from
         # _reset_global_seed would populate the manager before its
         # before_reset hook and leave two scenarios cached across episodes.
+        started = time.perf_counter()
         self._inject_assigned_route_metadata_into_scenario()
+        self._record_reset_phase("route_metadata", time.perf_counter() - started)
+        started = time.perf_counter()
         self._install_rulebook_v2_adapter()
+        self._record_reset_phase("rulebook_adapter", time.perf_counter() - started)
+        started = time.perf_counter()
         self._install_causal_observation_builder()
+        self._record_reset_phase("causal_observation_builder", time.perf_counter() - started)
+        started = time.perf_counter()
         self._prepare_initial_causal_context()
-        return super()._get_reset_return(reset_info)
+        self._record_reset_phase("initial_causal_context", time.perf_counter() - started)
+        started = time.perf_counter()
+        result = super()._get_reset_return(reset_info)
+        self._record_reset_phase("base_reset_observation", time.perf_counter() - started)
+        return result
 
     @staticmethod
     def _recompute_terminated(done_info: Mapping[str, Any]) -> bool:
@@ -754,8 +833,16 @@ class ThesisScenarioEnv(ScenarioEnv):
 
     def reset(self, seed: int | None = None, **kwargs):
         started = time.perf_counter()
-        observation, info = super().reset(seed=seed, **kwargs)
+        self._active_reset_timing_seconds = {}
+        try:
+            with self._profile_existing_engine_reset():
+                observation, info = super().reset(seed=seed, **kwargs)
+        finally:
+            self._record_reset_phase("total", time.perf_counter() - started)
+            reset_timing = dict(self._active_reset_timing_seconds)
+            self._active_reset_timing_seconds = None
         info = dict(info)
+        info["_thesis_reset_timing_seconds"] = reset_timing
         metadata = self._scenario_metadata()
         info.update(metadata)
         info.update(self._last_sampling_metadata)

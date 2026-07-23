@@ -65,6 +65,13 @@ def _actor_class(actor: Any) -> ActorClass:
     """Map only known MetaDrive object classes to the canonical taxonomy."""
 
     name = type(actor).__name__.lower()
+    # ScenarioNet traffic lights can participate in Bullet contacts even
+    # though they are intentionally excluded from the live actor registry
+    # (signal state is supplied by the dedicated signal provider).  A contact
+    # with their physical geometry is still a static collision, so normalize
+    # the contact taxonomy instead of failing the whole vector worker.
+    if "trafficlight" in name or "traffic_light" in name:
+        return ActorClass.STATIC_COLLIDABLE
     if "pedestrian" in name:
         return ActorClass.PEDESTRIAN
     if "cyclist" in name or "bicycl" in name:

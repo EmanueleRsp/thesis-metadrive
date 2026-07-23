@@ -1,0 +1,8 @@
+{
+  "schema": "scenarionet_golden_suite_content_validated_v1",
+  "references": [
+    {
+      "scenario_uid": "waymo:training_20s:3f1985e8163dded1"
+    }
+  ]
+}
