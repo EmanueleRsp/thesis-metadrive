@@ -69,16 +69,14 @@ class StagedCurriculumConfig:
 class ScenarioAclMabConfig:
     num_arms: int = 6
     eta: float = 0.2
-    alpha: float = 0.005
-    initial_weight: float = 1.0
-    # Consecutive arms start with probability ratio ``initial_weight_decay``.
-    # A value of one preserves a uniform initialization.
-    initial_weight_decay: float = 1.0
-    use_target_mab: bool = True
-    target_sync_interval: int = 5
-    weight_clip_min: float = -5.0
-    weight_clip_max: float = 5.0
-    feedback: str = "rank_normalized_usefulness"
+    update_method: str = "ema"
+    alpha: float = 0.10
+    initial_score: float = 0.50
+    temperature: float = 0.50
+    use_importance_correction: bool = False
+    use_target_mab: bool = False
+    target_sync_interval: int = 1
+    feedback: str = "rank_normalized_learning_potential"
 
 
 @dataclass(frozen=True)
@@ -108,7 +106,8 @@ class ScenarioAclScenarioEnvConfig:
 class ScenarioAclConfig:
     buffer_capacity: int = 1000
     warmup_buffer_size: int = 100
-    exploit_probability: float = 0.8
+    generate_probability: float = 0.4
+    exploit_probability: float = 0.6
     use_mab: bool = True
     use_scenario_buffer: bool = True
     use_replay: bool = False
@@ -260,7 +259,8 @@ def _parse_scenario_acl_config(data: DictConfig | dict[str, Any]) -> ScenarioAcl
     buffer_capacity = int(payload.get("buffer_capacity", 1000))
     warmup_buffer_size = int(payload.get("warmup_buffer_size", 100))
     recent_window_size = int(payload.get("recent_window_size", 100))
-    exploit_probability = float(payload.get("exploit_probability", 0.8))
+    exploit_probability = float(payload.get("exploit_probability", 0.6))
+    generate_probability = float(payload.get("generate_probability", 1.0 - exploit_probability))
 
     if buffer_capacity <= 0:
         raise ValueError("scenario_acl.buffer_capacity must be > 0.")
@@ -277,8 +277,10 @@ def _parse_scenario_acl_config(data: DictConfig | dict[str, Any]) -> ScenarioAcl
         )
     if recent_window_size <= 0:
         raise ValueError("scenario_acl.recent_window_size must be > 0.")
-    if not 0.0 <= exploit_probability <= 1.0:
-        raise ValueError("scenario_acl.exploit_probability must be in [0, 1].")
+    if not 0.0 <= exploit_probability <= 1.0 or not 0.0 <= generate_probability <= 1.0:
+        raise ValueError("scenario_acl Generate/Replay probabilities must be in [0, 1].")
+    if not abs(generate_probability + exploit_probability - 1.0) <= 1.0e-8:
+        raise ValueError("scenario_acl Generate/Replay probabilities must sum to one.")
     if bool(payload.get("use_replay", False)) and not bool(
         payload.get("use_scenario_buffer", True)
     ):
@@ -288,32 +290,48 @@ def _parse_scenario_acl_config(data: DictConfig | dict[str, Any]) -> ScenarioAcl
     replay_payload = _to_plain_mapping(payload.get("replay_sampling"))
     scenario_env_payload = _to_plain_mapping(payload.get("scenario_env"))
 
-    feedback = str(mab_payload.get("feedback", "rank_normalized_usefulness")).strip()
-    if feedback != "rank_normalized_usefulness":
+    legacy_mab_keys = {
+        "initial_weight",
+        "initial_weight_decay",
+        "weight_clip_min",
+        "weight_clip_max",
+    }
+    present_legacy_keys = sorted(legacy_mab_keys.intersection(mab_payload))
+    if present_legacy_keys:
+        raise ValueError(
+            "Legacy cumulative Scenario ACL MAB fields are incompatible with ACL v1.1: "
+            f"{present_legacy_keys}"
+        )
+
+    feedback = str(mab_payload.get("feedback", "rank_normalized_learning_potential")).strip()
+    if feedback != "rank_normalized_learning_potential":
         raise ValueError(
             "Unsupported scenario_acl.mab.feedback "
-            f"'{feedback}'. Expected 'rank_normalized_usefulness'."
+            f"'{feedback}'. Expected 'rank_normalized_learning_potential'."
         )
 
     num_arms = int(mab_payload.get("num_arms", 6))
-    target_sync_interval = int(mab_payload.get("target_sync_interval", 5))
-    weight_clip_min = float(mab_payload.get("weight_clip_min", -5.0))
-    weight_clip_max = float(mab_payload.get("weight_clip_max", 5.0))
-    initial_weight_decay = float(mab_payload.get("initial_weight_decay", 1.0))
+    update_method = str(mab_payload.get("update_method", "ema"))
+    alpha = float(mab_payload.get("alpha", 0.10))
+    initial_score = float(mab_payload.get("initial_score", 0.50))
+    temperature = float(mab_payload.get("temperature", 0.50))
     if num_arms != 6:
         raise ValueError("scenario_acl.mab.num_arms must be 6 for semantic arms A0-A5.")
+    if update_method != "ema":
+        raise ValueError("scenario_acl.mab.update_method must be 'ema'.")
+    if not 0.0 < alpha <= 1.0 or not 0.0 <= initial_score <= 1.0 or temperature <= 0.0:
+        raise ValueError("Invalid EMA MAB alpha, initial_score, or temperature.")
+    if bool(mab_payload.get("use_importance_correction", False)):
+        raise ValueError("ACL v1.1 does not support importance correction.")
+    use_target_mab = bool(mab_payload.get("use_target_mab", False))
+    target_sync_interval = int(mab_payload.get("target_sync_interval", 1))
     if target_sync_interval <= 0:
         raise ValueError("scenario_acl.mab.target_sync_interval must be > 0.")
-    if weight_clip_min > weight_clip_max:
-        raise ValueError(
-            "scenario_acl.mab.weight_clip_min must be <= scenario_acl.mab.weight_clip_max."
-        )
-    if not 0.0 < initial_weight_decay <= 1.0:
-        raise ValueError("scenario_acl.mab.initial_weight_decay must be in (0, 1].")
 
     return ScenarioAclConfig(
         buffer_capacity=buffer_capacity,
         warmup_buffer_size=warmup_buffer_size,
+        generate_probability=generate_probability,
         exploit_probability=exploit_probability,
         use_mab=bool(payload.get("use_mab", True)),
         use_scenario_buffer=bool(payload.get("use_scenario_buffer", True)),
@@ -323,13 +341,13 @@ def _parse_scenario_acl_config(data: DictConfig | dict[str, Any]) -> ScenarioAcl
         mab=ScenarioAclMabConfig(
             num_arms=num_arms,
             eta=float(mab_payload.get("eta", 0.2)),
-            alpha=float(mab_payload.get("alpha", 0.005)),
-            initial_weight=float(mab_payload.get("initial_weight", 1.0)),
-            initial_weight_decay=initial_weight_decay,
-            use_target_mab=bool(mab_payload.get("use_target_mab", True)),
+            update_method=update_method,
+            alpha=alpha,
+            initial_score=initial_score,
+            temperature=temperature,
+            use_importance_correction=bool(mab_payload.get("use_importance_correction", False)),
+            use_target_mab=use_target_mab,
             target_sync_interval=target_sync_interval,
-            weight_clip_min=weight_clip_min,
-            weight_clip_max=weight_clip_max,
             feedback=feedback,
         ),
         replay_sampling=ScenarioAclReplaySamplingConfig(

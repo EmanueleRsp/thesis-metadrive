@@ -137,7 +137,7 @@ Scenario ACL parent state
 | DEC-VEC-002 | specification clarification | Same frozen record can be selected twice in one fresh-selection batch. | A: permit as ScenarioNet §23.3 permits duplicates; B: prohibit only fresh duplicates within a parent selection batch, while allowing independently sampled non-ACL duplicates. | B. | Preserves ACL fresh/replay disjointness and avoids duplicate insert races; changes only ACL batch semantics. | Approved; ADR-016 |
 | DEC-VEC-003 | specification clarification | Exact off-policy LP attribution point. | A: assign aggregate learner-update residuals to recent episodes; B: compute §12 residuals from each collected transition under a documented learner snapshot and aggregate by episode. | B. | Prevents replay-sampled old transitions from being attributed to the wrong current scenario. | Approved; ADR-016 |
 | DEC-VEC-004 | implementation detail | Batch commit order for several completions. | A: arrival order; B: stable `(collection_tick, worker_id)` order. | B. | Seed reproducibility is insulated from OS scheduling. | Approved; ADR-016 |
-| DEC-VEC-005 | blocking technical issue | PPO LP attribution across rollout buffers and partial episodes at chunk boundaries. | A: defer PPO vector ACL; B: add episode/slot provenance to rollout storage and carry partial state across chunks. | B. | Required for all currently supported scalar ACL planners; implementation is larger. | Approved; ADR-016 |
+| DEC-VEC-005 | specification/implementation contract | PPO LP attribution must follow episode termination, not rollout-chunk timing. | A: defer all PPO ACL feedback to rollout finalization; B: retain slot/episode provenance, close GAE at episode end, and defer only when the required terminal value is genuinely unavailable. | B. | Preserves causal scenario→LP ownership while allowing a narrowly defined pending-completion fallback. | Approved; ADR-016 |
 | DEC-VEC-006 | specification clarification | Deterministic scope. | A: promise bitwise cross-platform equality; B: same software/data/config/platform logical reproducibility only. | B. | Matches ScenarioNet §23.2 and realistic GPU behavior. | Approved; user confirmation 2026-07-20 |
 
 DEC-VEC-001 through DEC-VEC-006 are approved by the user on 2026-07-20 and
@@ -394,6 +394,10 @@ mandatory acceptance command. No global static-type command is configured.
   acl_episode_id)` and never uses replay-batch residuals for that value. PPO
   rollout buffers now retain the same provenance and aggregate positive GAE
   advantages per episode, including fragments retained across rollout updates.
+  The normative timing is episode termination: ACL feedback is committed at
+  that boundary whenever the terminal value is available; rollout finalization
+  is only a completion path for genuinely unavailable bootstrap values, never
+  the default trigger.
   Focused planner/ACL validation passes (`51 passed` after the driver and state
   persistence integration).
 - 2026-07-20 — Wired the main Scenario ACL driver to the ACL-mode process vector
@@ -427,8 +431,14 @@ mandatory acceptance command. No global static-type command is configured.
 - 2026-07-20 — A compact real ScenarioNet smoke with `horizon=10` and 60
   transitions verified two fresh insertions followed by replay updates on both
   slots, with distinct per-episode TD3 LP values and deterministic commit
-  ordering. A matching PPO smoke completed six episodes and persisted two
-  unresolved rollout completions exactly once while LP attribution was pending.
+  ordering. A matching PPO smoke completed six episodes; the two completions
+  whose terminal bootstrap value was not yet available were persisted exactly
+  once when that value became available (the pending path is exceptional, not
+  the normal rollout-timing rule).
+- 2026-07-23 — Clarified the normative PPO contract: LP and ACL feedback are
+  applied at episode termination whenever the GAE inputs are available. A
+  rollout boundary may only defer a completion when a required terminal value
+  is genuinely unavailable; partial/proxy LP is prohibited.
 - 2026-07-20 — Fixed duplicate persistence of PPO completions whose LP becomes
   available after the terminal callback; same-slot/same-tick completion ties
   now use `episode_id` as an explicit deterministic tiebreaker. The regression

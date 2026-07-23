@@ -1576,15 +1576,33 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         for feature_id, feature in context.episode_cache.map_feature_catalog.items():
             if feature.feature_class not in {MapFeatureClass.OTHER_NON_DRIVABLE, MapFeatureClass.ROAD_BOUNDARY}:
                 continue
-            elevation = feature.elevation_m
-            if elevation is not None and abs(elevation - ego.position_z) > self.vertical_tolerance_m:
-                continue
             _source, closest = nearest_points(feature.geometry, ego_point)
             position = (float(closest.x), float(closest.y))
+            elevation = feature.elevation_at_xy(position)
+            if elevation is not None and abs(elevation - ego.position_z) > self.vertical_tolerance_m:
+                continue
             distance = hypot(position[0] - ego.position_xy[0], position[1] - ego.position_xy[1])
             if distance > self.static_radius_m:
                 continue
-            projection = self.route.project(position, position_z=elevation or ego.position_z)
+            projection_z = elevation if elevation is not None else ego.position_z
+            try:
+                projection = self.route.project(position, position_z=projection_z)
+            except ValueError as error:
+                diagnostics = self.route.projection_diagnostics(position, position_z=projection_z)
+                raise CausalSemanticObservationError(
+                    "Semantic static-map route projection unavailable: "
+                    f"scenario_id={context.snapshot.scenario_id}; step={context.snapshot.step_index}; "
+                    f"feature_id={feature_id}; feature_class={feature.feature_class.value}; "
+                    f"feature_position_xy={position}; feature_elevation_m={elevation}; "
+                    f"ego_id={ego.actor_id}; ego_z_m={ego.position_z}; "
+                    f"nearest_planar_segment_index={diagnostics.nearest_planar_segment_index}; "
+                    f"nearest_planar_s_m={diagnostics.nearest_planar_s_m}; "
+                    f"nearest_planar_z_m={diagnostics.nearest_planar_z_m}; "
+                    f"nearest_planar_distance_m={diagnostics.nearest_planar_distance_m}; "
+                    f"minimum_vertical_difference_m={diagnostics.minimum_vertical_difference_m}; "
+                    f"vertically_compatible_segment_count={diagnostics.vertically_compatible_segment_count}; "
+                    f"route_z_range_m=({diagnostics.route_min_z_m},{diagnostics.route_max_z_m})"
+                ) from error
             bounds = feature.geometry.bounds
             candidates.append(
                 (

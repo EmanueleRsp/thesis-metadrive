@@ -11,7 +11,9 @@ from thesis_rl.rulebook.v2.context.waymo_static_adapter import (
 )
 
 
-def _minimal_scenario(*, signal_lane_reachable: bool) -> dict:
+def _minimal_scenario(
+    *, signal_lane_reachable: bool, signal_state: str = "LANE_STATE_UNKNOWN"
+) -> dict:
     return {
         "id": "minimal",
         "length": 2,
@@ -48,7 +50,7 @@ def _minimal_scenario(*, signal_lane_reachable: bool) -> dict:
                 "type": "TRAFFIC_LIGHT",
                 "lane": "lane-b",
                 "stop_point": [11.0, 0.0, 0.0],
-                "state": {"object_state": ["LANE_STATE_UNKNOWN", "LANE_STATE_UNKNOWN"]},
+                "state": {"object_state": [signal_state, signal_state]},
             }
         },
     }
@@ -132,15 +134,16 @@ def test_waymo_adapter_interpolates_missing_per_side_width_samples() -> None:
 
 
 @pytest.mark.parametrize(
-    ("reachable", "expected"),
-    ((False, False), (True, True)),
+    ("reachable", "signal_state", "expected"),
+    ((False, "LANE_STATE_UNKNOWN", False), (True, "LANE_STATE_UNKNOWN", True),
+     (True, "TRAFFIC_LIGHT_UNKNOWN", True)),
 )
 def test_waymo_adapter_validates_unknown_signal_only_when_topologically_relevant(
-    reachable: bool,
+    reachable: bool, signal_state: str,
     expected: bool,
 ) -> None:
     result = build_waymo_static_adapter_result(
-        _minimal_scenario(signal_lane_reachable=reachable),
+        _minimal_scenario(signal_lane_reachable=reachable, signal_state=signal_state),
         scenario_uid="minimal",
     )
     assert ("signal_state_unknown:signal" in result.validation_errors) is expected

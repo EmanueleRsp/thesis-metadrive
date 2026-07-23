@@ -9,5 +9,8 @@ scenario_acl:
   use_mab: true
   use_scenario_buffer: true
   use_replay: true
+  generate_probability: 0.40
+  exploit_probability: 0.60
   mab:
     num_arms: 6
+    target_sync_interval: 1

@@ -1248,6 +1248,26 @@ class Agent:
                     ]
                     if len(done_indices) > 0:
                         lifecycle.on_episode_end(indices=done_indices.tolist())
+                        # PPO finalises collection-time advantages in
+                        # ``on_episode_end``/rollout processing.  Refresh the
+                        # ACL values after that hook; the payload was created
+                        # before it and could otherwise report a stale None.
+                        ready_learning_potentials = getattr(
+                            lifecycle, "acl_ready_learning_potentials", lambda: {}
+                        )()
+                        for payload in acl_episode_payloads:
+                            slot_id = int(payload["worker_id"])
+                            episode_id = payload.get("episode_id")
+                            if episode_id is None:
+                                continue
+                            value = getattr(
+                                lifecycle, "acl_learning_potential", lambda *_: None
+                            )(slot_id, int(episode_id))
+                            if value is not None:
+                                payload["learning_potential"] = float(value)
+                            payload["ready_learning_potentials"] = dict(
+                                ready_learning_potentials
+                            )
                         self.preprocessor.reset()
                     event_details: dict[int, tuple[int, str, int, float, float]] = {}
                     for idx in done_indices:

@@ -56,7 +56,7 @@ TTY allocation and allow the caller to choose the Rulebook worker count.
 
 | Command | Result | Date | Notes |
 |---|---|---|---|
-| `make -n scenarionet-rebuild-existing` | PASS | 2026-07-20 | Emits no `-T`, uses `--no-incremental`, and chains all five rebuild stages |
+| `make -n scenarionet-rebuild-existing` | PASS | 2026-07-20 | Emits no `-T`, uses `--no-incremental`, and chains all five rebuild stages; host/container existence checks were subsequently corrected to run inside the dataset-pipeline mount. |
 | `make -n scenarionet-rebuild-existing SCENARIONET_REBUILD_WORKERS=64` | PASS | 2026-07-20 | Emits `--workers "64"` only for the full Rulebook revalidation stage |
 | `git diff --check` | PASS | 2026-07-20 | No whitespace errors |
 

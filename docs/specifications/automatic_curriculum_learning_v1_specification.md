@@ -1045,6 +1045,20 @@ r_t
 done flag
 ```
 
+#### Episode-boundary timing contract (PPO)
+
+`LP_PPO_s` is owned by the scenario episode that produced the transitions and
+must be computed and published when that episode terminates. Implementations
+must retain slot/episode provenance and the terminal observation/value needed
+to close the GAE backward pass; the ACL buffer/MAB transaction is then applied
+immediately for that episode. A rollout/chunk boundary is not an ACL timing
+boundary. If an episode terminates while the collector has not yet acquired
+the value estimate required by the formula (for example, a truncation that
+requires valid final-observation bootstrapping), the completion may remain
+pending until rollout finalization, but it must be committed exactly once as
+soon as the required value becomes available. No partial or proxy LP may be
+used in the meantime.
+
 Here `r_t` is the scalar reward used by the PPO critic.
 
 For scalar baselines:

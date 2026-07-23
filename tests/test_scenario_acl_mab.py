@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from omegaconf import OmegaConf
 from types import SimpleNamespace
 
@@ -29,7 +30,7 @@ def test_generator_arm_bandit_probabilities_sum_to_one() -> None:
         ScenarioAclMabConfig(
             num_arms=3,
             eta=0.2,
-            initial_weight=1.0,
+            initial_score=0.5,
         )
     )
 
@@ -40,34 +41,55 @@ def test_generator_arm_bandit_probabilities_sum_to_one() -> None:
     assert np.all(probs > 0.0)
 
 
-def test_generator_arm_bandit_initializes_exponentially_by_arm_index() -> None:
+def test_generator_arm_bandit_initializes_uniformly_with_ema_scores() -> None:
     bandit = ScenarioArmBandit(
         ScenarioAclMabConfig(
             num_arms=4,
             eta=0.0,
-            initial_weight_decay=0.5,
+            initial_score=0.5,
         )
     )
 
-    assert np.allclose(bandit.probabilities(), np.asarray([8, 4, 2, 1]) / 15)
-    assert np.allclose(bandit.target_weights, bandit.weights)
+    assert np.allclose(bandit.probabilities(), np.full(4, 0.25))
+    assert np.allclose(bandit.scores, np.full(4, 0.5))
 
 
-def test_generator_arm_bandit_target_sync_updates_live_weights_on_interval() -> None:
+def test_generator_arm_bandit_ema_updates_only_selected_score() -> None:
     bandit = ScenarioArmBandit(
         ScenarioAclMabConfig(
             num_arms=2,
             alpha=0.5,
-            target_sync_interval=2,
-            use_target_mab=True,
+            initial_score=0.5,
         )
     )
 
-    initial_weights = bandit.weights.copy()
-    bandit.update(arm_index=0, normalized_usefulness=1.0, selection_probability=0.5)
-    assert np.allclose(bandit.weights, initial_weights)
-    bandit.update(arm_index=0, normalized_usefulness=1.0, selection_probability=0.5)
-    assert not np.allclose(bandit.weights, initial_weights)
+    bandit.update(arm_index=0, normalized_usefulness=1.0, selection_probability=0.01)
+    assert bandit.scores[0] == 0.75
+    assert np.allclose(bandit.scores[1:], 0.5)
+
+
+def test_generator_arm_bandit_probability_contract_and_checkpoint_schema() -> None:
+    bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=6, eta=0.2, temperature=0.5))
+    bandit.update(arm_index=0, normalized_usefulness=1.0)
+    probabilities = bandit.probabilities()
+    assert probabilities[0] > 1.0 / 6.0
+    assert np.isclose(probabilities.sum(), 1.0)
+    assert np.all(probabilities >= 0.2 / 6.0)
+    restored = ScenarioArmBandit.from_state_dict(bandit.config, bandit.state_dict())
+    assert np.allclose(restored.scores, bandit.scores)
+    with pytest.raises(ValueError, match="Incompatible"):
+        ScenarioArmBandit.from_state_dict(bandit.config, {"weights": [1.0] * 6})
+
+
+def test_target_mab_is_available_but_disabled_by_default() -> None:
+    bandit = ScenarioArmBandit(
+        ScenarioAclMabConfig(num_arms=2, alpha=1.0, use_target_mab=True, target_sync_interval=2)
+    )
+    bandit.update(arm_index=0, normalized_usefulness=1.0)
+    assert np.allclose(bandit.scores, [1.0, 0.5])
+    assert np.allclose(bandit.target_scores, [0.5, 0.5])
+    bandit.update(arm_index=0, normalized_usefulness=0.0)
+    assert np.allclose(bandit.target_scores, bandit.scores)
 
 
 def test_default_scenario_arms_match_canonical_scenarionet_taxonomy() -> None:

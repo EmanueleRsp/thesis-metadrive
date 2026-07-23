@@ -55,6 +55,7 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         self._last_buffer_actions: np.ndarray | None = None
         self._last_next_obs: np.ndarray | None = None
         self._acl_episode_advantages: dict[tuple[int, int], list[float]] = {}
+        self._acl_episode_transitions: dict[tuple[int, int], list[tuple[float, float, float, bool]]] = {}
         self._acl_rollout_slot_ids = np.full(
             (int(self.model.rollout_buffer.buffer_size), self.n_envs), -1, dtype=np.int64
         )
@@ -269,6 +270,15 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
             value=self._last_values,
             log_prob=self._last_log_probs,
         )
+        self._record_acl_transition_batch(
+            np.asarray([int(transition_info.get("acl_slot_id", -1))]),
+            np.asarray([int(transition_info.get("acl_episode_id", -1))]),
+            np.asarray([transition.scalar_reward], dtype=np.float32),
+            np.asarray(self._last_values).reshape(-1),
+            np.asarray([bool(transition.terminated)]),
+            np.asarray([bool(transition.terminated or transition.truncated)]),
+            np.asarray(transition.next_observation, dtype=np.float32)[None, :],
+        )
         self.model._last_episode_starts = np.asarray(
             [transition.terminated or transition.truncated],
             dtype=bool,
@@ -328,11 +338,49 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
             value=self._last_values,
             log_prob=self._last_log_probs,
         )
+        self._record_acl_transition_batch(
+            np.asarray([int(info.get("acl_slot_id", -1)) for info in infos]),
+            np.asarray([int(info.get("acl_episode_id", -1)) for info in infos]),
+            np.asarray(rewards, dtype=np.float32),
+            np.asarray(self._last_values).reshape(-1),
+            np.asarray(terminated_batch),
+            done_batch,
+            resolved_next_obs,
+        )
         self.model._last_episode_starts = done_batch.copy()
         self._last_next_obs = resolved_next_obs
         collected = int(obs_batch.shape[0])
         self.model.num_timesteps += collected
         self.collected_transitions += collected
+
+    def _record_acl_transition_batch(
+        self, slot_ids, episode_ids, rewards, values, dones, boundaries, next_obs
+    ) -> None:
+        from thesis_rl.curriculum.scenario_acl.usefulness import compute_ppo_learning_potential
+
+        with torch.no_grad():
+            next_values = self.model.policy.predict_values(
+                self.model.policy.obs_to_tensor(np.asarray(next_obs, dtype=np.float32))[0]
+            ).reshape(-1).cpu().numpy()
+        for slot, episode, reward, value, next_value, done, boundary in zip(
+            slot_ids, episode_ids, rewards, values, next_values, dones, boundaries, strict=True
+        ):
+            key = (int(slot), int(episode))
+            if key[0] < 0 or key[1] < 0:
+                continue
+            sequence = self._acl_episode_transitions.setdefault(key, [])
+            sequence.append((float(reward), float(value), float(next_value), bool(done)))
+            if bool(boundary):
+                array = np.asarray(sequence, dtype=np.float64)
+                self._acl_episode_advantages[key] = [
+                    compute_ppo_learning_potential(
+                        rewards=array[:, 0], values=array[:, 1], next_values=array[:, 2],
+                        dones=array[:, 3],
+                        gamma=float(self.cfg_planner.get("learning_potential_gamma", 0.99)),
+                        gae_lambda=float(self.cfg_planner.get("learning_potential_gae_lambda", 0.9)),
+                    )
+                ]
+                self._acl_episode_transitions.pop(key, None)
 
     def maybe_update(
         self,

@@ -56,6 +56,18 @@ from thesis_rl.rulebook.v2.types import (
 )
 
 
+def test_map_feature_elevation_profile_interpolates_at_nearest_xy() -> None:
+    feature = MapFeatureRecord(
+        "boundary",
+        MapFeatureClass.ROAD_BOUNDARY,
+        LineString(((0.0, 0.0), (10.0, 0.0))),
+        5.0,
+        elevation_profile_xyz=((0.0, 0.0, 0.0), (10.0, 0.0, 10.0)),
+    )
+
+    assert feature.elevation_at_xy((2.5, 0.2)) == pytest.approx(2.5)
+
+
 def test_task_route_is_immutable_and_has_no_future_trajectory_fields() -> None:
     route = TaskRouteRecord("scenario-1", ("lane-a", "lane-b"), "waymo_offline", "v2", "abc")
     with pytest.raises(FrozenInstanceError):

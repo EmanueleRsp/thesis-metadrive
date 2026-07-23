@@ -144,6 +144,7 @@ class PpoPlannerBackend(BasePlannerBackend):
         self._last_dones: np.ndarray | None = None
         self._current_episode_starts = np.ones((max(self.n_envs, 1),), dtype=np.float32)
         self._acl_episode_advantages: dict[tuple[int, int], list[float]] = {}
+        self._acl_episode_transitions: dict[tuple[int, int], list[tuple[float,float,float,bool]]] = {}
 
     @classmethod
     def build(
@@ -464,6 +465,15 @@ class PpoPlannerBackend(BasePlannerBackend):
                 [int(transition_info.get("acl_episode_id", -1))], dtype=np.int64
             ),
         )
+        self._record_acl_transition_batch(
+            np.asarray([int(transition_info.get("acl_slot_id", -1))]),
+            np.asarray([int(transition_info.get("acl_episode_id", -1))]),
+            np.asarray([transition.scalar_reward], dtype=np.float32),
+            np.asarray(self._last_values).reshape(-1),
+            np.asarray([bool(transition.terminated)]),
+            np.asarray([bool(transition.terminated or transition.truncated)]),
+            np.asarray(transition.next_observation, dtype=np.float32)[None, :],
+        )
         self._last_next_obs = np.asarray(transition.next_observation, dtype=np.float32)[None, :]
         self._last_dones = np.asarray(
             [float(transition.terminated or transition.truncated)], dtype=np.float32
@@ -517,12 +527,43 @@ class PpoPlannerBackend(BasePlannerBackend):
                 [int(info.get("acl_episode_id", -1)) for info in infos], dtype=np.int64
             ),
         )
+        self._record_acl_transition_batch(
+            np.asarray([int(info.get("acl_slot_id", -1)) for info in infos]),
+            np.asarray([int(info.get("acl_episode_id", -1)) for info in infos]),
+            np.asarray(rewards, dtype=np.float32),
+            np.asarray(self._last_values).reshape(-1),
+            np.asarray(terminated_batch),
+            np.asarray(terminated_batch | truncated_batch),
+            resolved_next_observations,
+        )
         self._last_next_obs = resolved_next_observations
         self._last_dones = np.asarray(terminated_batch, dtype=np.float32)
         self._current_episode_starts = np.asarray(
             terminated_batch | truncated_batch, dtype=np.float32
         )
         self.state.total_steps += int(observations.shape[0])
+
+    def _record_acl_transition_batch(self, slot_ids, episode_ids, rewards, values, dones, boundaries, next_obs):
+        """Finalize ACL learning potential as soon as each episode boundary arrives."""
+        from thesis_rl.curriculum.scenario_acl.usefulness import compute_ppo_learning_potential
+        with torch.no_grad():
+            next_values = self._value(torch.as_tensor(next_obs, dtype=torch.float32, device=self.device)).squeeze(-1).cpu().numpy()
+        for slot, episode, reward, value, nv, done, boundary in zip(
+            slot_ids, episode_ids, rewards, values, next_values, dones, boundaries, strict=True
+        ):
+            key = (int(slot), int(episode))
+            if key[0] < 0 or key[1] < 0:
+                continue
+            seq = self._acl_episode_transitions.setdefault(key, [])
+            seq.append((float(reward), float(value), float(nv), bool(done)))
+            if bool(boundary):
+                arr = np.asarray(seq, dtype=np.float64)
+                self._acl_episode_advantages[key] = [compute_ppo_learning_potential(
+                    rewards=arr[:,0], values=arr[:,1], next_values=arr[:,2], dones=arr[:,3],
+                    gamma=float(self.cfg_planner.get("learning_potential_gamma", 0.99)),
+                    gae_lambda=float(self.cfg_planner.get("learning_potential_gae_lambda", 0.9)),
+                )]
+                self._acl_episode_transitions.pop(key, None)
 
     def maybe_update(
         self,

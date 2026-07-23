@@ -202,10 +202,12 @@ def infer_waymo_topology(
         else:
             normalized_states = [str(value) for value in object_states]
             light_has_unknown_state |= any(
-                value == "LANE_STATE_UNKNOWN" for value in normalized_states
+                value in {"LANE_STATE_UNKNOWN", "TRAFFIC_LIGHT_UNKNOWN"}
+                for value in normalized_states
             )
             light_has_known_state |= any(
-                value != "LANE_STATE_UNKNOWN" for value in normalized_states
+                value not in {"LANE_STATE_UNKNOWN", "TRAFFIC_LIGHT_UNKNOWN"}
+                for value in normalized_states
             )
 
     if route_light:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from math import isfinite
+from math import hypot, isfinite
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Mapping, TypeAlias, cast
 
@@ -181,6 +181,32 @@ class MapFeatureRecord:
     geometry: BaseGeometry
     elevation_m: float | None
     logical_boundary_id: str | None = None
+    elevation_profile_xyz: tuple[tuple[float, float, float], ...] = ()
+
+    def elevation_at_xy(self, point_xy: tuple[float, float]) -> float | None:
+        """Interpolate the source 2.5D profile at the nearest XY location."""
+        if not self.elevation_profile_xyz:
+            return self.elevation_m
+        px, py = point_xy
+        best: tuple[float, int, float] | None = None
+        for index, (start, end) in enumerate(
+            zip(self.elevation_profile_xyz, self.elevation_profile_xyz[1:])
+        ):
+            ax, ay, az = start
+            bx, by, bz = end
+            dx, dy = bx - ax, by - ay
+            length_sq = dx * dx + dy * dy
+            if length_sq <= 0.0:
+                continue
+            fraction = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_sq))
+            x, y = ax + fraction * dx, ay + fraction * dy
+            distance = hypot(px - x, py - y)
+            candidate = (distance, index, az + fraction * (bz - az))
+            if best is None or candidate[:2] < best[:2]:
+                best = candidate
+        if best is not None:
+            return best[2]
+        return self.elevation_profile_xyz[0][2] if len(self.elevation_profile_xyz) == 1 else self.elevation_m
 
 
 @dataclass(frozen=True, slots=True)

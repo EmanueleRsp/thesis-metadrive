@@ -209,7 +209,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         self.config["assigned_route_source"] = getattr(record, "assigned_route_source", None)
 
     def _record_reset_phase(self, name: str, seconds: float) -> None:
-        if self._active_reset_timing_seconds is not None:
+        if getattr(self, "_active_reset_timing_seconds", None) is not None:
             self._active_reset_timing_seconds[name] = (
                 self._active_reset_timing_seconds.get(name, 0.0) + float(seconds)
             )

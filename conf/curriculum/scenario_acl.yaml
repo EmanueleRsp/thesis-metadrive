@@ -5,7 +5,8 @@ scenario_acl:
   buffer_capacity: 1000
   warmup_buffer_size: 100
 
-  exploit_probability: 0.8
+  generate_probability: 0.40
+  exploit_probability: 0.60
 
   use_mab: true
   use_scenario_buffer: true
@@ -15,17 +16,15 @@ scenario_acl:
 
   mab:
     num_arms: 6
-    eta: 0.2
-    alpha: 0.005
-    initial_weight: 1.0
-    # p(A_i) is proportional to 0.5**i at startup: A0 is sampled most often.
-    initial_weight_decay: 0.5
-    use_target_mab: true
-    # N_MAB: copy target weights into sampling weights every 5 generated episodes.
-    target_sync_interval: 5
-    weight_clip_min: -5.0
-    weight_clip_max: 5.0
-    feedback: rank_normalized_usefulness
+    eta: 0.20
+    update_method: ema
+    alpha: 0.10
+    initial_score: 0.50
+    temperature: 0.50
+    use_importance_correction: false
+    use_target_mab: false
+    target_sync_interval: 1
+    feedback: rank_normalized_learning_potential
 
   replay_sampling:
     omega: 0.7

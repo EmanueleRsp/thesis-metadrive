@@ -15,11 +15,14 @@ def test_curriculum_config_parses_scenario_acl_block() -> None:
             "scenario_acl": {
                 "buffer_capacity": 32,
                 "warmup_buffer_size": 8,
+                "generate_probability": 0.25,
                 "exploit_probability": 0.75,
                 "mab": {
                     "num_arms": 6,
                     "eta": 0.1,
-                    "alpha": 0.01,
+                    "alpha": 0.10,
+                    "initial_score": 0.50,
+                    "temperature": 0.50,
                 },
             },
         }
@@ -30,6 +33,7 @@ def test_curriculum_config_parses_scenario_acl_block() -> None:
     assert curriculum.is_scenario_acl is True
     assert curriculum.scenario_acl.buffer_capacity == 32
     assert curriculum.scenario_acl.mab.num_arms == 6
+    assert curriculum.scenario_acl.generate_probability == 0.25
 
 
 def test_curriculum_config_parses_scenarionet_semantic_acl_block() -> None:
@@ -46,6 +50,25 @@ def test_curriculum_config_parses_scenarionet_semantic_acl_block() -> None:
     )
 
     assert curriculum.scenario_acl.mab.num_arms == 6
+
+
+@pytest.mark.parametrize(
+    "mab_overrides",
+    [
+        {"initial_weight": 1.0},
+        {"weight_clip_min": -5.0},
+        {"use_importance_correction": True},
+    ],
+)
+def test_acl_v11_rejects_legacy_or_removed_mab_options(mab_overrides: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="ACL|Legacy"):
+        CurriculumConfig.from_mapping(
+            {
+                "enabled": True,
+                "kind": "scenario_acl",
+                "scenario_acl": {"mab": {"num_arms": 6, **mab_overrides}},
+            }
+        )
 
 
 def test_scenario_acl_runtime_validation_accepts_spawned_vectorized_envs() -> None:

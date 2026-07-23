@@ -176,9 +176,9 @@ scenarionet-pipeline:
 # Docker TTY allocation is intentionally retained so Rich progress remains
 # visible. No discovery, acquisition, or source generation is performed.
 scenarionet-rebuild-existing:
-	@test -f "$(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" || (echo "Missing raw catalog: $(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" >&2; exit 2)
-	@test -f "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" || (echo "Missing frozen ego config: $(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" >&2; exit 2)
-	@test -f "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" || (echo "Missing Rulebook calibration: $(RULEBOOK_V2_CALIBRATION_CONTAINER)" >&2; exit 2)
+	docker compose run --rm dataset-pipeline test -f "$(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" || (echo "Missing raw catalog inside the dataset mount: $(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" >&2; exit 2)
+	docker compose run --rm dataset-pipeline test -f "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" || (echo "Missing frozen ego config inside the dataset mount: $(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" >&2; exit 2)
+	docker compose run --rm dataset-pipeline test -f "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" || (echo "Missing Rulebook calibration inside the dataset mount: $(RULEBOOK_V2_CALIBRATION_CONTAINER)" >&2; exit 2)
 	docker compose run --rm dataset-pipeline uv run --no-sync python \
 		-m thesis_rl.cli.scenarios.filter_rulebook_v2_catalog \
 		--catalog "$(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" \

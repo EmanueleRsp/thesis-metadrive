@@ -70,6 +70,17 @@ def test_ppo_learning_potential_builds_gae_from_transition_inputs() -> None:
     ) == pytest.approx(1.5)
 
 
+def test_ppo_learning_potential_bootstraps_truncation_final_value() -> None:
+    assert compute_ppo_learning_potential(
+        rewards=[0.0],
+        values=[0.0],
+        next_values=[2.0],
+        dones=[False],
+        gamma=1.0,
+        gae_lambda=1.0,
+    ) == pytest.approx(2.0)
+
+
 def test_td3_and_sac_learning_potential_use_absolute_residuals() -> None:
     assert compute_td3_learning_potential([-2.0, 1.0, 3.0]) == pytest.approx(2.0)
     assert compute_sac_learning_potential([-2.0, 1.0, 3.0]) == pytest.approx(2.0)

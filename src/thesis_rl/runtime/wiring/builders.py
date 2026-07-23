@@ -275,14 +275,23 @@ def _resolve_planner_cfg(cfg: DictConfig) -> DictConfig:
 def build_planner(cfg: DictConfig, env: Any, seed: int | None = None) -> "BasePlanner":
     from thesis_rl.agent.planners.factory import build_planner_backend
 
+    algorithm_name = str(cfg.agent.planner.algorithm.name)
+    configured_device = str(cfg.device)
+    # SB3 PPO with the project's MLP policy is CPU-bound; passing ``auto``
+    # selects CUDA when available and triggers SB3's performance warning.
+    device = (
+        "cpu"
+        if algorithm_name == "ppo_sb3" and configured_device == "auto"
+        else configured_device
+    )
     return build_planner_backend(
-        planner_name=str(cfg.agent.planner.algorithm.name),
+        planner_name=algorithm_name,
         env=env,
         cfg_planner=_resolve_planner_cfg(cfg),
         cfg_encoder=cfg.agent.planner.encoder,
         cfg_decoder=cfg.agent.planner.decoder,
         cfg_obs=cfg.get("obs"),
-        device=str(cfg.device),
+        device=device,
         seed=seed,
     )
 
@@ -294,15 +303,22 @@ def load_planner(cfg: DictConfig, checkpoint_path: str, env: Any) -> "BasePlanne
         checkpoint_path,
         build_reward_semantics_identity(cfg),
     )
+    algorithm_name = str(cfg.agent.planner.algorithm.name)
+    configured_device = str(cfg.device)
+    device = (
+        "cpu"
+        if algorithm_name == "ppo_sb3" and configured_device == "auto"
+        else configured_device
+    )
     return load_planner_backend(
-        planner_name=str(cfg.agent.planner.algorithm.name),
+        planner_name=algorithm_name,
         checkpoint_path=checkpoint_path,
         env=env,
         cfg_planner=_resolve_planner_cfg(cfg),
         cfg_encoder=cfg.agent.planner.encoder,
         cfg_decoder=cfg.agent.planner.decoder,
         cfg_obs=cfg.get("obs"),
-        device=str(cfg.device),
+        device=device,
     )
 
 

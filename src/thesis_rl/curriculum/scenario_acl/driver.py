@@ -734,6 +734,16 @@ def _run_scenario_acl_vectorized_training(
                 selection=selection,
                 metrics=dict(payload.get("metrics", {})),
             )
+            # PPO publishes LP only after a complete rollout.  Preserve the
+            # selection provenance now so its live event has the same useful
+            # structure as off-policy algorithms instead of waiting for LP.
+            payload["live_event_context"] = {
+                "arm": _short_arm_name(selection.arm_name),
+                "source": selection.source,
+                "origin": "replay" if selection.mode == "replay" else "new",
+                "U": "pending",
+                "U_norm": "pending",
+            }
             completed[(slot, episode_id)] = completion
             if payload.get("learning_potential") is not None:
                 learning_potentials[(slot, episode_id)] = float(payload["learning_potential"])
@@ -882,10 +892,13 @@ def _run_scenario_acl_vectorized_training(
     def mab_monitor_rows() -> list[tuple[str, str]]:
         probabilities = bandit.probabilities()
         labels = ", ".join(
-            f"{_short_arm_name(arm.name)}={probability:.3f}"
+            f"{_short_arm_name(arm.name)}={probability:.4f}"
             for arm, probability in zip(arms, probabilities, strict=True)
         )
-        return [("ACL arm probabilities", labels)]
+        return [
+            ("ACL arm probabilities", labels),
+            ("ACL MAB updates", str(bandit.update_count)),
+        ]
 
     def record_async_acl_evaluation(job: EvaluationJob, metrics: dict[str, Any]) -> None:
         """Persist completed ACL diagnostics; the result never feeds ACL selection."""

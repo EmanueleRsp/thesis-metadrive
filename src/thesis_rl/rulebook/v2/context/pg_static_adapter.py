@@ -180,6 +180,9 @@ def build_pg_static_adapter_result(
                 feature_class,
                 geometry,
                 float(np.median(points[:, 2] - z_origin_m)),
+                elevation_profile_xyz=tuple(
+                    (float(x), float(y), float(z - z_origin_m)) for x, y, z in points
+                ),
             )
         )
     controls: list[TrafficControlRecord] = []
@@ -244,7 +247,10 @@ def build_pg_static_adapter_result(
                     scenario.get("length", 0)
                 ):
                     signal_errors.append(f"signal_sequence_invalid:{physical_id}")
-                elif any(str(state) == "LANE_STATE_UNKNOWN" for state in states):
+                elif any(
+                    str(state) in {"LANE_STATE_UNKNOWN", "TRAFFIC_LIGHT_UNKNOWN"}
+                    for state in states
+                ):
                     signal_errors.append(f"signal_state_unknown:{physical_id}")
             point = _array_points(np.asarray(point_value).reshape(1, -1))[0]
             movement = derive_lane_movement_key(
