@@ -5,7 +5,7 @@
 This index prevents an apparently newer, exploratory, or implementation-tracking
 document from being mistaken for an approved scientific contract.
 
-- Last repository inspection: 2026-07-21
+- Last repository inspection: 2026-07-23
 - Index status: `CURRENT_WITH_DOCUMENTED_GAPS`
 - Approval evidence: explicit user confirmations recorded on 2026-07-16,
   2026-07-17, and 2026-07-21
@@ -90,6 +90,7 @@ root.
 | `decisions/ADR-021-source-bounded-reactive-traffic.md` | `APPROVED` | Explicit user approval to retain reactive traffic only through source-track validity on 2026-07-21 | Source-bounded ScenarioNet IDM traffic lifecycle; no fallback traffic after an actor record ends |
 | `decisions/ADR-022-perception-bounded-semantic-observation.md` | `APPROVED` | Explicit user approval to proceed on 2026-07-21 | OBS-V1.2/ENC-V1.1, planar first-hit LiDAR, symbolic signal visibility, causal memory, and strict preflight policy |
 | `decisions/ADR-023-scoped-vehicle-yield-source-contract.md` | `APPROVED` | Explicit user instruction to implement the proposed source-bound vehicle-yield contract on 2026-07-21 | Rulebook v4.7 §7.9 causal live wiring; explicit pairwise and roundabout metadata; no geometric-priority fallback |
+| `decisions/ADR-024-runtime-scenario-data-abort.md` | `APPROVED` | Explicit user approval of the typed data-abort/quarantine contract on 2026-07-23 | Typed runtime scenario non-evaluability, valid-prefix truncation, vector selective reset, ACL exclusion, run-local quarantine, evaluation coverage and comparison exclusions |
 
 ## ExecPlan Registry
 
@@ -122,6 +123,7 @@ root.
 | Documentation structure | User instructions dated 2026-07-16 | `implementation/repository_documentation_restructure_exec_plan.md` | `VERIFIED` | 2026-07-16 |
 | Repository quality commands | User process decision dated 2026-07-16 | `implementation/repository_quality_commands_exec_plan.md` | `VERIFIED` | 2026-07-16 |
 | PyTorch cross-architecture compatibility | User request dated 2026-07-19; ADR-013 | `implementation/pytorch_cross_architecture_compatibility_exec_plan.md` | `IN_PROGRESS`; approved 2.9.1 pin and ARM64 CUDA validator exception pending full validation | 2026-07-19 |
+| Runtime scenario data-abort v1 | Rulebook v4.7 RSA-1; Transition Replay v1 RSA-1; ACL v1 RSA-1; RL Baselines v1 RSA-1; ScenarioNet v1.1 RSA-1; ADR-024 | `implementation/runtime_scenario_data_abort_v1_exec_plan.md` | `IMPLEMENTED`; typed data-abort, PER boundary closure, a prefix-preserving PPO/GAE boundary (`MaskedRolloutBuffer`, no more full-rollout discard), evaluation-path exclusion, ACL/non-ACL quarantine persistence across resume, and forensic JSONL wiring implemented and tested (buffer-, backend-, and loop-level, including a real SB3 PPO backend test); uniform replay remains deliberately fatal pending a larger safe N-step mutation; representative smoke not yet run | 2026-07-23 |
 
 ## Maintenance Rules
 

@@ -19,7 +19,7 @@ from thesis_rl.curriculum.scenario_acl.usefulness import (
 )
 
 
-VECTOR_STATE_VERSION = 1
+VECTOR_STATE_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -257,6 +257,7 @@ class AclVectorState:
     pending_completions: list[AclCompletion] = field(default_factory=list)
     last_observations: Any | None = None
     rng_state: dict[str, Any] | None = None
+    quarantined_scenario_uids: list[str] = field(default_factory=list)
     version: int = VECTOR_STATE_VERSION
 
     def __post_init__(self) -> None:
@@ -286,6 +287,7 @@ class AclVectorState:
             ],
             "last_observations": _json_observation(self.last_observations),
             "rng_state": self.rng_state,
+            "quarantined_scenario_uids": sorted(str(uid) for uid in self.quarantined_scenario_uids),
         }
 
     @classmethod
@@ -324,6 +326,9 @@ class AclVectorState:
             ],
             last_observations=_restore_json_observation(payload.get("last_observations")),
             rng_state=payload.get("rng_state"),
+            quarantined_scenario_uids=[
+                str(uid) for uid in payload.get("quarantined_scenario_uids", ())
+            ],
         )
 
 

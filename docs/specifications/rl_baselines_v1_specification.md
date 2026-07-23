@@ -34,6 +34,11 @@
 
 ## Executive Summary
 
+> Amendment RSA-1 (approved 2026-07-23; ADR-024): TD3/SAC preserve valid
+> prefixes with a truncation boundary and PPO preserves valid rollout prefixes
+> with final-observation value bootstrap. Typed data-aborts are excluded from
+> evaluation policy metrics; generic exceptions remain fatal.
+
 This specification defines the three scalar, non-lexicographic,
 non-distributional reinforcement-learning baselines used by the thesis:
 

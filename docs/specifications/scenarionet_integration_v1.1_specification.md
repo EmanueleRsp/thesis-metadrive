@@ -32,6 +32,11 @@
 
 ### Decisioni di revisione confermate
 
+- Amendment RSA-1, approved 2026-07-23 and recorded by ADR-024, makes only
+  explicitly typed runtime scenario non-evaluability recoverable through a
+  run-local quarantine and selective reset. It does not modify frozen data,
+  catalog eligibility, splits, runtime view, or fingerprints.
+
 - Gli arm semantici ScenarioNet e lo spazio arm del MAB `scenario_acl_scenarionet`
   restano gli stessi sei arm correnti `A0`–`A5`; questa revisione non ne cambia
   nomi, formule o semantica.

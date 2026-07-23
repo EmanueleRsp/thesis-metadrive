@@ -65,6 +65,17 @@ class ScenarioBuffer:
                 return
         raise KeyError(f"Scenario record '{record.scenario_id}' not found in buffer.")
 
+    def remove_scenario_id(self, scenario_id: str) -> bool:
+        """Remove an unusable run-local scenario without altering frozen data."""
+
+        target = str(scenario_id)
+        before = len(self._records)
+        self._records = [record for record in self._records if record.scenario_id != target]
+        if len(self._records) != before:
+            self._refresh_ranks()
+            return True
+        return False
+
     def sample_replay(
         self,
         *,

@@ -15,6 +15,7 @@ from thesis_rl.sb3_extensions import (
     build_sb3_specs_from_configs,
     resolve_transition_replay_config,
 )
+from thesis_rl.sb3_extensions.rollout import MaskedRolloutBuffer
 
 if TYPE_CHECKING:
     from stable_baselines3 import PPO
@@ -44,6 +45,11 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         super().__init__(env=env, cfg_planner=cfg_planner, device=device)
         self.model = model
         self.sb3_model = model
+
+        self.global_rollout_size = int(model.n_steps) * int(self.n_envs)
+        self.minibatches_per_epoch = self.global_rollout_size // int(model.batch_size)
+        self.optimizer_steps_per_update = self.minibatches_per_epoch * int(model.n_epochs)
+        self._validate_rollout_geometry()
 
         self.last_actor_loss = float("nan")
         self.last_critic_loss = float("nan")
@@ -112,9 +118,30 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
             verbose=int(planner_cfg.get("verbose", 0)),
             device=device,
             seed=seed,
+            rollout_buffer_class=MaskedRolloutBuffer,
             **model_kwargs,
         )
         return cls(env=env, cfg_planner=planner_cfg, model=model, device=device)
+
+    def _validate_rollout_geometry(self) -> None:
+        """Fail fast when vectorized PPO geometry cannot form full minibatches."""
+
+        n_steps = int(self.model.n_steps)
+        batch_size = int(self.model.batch_size)
+        n_epochs = int(self.model.n_epochs)
+        num_envs = int(self.n_envs)
+        rollout_size = n_steps * num_envs
+        if n_steps <= 0:
+            raise ValueError("PPO n_steps must be positive.")
+        if batch_size <= 1:
+            raise ValueError("PPO batch_size must be greater than 1.")
+        if n_epochs <= 0:
+            raise ValueError("PPO n_epochs must be positive.")
+        if rollout_size % batch_size != 0:
+            raise ValueError(
+                "PPO global rollout size must be divisible by batch_size: "
+                f"{num_envs} * {n_steps} = {rollout_size} is not divisible by {batch_size}."
+            )
 
     @classmethod
     def load(
@@ -297,11 +324,18 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
         terminated: np.ndarray | None = None,
         truncated: np.ndarray | None = None,
+        valid_mask: np.ndarray | None = None,
     ) -> None:
         if self._last_values is None or self._last_log_probs is None:
             raise RuntimeError(
                 "PPO batch transition observed before action evaluation cache is set."
             )
+
+        mask = (
+            np.ones(self.n_envs, dtype=bool)
+            if valid_mask is None
+            else np.asarray(valid_mask, dtype=bool)
+        )
 
         obs_batch = np.asarray(observations, dtype=np.float32)
         action_batch = np.asarray(buffer_actions, dtype=np.float32)
@@ -320,38 +354,80 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         )
         episode_starts = np.asarray(self.model._last_episode_starts, dtype=np.float32)
 
-        position = int(self.model.rollout_buffer.pos)
-        if position >= int(self.model.rollout_buffer.buffer_size):
+        rollout_buffer: MaskedRolloutBuffer = self.model.rollout_buffer
+        position = int(rollout_buffer.pos)
+        if position >= int(rollout_buffer.buffer_size):
             raise RuntimeError("PPO rollout provenance position exceeded the rollout buffer.")
         self._acl_rollout_slot_ids[position] = np.asarray(
-            [int(info.get("acl_slot_id", -1)) for info in infos], dtype=np.int64
+            [int(info.get("acl_slot_id", -1)) if mask[idx] else -1 for idx, info in enumerate(infos)],
+            dtype=np.int64,
         )
         self._acl_rollout_episode_ids[position] = np.asarray(
-            [int(info.get("acl_episode_id", -1)) for info in infos], dtype=np.int64
+            [int(info.get("acl_episode_id", -1)) if mask[idx] else -1 for idx, info in enumerate(infos)],
+            dtype=np.int64,
         )
 
-        self.model.rollout_buffer.add(
+        rollout_buffer.add(
             obs=obs_batch,
             action=action_batch,
             reward=adjusted_rewards,
             episode_start=episode_starts,
             value=self._last_values,
             log_prob=self._last_log_probs,
+            valid_mask=mask,
         )
         self._record_acl_transition_batch(
-            np.asarray([int(info.get("acl_slot_id", -1)) for info in infos]),
-            np.asarray([int(info.get("acl_episode_id", -1)) for info in infos]),
+            self._acl_rollout_slot_ids[position],
+            self._acl_rollout_episode_ids[position],
             np.asarray(rewards, dtype=np.float32),
             np.asarray(self._last_values).reshape(-1),
             np.asarray(terminated_batch),
             done_batch,
             resolved_next_obs,
         )
-        self.model._last_episode_starts = done_batch.copy()
-        self._last_next_obs = resolved_next_obs
-        collected = int(obs_batch.shape[0])
+        last_episode_starts = np.array(self.model._last_episode_starts, dtype=bool, copy=True)
+        last_episode_starts[mask] = done_batch[mask]
+        self.model._last_episode_starts = last_episode_starts
+        if self._last_next_obs is None:
+            self._last_next_obs = np.array(resolved_next_obs, copy=True)
+        else:
+            self._last_next_obs = np.array(self._last_next_obs, copy=True)
+            self._last_next_obs[mask] = resolved_next_obs[mask]
+        collected = int(np.count_nonzero(mask))
         self.model.num_timesteps += collected
         self.collected_transitions += collected
+
+    def close_previous_transition_as_data_abort(
+        self, *, env_index: int, final_observation: np.ndarray
+    ) -> None:
+        """Retroactively bootstrap the preceding valid row at an abort boundary.
+
+        Mirrors the existing ``TimeLimit``-truncation reward-bootstrap
+        convention instead of discarding the whole in-flight rollout: only
+        this one env's column is affected, and every other env's collected
+        data in the same rollout is preserved untouched.
+        """
+
+        obs = np.asarray(final_observation, dtype=np.float32)
+        with torch.no_grad():
+            terminal_value = (
+                self.model.policy.predict_values(self.model.policy.obs_to_tensor(obs[None, :])[0])
+                .reshape(-1)[0]
+                .cpu()
+                .item()
+            )
+        self.model.rollout_buffer.close_previous_transition_as_data_abort(
+            env_index=int(env_index), terminal_value=float(terminal_value)
+        )
+        last_episode_starts = np.array(self.model._last_episode_starts, dtype=bool, copy=True)
+        last_episode_starts[int(env_index)] = True
+        self.model._last_episode_starts = last_episode_starts
+        if self._last_next_obs is not None:
+            self._last_next_obs = np.array(self._last_next_obs, copy=True)
+            self._last_next_obs[int(env_index)] = obs
+        for key in list(self._acl_episode_transitions.keys()):
+            if key[0] == int(env_index):
+                self._acl_episode_transitions.pop(key, None)
 
     def _record_acl_transition_batch(
         self, slot_ids, episode_ids, rewards, values, dones, boundaries, next_obs
@@ -432,11 +508,12 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
                 self._acl_episode_advantages.setdefault((int(slot_id), int(episode_id)), []).append(
                     float(max(float(advantage), 0.0))
                 )
+        valid_flat = np.asarray(self.model.rollout_buffer.valid_transitions, dtype=bool).reshape(-1)
         learning_potential = compute_ppo_learning_potential(
-            rewards=rewards.reshape(-1),
-            values=values.reshape(-1),
-            next_values=next_values.reshape(-1),
-            dones=dones.reshape(-1),
+            rewards=rewards.reshape(-1)[valid_flat],
+            values=values.reshape(-1)[valid_flat],
+            next_values=next_values.reshape(-1)[valid_flat],
+            dones=dones.reshape(-1)[valid_flat],
             gamma=float(self.cfg_planner.get("learning_potential_gamma", 0.99)),
             gae_lambda=float(self.cfg_planner.get("learning_potential_gae_lambda", 0.9)),
         )

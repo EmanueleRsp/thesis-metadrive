@@ -1,6 +1,10 @@
 from shapely.geometry import LineString
 import pytest
 from thesis_rl.rulebook.v2.components.controls import evaluate_signal_transition
+from thesis_rl.rulebook.v2.errors import (
+    RuntimeScenarioNotEvaluableError,
+    RuntimeScenarioNotEvaluableReason,
+)
 from thesis_rl.rulebook.v2.types import ApproachControl, MovementKey, TrafficControlRecord
 
 
@@ -58,8 +62,8 @@ def test_signal_red_approach_is_continuous():
     assert 0.0 < result.cost < 1.0
 
 
-def test_signal_unknown_fails_fast():
-    with pytest.raises(ValueError):
+def test_signal_unknown_is_typed_runtime_scenario_data_abort():
+    with pytest.raises(RuntimeScenarioNotEvaluableError) as raised:
         evaluate_signal_transition(
             control=_signal(),
             pre_state="UNKNOWN",
@@ -76,3 +80,6 @@ def test_signal_unknown_fails_fast():
             crossing=False,
             ego_brake_mps2=4.0,
         )
+    assert raised.value.reason is RuntimeScenarioNotEvaluableReason.INVALID_SIGNAL_TRANSITION
+    assert isinstance(raised.value.__cause__, ValueError)
+    assert raised.value.diagnostics["active_signal_group_id"] == "sig"

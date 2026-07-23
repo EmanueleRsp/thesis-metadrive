@@ -45,7 +45,12 @@ from thesis_rl.rulebook.v2.calibration import (
     load_calibration_artifact,
     write_calibration_artifact,
 )
-from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationError
+from thesis_rl.rulebook.v2.errors import (
+    EvaluationFailure,
+    RulebookEvaluationError,
+    RuntimeScenarioNotEvaluableError,
+    RuntimeScenarioNotEvaluableReason,
+)
 from thesis_rl.rulebook.v2.events import (
     ContactOnsetBuffer,
     ContactSetTransition,
@@ -89,6 +94,8 @@ __all__ = [
     "MacroRule",
     "RULEBOOK_V2_VERSION",
     "RulebookEvaluationError",
+    "RuntimeScenarioNotEvaluableError",
+    "RuntimeScenarioNotEvaluableReason",
     "RulebookMemory",
     "RulebookResult",
     "RulebookV2Config",

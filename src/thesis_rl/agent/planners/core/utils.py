@@ -54,6 +54,24 @@ def count_envs(env: Any) -> int:
         return 1
 
 
+def call_env_method(env: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
+    """Call ``env_method`` without tripping gymnasium's deprecated attribute forwarding.
+
+    ``gym.Wrapper.__getattr__`` logs a deprecation warning whenever an
+    attribute (such as ``env_method``) falls through to the wrapped env
+    instead of being defined on the wrapper itself. ``get_wrapper_attr``
+    resolves the same attribute by walking the wrapper chain explicitly, with
+    no warning; the plain attribute access remains the fallback for objects
+    (such as a raw SB3 ``VecEnv``) that never go through a gym wrapper.
+    """
+    if hasattr(env, "get_wrapper_attr"):
+        try:
+            return env.get_wrapper_attr("env_method")(method_name, *args, **kwargs)
+        except AttributeError:
+            pass
+    return env.env_method(method_name, *args, **kwargs)
+
+
 def to_batch_obs(obs: np.ndarray) -> np.ndarray:
     arr = np.asarray(obs, dtype=np.float32)
     if arr.ndim == 1:

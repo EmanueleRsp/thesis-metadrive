@@ -9,7 +9,12 @@ from gymnasium import Env, spaces
 
 from thesis_rl.runtime.execution.deterministic_subproc_vec_env import (
     DeterministicSubprocVecEnv,
+    RuntimeScenarioDataAbort,
     SubprocessWorkerError,
+)
+from thesis_rl.rulebook.v2.errors import (
+    RuntimeScenarioNotEvaluableError,
+    RuntimeScenarioNotEvaluableReason,
 )
 
 
@@ -53,6 +58,15 @@ class _FailingStepEnv(_SeedWindowEnv):
         raise ValueError("intentional worker failure")
 
 
+class _RuntimeAbortEnv(_SeedWindowEnv):
+    def step(self, action):
+        _ = action
+        raise RuntimeScenarioNotEvaluableError(
+            RuntimeScenarioNotEvaluableReason.INVALID_SIGNAL_TRANSITION,
+            "typed runtime-invalid scenario",
+        )
+
+
 class _AbruptExitEnv(_SeedWindowEnv):
     def step(self, action):
         _ = action
@@ -79,6 +93,10 @@ class _NumericThreadEnvironmentEnv(_SeedWindowEnv):
 
 def _make_failing_step_env():
     return _FailingStepEnv(start_index=0, num_scenarios=1)
+
+
+def _make_runtime_abort_env():
+    return _RuntimeAbortEnv(start_index=0, num_scenarios=1)
 
 
 def _make_abrupt_exit_env():
@@ -164,6 +182,22 @@ def test_worker_python_exception_reports_remote_traceback() -> None:
         assert "type=ValueError" in message
         assert "intentional worker failure" in message
         assert "Remote traceback:" in message
+    finally:
+        vec_env.close()
+
+
+def test_typed_runtime_scenario_abort_keeps_worker_alive() -> None:
+    vec_env = DeterministicSubprocVecEnv(
+        [_make_runtime_abort_env], start_method="spawn", auto_reset=False
+    )
+    try:
+        vec_env.reset()
+        result = vec_env.step_slots({0: np.zeros(1, dtype=np.float32)})[0]
+        assert isinstance(result, RuntimeScenarioDataAbort)
+        assert result.payload["reason_code"] == "INVALID_SIGNAL_TRANSITION"
+        assert vec_env.processes[0].is_alive()
+        reset = vec_env.reset_slots([0], seeds={0: 0})
+        np.testing.assert_array_equal(reset[0][0], np.array([0], dtype=np.float32))
     finally:
         vec_env.close()
 

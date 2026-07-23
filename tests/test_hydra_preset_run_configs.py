@@ -161,6 +161,23 @@ def test_sb3_ppo_smoke_uses_diagnostic_rollout_override() -> None:
     assert int(resolved_planner_cfg.batch_size) == 8
 
 
+def test_sb3_ppo_vectorized_21_env_geometry_is_ordinary_profile_default() -> None:
+    for profile in ("default", "fast", "medium", "long", "tune", "thesis"):
+        cfg = _compose(
+            f"run_profile={profile}",
+            "agent/planner/algorithm=ppo_sb3",
+            "env.vectorized.enabled=true",
+            "env.vectorized.num_envs=21",
+        )
+        resolved_planner_cfg = _resolve_planner_cfg(cfg)
+        assert int(resolved_planner_cfg.n_steps) == 96
+        assert int(resolved_planner_cfg.batch_size) == 63
+        assert int(resolved_planner_cfg.n_epochs) == 10
+        assert int(resolved_planner_cfg.n_steps) * 21 == 2016
+        assert 2016 % int(resolved_planner_cfg.batch_size) == 0
+        assert 2016 // int(resolved_planner_cfg.batch_size) == 32
+
+
 def test_make_run_keeps_shared_pipeline_identical_across_sb3_algorithms() -> None:
     common_overrides = [
         "env=scenarionet",

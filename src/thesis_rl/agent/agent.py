@@ -21,7 +21,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from thesis_rl.agent.planners.core.utils import count_envs
+from thesis_rl.agent.planners.core.utils import call_env_method, count_envs
 from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
 from thesis_rl.agent.planners.interfaces.planner import BasePlanner
 from thesis_rl.agent.adapters.interfaces.base import BaseAdapter
@@ -33,6 +33,8 @@ from thesis_rl.sb3_extensions.checkpointing import (
     CheckpointGeneration,
     publish_checkpoint_generation,
 )
+from thesis_rl.runtime.execution.deterministic_subproc_vec_env import RuntimeScenarioDataAbort
+from thesis_rl.runtime.data_abort import append_data_abort_record
 
 
 class _LiveEventLogHandler(logging.Handler):
@@ -852,6 +854,8 @@ class Agent:
         monitor_event_poll_callback: Callable[[], list[str]] | None = None,
         live_extra_renderables_callback: Callable[[], list[Any]] | None = None,
         slow_step_callback: Callable[[int, Mapping[str, Any]], None] | None = None,
+        data_abort_log_path: str | Path | None = None,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
         """Train with a vectorized env, counting total collected transitions.
 
@@ -1068,7 +1072,68 @@ class Agent:
                     phase_seconds["encoder_action"] += phase_elapsed
                     iteration_accounted_seconds += phase_elapsed
                     phase_started = time.perf_counter()
-                    next_obs, rewards, dones, infos = env.step(actions)
+                    data_aborts: dict[int, RuntimeScenarioDataAbort] = {}
+                    if hasattr(env, "step_slots"):
+                        slot_results = env.step_slots(
+                            {index: actions[index] for index in range(n_envs)}
+                        )
+                        normal_results: list[tuple[Any, Any, Any, Any, Any]] = []
+                        for index in range(n_envs):
+                            result = slot_results[index]
+                            if isinstance(result, RuntimeScenarioDataAbort):
+                                data_aborts[index] = result
+                                final_observation = result.payload.get("final_observation")
+                                if final_observation is None:
+                                    raise RuntimeError(
+                                        "Typed runtime data-abort omitted its valid final observation."
+                                    )
+                                if data_abort_log_path is not None:
+                                    diagnostics = dict(result.payload.get("diagnostics", {}))
+                                    append_data_abort_record(
+                                        data_abort_log_path,
+                                        {
+                                            "run_id": run_id,
+                                            "worker_slot": index,
+                                            "scenario_uid": diagnostics.get("scenario_uid"),
+                                            "reason_code": result.payload.get("reason_code"),
+                                            "environment_step": diagnostics.get("environment_step"),
+                                            "worker_step_index": result.payload.get(
+                                                "worker_step_index"
+                                            ),
+                                            "exception_message": result.payload.get(
+                                                "exception_message"
+                                            ),
+                                            "full_traceback": result.payload.get("traceback"),
+                                            "diagnostics": diagnostics,
+                                            "final_observation": final_observation,
+                                        },
+                                    )
+                                normal_results.append(
+                                    (
+                                        final_observation,
+                                        0.0,
+                                        True,
+                                        {
+                                            "runtime_scenario_data_abort": True,
+                                            "runtime_data_abort": dict(result.payload),
+                                            "final_observation": final_observation,
+                                            "terminal_observation": final_observation,
+                                            "terminated": False,
+                                            "truncated": True,
+                                            "TimeLimit.truncated": True,
+                                        },
+                                        {},
+                                    )
+                                )
+                            else:
+                                normal_results.append(result)
+                        next_obs, rewards, dones, infos, _reset_infos = zip(*normal_results)
+                        next_obs = np.asarray(next_obs)
+                        rewards = np.asarray(rewards, dtype=np.float32)
+                        dones = np.asarray(dones, dtype=bool)
+                        infos = tuple(infos)
+                    else:
+                        next_obs, rewards, dones, infos = env.step(actions)
                     phase_elapsed = time.perf_counter() - phase_started
                     phase_seconds["env_step"] += phase_elapsed
                     iteration_accounted_seconds += phase_elapsed
@@ -1174,6 +1239,15 @@ class Agent:
                             info["final_observation"] = self.preprocessor(final_observations[idx])
                             info["terminal_observation"] = info["final_observation"]
                             next_processed_obs[idx] = info["final_observation"]
+                    valid_mask = np.asarray(
+                        [index not in data_aborts for index in range(n_envs)], dtype=bool
+                    )
+                    for index, abort in data_aborts.items():
+                        if int(episode_len[index]) > 1:
+                            lifecycle.close_previous_transition_as_data_abort(
+                                env_index=index,
+                                final_observation=np.asarray(final_observations[index]),
+                            )
                     lifecycle.observe_transition_batch(
                         observations=processed_obs,
                         buffer_actions=buffer_actions,
@@ -1183,7 +1257,21 @@ class Agent:
                         infos=infos,
                         terminated=terminated,
                         truncated=truncated,
+                        valid_mask=valid_mask,
                     )
+                    if data_aborts:
+                        for abort in data_aborts.values():
+                            diagnostics = dict(abort.payload.get("diagnostics", {}))
+                            scenario_uid = diagnostics.get("scenario_uid")
+                            if scenario_uid is not None and hasattr(env, "env_method"):
+                                call_env_method(env, "quarantine_scenario_uid", str(scenario_uid))
+                        if not bool(getattr(env, "acl_mode", False)):
+                            reset_results = env.reset_slots(
+                                sorted(data_aborts), force=True
+                            )
+                            next_obs = np.asarray(next_obs).copy()
+                            for index, (reset_observation, _reset_info) in reset_results.items():
+                                next_obs[int(index)] = reset_observation
                     phase_elapsed = time.perf_counter() - phase_started
                     phase_seconds["transition_collection"] += phase_elapsed
                     iteration_accounted_seconds += phase_elapsed
@@ -2007,6 +2095,7 @@ class Agent:
         active: dict[int, int] = {}
         observations: dict[int, Any] = {}
         states: dict[int, _ParallelEvaluationEpisode] = {}
+        invalid_records: dict[int, dict[str, Any]] = {}
 
         def _install_episode(slot: int, episode_idx: int) -> None:
             proxy = env.get_slot_proxy(slot)
@@ -2086,7 +2175,27 @@ class Agent:
 
                 completed_slots: list[int] = []
                 for slot in sorted(active):
-                    next_obs, reward, done, info, _reset_info = step_results[slot]
+                    result = step_results[slot]
+                    if isinstance(result, RuntimeScenarioDataAbort):
+                        episode_idx = active[slot]
+                        diagnostics = dict(result.payload.get("diagnostics", {}))
+                        scenario_uid = diagnostics.get("scenario_uid")
+                        invalid_records[episode_idx] = {
+                            "episode_idx": episode_idx,
+                            "scenario_uid": scenario_uid,
+                            "reason_code": result.payload.get("reason_code"),
+                        }
+                        if scenario_uid is not None and hasattr(env, "env_method"):
+                            env.env_method("quarantine_scenario_uid", str(scenario_uid))
+                        completed_slots.append(slot)
+                        del active[slot]
+                        del states[slot]
+                        observations.pop(slot, None)
+                        if next_episode < n_eval_episodes:
+                            _install_episode(slot, next_episode)
+                            next_episode += 1
+                        continue
+                    next_obs, reward, done, info, _reset_info = result
                     done_flag = bool(done)
                     truncated = bool(
                         isinstance(info, dict)
@@ -2155,13 +2264,25 @@ class Agent:
             if progress is not None:
                 progress.stop()
 
-        if any(record is None for record in records):
+        unaccounted = [
+            idx
+            for idx, record in enumerate(records)
+            if record is None and idx not in invalid_records
+        ]
+        if unaccounted:
             raise RuntimeError("Parallel evaluation ended without one result per episode.")
-        return self._aggregate_parallel_evaluation(
+        metrics = self._aggregate_parallel_evaluation(
             [record for record in records if record is not None],
             error_priority_base=error_priority_base,
             return_episode_metrics=return_episode_metrics,
         )
+        metrics["data_abort_coverage"] = {
+            "attempted": int(n_eval_episodes),
+            "valid": int(n_eval_episodes - len(invalid_records)),
+            "invalid": len(invalid_records),
+            "invalid_episodes": [invalid_records[idx] for idx in sorted(invalid_records)],
+        }
+        return metrics
 
     def _aggregate_parallel_evaluation(
         self,

@@ -3,8 +3,8 @@
 name: ppo_sb3
 policy: MlpPolicy
 verbose: 0
-n_steps: 2048
-batch_size: 64
+n_steps: 96
+batch_size: 63
 n_epochs: 10
 learning_rate: 3e-4
 gamma: 0.99

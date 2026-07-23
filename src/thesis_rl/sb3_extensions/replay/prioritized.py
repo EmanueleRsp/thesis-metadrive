@@ -111,6 +111,11 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         self.beta_progress_env_steps = 0
         self.rng = np.random.default_rng(seed)
         self.raw_priorities = np.zeros((self.buffer_size, self.n_envs), dtype=np.float64)
+        # A vector collection tick may have no transition for one slot after a
+        # typed runtime data-abort. The physical row remains only to preserve
+        # the other slots' chronology; an invalid leaf is never addressable,
+        # sampled, prioritized, or interpreted as a replay transition.
+        self.valid_transitions = np.zeros((self.buffer_size, self.n_envs), dtype=bool)
         # The specification assigns an unseen transition the exact current raw
         # maximum (or 1.0 for an empty buffer).  Tracking its multiplicity avoids
         # scanning the entire allocation at every vector insertion.
@@ -202,12 +207,42 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
     def _insertion_priority(self) -> float:
         return self._current_max_raw_priority if self._current_max_count > 0 else 1.0
 
-    def add(self, *args: Any, **kwargs: Any) -> None:
+    def add(self, *args: Any, valid_mask: np.ndarray | None = None, **kwargs: Any) -> None:
         storage_index = int(self.pos)
         super().add(*args, **kwargs)
+        if valid_mask is None:
+            mask = np.ones(self.n_envs, dtype=bool)
+        else:
+            mask = np.asarray(valid_mask, dtype=bool)
+            if mask.shape != (self.n_envs,):
+                raise ValueError("Replay valid_mask must have one entry per environment.")
+        self.valid_transitions[storage_index] = mask
         maximum = self._insertion_priority()
         for env_index in range(self.n_envs):
-            self._set_raw_priority(storage_index * self.n_envs + env_index, maximum)
+            flat_index = storage_index * self.n_envs + env_index
+            if mask[env_index]:
+                self._set_raw_priority(flat_index, maximum)
+            else:
+                self.raw_priorities.flat[flat_index] = 0.0
+                self._tree.set(flat_index, 0.0)
+
+    def close_previous_transition_as_data_abort(
+        self, *, env_index: int, final_observation: np.ndarray
+    ) -> None:
+        """Retroactively make the preceding valid row a bootstrappable boundary."""
+
+        if not 0 <= int(env_index) < self.n_envs:
+            raise IndexError("Replay environment index is out of range.")
+        if self.pos == 0 and not self.full:
+            raise ValueError("No previous replay transition exists for data-abort closure.")
+        row = (int(self.pos) - 1) % self.buffer_size
+        if not bool(self.valid_transitions[row, int(env_index)]):
+            raise ValueError("Data-abort closure requires a preceding valid transition.")
+        self.dones[row, int(env_index)] = 0.0
+        self.timeouts[row, int(env_index)] = 1.0
+        self.next_observations[row, int(env_index)] = np.asarray(
+            final_observation, dtype=self.next_observations.dtype
+        )
 
     def _sample_addresses(self, batch_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         active_count = self._active_count() * self.n_envs
@@ -259,6 +294,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
                 "dones",
                 "timeouts",
                 "raw_priorities",
+                "valid_transitions",
             ):
                 values = np.asarray(state[name])
                 state[name] = values[:active_count].copy()
@@ -273,6 +309,8 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         version = state.pop("_thesis_sparse_replay_version", None)
         if version is None:
             self.__dict__.update(state)
+            if not hasattr(self, "valid_transitions"):
+                self.valid_transitions = np.asarray(self.raw_priorities > 0.0, dtype=bool)
             return
         if version != 1:
             raise ValueError(f"Unsupported sparse replay persistence version: {version}")
@@ -281,6 +319,8 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         if active_count < 0 or active_count > capacity:
             raise ValueError("Sparse replay checkpoint has an invalid active row count.")
         self.__dict__.update(state)
+        if not hasattr(self, "valid_transitions"):
+            self.valid_transitions = np.asarray(self.raw_priorities > 0.0, dtype=bool)
         if not bool(self.full):
             for name in (
                 "observations",
@@ -290,6 +330,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
                 "dones",
                 "timeouts",
                 "raw_priorities",
+                "valid_transitions",
             ):
                 persisted = np.asarray(getattr(self, name))
                 restored = np.zeros((capacity, *persisted.shape[1:]), dtype=persisted.dtype)

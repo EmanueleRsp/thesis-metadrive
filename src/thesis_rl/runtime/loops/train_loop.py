@@ -23,7 +23,9 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.agent.agent import Agent
+from thesis_rl.agent.planners.core.utils import call_env_method
 from thesis_rl.contracts.reward_semantics import build_reward_semantics_identity
+from thesis_rl.runtime.data_abort import RuntimeScenarioQuarantine
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.manager import CurriculumManager
 from thesis_rl.curriculum.scenario_acl import (
@@ -324,6 +326,30 @@ def _load_rng_state(path: Path) -> bool:
     return True
 
 
+def _save_quarantine_state(env: Any, path: Path) -> bool:
+    """Persist the run-local runtime-scenario quarantine alongside the checkpoint."""
+
+    if not hasattr(env, "env_method"):
+        return False
+    quarantine = RuntimeScenarioQuarantine()
+    for worker_uids in call_env_method(env, "get_quarantined_scenario_uids"):
+        for uid in worker_uids:
+            quarantine.add(str(uid), "unspecified")
+    quarantine.save(path)
+    return True
+
+
+def _load_quarantine_state(env: Any, path: Path) -> bool:
+    """Restore the run-local runtime-scenario quarantine into every worker."""
+
+    if not path.exists() or not hasattr(env, "env_method"):
+        return False
+    quarantine = RuntimeScenarioQuarantine.load(path)
+    for uid in sorted(quarantine.scenario_uids):
+        call_env_method(env, "quarantine_scenario_uid", uid)
+    return True
+
+
 def _required_curriculum_metrics(curriculum_cfg: CurriculumConfig) -> list[str]:
     """Derive required metric names from configured curriculum gates.
 
@@ -486,11 +512,13 @@ def run_training(cfg: DictConfig) -> None:
     latest_training_state_path = checkpoints_dir / "latest_training_state.yaml"
     latest_checkpoint_pair_path = checkpoints_dir / "latest_checkpoint_pair.json"
     latest_rng_state_path = checkpoints_dir / "latest_rng_state.pkl"
+    latest_quarantine_state_path = checkpoints_dir / "latest_quarantine_state.json"
     train_log_path = logs_dir / "train.log"
     eval_log_path = logs_dir / "eval.log"
     curriculum_log_path = logs_dir / "curriculum.log"
     errors_log_path = logs_dir / "errors.log"
     events_log_path = logs_dir / "events.jsonl"
+    data_abort_log_path = logs_dir / "runtime_scenario_data_abort.jsonl"
 
     logging_cfg = cfg.get("logging", {})
     global_log_level = parse_log_level(logging_cfg.get("level"), default=logging.INFO)
@@ -582,6 +610,9 @@ def run_training(cfg: DictConfig) -> None:
         )
         resume_training_state_path = resume_run_dir / "checkpoints" / "latest_training_state.yaml"
         resume_rng_state_path = resume_run_dir / "checkpoints" / "latest_rng_state.pkl"
+        resume_quarantine_state_path = (
+            resume_run_dir / "checkpoints" / "latest_quarantine_state.json"
+        )
         resume_state: dict[str, Any] | None = None
         resume_global_steps_done = 0
         resume_chunk_id = 0
@@ -882,6 +913,7 @@ def run_training(cfg: DictConfig) -> None:
                 _validate_replay_buffer_n_envs(planner)
             if bool(resume_cfg.get("restore_rng_state", True)):
                 _load_rng_state(resume_rng_state_path)
+            _load_quarantine_state(env, resume_quarantine_state_path)
             if resume_state is None and resume_training_state_path.exists():
                 resume_state = _load_training_state(resume_training_state_path)
             if resume_state is not None:
@@ -1133,6 +1165,7 @@ def run_training(cfg: DictConfig) -> None:
                 _save_training_state(latest_training_state_path, latest_state_payload)
                 if bool(cfg.checkpoint.get("save_rng_state", True)):
                     _save_rng_state(latest_rng_state_path)
+                _save_quarantine_state(env, latest_quarantine_state_path)
                 _append_checkpoint_index_row(
                     checkpoint_index_path,
                     {
@@ -1254,6 +1287,10 @@ def run_training(cfg: DictConfig) -> None:
 
             # Agent training
             train_fn = agent.train_vectorized if vectorized_training else agent.train
+            extra_train_kwargs: dict[str, Any] = {}
+            if vectorized_training:
+                extra_train_kwargs["data_abort_log_path"] = data_abort_log_path
+                extra_train_kwargs["run_id"] = run_id
             provider_driven_scenarionet = str(
                 cfg.env.get("name", "")
             ).lower() == "scenarionet" and str(
@@ -1280,6 +1317,7 @@ def run_training(cfg: DictConfig) -> None:
                     if async_evaluation_manager is not None
                     else None
                 ),
+                **extra_train_kwargs,
             )
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
             beta_progress_env_steps += actual_chunk_steps
@@ -2467,6 +2505,7 @@ def run_training(cfg: DictConfig) -> None:
             )
             if bool(cfg.checkpoint.get("save_rng_state", True)):
                 _save_rng_state(latest_rng_state_path)
+            _save_quarantine_state(env, latest_quarantine_state_path)
             _append_checkpoint_index_row(
                 checkpoint_index_path,
                 {

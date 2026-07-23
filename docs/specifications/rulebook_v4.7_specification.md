@@ -22,6 +22,12 @@ on 2026-07-17. It supersedes the v4.6 Rulebook contract for the selected
 feature scope and authorizes implementation planning. Production implementation
 remains subject to the approved ExecPlan and conformance gates.
 
+> Amendment RSA-1 (approved 2026-07-23; ADR-024) supersedes this document's
+> runtime fail-fast disposition only for `RuntimeScenarioNotEvaluableError`.
+> It preserves fail-fast for every untyped evaluation/software error and does
+> not alter offline eligibility, Rulebook formulas, reward values, or atomic
+> monitor commit semantics.
+
 # Sintesi esecutiva
 
 Il rulebook definitivo è costituito da quattro macro-regole in ordine totale:

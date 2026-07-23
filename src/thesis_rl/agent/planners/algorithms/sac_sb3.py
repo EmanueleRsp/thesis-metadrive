@@ -370,6 +370,7 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
         infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
         terminated: np.ndarray | None = None,
         truncated: np.ndarray | None = None,
+        valid_mask: np.ndarray | None = None,
     ) -> None:
         obs_batch = np.asarray(observations, dtype=np.float32)
         terminated_batch, truncated_batch, next_obs_batch = normalize_vector_transition_boundary(
@@ -396,6 +397,13 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
                 next_obs_batch[idx] = terminal_obs
             replay_infos.append(replay_info)
 
+        add_kwargs: dict[str, Any] = {}
+        if valid_mask is not None and not np.all(valid_mask):
+            if not hasattr(self.replay_buffer, "valid_transitions"):
+                raise RuntimeError(
+                    "Sparse runtime data-abort collection requires the owned sparse replay buffer."
+                )
+            add_kwargs["valid_mask"] = np.asarray(valid_mask, dtype=bool)
         self.replay_buffer.add(
             obs=obs_batch,
             action=action_batch,
@@ -403,12 +411,20 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
             done=done_batch,
             next_obs=next_obs_batch,
             infos=replay_infos,
+            **add_kwargs,
         )
 
         collected = int(obs_batch.shape[0])
         self.num_timesteps += collected
         self.model.num_timesteps += collected
         self.collected_transitions += collected
+
+    def close_previous_transition_as_data_abort(
+        self, *, env_index: int, final_observation: np.ndarray) -> None:
+        close = getattr(self.replay_buffer, "close_previous_transition_as_data_abort", None)
+        if not callable(close):
+            raise RuntimeError("Replay buffer does not support runtime data-abort boundaries.")
+        close(env_index=int(env_index), final_observation=np.asarray(final_observation))
 
     def collection_learning_potential_batch(
         self,

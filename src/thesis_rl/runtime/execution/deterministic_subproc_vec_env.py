@@ -42,11 +42,20 @@ VecEnvIndices = Union[None, int, Sequence[int], np.ndarray]
 VecEnvObs = Union[np.ndarray, dict[str, np.ndarray], tuple[np.ndarray, ...]]
 VecEnvStepReturn = tuple[VecEnvObs, np.ndarray, np.ndarray, tuple[dict[str, Any], ...]]
 _WORKER_ERROR_MARKER = "__thesis_rl_worker_error__"
+_RUNTIME_DATA_ABORT_MARKER = "__thesis_rl_runtime_data_abort__"
 _CHILD_JOIN_TIMEOUT_S = 1.0
 
 
 class SubprocessWorkerError(RuntimeError):
     """A vector-environment worker failed before completing its command."""
+
+
+class RuntimeScenarioDataAbort:
+    """Non-fatal worker response for an explicitly typed scenario data defect."""
+
+    def __init__(self, *, slot: int, payload: Mapping[str, Any]) -> None:
+        self.slot = int(slot)
+        self.payload = dict(payload)
 
 
 class CloudpickleWrapper:
@@ -125,7 +134,31 @@ def _worker(
             cmd, data = remote.recv()
             if cmd == "step":
                 step_started = time.perf_counter()
-                observation, reward, terminated, truncated, info = env.step(data)
+                try:
+                    observation, reward, terminated, truncated, info = env.step(data)
+                except Exception as exc:
+                    from thesis_rl.rulebook.v2.errors import RuntimeScenarioNotEvaluableError
+
+                    if not isinstance(exc, RuntimeScenarioNotEvaluableError):
+                        raise
+                    remote.send(
+                        (
+                            _RUNTIME_DATA_ABORT_MARKER,
+                            {
+                                "pid": os.getpid(),
+                                "reason_code": exc.reason.value,
+                                "original_message": str(exc.__cause__ or exc),
+                                "exception_message": str(exc),
+                                "traceback": traceback.format_exc(),
+                                "diagnostics": dict(exc.diagnostics),
+                                "final_observation": getattr(exc, "final_observation", None),
+                                "failed_action": data,
+                                "worker_step_index": worker_step_index,
+                            },
+                        )
+                    )
+                    worker_step_index += 1
+                    continue
                 environment_step_seconds = time.perf_counter() - step_started
                 enrich_started = time.perf_counter()
                 from thesis_rl.runtime.io.video_diagnostics import enrich_step_info_from_env
@@ -383,9 +416,10 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         *,
         seeds: Mapping[int, int | None] | None = None,
         options: Mapping[int, dict[str, Any] | None] | None = None,
+        force: bool = False,
     ) -> dict[int, tuple[Any, dict[str, Any]]]:
         """Reset only completed ACL slots after their next selection is installed."""
-        if self.auto_reset and not self.acl_mode:
+        if self.auto_reset and not self.acl_mode and not force:
             raise RuntimeError(
                 "Selective reset protocol requires auto_reset=False or acl_mode=True."
             )
@@ -547,6 +581,14 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
                 f"message={payload.get('exception_message')}\n"
                 f"Remote traceback:\n{payload.get('traceback', '<unavailable>')}"
             )
+        if (
+            command == "step"
+            and isinstance(result, tuple)
+            and len(result) == 2
+            and result[0] == _RUNTIME_DATA_ABORT_MARKER
+            and isinstance(result[1], Mapping)
+        ):
+            return RuntimeScenarioDataAbort(slot=index, payload=result[1])
         return result
 
     def _transport_error(

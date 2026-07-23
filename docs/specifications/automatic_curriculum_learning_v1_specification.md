@@ -10,6 +10,12 @@
 
 ## 0. High-level design decision
 
+> Amendment RSA-1 (approved 2026-07-23; ADR-024): an episode ending in a typed
+> runtime scenario data-abort is not an ACL outcome. It has no learning
+> potential/usefulness/MAB update or scenario-buffer insertion/update; an
+> existing record is removed or made non-sampleable, and its UID is quarantined
+> for the current run only.
+
 The curriculum operates at **scenario level**, while the RL algorithm operates at **transition level**.
 
 ```text

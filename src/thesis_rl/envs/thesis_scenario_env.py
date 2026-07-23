@@ -136,6 +136,19 @@ class ThesisScenarioEnv(ScenarioEnv):
             self.scenario_source = str(source)
         return {"selection_generation": int(payload.get("generation", -1))}
 
+    def quarantine_scenario_uid(self, scenario_uid: str) -> None:
+        """Exclude one runtime-invalid scenario for this process/run only."""
+
+        normalized = str(scenario_uid).strip()
+        if not normalized:
+            raise ValueError("Runtime quarantine requires a non-empty scenario UID.")
+        self.scenario_excluded_uids.add(normalized)
+
+    def get_quarantined_scenario_uids(self) -> list[str]:
+        """Return the run-local quarantine set for checkpoint persistence."""
+
+        return sorted(self.scenario_excluded_uids)
+
     def _acl_info(self) -> dict[str, Any]:
         """Expose collection provenance in info only, never in observations."""
 

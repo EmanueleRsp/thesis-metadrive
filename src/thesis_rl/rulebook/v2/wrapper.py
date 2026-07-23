@@ -19,6 +19,7 @@ import gymnasium as gym
 from thesis_rl.contracts.causal_scene_context import CausalSceneContext
 from thesis_rl.reward.scalarization import RulebookScalarizer, ScalarizationResult
 from thesis_rl.rulebook.v2.memory import apply_cache_delta
+from thesis_rl.rulebook.v2.errors import RuntimeScenarioNotEvaluableError
 from thesis_rl.rulebook.v2.types import (
     MACRO_RULE_ORDER,
     EpisodeCache,
@@ -160,12 +161,27 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         post_snapshot = self._snapshotter(self.env)
         snapshot_seconds = time.perf_counter() - phase_started
         phase_started = time.perf_counter()
-        result, next_memory, cache_delta = self._transition_evaluator(
-            pre_state=pre_snapshot,
-            post_state=post_snapshot,
-            memory=self._memory,
-            cache=self._cache,
-        )
+        try:
+            result, next_memory, cache_delta = self._transition_evaluator(
+                pre_state=pre_snapshot,
+                post_state=post_snapshot,
+                memory=self._memory,
+                cache=self._cache,
+            )
+        except RuntimeScenarioNotEvaluableError as exc:
+            # The simulator has advanced and its observation is valid, but the
+            # Rulebook reward is not. Keep this data exclusively for the
+            # parent-side truncation bootstrap/log record; it is never a step
+            # result or reward-bearing transition.
+            exc.diagnostics.update(
+                {
+                    "scenario_uid": getattr(post_snapshot, "scenario_id", None),
+                    "environment_step": getattr(post_snapshot, "step_index", None),
+                    "failed_action": action,
+                }
+            )
+            exc.final_observation = observation
+            raise
         next_cache = apply_cache_delta(self._cache, cache_delta)
         evaluator_seconds = time.perf_counter() - phase_started
         scalarization_result: ScalarizationResult | None = None

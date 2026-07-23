@@ -18,7 +18,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.agent.agent import Agent
-from thesis_rl.agent.planners.core.utils import count_envs
+from thesis_rl.agent.planners.core.utils import call_env_method, count_envs
 from thesis_rl.contracts.reward_semantics import build_reward_semantics_identity
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.scenario_acl.arms import (
@@ -572,6 +572,9 @@ def _run_scenario_acl_vectorized_training(
             raise ValueError("Scenario ACL vector state version is incompatible.")
         if vector_state.rng_state is not None:
             rng.bit_generator.state = vector_state.rng_state
+        if vector_state.quarantined_scenario_uids and hasattr(env, "env_method"):
+            for scenario_uid in vector_state.quarantined_scenario_uids:
+                call_env_method(env, "quarantine_scenario_uid", scenario_uid)
     else:
         vector_state = AclVectorState(n_envs=n_envs)
 
@@ -707,6 +710,14 @@ def _run_scenario_acl_vectorized_training(
     def vector_episode_end_callback(
         vector_env: Any, done_indices: list[int], payloads: list[dict[str, Any]]
     ) -> dict[int, Any]:
+        aborted_slots = {
+            int(payload["worker_id"])
+            for payload in payloads
+            if bool(dict(payload.get("info", {})).get("runtime_scenario_data_abort", False))
+        }
+        # An aborted scenario must still be replaced in its slot, but cannot
+        # produce completion, LP, MAB, or scenario-buffer effects.
+        payloads = [payload for payload in payloads if int(payload["worker_id"]) not in aborted_slots]
         completed: dict[tuple[int, int], AclCompletion] = {}
         learning_potentials: dict[tuple[int, int], float] = {}
         ready: dict[tuple[int, int], float] = {}
@@ -864,6 +875,10 @@ def _run_scenario_acl_vectorized_training(
             resolved_keys=committed_keys,
         )
 
+        for slot in sorted(aborted_slots):
+            selection = vector_state.active_selections.get(slot)
+            if selection is not None and selection.scenario_uid is not None:
+                buffer.remove_scenario_id(selection.scenario_uid)
         coordinator.clear_completed(done_indices)
         selection_started = time.perf_counter()
         selected = select_batch(done_indices)
@@ -1061,6 +1076,14 @@ def _run_scenario_acl_vectorized_training(
             )
             vector_state.last_observations = current_observations
             vector_state.rng_state = rng.bit_generator.state
+            if hasattr(env, "env_method"):
+                vector_state.quarantined_scenario_uids = sorted(
+                    {
+                        str(uid)
+                        for worker_uids in call_env_method(env, "get_quarantined_scenario_uids")
+                        for uid in worker_uids
+                    }
+                )
             _persist_buffer_state(path=artifact_paths["buffer"], buffer=buffer)
             save_acl_vector_state(artifact_paths["vector_state"], vector_state)
             recorder.append_row(

@@ -124,6 +124,40 @@ def test_per_insertion_priority_tracks_exact_maximum_across_updates_and_overwrit
     assert buffer._insertion_priority() == pytest.approx(float(np.max(buffer.raw_priorities)))
 
 
+def test_per_data_abort_leaf_is_non_addressable_and_closes_previous_transition() -> None:
+    buffer = PrioritizedNStepReplayBuffer(
+        buffer_size=8,
+        observation_space=spaces.Box(-10.0, 10.0, shape=(1,), dtype=np.float32),
+        action_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+        device="cpu",
+        n_envs=2,
+        n_steps=3,
+        gamma=0.9,
+        beta_anneal_steps=10,
+    )
+    obs = np.asarray([[1.0], [2.0]], dtype=np.float32)
+    action = np.zeros((2, 1), dtype=np.float32)
+    buffer.add(obs, obs + 1.0, action, np.ones(2), np.zeros(2, dtype=bool), [{}, {}])
+    buffer.close_previous_transition_as_data_abort(
+        env_index=1, final_observation=np.asarray([9.0], dtype=np.float32)
+    )
+    buffer.add(
+        obs + 2.0,
+        obs + 3.0,
+        action,
+        np.asarray([2.0, 0.0], dtype=np.float32),
+        np.zeros(2, dtype=bool),
+        [{}, {}],
+        valid_mask=np.asarray([True, False]),
+    )
+
+    assert bool(buffer.timeouts[0, 1])
+    np.testing.assert_array_equal(buffer.next_observations[0, 1], np.asarray([9.0]))
+    assert not bool(buffer.valid_transitions[1, 1])
+    assert buffer.raw_priorities[1, 1] == 0.0
+    assert buffer._tree.tree[buffer._tree.capacity + 3] == 0.0
+
+
 def test_per_sparse_persistence_restores_active_rows_without_serializing_capacity() -> None:
     buffer = PrioritizedNStepReplayBuffer(
         buffer_size=1_000,

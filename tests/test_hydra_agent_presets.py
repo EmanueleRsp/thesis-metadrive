@@ -76,8 +76,8 @@ def test_ppo_sb3_algorithm_config_composes() -> None:
         cfg = compose(config_name="config", overrides=["agent/planner/algorithm=ppo_sb3"])
     assert str(cfg.agent.planner.algorithm.name) == "ppo_sb3"
     assert str(cfg.agent.planner.algorithm.policy) == "MlpPolicy"
-    assert int(cfg.agent.planner.algorithm.n_steps) == 2048
-    assert int(cfg.agent.planner.algorithm.batch_size) == 64
+    assert int(cfg.agent.planner.algorithm.n_steps) == 96
+    assert int(cfg.agent.planner.algorithm.batch_size) == 63
     assert int(cfg.agent.planner.algorithm.n_epochs) == 10
     assert float(cfg.agent.planner.algorithm.ent_coef) == 0.0
     assert list(cfg.agent.planner.algorithm.policy_kwargs.net_arch.pi) == [256, 256]

@@ -13,6 +13,10 @@ from thesis_rl.rulebook.v2.types import (
     TrafficControlRecord,
     ApproachControl,
 )
+from thesis_rl.rulebook.v2.errors import (
+    RuntimeScenarioNotEvaluableError,
+    RuntimeScenarioNotEvaluableReason,
+)
 
 VALID_SIGNAL_STATES = frozenset({"GREEN", "YELLOW", "RED", "FLASHING_YELLOW", "UNKNOWN"})
 STOP_ZONE_M = 1.0
@@ -206,7 +210,20 @@ def evaluate_signal_transition(
         or post_state not in VALID_SIGNAL_STATES
         or "UNKNOWN" in (pre_state, post_state)
     ):
-        raise ValueError("Signal transition requires valid, known pre/post states")
+        cause = ValueError("Signal transition requires valid, known pre/post states")
+        raise RuntimeScenarioNotEvaluableError(
+            RuntimeScenarioNotEvaluableReason.INVALID_SIGNAL_TRANSITION,
+            str(cause),
+            diagnostics={
+                "active_signal_group_id": control.control_group_id,
+                "physical_signal_ids": list(control.physical_control_ids),
+                "raw_pre_state": pre_state,
+                "normalized_pre_state": pre_state,
+                "raw_post_state": post_state,
+                "normalized_post_state": post_state,
+                "mapping_status": "invalid_or_unknown_transition",
+            },
+        ) from cause
     if pre_delta_m is None or post_delta_m is None or speed_mps < 0.0 or delta_t_s <= 0.0:
         raise ValueError("Signal transition requires valid distances, speed and timestep")
     if ego_brake_mps2 is None or ego_brake_mps2 <= 0.0:

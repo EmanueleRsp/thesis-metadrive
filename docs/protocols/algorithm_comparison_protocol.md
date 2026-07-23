@@ -6,6 +6,12 @@ the CSV format and logging requirements.
 
 ## 1) Units Of Analysis
 
+> Amendment RSA-1 (approved 2026-07-23; ADR-024): record per-scenario UID
+> evaluation results. Primary comparisons exclude the union of UIDs that are
+> runtime-invalid in at least one compared algorithm/seed, report each
+> method's exclusions/reason codes and coverage, and never compare implicit
+> different scenario sets.
+
 Hierarchy:
 
 - `run` = algorithm + seed + configuration + timestamp

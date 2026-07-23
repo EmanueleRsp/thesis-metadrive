@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
 from thesis_rl.curriculum.scenario_acl.vectorized import (
+    VECTOR_STATE_VERSION,
     AclCompletion,
     AclEpisodeAccumulator,
     AclSlotSelection,
@@ -59,6 +62,30 @@ def test_acl_vector_state_round_trip_and_env_count_guard(tmp_path) -> None:
     assert np.array_equal(restored.last_observations, state.last_observations)
     with pytest.raises(ValueError, match="n_envs"):
         load_acl_vector_state(path, expected_n_envs=3)
+
+
+def test_acl_vector_state_persists_runtime_quarantine_across_resume(tmp_path) -> None:
+    state = AclVectorState(
+        n_envs=2,
+        quarantined_scenario_uids=["waymo:broken", "pg:broken"],
+    )
+    path = tmp_path / "acl_vector_state.json"
+    save_acl_vector_state(path, state)
+
+    restored = load_acl_vector_state(path, expected_n_envs=2)
+    assert restored.quarantined_scenario_uids == ["pg:broken", "waymo:broken"]
+
+
+def test_acl_vector_state_rejects_a_mismatched_version(tmp_path) -> None:
+    state = AclVectorState(n_envs=2)
+    path = tmp_path / "acl_vector_state.json"
+    save_acl_vector_state(path, state)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["version"] = VECTOR_STATE_VERSION - 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="incompatible"):
+        load_acl_vector_state(path, expected_n_envs=2)
 
 
 def test_fresh_duplicates_are_rejected_but_replay_duplicates_are_allowed() -> None:

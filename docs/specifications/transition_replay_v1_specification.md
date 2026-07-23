@@ -30,6 +30,12 @@
 
 # Executive Summary
 
+> Amendment RSA-1 (approved 2026-07-23; ADR-024): an explicitly typed runtime
+> scenario data-abort discards its failed step and retrospectively closes the
+> preceding valid transition as a bootstrappable truncation. N-step effective
+> horizons may therefore be shorter than `n_steps`; no sequence crosses a
+> reset and the failed step receives neither storage nor PER priority.
+
 This specification defines transition-level replay behavior for the
 Stable-Baselines3-backed TD3 and SAC agents used in the thesis project.
 

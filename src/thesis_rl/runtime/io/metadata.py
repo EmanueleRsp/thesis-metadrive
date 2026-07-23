@@ -93,13 +93,30 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
     )
     if not isinstance(transition_replay, dict):
         transition_replay = {}
+    algorithm_name = str(_cfg_get(cfg, "agent.planner.algorithm.name", default=""))
+    ppo_geometry = None
+    if algorithm_name == "ppo_sb3":
+        num_envs = int(_cfg_get(cfg, "env.vectorized.num_envs", default=1))
+        n_steps = int(_cfg_get(cfg, "agent.planner.algorithm.n_steps", default=2048))
+        batch_size = int(_cfg_get(cfg, "agent.planner.algorithm.batch_size", default=64))
+        n_epochs = int(_cfg_get(cfg, "agent.planner.algorithm.n_epochs", default=10))
+        global_rollout_size = num_envs * n_steps
+        if n_steps <= 0 or batch_size <= 1 or n_epochs <= 0:
+            raise ValueError("Invalid PPO geometry in resolved configuration.")
+        if global_rollout_size % batch_size != 0:
+            raise ValueError("PPO global rollout size must be divisible by batch_size.")
+        ppo_geometry = {
+            "num_envs": num_envs,
+            "n_steps": n_steps,
+            "batch_size": batch_size,
+            "n_epochs": n_epochs,
+            "global_rollout_size": global_rollout_size,
+            "minibatches_per_epoch": global_rollout_size // batch_size,
+            "optimizer_steps_per_update": (global_rollout_size // batch_size) * n_epochs,
+        }
     metadata = {
         "name": _cfg_get(cfg, "name"),
-        "algorithm": _cfg_get(
-            cfg,
-            "agent.planner.algorithm.name",
-            default=_cfg_get(cfg, "planner.name", default="unknown"),
-        ),
+        "algorithm": algorithm_name or _cfg_get(cfg, "planner.name", default="unknown"),
         "task_contract": _cfg_get(cfg, "env.name", default="unknown"),
         "run_profile": _cfg_get(cfg, "run_profile.name", default="unknown"),
         "reward_type": _cfg_get(cfg, "reward.type", default="unknown"),
@@ -152,6 +169,8 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
         "total_timesteps": _cfg_get(cfg, "experiment.total_timesteps"),
         "eval_interval": _cfg_get(cfg, "experiment.eval_interval"),
         "eval_episodes": _cfg_get(cfg, "experiment.eval_episodes"),
+        "checkpoint_interval": _cfg_get(cfg, "checkpoint.periodic_interval"),
+        "ppo_geometry": ppo_geometry,
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "cuda_device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "hostname": socket.gethostname(),

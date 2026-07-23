@@ -101,6 +101,7 @@ class _DelegatingLifecycle:
         infos: list[dict[str, Any]] | tuple[dict[str, Any], ...],
         terminated: np.ndarray | None = None,
         truncated: np.ndarray | None = None,
+        valid_mask: np.ndarray | None = None,
     ) -> None:
         observations_array = np.asarray(observations, dtype=np.float32)
         actions_array = np.asarray(buffer_actions, dtype=np.float32)
@@ -116,7 +117,10 @@ class _DelegatingLifecycle:
             infos=infos,
             terminated=None if terminated is None else np.asarray(terminated, dtype=bool),
             truncated=None if truncated is None else np.asarray(truncated, dtype=bool),
+            valid_mask=None if valid_mask is None else np.asarray(valid_mask, dtype=bool),
         )
+        if valid_mask is not None and not np.all(valid_mask):
+            return
         collection_residuals = self.backend.collection_learning_potential_batch(
             observations=observations_array,
             buffer_actions=actions_array,
@@ -200,6 +204,14 @@ class _DelegatingLifecycle:
 
     def on_episode_end(self, indices: list[int] | np.ndarray | None = None) -> None:
         self.backend.on_episode_end(indices=indices)
+
+    def close_previous_transition_as_data_abort(
+        self, *, env_index: int, final_observation: np.ndarray
+    ) -> None:
+        close = getattr(self.backend, "close_previous_transition_as_data_abort", None)
+        if not callable(close):
+            raise RuntimeError("Planner backend does not support runtime data-abort boundaries.")
+        close(env_index=int(env_index), final_observation=np.asarray(final_observation))
 
     def end_training(self) -> None:
         if self._acl_collection_residuals:
