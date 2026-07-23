@@ -52,6 +52,7 @@ class SemanticOverflowDiagnostics:
     critical_dropped: int
     last_selected_key: Mapping[str, object]
     first_excluded_key: Mapping[str, object]
+    route_incompatible_static_features: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +202,7 @@ class CausalSemanticBatchBuilder:
         self._slot_actor: dict[int, str] = {}
         self._slot_last_seen: dict[int, int] = {}
         self._last_diagnostics = SemanticOverflowDiagnostics({}, {}, {}, 0, {}, {})
+        self._route_incompatible_static_features = 0
 
     @property
     def diagnostics(self) -> SemanticOverflowDiagnostics:
@@ -215,6 +217,7 @@ class CausalSemanticBatchBuilder:
         self._ego_frames.clear()
         self._slot_actor.clear()
         self._slot_last_seen.clear()
+        self._route_incompatible_static_features = 0
 
     def commit_context(self, context: CausalSceneContext) -> None:
         """Commit one observed snapshot to the causal track cache."""
@@ -1525,6 +1528,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             len(conflicts[8:]),
             {"dynamic": self._dynamic_key(selected[-1], ego, conflict_ids) if selected else ()},
             {"dynamic": self._dynamic_key(ordered[len(selected)], ego, conflict_ids) if len(ordered) > len(selected) else ()},
+            self._route_incompatible_static_features,
         )
         return payload, mask
 
@@ -1589,6 +1593,9 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 projection = self.route.project(position, position_z=projection_z)
             except ValueError as error:
                 diagnostics = self.route.projection_diagnostics(position, position_z=projection_z)
+                if diagnostics.vertically_compatible_segment_count == 0:
+                    self._route_incompatible_static_features += 1
+                    continue
                 raise CausalSemanticObservationError(
                     "Semantic static-map route projection unavailable: "
                     f"scenario_id={context.snapshot.scenario_id}; step={context.snapshot.step_index}; "
@@ -2071,6 +2078,7 @@ class PerceptionBoundedSemanticBatchBuilderV12(CausalSemanticBatchBuilder):
                 if len(ordered) > len(selected)
                 else ()
             },
+            self._route_incompatible_static_features,
         )
         return payload, mask
 

@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-from shapely.geometry import box
+from shapely.geometry import LineString, box
 
 from thesis_rl.contracts.causal_scene_context import CausalSceneContext
 from thesis_rl.envs.observations.causal_semantic import (
@@ -19,6 +19,8 @@ from thesis_rl.rulebook.v2.types import (
     ConflictZoneRecord,
     EpisodeCache,
     EnvSnapshot,
+    MapFeatureClass,
+    MapFeatureRecord,
     MovementKey,
     RulebookMemory,
     TaskRouteRecord,
@@ -66,12 +68,14 @@ def _context(
     lanes: tuple[RouteLaneRecord, ...],
     *,
     zones: tuple[ConflictZoneRecord, ...] = (),
+    map_features: dict[str, MapFeatureRecord] | None = None,
 ) -> CausalSceneContext:
     task_route = TaskRouteRecord("scene", ("lane-0",), "test", "v1", "geometry")
     cache = EpisodeCache(
         "scene",
         task_route,
         conflict_zones={zone.zone_id: zone for zone in zones},
+        map_feature_catalog=map_features or {},
         route_lanes=lanes,
         route_polyline=route,
     )
@@ -200,6 +204,95 @@ def test_unprojectable_dynamic_actor_reports_elevation_diagnostics() -> None:
     assert "nearest_planar_z_m=6.000000" in message
     assert "minimum_route_vertical_delta_m=3.100000" in message
     assert "compatible_route_segment_count=0" in message
+
+
+def _static_feature(feature_id: str, elevation: float) -> MapFeatureRecord:
+    points = ((10.0, 1.0, elevation), (12.0, 1.0, elevation))
+    return MapFeatureRecord(
+        feature_id=feature_id,
+        feature_class=MapFeatureClass.ROAD_BOUNDARY,
+        geometry=LineString(tuple((x, y) for x, y, _ in points)),
+        elevation_m=elevation,
+        elevation_profile_xyz=points,
+    )
+
+
+def _static_fixture(
+    features: dict[str, MapFeatureRecord],
+) -> tuple[CausalSemanticBatchBuilder, CausalSceneContext]:
+    route, lanes = _route()
+    ego = replace(_actor("ego", (0.0, 0.0), (5.0, 0.0)), position_z=0.1515)
+    return CausalSemanticBatchBuilder(route=route, route_lanes=lanes), _context(
+        3, ego, (), route, lanes, map_features=features
+    )
+
+
+def test_route_compatible_static_feature_emits_token_and_mask() -> None:
+    builder, context = _static_fixture({"compatible": _static_feature("compatible", 0.1515)})
+
+    batch = builder.build(_Vehicle(), context)
+
+    assert batch.static_mask[0] == 1.0
+    assert builder.diagnostics.route_incompatible_static_features == 0
+
+
+def test_route_incompatible_static_feature_is_omitted_and_masked() -> None:
+    builder, context = _static_fixture({"upper": _static_feature("upper", 3.1448)})
+
+    batch = builder.build(_Vehicle(), context)
+
+    assert batch.static_mask.sum() == 0.0
+    assert builder.diagnostics.route_incompatible_static_features == 1
+
+
+def test_mixed_static_features_keep_compatible_feature() -> None:
+    compatible = _static_feature("compatible", 0.1515)
+    incompatible = _static_feature("upper", 3.1448)
+    builder, context = _static_fixture({"upper": incompatible, "compatible": compatible})
+
+    batch = builder.build(_Vehicle(), context)
+
+    assert batch.static_mask[0] == 1.0
+    assert batch.static_mask[1] == 0.0
+    assert builder.diagnostics.route_incompatible_static_features == 1
+
+
+def test_all_incompatible_static_features_preserve_shape_and_empty_mask() -> None:
+    first = _static_feature("upper-a", 3.1448)
+    second = _static_feature("upper-b", 3.1448)
+    builder, context = _static_fixture({"upper-a": first, "upper-b": second})
+
+    batch = builder.build(_Vehicle(), context)
+
+    assert batch.static.shape == (8, 13)
+    assert batch.static_mask.shape == (8,)
+    assert batch.static_mask.sum() == 0.0
+    assert builder.diagnostics.route_incompatible_static_features == 2
+
+
+def test_structural_static_projection_error_is_propagated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder, context = _static_fixture({"broken": _static_feature("broken", 0.1515)})
+    original_project = RoutePolyline.project
+
+    def fail_feature_projection(self, point_xy, *, position_z=None, previous_s_m=None):
+        if point_xy == (10.0, 1.0):
+            raise ValueError("synthetic structural projection failure")
+        return original_project(self, point_xy, position_z=position_z, previous_s_m=previous_s_m)
+
+    monkeypatch.setattr(RoutePolyline, "project", fail_feature_projection)
+    with pytest.raises(ValueError, match="synthetic structural projection failure"):
+        builder.build(_Vehicle(), context)
+
+
+def test_waymo_feature_16_equivalent_geometry_is_omitted() -> None:
+    builder, context = _static_fixture({"16": _static_feature("16", 3.1447820165)})
+
+    batch = builder.build(_Vehicle(), context)
+
+    assert batch.static_mask.sum() == 0.0
+    assert builder.diagnostics.route_incompatible_static_features == 1
 
 
 def test_global_translation_preserves_relative_observation() -> None:
