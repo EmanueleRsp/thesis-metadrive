@@ -36,6 +36,7 @@ fi
 
 if [[ -z "$active_account" ]]; then
   echo "No active Google Cloud account found; starting OAuth login..."
+  # shellcheck disable=SC2086 # optional CLI flags are intentionally word-split
   gcloud auth login ${GCLOUD_LOGIN_FLAGS:-}
   active_account="$(gcloud_account || true)"
 fi

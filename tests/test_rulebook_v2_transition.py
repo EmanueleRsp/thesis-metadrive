@@ -339,6 +339,84 @@ def test_transition_vehicle_yield_uses_each_scoped_priority_predicate() -> None:
     assert result.components["vehicle_yield"].applicable
 
 
+def test_transition_clears_vehicle_yield_illegal_entry_latch_after_ego_fully_exits_zone() -> None:
+    """Regression test for ADR-025: a stale vehicle-yield illegal-entry latch.
+
+    Section 2.8.2's "ahead" filter (epsilon = 0.05 m) excludes a conflict
+    zone from selection long before the ego footprint (length 2 m here, via
+    ``_snapshot``) actually stops intersecting it, so
+    ``select_first_ahead_or_occupied_zone`` returns ``None`` for the zone at
+    the exact step ``ego_occupied`` becomes ``False``. The illegal-entry
+    latch must still clear at that step, independent of which zone (if any)
+    is selected for the step's own cost evaluation.
+    """
+
+    lane_b = RouteLaneRecord(
+        "lane-b",
+        Polygon(((8.0, -10.0), (12.0, -10.0), (12.0, 10.0), (8.0, 10.0))),
+        RoutePolyline(((10.0, -10.0, 0.0), (10.0, 10.0, 0.0))),
+        (),
+    )
+    base_cache = _cache()
+    cache = replace(base_cache, route_lanes=(base_cache.route_lanes[0], lane_b))
+    config = RulebookTransitionConfig(
+        rss_calibration=RSSCalibrationArtifact("calibration", 4.0),
+        expected_config_hash="calibration",
+    )
+    # Centred at (10, 3) -- outside lane-a's lateral extent, so association
+    # resolves unambiguously to lane-b -- with a footprint reaching down to
+    # y=-1 so it overlaps the lane-a/lane-b conflict zone (occupancy alone is
+    # a deterministic priority predicate, as in
+    # `test_transition_vehicle_yield_uses_each_scoped_priority_predicate`).
+    other = ActorSnapshot(
+        "other",
+        ActorClass.VEHICLE,
+        (10.0, 3.0),
+        0.0,
+        -1.57079632679,
+        (0.0, -2.0),
+        Polygon(((9.0, -1.0), (11.0, -1.0), (11.0, 4.0), (9.0, 4.0))),
+        "lane-b",
+        10.0,
+    )
+
+    # The conflict zone spans route s in roughly [7.99, 12.01] (lane-a's
+    # width intersected with lane-b's width).
+    # x=9.0: ego enters the zone (front_s=10, occupied) while "other" already
+    # occupies it -> illegal entry recorded.
+    # x=10.5: still occupied, still "ahead" (front_s=11.5 <= 12.06).
+    # x=11.5: still occupied (front_s=12.5, rear_s=10.5 < 12.01), but already
+    # NOT "ahead" (front_s=12.5 > 12.06) -- demonstrates that the "occupied"
+    # branch does not depend on the "ahead" filter, so the zone stays
+    # selected through this step.
+    # x=13.5: ego has fully left (rear_s=12.5 > 12.01) -> `ego_occupied`
+    # becomes False at the exact step "ahead" has long been False too, so
+    # `select_first_ahead_or_occupied_zone` returns None. The latch must
+    # clear here regardless.
+    ego_positions = (6.0, 9.0, 10.5, 11.5, 13.5, 15.0)
+    pre = replace(_snapshot(0, 0.0, ego_positions[0]), actors=(other,))
+    memory = initial_memory_for_snapshot(pre, cache)
+    illegal_entry_observed = False
+    for index, x in enumerate(ego_positions[1:], start=1):
+        post = replace(_snapshot(index, index * 0.1, x), actors=(other,))
+        result, memory, delta = evaluate_transition(
+            pre_state=pre,
+            post_state=post,
+            memory=memory,
+            cache=cache,
+            config=config,
+        )
+        cache = apply_cache_delta(cache, delta)
+        if ("other", result.components["vehicle_yield"].raw["zone_id"]) in (
+            memory.vehicle_yield_illegal_entries
+        ):
+            illegal_entry_observed = True
+        pre = post
+
+    assert illegal_entry_observed, "test setup must actually record an illegal entry first"
+    assert memory.vehicle_yield_illegal_entries == frozenset()
+
+
 def test_vehicle_conflict_pair_cache_reuses_complete_canonical_candidates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
