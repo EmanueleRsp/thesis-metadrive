@@ -193,7 +193,7 @@ shopt -u nullglob
 # their ledger only when they contain actual converted scenario files.
 if [[ "$valid_batch_found" != true ]] \
   && find "$host_database" -type f -name 'sd_*.pkl' -print -quit | grep -q . \
-  && -f "$state_dir/converted_shards.txt"; then
+  && [[ -f "$state_dir/converted_shards.txt" ]]; then
   cp "$state_dir/converted_shards.txt" "$reconciled_state"
 fi
 sort -u "$reconciled_state" > "$state_dir/converted_shards.txt"
