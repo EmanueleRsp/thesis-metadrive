@@ -43,6 +43,7 @@ from thesis_rl.rulebook.v2.geometry.lanes import (
     bumper_to_bumper_gap,
     derive_lane_movement_key,
     footprint_route_coordinates,
+    lateral_edge_to_edge_gap,
     _lane_coverage_polygon,
 )
 from thesis_rl.rulebook.v2.geometry.route import GEOMETRY_EPSILON_M, RoutePolyline
@@ -256,6 +257,31 @@ def test_bumper_gap_handles_separated_tangent_and_overlapping_footprints() -> No
         position_z=0.0,
     )
     assert bumper_to_bumper_gap(ego, tangent) == pytest.approx((0.0, True))
+
+
+def test_lateral_edge_to_edge_gap_and_side_on_shared_route_frame() -> None:
+    """rulebook v4.8 §7 ``d_i^lat``: edge-to-edge gap on the route normal
+    axis, mirroring ``bumper_to_bumper_gap`` on the tangent axis."""
+    route = RoutePolyline(((0.0, 0.0, 0.0), (30.0, 0.0, 0.0)))
+    ego = footprint_route_coordinates(
+        oriented_bounding_box(center_xy=(5.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0),
+        route,
+        position_z=0.0,
+    )
+    left = footprint_route_coordinates(
+        oriented_bounding_box(center_xy=(5.0, 3.0), heading_rad=0.0, length_m=4.0, width_m=2.0),
+        route,
+        position_z=0.0,
+    )
+    assert lateral_edge_to_edge_gap(ego, left) == pytest.approx((1.0, 1))
+    assert lateral_edge_to_edge_gap(left, ego) == pytest.approx((1.0, -1))
+    overlapping = footprint_route_coordinates(
+        oriented_bounding_box(center_xy=(5.0, 0.5), heading_rad=0.0, length_m=4.0, width_m=2.0),
+        route,
+        position_z=0.0,
+    )
+    gap, _ = lateral_edge_to_edge_gap(ego, overlapping)
+    assert gap == pytest.approx(0.0)
 
 
 def test_drivable_surface_uses_current_vertical_layer_and_width_fallback() -> None:

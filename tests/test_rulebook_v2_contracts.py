@@ -452,7 +452,7 @@ def test_registry_binds_all_normative_evaluators():
         if component.normative_output
     ]
     assert all(component.evaluator is not None for component in normative)
-    assert DEFAULT_RULEBOOK_V2_REGISTRY.components[10].evaluator is None
+    assert DEFAULT_RULEBOOK_V2_REGISTRY.definition("zone_lifecycle").evaluator is None
     with pytest.raises(ValueError, match="infrastructure"):
         DEFAULT_RULEBOOK_V2_REGISTRY.evaluate("zone_lifecycle")
     with pytest.raises(ValueError, match="Unknown"):

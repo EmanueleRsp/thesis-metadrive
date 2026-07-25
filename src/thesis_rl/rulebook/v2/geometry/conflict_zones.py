@@ -15,6 +15,7 @@ from thesis_rl.rulebook.v2.geometry.canonical import (
     canonical_geometry_wkb,
     canonicalize_geometry,
 )
+from thesis_rl.rulebook.v2.geometry.continuous_sat import OccupancyInterval
 from thesis_rl.rulebook.v2.geometry.route import GEOMETRY_EPSILON_M, RoutePolyline
 from thesis_rl.rulebook.v2.geometry.vertical import ElevationAtXY, vertically_compatible_at_xy
 from thesis_rl.rulebook.v2.types import MovementKey
@@ -377,3 +378,31 @@ def select_first_ahead_or_occupied_zone(
         ahead,
         key=lambda candidate: (candidate.route_entry_s_m, candidate.candidate.component_index),
     )
+
+
+def worst_case_temporal_gap_violation(
+    *,
+    ego_interval: OccupancyInterval,
+    other_intervals: tuple[tuple[str, OccupancyInterval], ...],
+    gap_scale_s: float,
+) -> float:
+    """Worst-of temporal-gap risk between an ego occupancy interval and others.
+
+    Returns ``max_i [1 - gap_i / gap_scale_s]_+`` in ``[0, 1]``; an interval
+    pair that cannot be temporally ordered (concurrent/unknown separation)
+    contributes ``1.0``. Shared by the vehicle-yield pre-state and
+    post-state passes (Rulebook v2 spec Section 7.9).
+    """
+    worst = 0.0
+    for _, interval in other_intervals:
+        if ego_interval.end_s is not None and interval.start_s >= ego_interval.end_s:
+            gap = interval.start_s - ego_interval.end_s
+        elif interval.end_s is not None and interval.end_s <= ego_interval.start_s:
+            gap = ego_interval.start_s - interval.end_s
+        else:
+            gap = None
+        worst = max(
+            worst,
+            1.0 if gap is None else min(max((gap_scale_s - gap) / gap_scale_s, 0.0), 1.0),
+        )
+    return worst

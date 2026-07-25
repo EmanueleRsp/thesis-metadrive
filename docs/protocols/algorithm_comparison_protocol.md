@@ -1,5 +1,13 @@
 # Algorithm Comparison Protocol
 
+> **Superseded (2026-07-24):** the normative statistical/seed content of this
+> document — the 10-seed protocol, the `mean ± 1.96*s/sqrt(n)` 95% CI
+> convention, and the reward-setting x curriculum ablation framing — is
+> superseded by `docs/specifications/evaluation_protocol_v1.0_specification.md`
+> (`EVAL-PROTOCOL` v1.0, `AUTHORITATIVE`), per its `DEC-008`. This document is
+> retained as historical/supporting material; do not use its seed count or CI
+> formula for official runs.
+
 This document defines how to compare algorithms in a scientific and
 reproducible way. It complements `csv_evaluation_objectives.md`, which defines
 the CSV format and logging requirements.

@@ -132,8 +132,11 @@ def test_ttc_current_overlap_and_clearance_thresholds_are_bounded():
     _assert_bounded(ttc)
     _assert_bounded(clearance)
     assert ttc.cost == pytest.approx(1.0)
-    assert clearance.raw["worst_actor_id"] == "vehicle"
+    # REQ-R2-01/02: VEHICLE and STATIC_COLLIDABLE no longer contribute to
+    # the clearance cost (rulebook v4.8); only the CYCLIST candidate remains.
+    assert clearance.raw["worst_actor_id"] == "cyclist"
     assert clearance.cost == pytest.approx(0.0)
+    assert clearance.diagnostics["static_polygon_distance_m"] > 0.0
 
 
 def test_rss_safe_distance_equal_gap_has_zero_margin_and_finite_status():

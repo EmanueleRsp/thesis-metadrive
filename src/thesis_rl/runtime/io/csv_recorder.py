@@ -105,6 +105,10 @@ class CSVRecorder:
             "consecutive_evals_required",
             "promoted",
             "next_stage",
+            "data_abort_attempted",
+            "data_abort_valid",
+            "data_abort_invalid",
+            "data_abort_coverage",
         ],
         "eval_episodes.csv": [
             "algorithm",
@@ -196,6 +200,12 @@ class CSVRecorder:
             "mean_margin",
             "min_margin",
             "max_margin",
+            # EVAL-PROTOCOL v1.0 REQ-008 (spec §7.2): the count of episodes
+            # with >=1 applicable step for this rule feeding `violation_rate`
+            # /`mean_margin`, and the count excluded because they had zero
+            # applicable steps for this rule.
+            "applicable_episode_count",
+            "excluded_episode_count",
         ],
         "final_eval.csv": [
             "algorithm",
@@ -239,6 +249,12 @@ class CSVRecorder:
             "checkpoint_path",
             "checkpoint_type",
             "checkpoint_global_step",
+            "checkpoint_hash",
+            "checkpoint_role",
+            "data_abort_attempted",
+            "data_abort_valid",
+            "data_abort_invalid",
+            "data_abort_coverage",
         ],
     }
 

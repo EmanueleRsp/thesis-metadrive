@@ -15,8 +15,13 @@ import time
 
 from shapely.geometry.base import BaseGeometry
 
-from thesis_rl.rulebook.v2.components.controls import signal_group_state
-from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact, RSSCandidate
+from thesis_rl.rulebook.v2.components.controls import CROSSWALK_GAP_S, signal_group_state
+from thesis_rl.rulebook.v2.components.rss import (
+    RSSCalibrationArtifact,
+    RSSCandidate,
+    safe_distance_m,
+)
+from thesis_rl.rulebook.v2.components.rss_lateral import LateralRSSCandidate
 from thesis_rl.rulebook.v2.geometry.conflict_zones import (
     ConflictZoneCandidate,
     MovementCorridor,
@@ -24,6 +29,7 @@ from thesis_rl.rulebook.v2.geometry.conflict_zones import (
     attach_route_intervals,
     build_vehicle_conflict_zone_candidates,
     select_first_ahead_or_occupied_zone,
+    worst_case_temporal_gap_violation,
 )
 from thesis_rl.rulebook.v2.geometry.continuous_sat import OccupancyInterval
 from thesis_rl.rulebook.v2.geometry.ctrv import predict_conflict_zone_occupancy_intervals
@@ -31,12 +37,14 @@ from thesis_rl.rulebook.v2.geometry.drivable import DrivableLaneRecord, drivable
 from thesis_rl.rulebook.v2.geometry.elevation import PolylineElevation
 from thesis_rl.rulebook.v2.geometry.footprint import swept_front_bumper
 from thesis_rl.rulebook.v2.geometry.lanes import (
+    SIGNED_DISTANCE_EPSILON_M,
     LaneAssociation,
     RouteLaneRecord,
     associate_route_lane,
     bumper_to_bumper_gap,
     derive_lane_movement_key,
     footprint_route_coordinates,
+    lateral_edge_to_edge_gap,
 )
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.geometry.vertical import VERTICAL_COMPATIBILITY_TOLERANCE_M
@@ -276,6 +284,128 @@ def _rss_candidates(
                     ),
                 )
             )
+    return tuple(sorted(candidates, key=lambda candidate: candidate.actor_id))
+
+
+def _longitudinal_unsafe_gate(
+    *,
+    ego_coords,
+    actor_coords,
+    ego_tangent_speed_mps: float,
+    actor_tangent_speed_mps: float,
+    ego_brake_mps2: float,
+) -> bool:
+    """``I_long,unsafe,i`` per rulebook v4.8 specification §7.
+
+    Overlapping tangent-axis intervals are unsafe by construction. Otherwise
+    the existing RSS-longitudinal formula (v4.7 §6.2.2) is reused with the
+    real ego always in the "ego" (braking) role and the other actor in the
+    "front vehicle" role, since only ego's braking is calibrated
+    (``ego_brake_mps2``); this resolves the specification's informal
+    "identify which is the rear/front vehicle" step in the only way
+    consistent with the calibration the runtime actually has.
+    """
+
+    overlap = not (
+        ego_coords.front_s_m < actor_coords.rear_s_m - SIGNED_DISTANCE_EPSILON_M
+        or actor_coords.front_s_m < ego_coords.rear_s_m - SIGNED_DISTANCE_EPSILON_M
+    )
+    if overlap:
+        return True
+    gap = max(
+        actor_coords.rear_s_m - ego_coords.front_s_m,
+        ego_coords.rear_s_m - actor_coords.front_s_m,
+        0.0,
+    )
+    safe = safe_distance_m(
+        ego_speed_mps=max(0.0, ego_tangent_speed_mps),
+        front_speed_mps=max(0.0, actor_tangent_speed_mps),
+        ego_brake_mps2=ego_brake_mps2,
+    )
+    return gap < safe
+
+
+def _rss_lateral_candidates(
+    *,
+    ego: ActorSnapshot,
+    actors: tuple[ActorSnapshot, ...],
+    route,
+    route_lanes: tuple[RouteLaneRecord, ...],
+    ego_brake_mps2: float | None,
+    ego_association: LaneAssociation | None = None,
+    actor_associations: dict[str, LaneAssociation | None] | None = None,
+) -> tuple[LateralRSSCandidate, ...]:
+    """Build R2 scoped lateral-RSS candidates (rulebook v4.8 specification §7-8)."""
+
+    if ego_brake_mps2 is None or ego_brake_mps2 <= 0.0:
+        return ()
+    ego_lane = ego_association
+    if ego_lane is None:
+        ego_lane = associate_route_lane(
+            position_xy=ego.position_xy,
+            position_z=ego.position_z,
+            heading_rad=ego.heading_rad,
+            route_lanes=route_lanes,
+        )
+    if ego_lane is None:
+        return ()
+    ego_heading = (cos(ego.heading_rad), sin(ego.heading_rad))
+    if ego_heading[0] * ego_lane.tangent_xy[0] + ego_heading[1] * ego_lane.tangent_xy[1] <= 0.0:
+        return ()
+    ego_coords = footprint_route_coordinates(ego.footprint, route, position_z=ego.position_z)
+    tangent = ego_coords.center_tangent_xy
+    normal = (-tangent[1], tangent[0])
+    ego_tangent_speed = ego.velocity_xy[0] * tangent[0] + ego.velocity_xy[1] * tangent[1]
+    ego_normal_speed = ego.velocity_xy[0] * normal[0] + ego.velocity_xy[1] * normal[1]
+    candidates: list[LateralRSSCandidate] = []
+    for actor in actors:
+        if actor.actor_class is not ActorClass.VEHICLE:
+            continue
+        actor_lane = (
+            actor_associations.get(actor.actor_id)
+            if actor_associations is not None
+            else associate_route_lane(
+                position_xy=actor.position_xy,
+                position_z=actor.position_z,
+                heading_rad=actor.heading_rad,
+                route_lanes=route_lanes,
+            )
+        )
+        if actor_lane is None:
+            continue
+        actor_heading = (cos(actor.heading_rad), sin(actor.heading_rad))
+        if (
+            actor_heading[0] * actor_lane.tangent_xy[0]
+            + actor_heading[1] * actor_lane.tangent_xy[1]
+            <= 0.0
+        ):
+            continue
+        actor_coords = footprint_route_coordinates(
+            actor.footprint, route, position_z=actor.position_z
+        )
+        gap, direction = lateral_edge_to_edge_gap(ego_coords, actor_coords)
+        actor_tangent_speed = actor.velocity_xy[0] * tangent[0] + actor.velocity_xy[1] * tangent[1]
+        actor_normal_speed = actor.velocity_xy[0] * normal[0] + actor.velocity_xy[1] * normal[1]
+        # Inward convention: positive when moving toward the other vehicle
+        # along the shared normal (rulebook v4.8 specification §3, §7).
+        ego_inward_speed = direction * ego_normal_speed
+        actor_inward_speed = -direction * actor_normal_speed
+        longitudinal_unsafe = _longitudinal_unsafe_gate(
+            ego_coords=ego_coords,
+            actor_coords=actor_coords,
+            ego_tangent_speed_mps=ego_tangent_speed,
+            actor_tangent_speed_mps=actor_tangent_speed,
+            ego_brake_mps2=ego_brake_mps2,
+        )
+        candidates.append(
+            LateralRSSCandidate(
+                actor_id=actor.actor_id,
+                lateral_gap_m=gap,
+                ego_inward_speed_mps=ego_inward_speed,
+                actor_inward_speed_mps=actor_inward_speed,
+                longitudinal_unsafe=longitudinal_unsafe,
+            )
+        )
     return tuple(sorted(candidates, key=lambda candidate: candidate.actor_id))
 
 
@@ -532,6 +662,79 @@ def _cleared_vehicle_yield_illegal_entries(
     return frozenset(active)
 
 
+def _pre_state_priority_and_gap(
+    *,
+    pre: EnvSnapshot,
+    zone,
+    other_movement_key,
+    ego_key,
+    ego_lane: RouteLaneRecord,
+    ego_control: ApproachControl,
+    priority_records: dict[tuple[object, object], MovementPriority],
+    cache: EpisodeCache,
+    memory: RulebookMemory,
+    actor_keys: dict[str, object],
+    actor_lanes: dict[str, RouteLaneRecord],
+    prediction_horizon_s: float,
+    minimum_history_samples: int,
+) -> tuple[frozenset[str], float]:
+    """DEC-005 Fase A: re-evaluate the four scoped priority predicates for the
+    already-selected zone against ``pre_state`` actor footprints, and derive
+    the pre-state worst-case temporal gap r_gap^- that gates illegal-entry
+    latch creation (spec Section 7.9). Movement-key identity (``actor_keys``,
+    ``actor_lanes``) and the static/topological predicates (STOP-vs-NONE,
+    pairwise, roundabout) are frozen-for-the-transition context, unchanged
+    from the post-state pass; only the dynamic ``occupied`` predicate and the
+    occupancy-interval prediction read pre-state data here.
+    """
+
+    pre_by_id = {actor.actor_id: actor for actor in pre.actors}
+    prioritized_ids: set[str] = set()
+    for actor_id, movement_key in actor_keys.items():
+        if movement_key != other_movement_key:
+            continue
+        pre_actor = pre_by_id.get(actor_id)
+        occupied = (
+            pre_actor is not None
+            and pre_actor.footprint.intersects(zone)
+            and abs(pre_actor.position_z - pre.ego.position_z) <= VERTICAL_COMPATIBILITY_TOLERANCE_M
+        )
+        other_control = _approach_control_for_movement(cache, movement_key)
+        stop_priority = (
+            ego_control is ApproachControl.STOP and other_control is ApproachControl.NONE
+        )
+        pairwise_priority = (
+            priority_records.get((ego_key, movement_key)) is MovementPriority.OTHER_HAS_PRIORITY
+        )
+        other_lane = actor_lanes.get(actor_id)
+        roundabout_priority = other_lane is not None and any(
+            record.entry_lane_id == ego_lane.lane_id
+            and record.circulating_lane_id == other_lane.lane_id
+            for record in cache.roundabout_priority_records
+        )
+        if occupied or stop_priority or pairwise_priority or roundabout_priority:
+            prioritized_ids.add(actor_id)
+    if not prioritized_ids:
+        return frozenset(), 0.0
+    pre_ego_interval, pre_intervals, _ = predict_conflict_zone_occupancy_intervals(
+        ego=pre.ego,
+        actors=tuple(actor for actor_id, actor in pre_by_id.items() if actor_id in prioritized_ids),
+        histories=memory.actor_motion_histories,
+        sim_time_s=pre.sim_time_s,
+        zone=zone,
+        horizon_s=prediction_horizon_s,
+        minimum_history_samples=minimum_history_samples,
+    )
+    if pre_ego_interval is None:
+        return frozenset(prioritized_ids), 0.0
+    gap = worst_case_temporal_gap_violation(
+        ego_interval=pre_ego_interval,
+        other_intervals=pre_intervals,
+        gap_scale_s=CROSSWALK_GAP_S,
+    )
+    return frozenset(prioritized_ids), gap
+
+
 def _vehicle_yield_inputs(
     *,
     pre: EnvSnapshot,
@@ -746,16 +949,48 @@ def _vehicle_yield_inputs(
     if ego_interval is None:
         return empty, CacheDelta(new_vehicle_conflict_pairs=tuple(new_pair_records))
     pre_by_id = {actor.actor_id: actor for actor in pre.actors}
+    post_by_id = {actor.actor_id: actor for actor in post.actors}
     ego_occupied = post.ego.footprint.intersects(zone)
-    ego_entered = not pre.ego.footprint.intersects(zone) and ego_occupied
+    # DEC-005 / REQ-VY-02: the entry event uses the swept front bumper
+    # pre->post, not the plain post-state footprint, so a fast crossing
+    # that only overlaps the zone mid-step is still detected.
+    entry_swept_bumper = swept_front_bumper(
+        pre.ego.footprint,
+        post.ego.footprint,
+        pre_heading_rad=pre.ego.heading_rad,
+        post_heading_rad=post.ego.heading_rad,
+    )
+    ego_entered = not pre.ego.footprint.intersects(zone) and entry_swept_bumper.intersects(zone)
+    pre_prioritized_ids: frozenset[str] = frozenset()
+    pre_gap_violation = 0.0
+    if ego_entered:
+        # DEC-005 Fase A/B: judge entry legality from the pre-state view of
+        # the priority actors, independent of whether they are still
+        # present/prioritized by the time the post-state is observed
+        # (REQ-VY-01).
+        pre_prioritized_ids, pre_gap_violation = _pre_state_priority_and_gap(
+            pre=pre,
+            zone=zone,
+            other_movement_key=candidate.other_movement_key,
+            ego_key=ego_key,
+            ego_lane=ego_lane,
+            ego_control=ego_control,
+            priority_records=priority_records,
+            cache=cache,
+            memory=memory,
+            actor_keys=actor_keys,
+            actor_lanes=actor_lanes,
+            prediction_horizon_s=prediction_horizon_s,
+            minimum_history_samples=minimum_history_samples,
+        )
     exited = frozenset(
         actor_id
-        for actor_id in prioritized_ids
+        for actor_id in prioritized_ids | pre_prioritized_ids
         if actor_id in pre_by_id
         and pre_by_id[actor_id].footprint.intersects(zone)
-        and not next(
-            actor for actor in post.actors if actor.actor_id == actor_id
-        ).footprint.intersects(zone)
+        and not (
+            post_by_id.get(actor_id) is not None and post_by_id[actor_id].footprint.intersects(zone)
+        )
     )
     record = ConflictZoneRecord(
         zone_id=candidate.zone_id,
@@ -778,7 +1013,17 @@ def _vehicle_yield_inputs(
             "approach_speed_mps": approach_speed_mps,
             "delta_t_s": delta_t_s,
             "ego_occupied": ego_occupied,
-            "entered_actor_ids": frozenset(prioritized_ids) if ego_entered else frozenset(),
+            # DEC-005: the entry-event actor set is pre-state only, supplied
+            # via ``pre_state_entered_actor_ids`` below; ``entered_actor_ids``
+            # is left empty here so the two-set consistency guard in
+            # ``evaluate_vehicle_yield`` never sees a spurious disagreement
+            # between the (unused) post-state view and the pre-state one.
+            "entered_actor_ids": frozenset(),
+            "pre_state_entered_actor_ids": pre_prioritized_ids if ego_entered else frozenset(),
+            "pre_state_gap_violation": pre_gap_violation if ego_entered else None,
+            # ADR-025: cleared_illegal_entries already drops latches for zones
+            # the ego footprint has fully left, independent of this step's
+            # zone selection.
             "previous_illegal_entries": cleared_illegal_entries,
             "preexisting": candidate.zone_id in memory.preexisting_ego_occupancy_zone_ids,
             "actor_movement_keys": tuple(sorted(actor_keys.items())),
@@ -998,6 +1243,17 @@ def evaluate_transition(
         actor_associations=pre_actor_associations,
     )
     rss_candidates_seconds = time.perf_counter() - phase_started
+    phase_started = time.perf_counter()
+    rss_lateral_candidates = _rss_lateral_candidates(
+        ego=pre_state.ego,
+        actors=pre_state.actors,
+        route=route,
+        route_lanes=cache.route_lanes,
+        ego_brake_mps2=calibrated_brake_mps2,
+        ego_association=pre_ego_association,
+        actor_associations=pre_actor_associations,
+    )
+    rss_lateral_candidates_seconds = time.perf_counter() - phase_started
     component_inputs = {
         "collision": {
             "scenario_id": post_state.scenario_id,
@@ -1026,6 +1282,9 @@ def evaluate_transition(
             "ego_footprint": post_state.ego.footprint,
             "actors": actors,
             "vertically_compatible_actor_ids": _vertical_actor_ids(post_state.ego, actors),
+        },
+        "rss_lateral": {
+            "candidates": rss_lateral_candidates,
         },
         "offroad": {"ego_footprint": post_state.ego.footprint, "drivable_surface": drivable},
         "wrong_way": {
@@ -1089,6 +1348,7 @@ def evaluate_transition(
                 "vehicle_yield": vehicle_yield_seconds,
                 **vehicle_yield_diagnostic_timing,
                 "rss_candidates": rss_candidates_seconds,
+                "rss_lateral_candidates": rss_lateral_candidates_seconds,
                 "registry": registry_seconds,
             },
         ),

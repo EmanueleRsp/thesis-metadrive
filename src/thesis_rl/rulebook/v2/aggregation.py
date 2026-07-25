@@ -62,7 +62,9 @@ def aggregate_rulebook_result(*, components: tuple[RuleComponentResult, ...], ra
         raise ValueError("Applicable component is NOT_EVALUABLE")
     groups = {
         "collision_impact": tuple(c for c in components if c.name in {"collision", "collision_impact"}),
-        "dynamic_interaction_safety": tuple(c for c in components if c.name in {"rss", "ttc", "clearance"}),
+        "dynamic_interaction_safety": tuple(
+            c for c in components if c.name in {"rss", "rss_lateral", "ttc", "clearance"}
+        ),
         "road_traffic_compliance": tuple(c for c in components if c.name in {"offroad", "wrongway", "wrong_way", "solid_line", "dashed_line", "signal", "stop", "crosswalk", "vehicle_yield"}),
     }
     macro = tuple(aggregate_max_component(name=name, components=group) for name, group in groups.items())

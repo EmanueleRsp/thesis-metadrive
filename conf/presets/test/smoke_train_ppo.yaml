@@ -1,0 +1,35 @@
+# @package _global_
+defaults:
+  - /config
+  - override /run_profile: smoke
+  - override /obs: lidar_state
+  - override /agent/planner/encoder: none
+  - override /agent/planner/algorithm: ppo_sb3
+  - override /reward: monitor_only
+  - override /curriculum: disabled
+  - _self_
+
+# EVAL-PROTOCOL v1.0 Milestone 5 (REQ-002/DEC-015): PPO-variant of
+# `smoke_train.yaml`, used to live-verify the atomic-boundary stop condition
+# for a real SB3 PPO model (`pending_atomic_steps > 0` path), not just the
+# unit test's small in-memory model.
+#
+# `run_profile.planner.ppo.{n_steps,batch_size}` is not consumed by any
+# production code path (verified: no reference in src/thesis_rl/); the
+# algorithm's actual n_steps/batch_size come from
+# `agent.planner.algorithm.{n_steps,batch_size}` (`ppo_sb3.yaml` defaults:
+# 96/63), overridden directly below to small smoke-appropriate values.
+experiment:
+  name: smoke_ppo
+  # Deliberately not a multiple of n_steps*num_envs=8: forces
+  # pending_atomic_steps > 0 at the target boundary (first atomic boundary
+  # >= 30 is 32, i.e. a real overshoot of 2), to live-verify DEC-015's
+  # bounded-overshoot completion path end to end.
+  total_timesteps: 30
+
+agent:
+  planner:
+    algorithm:
+      n_steps: 8
+      batch_size: 4
+      n_epochs: 2

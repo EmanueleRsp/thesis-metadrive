@@ -50,7 +50,11 @@ from thesis_rl.runtime.wiring.builders import (
 )
 from thesis_rl.runtime.io.console import print_evaluation_summary, print_run_setup
 from thesis_rl.runtime.io.csv_recorder import CSVRecorder
-from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
+from thesis_rl.runtime.io.eval_artifacts import (
+    maybe_build_live_final_eval_recorder_factory,
+    maybe_build_periodic_tracked_subset_recorder_factory,
+)
+from thesis_rl.analysis.videos.select_video_episodes import select_tracked_subset_episodes
 from thesis_rl.runtime.io.metadata import save_run_metadata, update_run_metadata
 from thesis_rl.runtime.io.run_logging import (
     configure_logging,
@@ -104,6 +108,44 @@ def _append_checkpoint_index_row(index_path: Path, row: dict[str, Any]) -> None:
 def _checkpoint_rel(run_dir: Path, checkpoint_stem_path: Path) -> str:
     zip_path = checkpoint_stem_path.with_suffix(".zip")
     return str(zip_path.relative_to(run_dir)).replace("\\", "/")
+
+
+def _checkpoint_hash(checkpoint_stem_path: Path) -> str | None:
+    """EVAL-PROTOCOL REQ-006: content hash for the official checkpoint."""
+    from thesis_rl.sb3_extensions.checkpointing import sha256_file
+
+    zip_path = checkpoint_stem_path.with_suffix(".zip")
+    if not zip_path.is_file():
+        return None
+    return sha256_file(zip_path)
+
+
+def _data_abort_coverage_fields(metrics: dict[str, Any]) -> dict[str, Any]:
+    """EVAL-PROTOCOL REQ-012: persist the already-computed data-abort coverage.
+
+    ``metrics["data_abort_coverage"]`` is produced by
+    ``Agent._evaluate_parallel`` as ``{"attempted", "valid", "invalid",
+    "invalid_episodes"}``; this maps it to additive CSV columns without
+    recomputing anything.
+    """
+    coverage = metrics.get("data_abort_coverage")
+    if not isinstance(coverage, dict):
+        return {
+            "data_abort_attempted": None,
+            "data_abort_valid": None,
+            "data_abort_invalid": None,
+            "data_abort_coverage": None,
+        }
+    attempted = coverage.get("attempted")
+    valid = coverage.get("valid")
+    invalid = coverage.get("invalid")
+    ratio = (float(valid) / float(attempted)) if attempted else None
+    return {
+        "data_abort_attempted": attempted,
+        "data_abort_valid": valid,
+        "data_abort_invalid": invalid,
+        "data_abort_coverage": ratio,
+    }
 
 
 def _lexicographic_eval_key(
@@ -394,6 +436,67 @@ def _min_stage_steps(curriculum_cfg: CurriculumConfig, stage_name: str) -> int |
     return None
 
 
+def _tracked_subset_uids_from_resolved_env_cfg(resolved_cfg: Any) -> tuple[str, ...]:
+    """REQ-014/DEC-014 (amended 2026-07-25): read the frozen tracked-subset
+    ``scenario_uid``s off a resolved eval env config's
+    ``provider.panel_manifest_path``, if one is configured (checked at both
+    the top level and under a nested ``config`` key, matching the two
+    shapes ``merge_env_config_with_overrides`` output is used with in this
+    module for periodic vs. final eval). Returns an empty tuple -- tracked-
+    subset rendering simply does not fire, never a fallback draw -- when no
+    manifest is configured, consistent with `envs/factory.py`'s
+    `_resolve_frozen_panel_uids` precedent.
+    """
+    if not isinstance(resolved_cfg, dict):
+        return ()
+    candidates = [resolved_cfg]
+    nested = resolved_cfg.get("config")
+    if isinstance(nested, dict):
+        candidates.append(nested)
+    for candidate in candidates:
+        provider_cfg = candidate.get("provider")
+        if isinstance(provider_cfg, dict):
+            manifest_path = provider_cfg.get("panel_manifest_path")
+            if manifest_path not in (None, "", "null"):
+                from thesis_rl.scenarios.panel_manifest import load_panel_manifest
+
+                return load_panel_manifest(str(manifest_path)).tracked_subset_uids
+    return ()
+
+
+def _make_tracked_subset_render_gate(*, interval: int = 100_000):
+    """REQ-014/DEC-014 (amended 2026-07-25): cadence gate for the *periodic*
+    validation tracked-subset GIF render (approved 2026-07-25: every
+    100,000 timesteps -- with the repo's default ``eval_interval=25,000``
+    that is every 4th periodic evaluation). Final-test tracked-subset (and
+    full-panel) rendering is always unconditional and never calls this
+    gate.
+
+    Returns a stateful ``due(global_steps_done) -> bool`` closure that fires
+    exactly once per crossed multiple of ``interval``: the *first* periodic
+    eval whose ``global_steps_done`` is at or after each multiple of
+    ``interval`` (the nearest eval boundary >= that multiple), rather than
+    an exact-modulo check. An exact-modulo check would silently never fire
+    again once the cadence and ``eval_interval`` fall out of exact
+    alignment (e.g. a non-divisor ``eval_interval`` such as 30,000); this
+    closure instead tracks the next still-undue threshold explicitly, so it
+    is robust to any ``eval_interval`` value while still firing at most
+    once per 100,000-timestep window.
+    """
+    if interval <= 0:
+        raise ValueError("interval must be positive")
+    state: dict[str, int] = {"next_due": interval}
+
+    def due(global_steps_done: int) -> bool:
+        global_steps_done = int(global_steps_done)
+        if global_steps_done >= state["next_due"]:
+            state["next_due"] = ((global_steps_done // interval) + 1) * interval
+            return True
+        return False
+
+    return due
+
+
 def _append_rule_metrics_rows(
     recorder: CSVRecorder,
     *,
@@ -432,6 +535,11 @@ def _append_rule_metrics_rows(
                 "mean_margin": row.get("mean_margin"),
                 "min_margin": row.get("min_margin"),
                 "max_margin": row.get("max_margin"),
+                # EVAL-PROTOCOL v1.0 REQ-008: episodes with >=1 applicable
+                # step for this rule feeding violation_rate/mean_margin, and
+                # the count excluded for having zero applicable steps.
+                "applicable_episode_count": row.get("applicable_episode_count"),
+                "excluded_episode_count": row.get("excluded_episode_count"),
             },
         )
 
@@ -857,6 +965,7 @@ def run_training(cfg: DictConfig) -> None:
                     },
                     "promoted": False,
                     "next_stage": job.stage,
+                    **_data_abort_coverage_fields(metrics),
                 },
             )
             _append_rule_metrics_rows(
@@ -928,6 +1037,9 @@ def run_training(cfg: DictConfig) -> None:
         eval_interval = int(cfg.experiment.get("eval_interval", total_timesteps))
         if eval_interval <= 0:
             eval_interval = total_timesteps
+        # REQ-014/DEC-014 (amended 2026-07-25): periodic tracked-subset GIF
+        # render cadence, independent of `eval_interval`.
+        tracked_subset_render_due = _make_tracked_subset_render_gate(interval=100_000)
         stage_name = (
             curriculum_manager.get_current_stage().name
             if curriculum_manager is not None
@@ -1501,6 +1613,47 @@ def run_training(cfg: DictConfig) -> None:
                 episodes=eval_episode_count,
                 start_seed=eval_base_seed,
             )
+            # REQ-014/DEC-014 (amended 2026-07-25): the periodic tracked-
+            # subset GIF render must be wired in *before* `evaluate()` runs
+            # (the recorder factory is invoked live, per episode, during the
+            # rollout), so the cadence gate and tracked scenario_uids are
+            # resolved here rather than after the eval completes. The gate
+            # closure has side effects (it advances its internal
+            # `next_due` threshold), so it must be called at most once per
+            # periodic evaluation; the result is reused below when writing
+            # the tracked-subset selection JSON.
+            resolved_periodic_eval_cfg = OmegaConf.to_container(
+                merge_env_config_with_overrides(cfg.env, eval_env_overrides or {}),
+                resolve=True,
+            )
+            tracked_scenario_uids = _tracked_subset_uids_from_resolved_env_cfg(
+                resolved_periodic_eval_cfg if isinstance(resolved_periodic_eval_cfg, dict) else None
+            )
+            periodic_tracked_subset_render_due = bool(tracked_scenario_uids) and tracked_subset_render_due(
+                current_global_step
+            )
+            periodic_tracked_subset_artifact_factory = None
+            if periodic_tracked_subset_render_due:
+                resolved_periodic_eval_env_config = (
+                    resolved_periodic_eval_cfg.get("config", resolved_periodic_eval_cfg)
+                    if isinstance(resolved_periodic_eval_cfg, dict)
+                    else {}
+                )
+                periodic_tracked_subset_artifact_factory = maybe_build_periodic_tracked_subset_recorder_factory(
+                    cfg=cfg,
+                    run_dir=run_dir,
+                    resolved_env_config=resolved_periodic_eval_env_config
+                    if isinstance(resolved_periodic_eval_env_config, dict)
+                    else {},
+                    eval_id=eval_id,
+                    global_step=current_global_step,
+                    stage=current_stage_name,
+                    stage_index=current_stage_index,
+                    checkpoint_path=_checkpoint_rel(run_dir, eval_snapshot_stem),
+                    checkpoint_type="periodic_validation_snapshot",
+                    checkpoint_global_step=current_global_step,
+                    tracked_scenario_uids=tracked_scenario_uids,
+                )
             metrics = eval_agent.evaluate(
                 env=eval_env,
                 n_eval_episodes=eval_episode_count,
@@ -1509,6 +1662,7 @@ def run_training(cfg: DictConfig) -> None:
                 return_episode_metrics=True,
                 error_priority_base=float(cfg.reward.get("a", 2.01)),
                 show_progress=True,
+                artifact_recorder_factory=periodic_tracked_subset_artifact_factory,
             )
             eval_env.close()
             print_evaluation_summary(
@@ -1669,6 +1823,33 @@ def run_training(cfg: DictConfig) -> None:
                     },
                 )
 
+            # REQ-014/DEC-014 (amended 2026-07-25): tracked-subset GIF
+            # mechanism for periodic validation. Selection (which recorded
+            # eval_episodes.csv rows match the frozen tracked scenario_uids)
+            # is a cheap CSV scan and is written unconditionally every
+            # periodic eval, keeping the manifest complete. The GIF
+            # *rendering* itself was already gated and wired into the
+            # `evaluate()` call above (`periodic_tracked_subset_render_due`
+            # / `periodic_tracked_subset_artifact_factory`, computed once
+            # before the call since the cadence gate is a stateful
+            # closure); this block only writes the selection JSON and logs
+            # the outcome, reusing those already-computed values instead of
+            # re-invoking the gate.
+            if tracked_scenario_uids:
+                select_tracked_subset_episodes(run_dir, tracked_scenario_uids=tracked_scenario_uids)
+                if periodic_tracked_subset_render_due:
+                    eval_logger.info(
+                        "Tracked-subset GIF render fired at global_step=%d "
+                        "(cadence=100000); GIFs written under "
+                        "videos_dir/periodic_eval/step_%07d/eval_%04d/ for "
+                        "scenario_uids matching the tracked subset "
+                        "(%d uid(s)).",
+                        current_global_step,
+                        current_global_step,
+                        eval_id,
+                        len(tracked_scenario_uids),
+                    )
+
             ###### CURRICULUM PROGRESSION ######
 
             # If no curriculum, just rebuild the env
@@ -1725,6 +1906,7 @@ def run_training(cfg: DictConfig) -> None:
                         ),
                         "promoted": False,
                         "next_stage": current_stage_name,
+                        **_data_abort_coverage_fields(metrics),
                     },
                 )
                 _append_rule_metrics_rows(
@@ -1926,6 +2108,7 @@ def run_training(cfg: DictConfig) -> None:
                     ),
                     "promoted": bool(next_stage_name != current_stage_name),
                     "next_stage": next_stage_name,
+                    **_data_abort_coverage_fields(metrics),
                 },
             )
             _append_rule_metrics_rows(
@@ -1954,6 +2137,55 @@ def run_training(cfg: DictConfig) -> None:
             env = build_train_env(cfg, current_train_overrides)
             seed_env_spaces(env, run_seed + 400_000 + (total_timesteps - remaining))
             set_planner_env_if_compatible(planner, env)  # Update planner's env reference
+
+        # EVAL-PROTOCOL v1.0 REQ-002/DEC-015: the approved PPO atomic
+        # collection/update unit is a complete global rollout. If the target
+        # budget was reached mid-rollout, complete it (bounded overshoot)
+        # rather than discarding the partially collected transitions without
+        # training on them. Zero for algorithms without this concept
+        # (TD3/SAC update on every transition) or already at a boundary.
+        overshoot_steps = 0
+        pending_atomic_steps = int(agent.atomic_boundary_remaining())
+        if pending_atomic_steps > 0:
+            train_logger.info(
+                "Completing final atomic collection unit before stopping | pending_steps=%d",
+                pending_atomic_steps,
+            )
+            overshoot_summary = train_fn(
+                env=env,
+                chunk_timesteps=pending_atomic_steps,
+                global_total_timesteps=total_timesteps,
+                global_steps_done=total_timesteps,
+                stage_name=current_stage_name,
+                deterministic=False,
+                log_interval=log_interval,
+                reset_seed_fn=(
+                    None if provider_driven_scenarionet else train_reset_seed_for_episode
+                ),
+                monitor_event_poll_callback=(
+                    async_evaluation_manager.drain_event_messages
+                    if async_evaluation_manager is not None
+                    else None
+                ),
+                live_extra_renderables_callback=(
+                    async_evaluation_manager.renderables
+                    if async_evaluation_manager is not None
+                    else None
+                ),
+                **extra_train_kwargs,
+            )
+            overshoot_steps = int(
+                overshoot_summary.get("chunk_steps_actual", pending_atomic_steps)
+            )
+            beta_progress_env_steps += overshoot_steps
+            train_logger.info(
+                "Atomic collection unit completed | overshoot_steps=%d", overshoot_steps
+            )
+            log_event(
+                events_log_path,
+                "atomic_boundary_overshoot_completed",
+                overshoot_steps=overshoot_steps,
+            )
 
         ##########################
         ###### FINALIZATION ######
@@ -2225,6 +2457,7 @@ def run_training(cfg: DictConfig) -> None:
                 "unique_violation_patterns": int(metrics.get("unique_violation_patterns", 0)),
                 "promoted": False,
                 "next_stage": final_stage_name,
+                **_data_abort_coverage_fields(metrics),
             },
         )
         _append_rule_metrics_rows(
@@ -2366,6 +2599,20 @@ def run_training(cfg: DictConfig) -> None:
                     else None,
                 },
             )
+
+        # REQ-014/DEC-014 (amended 2026-07-25): the final-test tracked-
+        # subset selection JSON is written unconditionally (no cadence gate
+        # -- final test always covers the complete panel regardless of the
+        # periodic 100,000-timestep cadence). Actual GIF rendering for the
+        # tracked subset has the same AWAITING_CONFIRMATION status noted at
+        # the periodic call site above; the full test-panel live-eval video
+        # recording path (`maybe_build_live_final_eval_recorder_factory`,
+        # `eval_type="final"`) already renders unconditionally today and is
+        # unaffected by this change.
+        final_tracked_scenario_uids = _tracked_subset_uids_from_resolved_env_cfg(resolved_final_eval_cfg)
+        if final_tracked_scenario_uids:
+            select_tracked_subset_episodes(run_dir, tracked_scenario_uids=final_tracked_scenario_uids)
+
         recorder.append_row(
             "final_eval.csv",
             {
@@ -2413,6 +2660,9 @@ def run_training(cfg: DictConfig) -> None:
                 "checkpoint_path": _checkpoint_rel(run_dir, final_checkpoint_stem),
                 "checkpoint_type": "final",
                 "checkpoint_global_step": int(total_timesteps),
+                "checkpoint_hash": _checkpoint_hash(final_checkpoint_stem),
+                "checkpoint_role": "final",
+                **_data_abort_coverage_fields(metrics),
             },
         )
 
@@ -2438,6 +2688,16 @@ def run_training(cfg: DictConfig) -> None:
                 "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "duration_seconds": duration_seconds,
                 "scenarionet_runtime_stats": scenario_runtime_stats_total,
+                "checkpoint": {
+                    "path": _checkpoint_rel(run_dir, final_checkpoint_stem),
+                    "hash": _checkpoint_hash(final_checkpoint_stem),
+                    "role": "final",
+                },
+                "budget": {
+                    "target_timesteps": int(total_timesteps),
+                    "actual_completed_timesteps": int(total_timesteps + overshoot_steps),
+                    "overshoot_steps": int(overshoot_steps),
+                },
             },
         )
 

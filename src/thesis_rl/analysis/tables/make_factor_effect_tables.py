@@ -46,13 +46,13 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _mean_ci95(values: list[float]) -> tuple[float, float]:
+def _mean_sd(values: list[float]) -> tuple[float, float]:
+    """Mean and sample SD (no confidence interval; EVAL-PROTOCOL REQ-009)."""
     mean_v = sum(values) / len(values)
     if len(values) <= 1:
         return mean_v, 0.0
     var = sum((x - mean_v) ** 2 for x in values) / (len(values) - 1)
-    ci = 1.96 * math.sqrt(var / len(values))
-    return mean_v, ci
+    return mean_v, math.sqrt(var)
 
 
 def _read_rows(path: Path) -> list[dict[str, str]]:
@@ -83,7 +83,7 @@ def _write_effect_table(
 
     metric_columns: list[str] = []
     for m in METRICS:
-        metric_columns.extend([f"{m}_delta_mean", f"{m}_delta_ci95"])
+        metric_columns.extend([f"{m}_delta_mean", f"{m}_delta_sd"])
 
     with output_csv.open("w", encoding="utf-8", newline="") as handle:
         fieldnames = group_cols + ["n_pairs"] + metric_columns
@@ -99,8 +99,8 @@ def _write_effect_table(
             cells = [str(row[c]) for c in group_cols] + [str(row["n_pairs"])]
             for m in METRICS:
                 mean_key = f"{m}_delta_mean"
-                ci_key = f"{m}_delta_ci95"
-                cells.append(f"{float(row[mean_key]):.4f} ± {float(row[ci_key]):.4f}")
+                sd_key = f"{m}_delta_sd"
+                cells.append(f"{float(row[mean_key]):.4f} (SD {float(row[sd_key]):.4f})")
             handle.write("| " + " | ".join(cells) + " |\n")
 
 
@@ -129,11 +129,11 @@ def _aggregate_pair_deltas(
             vals = grouped[key].get(metric, [])
             if not vals:
                 row[f"{metric}_delta_mean"] = 0.0
-                row[f"{metric}_delta_ci95"] = 0.0
+                row[f"{metric}_delta_sd"] = 0.0
                 continue
-            m, ci = _mean_ci95(vals)
+            m, sd = _mean_sd(vals)
             row[f"{metric}_delta_mean"] = m
-            row[f"{metric}_delta_ci95"] = ci
+            row[f"{metric}_delta_sd"] = sd
         out.append(row)
     return out
 

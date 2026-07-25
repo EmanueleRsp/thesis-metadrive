@@ -57,13 +57,19 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _mean_ci95(values: list[float]) -> tuple[float, float]:
+def _mean_sd(values: list[float]) -> tuple[float, float]:
+    """Cross-seed mean and sample standard deviation.
+
+    EVAL-PROTOCOL v1.0 REQ-009/DEC-003: no confidence interval, bootstrap
+    estimate, or significance test is computed in the core report. This
+    replaces the removed ``1.96 * s / sqrt(n)`` 95% CI band with a raw
+    mean +/- sample-SD band.
+    """
     mean_v = sum(values) / len(values)
     if len(values) <= 1:
         return mean_v, 0.0
     var = sum((x - mean_v) ** 2 for x in values) / (len(values) - 1)
-    ci = 1.96 * math.sqrt(var / len(values))
-    return mean_v, ci
+    return mean_v, math.sqrt(var)
 
 
 def _condition_label(row: dict[str, str]) -> str:
@@ -215,7 +221,7 @@ def _plot_learning_curve(
         ys: list[float] = []
         ci: list[float] = []
         for x in xs:
-            m, c = _mean_ci95(bucket[condition_id][x])
+            m, c = _mean_sd(bucket[condition_id][x])
             ys.append(m)
             ci.append(c)
         lower = [y - c for y, c in zip(ys, ci)]
@@ -250,7 +256,7 @@ def _plot_learning_curve(
         for _t_idx, vals in transitions.items():
             if not vals:
                 continue
-            mean_step, _ci = _mean_ci95(vals)
+            mean_step, _ci = _mean_sd(vals)
             plt.axvline(
                 x=mean_step,
                 color=color,
@@ -290,8 +296,8 @@ def _plot_tradeoff(rows: list[dict[str, str]], output_path: Path) -> None:
 
     plt.figure(figsize=(9, 6))
     for condition_id in condition_ids:
-        x_m, _ = _mean_ci95(by_condition_x[condition_id])
-        y_m, _ = _mean_ci95(by_condition_y[condition_id])
+        x_m, _ = _mean_sd(by_condition_x[condition_id])
+        y_m, _ = _mean_sd(by_condition_y[condition_id])
         label = labels_by_condition.get(condition_id, condition_id)
         plt.scatter([x_m], [y_m], label=label)
         plt.annotate(label, (x_m, y_m), fontsize=8)
@@ -333,7 +339,7 @@ def _plot_rule_violation_by_rule(rows: list[dict[str, str]], output_path: Path) 
         for r_idx, rule in enumerate(rules):
             values = bucket[rule].get(condition_id, [])
             if values:
-                m, _ = _mean_ci95(values)
+                m, _ = _mean_sd(values)
                 ys.append(m)
             else:
                 ys.append(0.0)

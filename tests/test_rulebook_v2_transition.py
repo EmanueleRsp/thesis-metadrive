@@ -80,6 +80,7 @@ def test_transition_invokes_complete_registry_and_keeps_vehicle_yield_not_applic
     assert set(result.components) == {
         "collision",
         "rss",
+        "rss_lateral",
         "ttc",
         "clearance",
         "offroad",
@@ -339,6 +340,24 @@ def test_transition_vehicle_yield_uses_each_scoped_priority_predicate() -> None:
     assert result.components["vehicle_yield"].applicable
 
 
+def _yield_geometry_cache() -> EpisodeCache:
+    cache = _cache()
+    lane_b = RouteLaneRecord(
+        "lane-b",
+        Polygon(((8.0, -10.0), (12.0, -10.0), (12.0, 10.0), (8.0, 10.0))),
+        RoutePolyline(((10.0, -10.0, 0.0), (10.0, 10.0, 0.0))),
+        (),
+    )
+    return replace(cache, route_lanes=(cache.route_lanes[0], lane_b))
+
+
+def _yield_config() -> RulebookTransitionConfig:
+    return RulebookTransitionConfig(
+        rss_calibration=RSSCalibrationArtifact("calibration", 4.0),
+        expected_config_hash="calibration",
+    )
+
+
 def test_transition_clears_vehicle_yield_illegal_entry_latch_after_ego_fully_exits_zone() -> None:
     """Regression test for ADR-025: a stale vehicle-yield illegal-entry latch.
 
@@ -351,18 +370,8 @@ def test_transition_clears_vehicle_yield_illegal_entry_latch_after_ego_fully_exi
     is selected for the step's own cost evaluation.
     """
 
-    lane_b = RouteLaneRecord(
-        "lane-b",
-        Polygon(((8.0, -10.0), (12.0, -10.0), (12.0, 10.0), (8.0, 10.0))),
-        RoutePolyline(((10.0, -10.0, 0.0), (10.0, 10.0, 0.0))),
-        (),
-    )
-    base_cache = _cache()
-    cache = replace(base_cache, route_lanes=(base_cache.route_lanes[0], lane_b))
-    config = RulebookTransitionConfig(
-        rss_calibration=RSSCalibrationArtifact("calibration", 4.0),
-        expected_config_hash="calibration",
-    )
+    cache = _yield_geometry_cache()
+    config = _yield_config()
     # Centred at (10, 3) -- outside lane-a's lateral extent, so association
     # resolves unambiguously to lane-b -- with a footprint reaching down to
     # y=-1 so it overlaps the lane-a/lane-b conflict zone (occupancy alone is
@@ -415,6 +424,121 @@ def test_transition_clears_vehicle_yield_illegal_entry_latch_after_ego_fully_exi
 
     assert illegal_entry_observed, "test setup must actually record an illegal entry first"
     assert memory.vehicle_yield_illegal_entries == frozenset()
+
+
+def test_transition_vehicle_yield_latches_illegal_entry_from_pre_state_even_if_actor_exits_same_step() -> (
+    None
+):
+    """Regression for the DEC-005 wiring bug (REQ-VY-01): an actor occupying
+    the conflict zone in the pre-state, but gone from it by the post-state
+    (it exits during the same control step), must still gate the
+    illegal-entry latch when ego enters that same step."""
+
+    cache = _yield_geometry_cache()
+    pre_ego = _snapshot(0, 0.0, 6.0)
+    post_ego = _snapshot(1, 0.1, 9.0)
+    occupying = ActorSnapshot(
+        "other",
+        ActorClass.VEHICLE,
+        (10.0, 0.0),
+        0.0,
+        1.57079632679,
+        (0.0, 5.0),
+        Polygon(((9.0, -1.0), (11.0, -1.0), (11.0, 1.0), (9.0, 1.0))),
+        "lane-b",
+        10.0,
+    )
+    exited = replace(
+        occupying,
+        position_xy=(10.0, 6.0),
+        footprint=Polygon(((9.0, 5.0), (11.0, 5.0), (11.0, 7.0), (9.0, 7.0))),
+    )
+    pre = replace(pre_ego, actors=(occupying,))
+    post = replace(post_ego, actors=(exited,))
+    result, next_memory, _delta = evaluate_transition(
+        pre_state=pre,
+        post_state=post,
+        memory=initial_memory_for_snapshot(pre, cache),
+        cache=cache,
+        config=_yield_config(),
+    )
+    zone_id = result.components["vehicle_yield"].raw["zone_id"]
+    assert result.components["vehicle_yield"].applicable is True
+    assert result.components["vehicle_yield"].cost == 1.0
+    assert ("other", zone_id) in next_memory.vehicle_yield_illegal_entries
+
+
+def test_transition_vehicle_yield_no_latch_when_pre_state_gap_is_sufficient() -> None:
+    """Counterpart of the regression above: an occupying actor whose
+    pre-state occupancy of the zone clears well before ego's predicted entry
+    must not create a latch (sufficient r_gap^-)."""
+
+    cache = _yield_geometry_cache()
+    pre_ego = _snapshot(0, 0.0, 6.0)
+    post_ego = _snapshot(1, 0.1, 6.5)
+    clearing_early = ActorSnapshot(
+        "other",
+        ActorClass.VEHICLE,
+        (10.0, 0.0),
+        0.0,
+        1.57079632679,
+        (0.0, 40.0),
+        Polygon(((9.0, -1.0), (11.0, -1.0), (11.0, 1.0), (9.0, 1.0))),
+        "lane-b",
+        10.0,
+    )
+    already_cleared = replace(
+        clearing_early,
+        position_xy=(10.0, 4.0),
+        footprint=Polygon(((9.0, 3.0), (11.0, 3.0), (11.0, 5.0), (9.0, 5.0))),
+    )
+    pre = replace(pre_ego, actors=(clearing_early,))
+    post = replace(post_ego, actors=(already_cleared,))
+    result, next_memory, _delta = evaluate_transition(
+        pre_state=pre,
+        post_state=post,
+        memory=initial_memory_for_snapshot(pre, cache),
+        cache=cache,
+        config=_yield_config(),
+    )
+    assert next_memory.vehicle_yield_illegal_entries == frozenset()
+    assert result.components["vehicle_yield"].cost == 0.0
+
+
+def test_transition_vehicle_yield_approach_cost_clears_once_actor_exits_before_entry() -> None:
+    """REQ-VY-03: if ego never enters the zone and the priority actor exits,
+    the continuous approach cost must fall back to zero (post-state view)."""
+
+    cache = _yield_geometry_cache()
+    pre_ego = _snapshot(0, 0.0, 2.0)
+    post_ego = _snapshot(1, 0.1, 2.2)
+    occupying = ActorSnapshot(
+        "other",
+        ActorClass.VEHICLE,
+        (10.0, 0.0),
+        0.0,
+        1.57079632679,
+        (0.0, 5.0),
+        Polygon(((9.0, -1.0), (11.0, -1.0), (11.0, 1.0), (9.0, 1.0))),
+        "lane-b",
+        10.0,
+    )
+    exited = replace(
+        occupying,
+        position_xy=(10.0, 6.0),
+        footprint=Polygon(((9.0, 5.0), (11.0, 5.0), (11.0, 7.0), (9.0, 7.0))),
+    )
+    pre = replace(pre_ego, actors=(occupying,))
+    post = replace(post_ego, actors=(exited,))
+    result, next_memory, _delta = evaluate_transition(
+        pre_state=pre,
+        post_state=post,
+        memory=initial_memory_for_snapshot(pre, cache),
+        cache=cache,
+        config=_yield_config(),
+    )
+    assert result.components["vehicle_yield"].cost == 0.0
+    assert next_memory.vehicle_yield_illegal_entries == frozenset()
 
 
 def test_vehicle_conflict_pair_cache_reuses_complete_canonical_candidates(

@@ -5,10 +5,10 @@
 This index prevents an apparently newer, exploratory, or implementation-tracking
 document from being mistaken for an approved scientific contract.
 
-- Last repository inspection: 2026-07-23
+- Last repository inspection: 2026-07-24
 - Index status: `CURRENT_WITH_DOCUMENTED_GAPS`
 - Approval evidence: explicit user confirmations recorded on 2026-07-16,
-  2026-07-17, and 2026-07-21
+  2026-07-17, 2026-07-21, and 2026-07-24
 - Rule: repository evidence establishes paths, versions, links, and reported
   implementation status; explicit user approval establishes scientific authority.
 
@@ -27,6 +27,7 @@ document from being mistaken for an approved scientific contract.
 | Area | Exact authoritative or candidate document | Authority | Implementation record | Remaining gap |
 |---|---|---|---|---|
 | Rulebook v2 | `specifications/rulebook_v4.7_specification.md`; version `4.7-final-implementation-complete` | `AUTHORITATIVE`; explicit user approval 2026-07-17 | `implementation/rulebook_v2_implementation_plan.md`; F11 `COMPLETATA`; causal CTRV wiring, conformance suite and live Waymo smoke implemented | Final document/diff reconciliation required before `VERIFIED` |
+| Rulebook v2, R2 clearance amendment | `specifications/rulebook_v4.8_specification.md`; version `4.8`; amends only v4.7 §6.4 (vehicle/static clearance → scoped lateral-RSS / diagnostic-only) | `AUTHORITATIVE` for the amended §6.4 subset; explicit user approval 2026-07-24, recorded by ADR-025 | `implementation/r2_lateral_rss_clearance_v4.8_exec_plan.md`; `VERIFIED`; `rss_lateral` component, VRU-only clearance, aggregation/registry wiring, and REQ-R2-06 regression test implemented and tested (306-test rulebook suite and `make rulebook-v2-check` pass) | Known limitation: no R2 sub-metric other than TTC catches a static obstacle whose geometry converges beyond the TTC horizon (AC-R2-06, accepted by design) |
 | Rulebook scalarization v1.0 | `specifications/rulebook_scalarization_v1.0_specification.md`; ID `SCAL-V1.0`, version `1.0` | `AUTHORITATIVE`; explicit user approval 2026-07-17 | `implementation/rulebook_scalarization_v1.0_exec_plan.md`; implementation in progress | Configurable scalarizer for Rulebook margins and scalar RL baselines |
 | Perception-bounded semantic observation v1.2 | `specifications/observation_v1.2_specification.md`; ID `OBS-V1.2`, version `1.2-perception-bounded` | `AUTHORITATIVE`; explicit user approval 2026-07-21, recorded by ADR-022 | `implementation/perception_bounded_semantic_observation_v1.2_exec_plan.md`; M0–M6 complete; physical first-hit/signal gates, causal history, source-limited unknowns, encoder/checkpoint path, and provider-backed smoke verified | Ideal semantic tracking remains an explicit baseline limitation; calibrated stochastic tracking is deferred |
 | Automatic curriculum learning | `specifications/automatic_curriculum_learning_v1_specification.md`; version v1 amended by §28 / ADR-014 | `AUTHORITATIVE`; original approval 2026-07-16, ScenarioNet scalar amendment explicitly approved 2026-07-19 | `implementation/scenario_acl_implementation_plan.md`; its internal implementation stages v1/v2 are complete, v3 not started, and v4 deferred | Runtime learner smoke, live ScenarioNet/Rulebook wiring, resume validation, and final reconciliation before `VERIFIED` |
@@ -35,7 +36,8 @@ document from being mistaken for an approved scientific contract.
 | Perception-bounded encoder v1.1 | `specifications/encoder_v1.1_specification.md`; ID `ENC-V1.1`, version `1.1-perception-bounded` | `AUTHORITATIVE`; explicit user approval 2026-07-21, recorded by ADR-022 | `implementation/perception_bounded_semantic_observation_v1.2_exec_plan.md`; encoder, SB3 bridge, checkpoint schema identity, and provider-backed smoke complete | No migration path to legacy OBS/ENC checkpoints by design |
 | Transition-level replay v1 | `specifications/transition_replay_v1_specification.md`; ID `TRANSITION-REPLAY`, version `1.0` | `AUTHORITATIVE`; explicit user approval 2026-07-17 | `implementation/transition_replay_v1.0_exec_plan.md`; `IN_PROGRESS`; configuration, N-step, canonical collection, PER, persistence, and reward compatibility implemented | Focused replay matrix and current Hydra preset matrix pass; source-backed learner smoke and checkpoint/resume remain pending |
 | Lexicographic/distributional RL | No dedicated approved specification found | `MISSING` | No authority can be inferred from literature or exploratory documents | Approved algorithms, interfaces, and acceptance criteria |
-| Experimental and reporting protocols | `protocols/algorithm_comparison_protocol.md`, `protocols/csv_evaluation_objectives.md`, and `protocols/live_eval_video_protocol.md`; no versions declared | `CANDIDATE` | Operational commands exist in `setup/validation_commands.md` | Exact approved versions and authority confirmation |
+| Evaluation and algorithm comparison protocol | `specifications/evaluation_protocol_v1.0_specification.md`; ID `EVAL-PROTOCOL`, version `1.0` | `AUTHORITATIVE`; explicit user approval 2026-07-24 across four review passes (seeds, checkpoint policy, uncertainty convention, data-abort validity, primary metrics incl. R1--R3/R4 split, qualitative selection, ablation scope, candidate-protocol supersession, clean-tree policy, canonical analysis entry point, and the PPO end-of-budget atomic-rollout-boundary decision `DEC-015`); amended 2026-07-25 (optional opt-in confidence interval alongside mandatory mean/SD, `DEC-003`; no-backfill data-abort policy reconsidered and reconfirmed, `DEC-004`; tracked-subset GIF rendering mechanism added to qualitative selection, `DEC-014`) | `implementation/evaluation_protocol_v1.0_exec_plan.md`; `IN_PROGRESS` (see registry entry below) | One residual gap remains: `REQ-016` full end-to-end analysis regeneration not run against a real multi-condition comparison block. `REQ-008` (applicability-aware R1--R3 aggregation) implemented 2026-07-25 (Milestone 10). All other requirements implemented and live- or unit-verified (§15 of the ExecPlan) |
+| Experimental and reporting protocols | `protocols/algorithm_comparison_protocol.md`, `protocols/csv_evaluation_objectives.md`, and `protocols/live_eval_video_protocol.md`; no versions declared | `CANDIDATE`; normative statistical/seed content of `algorithm_comparison_protocol.md` (10-seed protocol, 95% CI formula, reward×curriculum ablation framing) superseded by `EVAL-PROTOCOL` v1.0; `csv_evaluation_objectives.md` retained as the subordinate implementation-level CSV schema `EVAL-PROTOCOL` references; `live_eval_video_protocol.md` retained as implementation guidance, amended by `EVAL-PROTOCOL` REQ-014's post-hoc qualitative-selection scheme. See `EVAL-PROTOCOL` `DEC-008`. | Operational commands exist in `setup/validation_commands.md` | Implementation reconciliation against `EVAL-PROTOCOL`; none of the three candidate documents is deleted, only superseded/consolidated/amended in normative scope |
 
 Document paths in the document and implementation columns are relative to
 `docs/`. Source, test, and configuration paths are relative to the repository
@@ -65,6 +67,26 @@ root.
   existing experiments. ADR-022 supersedes them only for the selected semantic
   observation/encoder implementation path; it does not change legacy runtime
   modes implicitly.
+- Rulebook v4.8 (`specifications/rulebook_v4.8_specification.md`) amends only
+  v4.7 §6.4 (R2 vehicle/static clearance), replacing the vehicle sub-metric
+  with a scoped lateral-RSS metric and demoting static clearance to
+  diagnostic-only per ADR-025, explicit user approval 2026-07-24. v4.7
+  remains authoritative and unchanged for every other section (§2-§4, §6.1-
+  §6.3, §6.5-§6.6, §7-§17), including RSS longitudinal, TTC, VRU clearance,
+  and vehicle-yield.
+- `EVAL-PROTOCOL` v1.0 (`specifications/evaluation_protocol_v1.0_specification.md`)
+  is approved and authoritative, following explicit user approval on
+  2026-07-24. It replaces the normative statistical/seed content of
+  `protocols/algorithm_comparison_protocol.md` (10-seed protocol, the
+  `1.96*s/sqrt(n)` 95% CI formula, and the reward-setting x curriculum
+  ablation framing), consolidates `protocols/csv_evaluation_objectives.md`
+  as a subordinate implementation-level CSV schema, and amends
+  `protocols/live_eval_video_protocol.md` only where its REQ-014 post-hoc
+  qualitative-selection scheme changes it. All three candidate documents
+  are retained for traceability, not deleted. Approval of `EVAL-PROTOCOL`
+  is a scientific-contract decision only; the repository implementation
+  does not yet conform (no ExecPlan exists yet; see the ExecPlan Registry
+  entry below and `EVAL-PROTOCOL` §11 for the specific verified gaps).
 
 ## Decisions
 
@@ -91,12 +113,15 @@ root.
 | `decisions/ADR-022-perception-bounded-semantic-observation.md` | `APPROVED` | Explicit user approval to proceed on 2026-07-21 | OBS-V1.2/ENC-V1.1, planar first-hit LiDAR, symbolic signal visibility, causal memory, and strict preflight policy |
 | `decisions/ADR-023-scoped-vehicle-yield-source-contract.md` | `APPROVED` | Explicit user instruction to implement the proposed source-bound vehicle-yield contract on 2026-07-21 | Rulebook v4.7 §7.9 causal live wiring; explicit pairwise and roundabout metadata; no geometric-priority fallback |
 | `decisions/ADR-024-runtime-scenario-data-abort.md` | `APPROVED` | Explicit user approval of the typed data-abort/quarantine contract on 2026-07-23 | Typed runtime scenario non-evaluability, valid-prefix truncation, vector selective reset, ACL exclusion, run-local quarantine, evaluation coverage and comparison exclusions |
+| `decisions/ADR-025-r2-lateral-rss-clearance-replacement.md` | `APPROVED` | Explicit user instruction "Approvo la specifica v4.8, procedi con l'implementazione" on 2026-07-24 | Rulebook v4.7 §6.4 R2 clearance replacement: vehicle clearance → scoped lateral-RSS metric, static clearance → diagnostic-only, VRU clearance unchanged, new R2 aggregation, `pre_state` snapshot |
 
 ## ExecPlan Registry
 
 | Feature | Specification | ExecPlan | Reported status | Last document update |
 |---|---|---|---|---|
 | Rulebook v2 | `specifications/rulebook_v4.7_specification.md` | `implementation/rulebook_v2_implementation_plan.md` | `COMPLETED; final reconciliation before VERIFIED` | 2026-07-17 |
+| Rulebook v2, R2 lateral-RSS clearance replacement | `specifications/rulebook_v4.8_specification.md` | `implementation/r2_lateral_rss_clearance_v4.8_exec_plan.md` | `VERIFIED`; ADR-025 approved; scoped lateral-RSS component, VRU-only clearance, aggregation/registry wiring, and REQ-R2-06 regression test implemented; full rulebook suite (306 tests) and `make rulebook-v2-check` pass | 2026-07-24 |
+| Vehicle-yield pre/post-state conformance | `specifications/rulebook_v4.7_specification.md` §7.9 (DEC-005) | `implementation/vehicle_yield_pre_post_state_conformance_v4.7_exec_plan.md` | `VERIFIED`; conformance restored, `make rulebook-v2-check` and full rulebook suite passed | 2026-07-24 |
 | Rulebook scalarization v1.0 | `specifications/rulebook_scalarization_v1.0_specification.md` | `implementation/rulebook_scalarization_v1.0_exec_plan.md` | `IMPLEMENTATION IN PROGRESS` | 2026-07-17 |
 | Transition-level replay v1 | `specifications/transition_replay_v1_specification.md` | `implementation/transition_replay_v1.0_exec_plan.md` | `IN_PROGRESS` | 2026-07-17 |
 | Rulebook v2 catalog filter parallelization | Rulebook v2 §15.11; ScenarioNet v1 §17/§24 | `implementation/rulebook_v2_catalog_filter_parallelization_exec_plan.md` | `IN_PROGRESS` | 2026-07-16 |
@@ -124,6 +149,7 @@ root.
 | Repository quality commands | User process decision dated 2026-07-16 | `implementation/repository_quality_commands_exec_plan.md` | `VERIFIED` | 2026-07-16 |
 | PyTorch cross-architecture compatibility | User request dated 2026-07-19; ADR-013 | `implementation/pytorch_cross_architecture_compatibility_exec_plan.md` | `IN_PROGRESS`; approved 2.9.1 pin and ARM64 CUDA validator exception pending full validation | 2026-07-19 |
 | Runtime scenario data-abort v1 | Rulebook v4.7 RSA-1; Transition Replay v1 RSA-1; ACL v1 RSA-1; RL Baselines v1 RSA-1; ScenarioNet v1.1 RSA-1; ADR-024 | `implementation/runtime_scenario_data_abort_v1_exec_plan.md` | `IMPLEMENTED`; typed data-abort, PER boundary closure, a prefix-preserving PPO/GAE boundary (`MaskedRolloutBuffer`, no more full-rollout discard), evaluation-path exclusion, ACL/non-ACL quarantine persistence across resume, and forensic JSONL wiring implemented and tested (buffer-, backend-, and loop-level, including a real SB3 PPO backend test); uniform replay remains deliberately fatal pending a larger safe N-step mutation; representative smoke not yet run | 2026-07-23 |
+| Evaluation and algorithm comparison protocol v1.0 | `specifications/evaluation_protocol_v1.0_specification.md`, `EVAL-PROTOCOL` v1.0 | `implementation/evaluation_protocol_v1.0_exec_plan.md` | `IN_PROGRESS`; Milestones 1--6, 8, 9, 10 complete, live- or unit-verified (incl. Milestone 5's PPO atomic-boundary/`DEC-015` overshoot path live-verified against a real SB3 PPO run, Milestone 2's panel manifest generated against the real ScenarioNet catalog and hash-recorded in run metadata, Milestone 9's tracked-subset feature-diversity GIF selection/rendering and category-taxonomy reconciliation, Milestone 10's applicability-aware R1--R3 seed-level aggregation for `REQ-008`); `REQ-016` full end-to-end analysis regeneration against real aggregated artifacts not run; full suite run 970/974 passing, the same 4 pre-existing unrelated failures (Rulebook v2 route geometry, a concurrent unrelated session's in-progress work) | 2026-07-25 |
 
 ## Maintenance Rules
 

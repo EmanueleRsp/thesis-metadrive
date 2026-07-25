@@ -10,6 +10,7 @@ from thesis_rl.rulebook.v2.components.collision import evaluate_collision_impact
 from thesis_rl.rulebook.v2.components.clearance import evaluate_clearance
 from thesis_rl.rulebook.v2.components.progress import evaluate_progress
 from thesis_rl.rulebook.v2.components.rss import evaluate_rss
+from thesis_rl.rulebook.v2.components.rss_lateral import evaluate_rss_lateral
 from thesis_rl.rulebook.v2.components.road import (
     evaluate_dashed_line,
     evaluate_offroad,
@@ -45,6 +46,7 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
         frozenset({"previous_contact_ids"}),
     ),
     ComponentDefinition("rss", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_rss),
+    ComponentDefinition("rss_lateral", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_rss_lateral),
     ComponentDefinition("ttc", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_ttc),
     ComponentDefinition("clearance", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_clearance),
     ComponentDefinition("offroad", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_offroad),

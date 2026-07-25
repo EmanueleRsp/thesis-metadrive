@@ -5,3 +5,9 @@ defaults:
   - override /reward: monitor_only
   - override /curriculum: stages
   - _self_
+
+# EVAL-PROTOCOL REQ-018: distinct comparison-block ID so this curriculum
+# ablation arm is separable from BASELINE-SCALAR-01/EXTENSION-ALGORITHM-01
+# and from its sibling ablation arms in the run registry.
+analysis:
+  experiment_group: ABLATION-CURRICULUM-MONITOR-CURR-01

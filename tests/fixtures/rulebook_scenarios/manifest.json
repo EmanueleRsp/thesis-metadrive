@@ -73,8 +73,8 @@
     {
       "components": [
         "rss",
-        "ttc",
-        "clearance"
+        "rss_lateral",
+        "ttc"
       ],
       "file": "rss_front_vehicle.pkl",
       "id": "rss_front_vehicle",

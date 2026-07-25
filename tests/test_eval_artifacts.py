@@ -10,7 +10,11 @@ from thesis_rl.agent.adapters.identity import IdentityAdapter
 from thesis_rl.agent.agent import Agent
 from thesis_rl.agent.preprocessors.identity import IdentityPreprocessor
 from thesis_rl.runtime.io.csv_recorder import CSVRecorder
-from thesis_rl.runtime.io.eval_artifacts import build_live_final_eval_recorder_factory
+from thesis_rl.runtime.io.eval_artifacts import (
+    build_live_final_eval_recorder_factory,
+    build_periodic_tracked_subset_recorder_factory,
+    maybe_build_periodic_tracked_subset_recorder_factory,
+)
 
 
 class _EvalPlanner:
@@ -51,6 +55,21 @@ class _RenderEnv:
     def render(self, mode="topdown", **kwargs):
         _ = (mode, kwargs)
         return np.zeros((8, 8, 3), dtype=np.uint8)
+
+
+class _ScenarioUidRenderEnv(_RenderEnv):
+    """Like ``_RenderEnv`` but stamps ``scenario_uid`` into ``step_info``,
+    matching ``thesis_scenario_env.step``'s real behavior (scenario metadata
+    is merged into every step's info dict)."""
+
+    def __init__(self, scenario_uid: str) -> None:
+        super().__init__()
+        self._scenario_uid = scenario_uid
+
+    def step(self, action):
+        obs, reward, done, truncated, info = super().step(action)
+        info = {**info, "scenario_uid": self._scenario_uid}
+        return obs, reward, done, truncated, info
 
 
 def _build_cfg(tmp_path: Path):
@@ -322,3 +341,240 @@ def test_csv_recorder_schema_keeps_live_video_fields(tmp_path: Path) -> None:
     assert "video_authoritative_path" in contents
     assert "video_manifest_path" in contents
     assert "video_recorded_live" in contents
+
+
+# --- REQ-014/DEC-014 (amended 2026-07-25): periodic tracked-subset GIF
+# rendering (`build_periodic_tracked_subset_recorder_factory`). ---
+
+
+def test_periodic_tracked_subset_recorder_persists_tracked_scenario_uid(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def _fake_save_gif(frames, output_path: Path, fps: int) -> None:
+        _ = (frames, fps)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"GIF89a")
+
+    monkeypatch.setattr("thesis_rl.runtime.io.eval_artifacts.save_gif", _fake_save_gif)
+
+    cfg = _build_cfg(tmp_path)
+    run_dir = Path(str(cfg.paths.run_dir))
+    run_dir.mkdir(parents=True, exist_ok=True)
+    factory = build_periodic_tracked_subset_recorder_factory(
+        cfg=cfg,
+        run_dir=run_dir,
+        resolved_env_config={"traffic_density": 0.1, "horizon": 500},
+        eval_id=4,
+        global_step=100_000,
+        stage="baseline",
+        stage_index=0,
+        checkpoint_path="checkpoints/eval_snapshot.zip",
+        checkpoint_type="periodic_validation_snapshot",
+        checkpoint_global_step=100_000,
+        tracked_scenario_uids=frozenset({"waymo:v1:arm_a:0007"}),
+    )
+
+    recorder = factory({"episode_id": 3, "scenario_seed": 55})
+    env = _ScenarioUidRenderEnv("waymo:v1:arm_a:0007")
+    recorder.record_step(
+        env=env,
+        step_index=0,
+        observation=np.array([0.0, 0.0], dtype=np.float32),
+        next_observation=np.array([1.0, 1.0], dtype=np.float32),
+        action=np.array([0.0, 0.0], dtype=np.float32),
+        reward=0.5,
+        done=False,
+        truncated=False,
+        step_info=env.step(np.array([0.0, 0.0], dtype=np.float32))[4],
+    )
+    payload = recorder.finalize_episode(episode_metrics={"reward": 1.0})
+
+    assert payload["video_recorded_live"] is True
+    expected_prefix = "videos/periodic_eval/step_0100000/eval_0004/waymo:v1:arm_a:0007"
+    assert payload["video_path"] == f"{expected_prefix}.gif"
+    assert payload["video_manifest_path"] == f"{expected_prefix}.manifest.json"
+    assert (run_dir / str(payload["video_path"])).exists()
+    manifest = json.loads((run_dir / str(payload["video_manifest_path"])).read_text(encoding="utf-8"))
+    assert manifest["scenario_uid"] == "waymo:v1:arm_a:0007"
+    assert manifest["eval_type"] == "periodic_tracked_subset"
+
+
+def test_periodic_tracked_subset_recorder_discards_untracked_scenario_uid(
+    tmp_path: Path, monkeypatch
+) -> None:
+    save_calls: list[Path] = []
+
+    def _fake_save_gif(frames, output_path: Path, fps: int) -> None:
+        _ = (frames, fps)
+        save_calls.append(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"GIF89a")
+
+    monkeypatch.setattr("thesis_rl.runtime.io.eval_artifacts.save_gif", _fake_save_gif)
+
+    cfg = _build_cfg(tmp_path)
+    run_dir = Path(str(cfg.paths.run_dir))
+    run_dir.mkdir(parents=True, exist_ok=True)
+    factory = build_periodic_tracked_subset_recorder_factory(
+        cfg=cfg,
+        run_dir=run_dir,
+        resolved_env_config={},
+        eval_id=4,
+        global_step=100_000,
+        stage="baseline",
+        stage_index=0,
+        checkpoint_path="checkpoints/eval_snapshot.zip",
+        checkpoint_type="periodic_validation_snapshot",
+        checkpoint_global_step=100_000,
+        tracked_scenario_uids=frozenset({"waymo:v1:arm_a:0007"}),
+    )
+
+    recorder = factory({"episode_id": 1, "scenario_seed": 1})
+    env = _ScenarioUidRenderEnv("waymo:v1:arm_b:9999")  # not in the tracked subset
+    recorder.record_step(
+        env=env,
+        step_index=0,
+        observation=np.array([0.0, 0.0], dtype=np.float32),
+        next_observation=np.array([1.0, 1.0], dtype=np.float32),
+        action=np.array([0.0, 0.0], dtype=np.float32),
+        reward=0.5,
+        done=False,
+        truncated=False,
+        step_info=env.step(np.array([0.0, 0.0], dtype=np.float32))[4],
+    )
+    payload = recorder.finalize_episode(episode_metrics={"reward": 1.0})
+
+    assert payload["video_recorded_live"] is False
+    assert payload["video_path"] is None
+    assert payload["video_manifest_path"] is None
+    assert payload["replay_warning"] == "periodic_tracked_subset_skip:not_in_tracked_subset"
+    assert save_calls == []
+    # Nothing should have been written to disk for an untracked scenario_uid.
+    assert not (run_dir / "videos" / "periodic_eval").exists()
+
+
+def test_maybe_build_periodic_tracked_subset_recorder_factory_none_when_empty_uids(
+    tmp_path: Path,
+) -> None:
+    cfg = _build_cfg(tmp_path)
+    cfg.video["enabled"] = True
+    cfg.video["mode"] = "live_final_eval"
+    run_dir = Path(str(cfg.paths.run_dir))
+    factory = maybe_build_periodic_tracked_subset_recorder_factory(
+        cfg=cfg,
+        run_dir=run_dir,
+        resolved_env_config={},
+        eval_id=1,
+        global_step=100_000,
+        stage="baseline",
+        stage_index=0,
+        checkpoint_path="checkpoints/eval_snapshot.zip",
+        checkpoint_type="periodic_validation_snapshot",
+        checkpoint_global_step=100_000,
+        tracked_scenario_uids=(),
+    )
+    assert factory is None
+
+
+def test_maybe_build_periodic_tracked_subset_recorder_factory_none_when_video_disabled(
+    tmp_path: Path,
+) -> None:
+    cfg = _build_cfg(tmp_path)
+    cfg.video["enabled"] = False
+    run_dir = Path(str(cfg.paths.run_dir))
+    factory = maybe_build_periodic_tracked_subset_recorder_factory(
+        cfg=cfg,
+        run_dir=run_dir,
+        resolved_env_config={},
+        eval_id=1,
+        global_step=100_000,
+        stage="baseline",
+        stage_index=0,
+        checkpoint_path="checkpoints/eval_snapshot.zip",
+        checkpoint_type="periodic_validation_snapshot",
+        checkpoint_global_step=100_000,
+        tracked_scenario_uids=("waymo:v1:arm_a:0007",),
+    )
+    assert factory is None
+
+
+def test_maybe_build_periodic_tracked_subset_recorder_factory_independent_of_record_intermediate_evals(
+    tmp_path: Path,
+) -> None:
+    """Regression: the periodic tracked-subset render is a separate,
+    DEC-014-approved mechanism and must not depend on the pre-existing
+    ``record_intermediate_evals`` flag (unlike the full-panel intermediate
+    recording gated by `maybe_build_live_final_eval_recorder_factory`)."""
+    cfg = _build_cfg(tmp_path)
+    cfg.video["enabled"] = True
+    cfg.video["mode"] = "live_final_eval"
+    cfg.video["record_intermediate_evals"] = False
+    run_dir = Path(str(cfg.paths.run_dir))
+    factory = maybe_build_periodic_tracked_subset_recorder_factory(
+        cfg=cfg,
+        run_dir=run_dir,
+        resolved_env_config={},
+        eval_id=1,
+        global_step=100_000,
+        stage="baseline",
+        stage_index=0,
+        checkpoint_path="checkpoints/eval_snapshot.zip",
+        checkpoint_type="periodic_validation_snapshot",
+        checkpoint_global_step=100_000,
+        tracked_scenario_uids=("waymo:v1:arm_a:0007",),
+    )
+    assert factory is not None
+
+
+def test_final_eval_recorder_factory_unaffected_by_periodic_defaults(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Regression: final-test rendering (`build_live_final_eval_recorder_factory`)
+    keeps its pre-existing path convention and unconditional full-panel
+    behavior -- it must not pick up the periodic tracked-subset output
+    directory or scenario_uid-based filename/filtering defaults added for
+    Milestone 9."""
+
+    def _fake_save_gif(frames, output_path: Path, fps: int) -> None:
+        _ = (frames, fps)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"GIF89a")
+
+    monkeypatch.setattr("thesis_rl.runtime.io.eval_artifacts.save_gif", _fake_save_gif)
+
+    cfg = _build_cfg(tmp_path)
+    run_dir = Path(str(cfg.paths.run_dir))
+    run_dir.mkdir(parents=True, exist_ok=True)
+    factory = build_live_final_eval_recorder_factory(
+        cfg=cfg,
+        run_dir=run_dir,
+        resolved_env_config={},
+        eval_id=9,
+        eval_type="final",
+        scenario_set="test",
+        stage="baseline",
+        stage_index=0,
+        checkpoint_path="checkpoints/final.zip",
+        checkpoint_type="final",
+        checkpoint_global_step=1_500_000,
+    )
+    recorder = factory({"episode_id": 5, "scenario_seed": 7})
+    # An untracked scenario_uid (not filtered: `tracked_scenario_uids` defaults
+    # to None for the final path, so every episode still persists).
+    env = _ScenarioUidRenderEnv("waymo:v1:arm_z:1234")
+    recorder.record_step(
+        env=env,
+        step_index=0,
+        observation=np.array([0.0, 0.0], dtype=np.float32),
+        next_observation=np.array([1.0, 1.0], dtype=np.float32),
+        action=np.array([0.0, 0.0], dtype=np.float32),
+        reward=0.5,
+        done=False,
+        truncated=False,
+        step_info=env.step(np.array([0.0, 0.0], dtype=np.float32))[4],
+    )
+    payload = recorder.finalize_episode(episode_metrics={"reward": 1.0})
+
+    assert payload["video_recorded_live"] is True
+    assert payload["video_path"] == "videos/final_eval/eval_0009/episode_0005.gif"
+    assert payload["video_manifest_path"] == "videos/final_eval/eval_0009/episode_0005.manifest.json"

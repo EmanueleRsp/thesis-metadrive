@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from thesis_rl.rulebook.v2.geometry.conflict_zones import worst_case_temporal_gap_violation
 from thesis_rl.rulebook.v2.geometry.continuous_sat import OccupancyInterval
 from thesis_rl.rulebook.v2.types import (
     ComponentStatus,
@@ -375,6 +376,7 @@ def evaluate_vehicle_yield(
     previous_illegal_entries: frozenset[tuple[str, str]],
     preexisting: bool = False,
     pre_state_entered_actor_ids: frozenset[str] | None = None,
+    pre_state_gap_violation: float | None = None,
     actor_movement_keys: tuple[tuple[str, object], ...] = (),
     previous_frozen_movement_keys: tuple[tuple[str, object], ...] = (),
     exited_actor_ids: frozenset[str] = frozenset(),
@@ -388,6 +390,14 @@ def evaluate_vehicle_yield(
     Approach intervals may be computed from the post-state, but an actor that
     leaves during the same control step must still be present in the pre-state
     entry set to create an illegal-entry flag.
+
+    ``pre_state_gap_violation``, when supplied, gates illegal-entry latch
+    creation (DEC-005 Fase A/B: the entry-legality judgment uses the
+    pre-state gap) independently of ``prioritized_intervals``, which remains
+    the post-state view used for the continuous approach cost (Fase C).
+    Callers that only evaluate a single snapshot (e.g. unit tests exercising
+    the historical post-state-only formula) may omit it, in which case the
+    post-state ``worst`` gap is reused for the latch gate as before.
     """
     if ego_interval is None:
         raise ValueError("Vehicle-yield requires an evaluable ego interval")
@@ -397,56 +407,26 @@ def evaluate_vehicle_yield(
         if entered_actor_ids and entered_actor_ids != pre_state_entered_actor_ids:
             raise ValueError("DEC-005 entered actor sets disagree")
         entered_actor_ids = pre_state_entered_actor_ids
-    if not prioritized_intervals:
-        active = set(previous_illegal_entries)
-        if not ego_occupied:
-            active = {entry for entry in active if entry[1] != zone_id}
-        frozen = dict(previous_frozen_movement_keys)
-        for actor_id in exited_actor_ids:
-            frozen.pop(actor_id, None)
-        result = RuleComponentResult(
-            "vehicle_yield",
-            0.0,
-            {"zone_id": zone_id, "prioritized_actor_count": 0, "commit": 0.0},
-            False,
-            True,
-            ComponentStatus.NOT_APPLICABLE,
-            {"before_gate": False},
-        )
-        delta = MemoryDelta(
-            writer="vehicle_yield",
-            writes=(
-                ("vehicle_yield_illegal_entries", frozenset(active)),
-                ("frozen_actor_movement_keys", tuple(sorted(frozen.items()))),
-            ),
-        )
-        return result, delta, CacheDelta()
-    if ego_brake_mps2 is None or ego_brake_mps2 <= 0.0:
+    if prioritized_intervals and (ego_brake_mps2 is None or ego_brake_mps2 <= 0.0):
         raise ValueError("Vehicle-yield requires calibrated positive ego braking")
-    worst = 0.0
-    for _, interval in prioritized_intervals:
-        if ego_interval.end_s is not None and interval.start_s >= ego_interval.end_s:
-            gap = interval.start_s - ego_interval.end_s
-        elif interval.end_s is not None and interval.end_s <= ego_interval.start_s:
-            gap = ego_interval.start_s - interval.end_s
-        else:
-            gap = None
-        worst = max(
-            worst,
-            1.0 if gap is None else min(max((CROSSWALK_GAP_S - gap) / CROSSWALK_GAP_S, 0.0), 1.0),
-        )
-    d_stop = approach_speed_mps * delta_t_s + approach_speed_mps * approach_speed_mps / (
-        2.0 * ego_brake_mps2
+
+    worst = worst_case_temporal_gap_violation(
+        ego_interval=ego_interval,
+        other_intervals=prioritized_intervals,
+        gap_scale_s=CROSSWALK_GAP_S,
     )
-    commit = min(max(1.0 - distance_to_entry_m / d_stop, 0.0), 1.0) if d_stop > 0.0 else 0.0
-    before = distance_to_entry_m > 0.05 and not ego_occupied and not preexisting
-    approach = worst * commit if before else 0.0
+    # DEC-005 Fase B: the illegal-entry latch gates on the pre-state gap when
+    # supplied; the post-state ``worst`` remains the fallback for callers
+    # that never separated the two snapshots.
+    gap_gate = worst if pre_state_gap_violation is None else pre_state_gap_violation
+
     illegal_keys = set(previous_illegal_entries)
     for actor_id in entered_actor_ids:
-        if worst > 0.0:
+        if gap_gate > 0.0:
             illegal_keys.add((actor_id, zone_id))
     if not ego_occupied:
         illegal_keys = {key for key in illegal_keys if key[1] != zone_id}
+
     # MovementKey is frozen at entry and released only after complete exit.
     # Preserve insertion-independent ordering for deterministic memory deltas.
     frozen = dict(previous_frozen_movement_keys)
@@ -455,7 +435,23 @@ def evaluate_vehicle_yield(
             frozen[actor_id] = movement_key
     for actor_id in exited_actor_ids:
         frozen.pop(actor_id, None)
-    cost = 1.0 if ego_occupied and any(key[1] == zone_id for key in illegal_keys) else approach
+
+    if prioritized_intervals:
+        d_stop = approach_speed_mps * delta_t_s + approach_speed_mps * approach_speed_mps / (
+            2.0 * ego_brake_mps2
+        )
+        commit = min(max(1.0 - distance_to_entry_m / d_stop, 0.0), 1.0) if d_stop > 0.0 else 0.0
+        before = distance_to_entry_m > 0.05 and not ego_occupied and not preexisting
+        approach = worst * commit if before else 0.0
+    else:
+        commit, before, approach = 0.0, False, 0.0
+
+    # DEC-005 Fase D: an active latch for this zone dominates the aggregated
+    # cost for as long as ego occupies it, independent of whether the
+    # post-state still has any live prioritized actor (REQ-VY-04).
+    active_latch_for_zone = ego_occupied and any(key[1] == zone_id for key in illegal_keys)
+    cost = 1.0 if active_latch_for_zone else approach
+    applicable = bool(prioritized_intervals) or active_latch_for_zone
     result = RuleComponentResult(
         "vehicle_yield",
         cost,
@@ -464,13 +460,11 @@ def evaluate_vehicle_yield(
             "prioritized_actor_count": len(prioritized_intervals),
             "commit": commit,
         },
-        bool(prioritized_intervals),
+        applicable,
         True,
         ComponentStatus.VIOLATED
         if cost > 0.0
-        else (
-            ComponentStatus.SATISFIED if prioritized_intervals else ComponentStatus.NOT_APPLICABLE
-        ),
+        else (ComponentStatus.SATISFIED if applicable else ComponentStatus.NOT_APPLICABLE),
         {"before_gate": before},
     )
     delta = MemoryDelta(

@@ -79,6 +79,11 @@ def _append_rule_metrics_rows(
                 "mean_margin": row.get("mean_margin"),
                 "min_margin": row.get("min_margin"),
                 "max_margin": row.get("max_margin"),
+                # EVAL-PROTOCOL v1.0 REQ-008: episodes with >=1 applicable
+                # step for this rule feeding violation_rate/mean_margin, and
+                # the count excluded for having zero applicable steps.
+                "applicable_episode_count": row.get("applicable_episode_count"),
+                "excluded_episode_count": row.get("excluded_episode_count"),
             },
         )
 

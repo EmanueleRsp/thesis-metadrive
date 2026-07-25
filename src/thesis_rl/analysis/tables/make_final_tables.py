@@ -7,6 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from thesis_rl.analysis.common_stats import ci95
 from thesis_rl.common.paths import default_analysis_root_str
 
 FINAL_METRICS = (
@@ -56,16 +57,9 @@ def _sample_std(values: list[float], mean_value: float) -> float:
     return math.sqrt(sum((x - mean_value) ** 2 for x in values) / (len(values) - 1))
 
 
-def _mean_ci95(values: list[float]) -> tuple[float, float]:
-    m = _mean(values)
-    s = _sample_std(values, m)
-    if len(values) <= 1:
-        return m, 0.0
-    ci = 1.96 * (s / math.sqrt(len(values)))
-    return m, ci
-
-
-def build_final_tables(aggregated_dir: Path, tables_dir: Path) -> None:
+def build_final_tables(
+    aggregated_dir: Path, tables_dir: Path, *, include_ci: bool = False
+) -> None:
     source = aggregated_dir / "final_eval_all_runs.csv"
     if not source.exists():
         raise FileNotFoundError(f"Missing aggregated file: {source}")
@@ -129,21 +123,33 @@ def build_final_tables(aggregated_dir: Path, tables_dir: Path) -> None:
             "eval_type",
             "scenario_set",
             "n_seeds",
-        ] + [f"{m}_mean" for m in FINAL_METRICS] + [f"{m}_ci95" for m in FINAL_METRICS]
+        ] + [f"{m}_mean" for m in FINAL_METRICS] + [f"{m}_std" for m in FINAL_METRICS] + [
+            f"{m}_seed_values" for m in FINAL_METRICS
+        ]
+        if include_ci:
+            fieldnames += [f"{m}_ci95" for m in FINAL_METRICS]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for condition_id in sorted(grouped.keys()):
             row: dict[str, Any] = dict(descriptors[condition_id])
-            row["n_seeds"] = len(by_condition_seed.get(condition_id, set()))
+            n_seeds = len(by_condition_seed.get(condition_id, set()))
+            row["n_seeds"] = n_seeds
             for metric in FINAL_METRICS:
                 values = grouped[condition_id].get(metric, [])
                 if values:
-                    m, ci = _mean_ci95(values)
+                    m = _mean(values)
+                    s = _sample_std(values, m)
                     row[f"{metric}_mean"] = m
-                    row[f"{metric}_ci95"] = ci
+                    row[f"{metric}_std"] = s
+                    row[f"{metric}_seed_values"] = ";".join(str(v) for v in values)
+                    if include_ci:
+                        row[f"{metric}_ci95"] = ci95(s, n_seeds)
                 else:
                     row[f"{metric}_mean"] = ""
-                    row[f"{metric}_ci95"] = ""
+                    row[f"{metric}_std"] = ""
+                    row[f"{metric}_seed_values"] = ""
+                    if include_ci:
+                        row[f"{metric}_ci95"] = ""
             writer.writerow(row)
 
     md_path = tables_dir / "final_evaluation.md"
@@ -177,8 +183,9 @@ def build_final_tables(aggregated_dir: Path, tables_dir: Path) -> None:
             for metric in FINAL_METRICS:
                 values = grouped[condition_id].get(metric, [])
                 if values:
-                    m, ci = _mean_ci95(values)
-                    cells.append(f"{m:.4f} ± {ci:.4f}")
+                    m = _mean(values)
+                    s = _sample_std(values, m)
+                    cells.append(f"{m:.4f} (SD {s:.4f}, n={len(values)})")
                 else:
                     cells.append("")
             handle.write("| " + " | ".join(cells) + " |\n")
@@ -188,13 +195,22 @@ def build_final_tables(aggregated_dir: Path, tables_dir: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build final evaluation tables (mean ± 95% CI) by condition.")
+    parser = argparse.ArgumentParser(
+        description="Build final evaluation tables (raw seed values, mean, sample SD; "
+        "no confidence interval, per EVAL-PROTOCOL v1.0 REQ-009) by condition."
+    )
     parser.add_argument("--analysis-root", default=default_analysis_root_str())
+    parser.add_argument(
+        "--include-ci",
+        action="store_true",
+        help="Also emit an optional 1.96*sd/sqrt(n) CI95 column (off by default, REQ-009/DEC-003).",
+    )
     args = parser.parse_args()
     analysis_root = Path(args.analysis_root)
     build_final_tables(
         aggregated_dir=analysis_root / "aggregated",
         tables_dir=analysis_root / "tables",
+        include_ci=bool(args.include_ci),
     )
 
 

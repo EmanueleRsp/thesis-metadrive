@@ -5,7 +5,7 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 
-from thesis_rl.analysis.common_stats import mean_ci95, to_float
+from thesis_rl.analysis.common_stats import ci95, mean_sd, to_float
 from thesis_rl.common.paths import default_analysis_root_str
 
 REQUIRED_COLUMNS = (
@@ -50,6 +50,7 @@ def build_sample_efficiency_tables(
     success_threshold: float,
     collision_threshold: float,
     route_completion_threshold: float,
+    include_ci: bool = False,
 ) -> None:
     rows = _read_rows(aggregated_dir / "evals_all_runs.csv")
     tables_dir.mkdir(parents=True, exist_ok=True)
@@ -118,16 +119,22 @@ def build_sample_efficiency_tables(
             "success_met_runs",
             "success_met_rate",
             "steps_to_success_mean",
-            "steps_to_success_ci95",
+            "steps_to_success_sd",
             "collision_met_runs",
             "collision_met_rate",
             "steps_to_collision_mean",
-            "steps_to_collision_ci95",
+            "steps_to_collision_sd",
             "route_met_runs",
             "route_met_rate",
             "steps_to_route_mean",
-            "steps_to_route_ci95",
+            "steps_to_route_sd",
         ]
+        if include_ci:
+            fieldnames += [
+                "steps_to_success_ci95",
+                "steps_to_collision_ci95",
+                "steps_to_route_ci95",
+            ]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
 
@@ -154,28 +161,40 @@ def build_sample_efficiency_tables(
             }
 
             if success_steps:
-                m, ci = mean_ci95(success_steps)
+                m, s = mean_sd(success_steps)
                 row_out["steps_to_success_mean"] = m
-                row_out["steps_to_success_ci95"] = ci
+                row_out["steps_to_success_sd"] = s
+                if include_ci:
+                    row_out["steps_to_success_ci95"] = ci95(s, len(success_steps))
             else:
                 row_out["steps_to_success_mean"] = ""
-                row_out["steps_to_success_ci95"] = ""
+                row_out["steps_to_success_sd"] = ""
+                if include_ci:
+                    row_out["steps_to_success_ci95"] = ""
 
             if collision_steps:
-                m, ci = mean_ci95(collision_steps)
+                m, s = mean_sd(collision_steps)
                 row_out["steps_to_collision_mean"] = m
-                row_out["steps_to_collision_ci95"] = ci
+                row_out["steps_to_collision_sd"] = s
+                if include_ci:
+                    row_out["steps_to_collision_ci95"] = ci95(s, len(collision_steps))
             else:
                 row_out["steps_to_collision_mean"] = ""
-                row_out["steps_to_collision_ci95"] = ""
+                row_out["steps_to_collision_sd"] = ""
+                if include_ci:
+                    row_out["steps_to_collision_ci95"] = ""
 
             if route_steps:
-                m, ci = mean_ci95(route_steps)
+                m, s = mean_sd(route_steps)
                 row_out["steps_to_route_mean"] = m
-                row_out["steps_to_route_ci95"] = ci
+                row_out["steps_to_route_sd"] = s
+                if include_ci:
+                    row_out["steps_to_route_ci95"] = ci95(s, len(route_steps))
             else:
                 row_out["steps_to_route_mean"] = ""
-                row_out["steps_to_route_ci95"] = ""
+                row_out["steps_to_route_sd"] = ""
+                if include_ci:
+                    row_out["steps_to_route_ci95"] = ""
 
             writer.writerow(row_out)
 
@@ -193,19 +212,19 @@ def build_sample_efficiency_tables(
             route_steps = [float(step_to_route[key]) for key in run_keys if key in step_to_route]
 
             if success_steps:
-                success_m, success_ci = mean_ci95(success_steps)
+                success_m, success_ci = mean_sd(success_steps)
                 success_cell = f"{success_m:.1f} ± {success_ci:.1f}"
             else:
                 success_cell = "-"
 
             if collision_steps:
-                collision_m, collision_ci = mean_ci95(collision_steps)
+                collision_m, collision_ci = mean_sd(collision_steps)
                 collision_cell = f"{collision_m:.1f} ± {collision_ci:.1f}"
             else:
                 collision_cell = "-"
 
             if route_steps:
-                route_m, route_ci = mean_ci95(route_steps)
+                route_m, route_ci = mean_sd(route_steps)
                 route_cell = f"{route_m:.1f} ± {route_ci:.1f}"
             else:
                 route_cell = "-"
@@ -237,6 +256,11 @@ def main() -> None:
     parser.add_argument("--success-threshold", type=float, default=0.70)
     parser.add_argument("--collision-threshold", type=float, default=0.20)
     parser.add_argument("--route-completion-threshold", type=float, default=0.80)
+    parser.add_argument(
+        "--include-ci",
+        action="store_true",
+        help="Also emit an optional 1.96*sd/sqrt(n) CI95 column (off by default, REQ-009/DEC-003).",
+    )
     args = parser.parse_args()
     analysis_root = Path(args.analysis_root)
     build_sample_efficiency_tables(
@@ -245,6 +269,7 @@ def main() -> None:
         success_threshold=float(args.success_threshold),
         collision_threshold=float(args.collision_threshold),
         route_completion_threshold=float(args.route_completion_threshold),
+        include_ci=bool(args.include_ci),
     )
 
 

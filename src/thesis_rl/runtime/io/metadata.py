@@ -1,4 +1,5 @@
 from datetime import datetime
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 import hashlib
 import os
@@ -9,6 +10,17 @@ import subprocess
 import yaml
 import torch
 from omegaconf import DictConfig, OmegaConf
+
+# Specification identities that are currently frozen repository-wide rather
+# than per-run configurable (EVAL-PROTOCOL REQ-015 / DEC-EP metadata gap).
+OBSERVATION_SPECIFICATION_ID = "OBS-V1.2"
+ENCODER_SPECIFICATION_ID = "ENC-V1.1"
+ACL_SPECIFICATION_ID = "ACL-SN-EMA-001"
+ACL_SPECIFICATION_VERSION = "1.1"
+TRANSITION_REPLAY_SPECIFICATION_ID = "TRANSITION-REPLAY"
+TRANSITION_REPLAY_SPECIFICATION_VERSION = "1.0"
+EVALUATION_PROTOCOL_SPECIFICATION_ID = "EVAL-PROTOCOL"
+EVALUATION_PROTOCOL_SPECIFICATION_VERSION = "1.0"
 
 
 def get_git_commit() -> str:
@@ -35,6 +47,60 @@ def get_git_branch() -> str:
         return "unknown"
 
 
+def get_git_dirty() -> bool | None:
+    """Return whether the tracked working tree has uncommitted changes.
+
+    Git-ignored and untracked-but-ignored files never make the tree dirty
+    (``git status --porcelain`` with default flags already excludes files
+    matched by ``.gitignore``); untracked files that are *not* ignored do
+    count, matching a plain ``git status`` reading of "dirty".
+    """
+
+    try:
+        output = subprocess.check_output(
+            ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL
+        ).decode()
+    except Exception:
+        return None
+    return bool(output.strip())
+
+
+def get_dependency_versions() -> dict[str, str | None]:
+    """Best-effort collection of exact dependency versions for reproducibility."""
+
+    def _package_version(name: str) -> str | None:
+        try:
+            return importlib_metadata.version(name)
+        except importlib_metadata.PackageNotFoundError:
+            return None
+
+    sb3_commit = "unknown"
+    try:
+        import stable_baselines3
+
+        sb3_root = Path(stable_baselines3.__file__).resolve().parents[1]
+        sb3_commit = (
+            subprocess.check_output(
+                ["git", "-C", str(sb3_root), "rev-parse", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except Exception:
+        sb3_commit = "unknown"
+
+    return {
+        # torch.__version__ is a TorchVersion (str subclass) that PyYAML's
+        # SafeDumper cannot represent directly; coerce to a plain str.
+        "torch_version": str(torch.__version__),
+        "sb3_version": _package_version("stable-baselines3"),
+        "sb3_commit": sb3_commit,
+        "metadrive_version": _package_version("metadrive-simulator") or _package_version("metadrive"),
+        "scenarionet_version": _package_version("scenarionet"),
+    }
+
+
 def _cfg_get(cfg: DictConfig, key: str, default=None):
     """Safely access nested OmegaConf values via dotted keys."""
     value = OmegaConf.select(cfg, key)
@@ -53,6 +119,11 @@ def _snapshot_scenarionet_artifacts(cfg: DictConfig, artifacts_dir: Path) -> dic
     catalog_path = _cfg_get(cfg, "env.catalog_path")
     if catalog_path:
         candidates["scenario_catalog"] = Path(str(catalog_path)).expanduser()
+
+    manifest_path = _cfg_get(cfg, "env.provider.panel_manifest_path")
+    if manifest_path:
+        resolved = Path(str(manifest_path)).expanduser()
+        candidates[f"panel_manifest_{resolved.stem}"] = resolved
 
     snapshot_dir = artifacts_dir / "scenarionet"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -161,6 +232,18 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
             "n_steps": transition_replay.get("n_steps"),
             "prioritized": transition_replay.get("prioritized"),
             "persistence": transition_replay.get("persistence", {}),
+            "specification_id": TRANSITION_REPLAY_SPECIFICATION_ID,
+            "specification_version": TRANSITION_REPLAY_SPECIFICATION_VERSION,
+        },
+        "observation": {"specification_id": OBSERVATION_SPECIFICATION_ID},
+        "encoder": {"specification_id": ENCODER_SPECIFICATION_ID},
+        "acl": {
+            "specification_id": ACL_SPECIFICATION_ID,
+            "version": ACL_SPECIFICATION_VERSION,
+        },
+        "evaluation_protocol": {
+            "specification_id": EVALUATION_PROTOCOL_SPECIFICATION_ID,
+            "version": EVALUATION_PROTOCOL_SPECIFICATION_VERSION,
         },
         "experiment_group": _cfg_get(cfg, "analysis.experiment_group"),
         "include_in_comparison": bool(_cfg_get(cfg, "analysis.include_in_comparison", True)),
@@ -177,7 +260,9 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
         "git": {
             "branch": get_git_branch(),
             "commit": get_git_commit(),
+            "dirty": get_git_dirty(),
         },
+        "dependencies": get_dependency_versions(),
         "status": "running",
     }
     if str(_cfg_get(cfg, "env.name", default="")).lower() == "scenarionet":

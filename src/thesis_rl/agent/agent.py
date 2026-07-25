@@ -121,6 +121,13 @@ class _ParallelEvaluationEpisode:
         self.ep_step_count = 0
         self.ep_top_rule_violating_steps = 0
         self.ep_rule_min_margin: dict[str, float] = {}
+        # EVAL-PROTOCOL v1.0 REQ-008: per-rule step counters restricted to
+        # steps the Rulebook marks applicable for that rule (R1--R3); a rule
+        # with no applicability concept (R4/route_progress) is treated as
+        # always-applicable, so these counters equal the episode step count
+        # for it (see `Agent._extract_rule_applicability`).
+        self.ep_rule_applicable_step_count: dict[str, int] = {}
+        self.ep_rule_violated_step_count: dict[str, int] = {}
         self.ep_rule_reward_sum_by_rule: dict[str, float] = {}
         self.ep_env_return = 0.0
         self.ep_scalar_rule_return = 0.0
@@ -174,11 +181,25 @@ class _ParallelEvaluationEpisode:
         )
         if agent._has_top_rule_violation(step_info):
             self.ep_top_rule_violating_steps += 1
+        applicability = agent._extract_rule_applicability(step_info)
         for rule_name, rule_priority, margin in agent._extract_rule_margins(step_info):
             self.rule_priority_by_name[rule_name] = int(rule_priority)
             self.ep_rule_reward_sum_by_rule[rule_name] = float(
                 self.ep_rule_reward_sum_by_rule.get(rule_name, 0.0) + float(margin)
             )
+            # EVAL-PROTOCOL v1.0 REQ-008 (spec §7.2): R1--R3 min-margin and
+            # violation counting use only applicable steps. A rule absent
+            # from `applicability` (R4/route_progress) has no applicability
+            # concept and defaults to always-applicable per §7.3.
+            if not applicability.get(rule_name, True):
+                continue
+            self.ep_rule_applicable_step_count[rule_name] = (
+                self.ep_rule_applicable_step_count.get(rule_name, 0) + 1
+            )
+            if float(margin) < 0.0:
+                self.ep_rule_violated_step_count[rule_name] = (
+                    self.ep_rule_violated_step_count.get(rule_name, 0) + 1
+                )
             self.ep_rule_min_margin[rule_name] = min(
                 float(self.ep_rule_min_margin.get(rule_name, float("inf"))),
                 float(margin),
@@ -216,6 +237,15 @@ class _ParallelEvaluationEpisode:
             if violated_in_episode
             else "none"
         )
+        # EVAL-PROTOCOL v1.0 REQ-008 (spec §7.2): EpisodeViolationRate is
+        # defined only for rules with at least one applicable step in this
+        # episode; a rule with zero applicable steps has no entry here and
+        # is excluded from that rule's seed-level aggregate downstream.
+        rule_episode_violation_rate: dict[str, float] = {
+            rule_name: float(self.ep_rule_violated_step_count.get(rule_name, 0)) / float(count)
+            for rule_name, count in self.ep_rule_applicable_step_count.items()
+            if count > 0
+        }
         if self.ep_rule_min_margin:
             p_max = max(
                 int(self.rule_priority_by_name.get(name, 0)) for name in self.ep_rule_min_margin
@@ -287,6 +317,8 @@ class _ParallelEvaluationEpisode:
             "violated_rules": violation_pattern,
             "rule_rewards_by_rule": dict(sorted(self.ep_rule_reward_sum_by_rule.items())),
             "rule_min_margins": dict(self.ep_rule_min_margin),
+            "rule_episode_violation_rates": rule_episode_violation_rate,
+            "rule_applicable_step_counts": dict(self.ep_rule_applicable_step_count),
             "rule_priorities": dict(self.rule_priority_by_name),
             "video_path": artifact_payload.get("video_path"),
             "video_authoritative_path": artifact_payload.get("video_authoritative_path"),
@@ -322,6 +354,18 @@ class Agent:
         """Set the immutable reward identity written beside runtime checkpoints."""
 
         self.checkpoint_identity = None if identity is None else dict(identity)
+
+    def atomic_boundary_remaining(self) -> int:
+        """EVAL-PROTOCOL v1.0 REQ-002/DEC-015: global env transitions still
+        needed to complete the current algorithm's atomic collection/update
+        unit (e.g. a full PPO rollout). Zero for algorithms without such a
+        concept (TD3/SAC update every transition) or when already at a
+        boundary.
+        """
+        method = getattr(self.planner, "atomic_boundary_remaining", None)
+        if method is None:
+            return 0
+        return int(method())
 
     def train(
         self,
@@ -1666,7 +1710,11 @@ class Agent:
         all_rule_names: set[str] = set()
         rule_priority_by_name: dict[str, int] = {}
         per_rule_episode_min_margins: dict[str, list[float]] = {}
+        # EVAL-PROTOCOL v1.0 REQ-008 (spec §7.2): per-episode violation rate,
+        # collected only for episodes with >=1 applicable step for the rule.
+        per_rule_episode_violation_rates: dict[str, list[float]] = {}
         per_rule_violation_count: dict[str, int] = {}
+        per_rule_included_episode_count: dict[str, int] = {}
 
         progress: Progress | None = None
         progress_task: Any | None = None
@@ -1739,6 +1787,8 @@ class Agent:
                 ep_step_count = 0
                 ep_top_rule_violating_steps = 0
                 ep_rule_min_margin: dict[str, float] = {}
+                ep_rule_applicable_step_count: dict[str, int] = {}
+                ep_rule_violated_step_count: dict[str, int] = {}
                 ep_rule_reward_sum_by_rule: dict[str, float] = {}
                 ep_env_return = 0.0
                 ep_scalar_rule_return = 0.0
@@ -1785,6 +1835,7 @@ class Agent:
                     )
                     if self._has_top_rule_violation(step_info):
                         ep_top_rule_violating_steps += 1
+                    applicability = self._extract_rule_applicability(step_info)
                     for rule_name, rule_priority, margin in self._extract_rule_margins(step_info):
                         all_rule_names.add(rule_name)
                         if rule_name not in rule_priority_by_name:
@@ -1792,6 +1843,20 @@ class Agent:
                         ep_rule_reward_sum_by_rule[rule_name] = float(
                             ep_rule_reward_sum_by_rule.get(rule_name, 0.0) + float(margin)
                         )
+                        # EVAL-PROTOCOL v1.0 REQ-008: only applicable steps
+                        # feed min-margin/violation counting; a rule absent
+                        # from `applicability` (R4/route_progress) has no
+                        # applicability concept and defaults to
+                        # always-applicable (spec §7.3).
+                        if not applicability.get(rule_name, True):
+                            continue
+                        ep_rule_applicable_step_count[rule_name] = (
+                            ep_rule_applicable_step_count.get(rule_name, 0) + 1
+                        )
+                        if float(margin) < 0.0:
+                            ep_rule_violated_step_count[rule_name] = (
+                                ep_rule_violated_step_count.get(rule_name, 0) + 1
+                            )
                         ep_rule_min_margin[rule_name] = min(
                             float(ep_rule_min_margin.get(rule_name, float("inf"))),
                             float(margin),
@@ -1839,11 +1904,27 @@ class Agent:
                 for rule_name, min_margin in ep_rule_min_margin.items():
                     per_rule_episode_min_margins.setdefault(rule_name, []).append(float(min_margin))
                     if float(min_margin) < 0.0:
-                        per_rule_violation_count[rule_name] = int(
-                            per_rule_violation_count.get(rule_name, 0) + 1
-                        )
                         violated_in_episode.append(
                             (rule_name, int(rule_priority_by_name.get(rule_name, 0)))
+                        )
+                # EVAL-PROTOCOL v1.0 REQ-008 (spec §7.2): EpisodeViolationRate
+                # is defined only for rules with >=1 applicable step this
+                # episode (`ep_rule_applicable_step_count`); episodes with
+                # zero applicable steps for a rule contribute no entry and
+                # are excluded from that rule's seed-level aggregate below.
+                for rule_name, applicable_count in ep_rule_applicable_step_count.items():
+                    if applicable_count <= 0:
+                        continue
+                    rate = float(ep_rule_violated_step_count.get(rule_name, 0)) / float(
+                        applicable_count
+                    )
+                    per_rule_episode_violation_rates.setdefault(rule_name, []).append(rate)
+                    per_rule_included_episode_count[rule_name] = (
+                        per_rule_included_episode_count.get(rule_name, 0) + 1
+                    )
+                    if rate > 0.0:
+                        per_rule_violation_count[rule_name] = int(
+                            per_rule_violation_count.get(rule_name, 0) + 1
                         )
 
                 if violated_in_episode:
@@ -1937,6 +2018,9 @@ class Agent:
         ) / float(max(len(all_rule_names), 1))
         unique_violation_patterns = int(len(set(episode_violation_patterns)))
 
+        # EVAL-PROTOCOL v1.0 REQ-008 (spec §7.2): see the analogous
+        # `_aggregate_parallel_evaluation` comment for the full rationale.
+        total_episodes = len(episode_returns)
         per_rule_rows: list[dict[str, Any]] = []
         for rule_name in sorted(
             all_rule_names, key=lambda name: (rule_priority_by_name.get(name, 0), name)
@@ -1950,17 +2034,22 @@ class Agent:
                 mean_margin = 0.0
                 min_margin = 0.0
                 max_margin = 0.0
+            violation_rates = per_rule_episode_violation_rates.get(rule_name, [])
+            included_count = int(per_rule_included_episode_count.get(rule_name, 0))
+            excluded_count = int(total_episodes - included_count)
             violation_count = int(per_rule_violation_count.get(rule_name, 0))
             per_rule_rows.append(
                 {
                     "rule_name": rule_name,
                     "rule_priority": int(rule_priority_by_name.get(rule_name, 0)),
                     "violated": bool(violation_count > 0),
-                    "violation_rate": float(violation_count / max(len(episode_returns), 1)),
+                    "violation_rate": float(np.mean(violation_rates)) if violation_rates else 0.0,
                     "violation_count": violation_count,
                     "mean_margin": mean_margin,
                     "min_margin": min_margin,
                     "max_margin": max_margin,
+                    "applicable_episode_count": included_count,
+                    "excluded_episode_count": excluded_count,
                 }
             )
 
@@ -2297,10 +2386,16 @@ class Agent:
         all_rule_names: set[str] = set()
         rule_priority_by_name: dict[str, int] = {}
         per_rule_episode_min_margins: dict[str, list[float]] = {}
+        # EVAL-PROTOCOL v1.0 REQ-008 (spec §7.2): per-episode violation rate
+        # (violated-applicable-steps / applicable-steps), collected only for
+        # episodes with >=1 applicable step for that rule.
+        per_rule_episode_violation_rates: dict[str, list[float]] = {}
         per_rule_violation_count: dict[str, int] = {}
+        per_rule_included_episode_count: dict[str, int] = {}
         for record in records:
             priorities = record.get("rule_priorities", {})
             margins = record.get("rule_min_margins", {})
+            episode_violation_rates = record.get("rule_episode_violation_rates", {})
             for name, priority in priorities.items():
                 all_rule_names.add(str(name))
                 if str(name) not in rule_priority_by_name:
@@ -2309,7 +2404,14 @@ class Agent:
                 name = str(name)
                 all_rule_names.add(name)
                 per_rule_episode_min_margins.setdefault(name, []).append(float(margin))
-                if float(margin) < 0.0:
+            for name, rate in episode_violation_rates.items():
+                name = str(name)
+                all_rule_names.add(name)
+                per_rule_episode_violation_rates.setdefault(name, []).append(float(rate))
+                per_rule_included_episode_count[name] = (
+                    per_rule_included_episode_count.get(name, 0) + 1
+                )
+                if float(rate) > 0.0:
                     per_rule_violation_count[name] = int(per_rule_violation_count.get(name, 0) + 1)
 
         episode_returns = [float(record["reward"]) for record in records]
@@ -2330,22 +2432,38 @@ class Agent:
         episode_patterns = [str(record["violation_pattern"]) for record in records]
         episode_violated = [str(record["violated_rules"]) for record in records]
 
+        # EVAL-PROTOCOL v1.0 REQ-008 (spec §7.2): `RuleViolationRate_(i,s)` is
+        # the mean of per-episode violation rates over the `N'_s` episodes
+        # with >=1 applicable step for rule `i`; episodes with zero
+        # applicable steps are excluded (not counted as zero violations),
+        # and that exclusion count is reported alongside the seed-level
+        # value (`excluded_episode_count`). `violation_count` here is
+        # redefined from "episodes with a violation" (pre-REQ-008 semantics)
+        # to "episodes with a non-zero violation rate among the included
+        # (applicable-step) episodes" -- still an episode-level diagnostic
+        # count, not a per-step count.
+        total_episodes = len(records)
         per_rule_rows: list[dict[str, Any]] = []
         for rule_name in sorted(
             all_rule_names, key=lambda name: (rule_priority_by_name.get(name, 0), name)
         ):
             margins = per_rule_episode_min_margins.get(rule_name, [])
+            violation_rates = per_rule_episode_violation_rates.get(rule_name, [])
+            included_count = int(per_rule_included_episode_count.get(rule_name, 0))
+            excluded_count = int(total_episodes - included_count)
             violation_count = int(per_rule_violation_count.get(rule_name, 0))
             per_rule_rows.append(
                 {
                     "rule_name": rule_name,
                     "rule_priority": int(rule_priority_by_name.get(rule_name, 0)),
                     "violated": bool(violation_count > 0),
-                    "violation_rate": float(violation_count / max(len(records), 1)),
+                    "violation_rate": float(np.mean(violation_rates)) if violation_rates else 0.0,
                     "violation_count": violation_count,
                     "mean_margin": float(np.mean(margins)) if margins else 0.0,
                     "min_margin": float(np.min(margins)) if margins else 0.0,
                     "max_margin": float(np.max(margins)) if margins else 0.0,
+                    "applicable_episode_count": included_count,
+                    "excluded_episode_count": excluded_count,
                 }
             )
 
@@ -2436,6 +2554,32 @@ class Agent:
         for idx in range(size):
             rows.append((str(names[idx]), int(priorities[idx]), float(margins[idx])))
         return rows
+
+    @staticmethod
+    def _extract_rule_applicability(step_info: Any) -> dict[str, bool]:
+        """EVAL-PROTOCOL v1.0 REQ-008: per-step applicability indicator per
+        Rulebook v2 macro rule, read directly from the authoritative
+        `RuleComponentResult.applicable` already exposed in
+        `step_info["rule_components"]` (`RulebookV2MonitorWrapper.step`,
+        `src/thesis_rl/rulebook/v2/wrapper.py`), without recomputing it.
+
+        A rule name absent from `rule_components` -- currently only R4
+        (`route_progress`) -- carries no applicability concept in the
+        authoritative Rulebook v2 aggregation
+        (`aggregate_rulebook_result`, `src/thesis_rl/rulebook/v2/
+        aggregation.py`), so callers must default such a rule to
+        always-applicable (spec §7.3) rather than treat it as absent.
+        """
+        if not isinstance(step_info, dict):
+            return {}
+        components = step_info.get("rule_components")
+        if not isinstance(components, dict):
+            return {}
+        result: dict[str, bool] = {}
+        for name, component in components.items():
+            if isinstance(component, dict) and "applicable" in component:
+                result[str(name)] = bool(component["applicable"])
+        return result
 
     @staticmethod
     def _extract_saturation_summary(step_info: Any) -> tuple[str, float] | None:

@@ -224,6 +224,20 @@ def test_metadrive_signal_provider_keeps_unknown_state_explicit():
     assert live_signal_states_by_physical_id(UnknownSignalEnv())["signal-red"] == "UNKNOWN"
 
 
+def test_metadrive_stationary_vehicle_stays_classified_as_vehicle():
+    """REQ-R2-06 (rulebook v4.8): a parked/stationary VEHICLE-typed object
+    must never be reclassified STATIC_COLLIDABLE based on its velocity, so
+    it remains a candidate for the scoped lateral-RSS metric instead of
+    silently falling out of R2 coverage entirely."""
+
+    class ParkedVehicle(_Vehicle):
+        id = "parked-runtime"
+        velocity = (0.0, 0.0)
+
+    snapshot = actor_snapshot_from_metadrive(_Env(), ParkedVehicle())
+    assert snapshot.actor_class is ActorClass.VEHICLE
+
+
 def test_metadrive_actor_requires_vehicle_speed_cap():
     class NoCapVehicle(_Vehicle):
         max_speed_m_s = None

@@ -250,6 +250,74 @@ def select_video_episodes(
     print(f"Wrote video index CSV -> {index_path}")
 
 
+def select_tracked_subset_episodes(
+    run_dir: Path,
+    *,
+    tracked_scenario_uids: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """EVAL-PROTOCOL v1.0 REQ-014/DEC-014 (amended 2026-07-25): select the
+    fixed tracked-subset episodes for GIF rendering, unconditionally, at
+    every evaluation (periodic validation and final test alike) recorded in
+    ``eval_episodes.csv`` -- as opposed to ``select_video_episodes``'s
+    post-hoc, score-based, single-eval_id curated categories.
+
+    Unlike ``select_video_episodes`` (which filters to one ``eval_id`` and
+    picks a handful of score-ranked categories), this scans every row across
+    every ``eval_id`` and keeps exactly the rows whose ``scenario_uid`` is in
+    ``tracked_scenario_uids``, tagged ``"tracked_progression"``. The same
+    fixed UID set is reused across periodic validation and final test calls
+    by construction: callers pass the identical ``tracked_scenario_uids``
+    (from `thesis_rl.scenarios.panel_manifest.select_tracked_subset_uids`)
+    each time.
+
+    Writes ``videos/metadata/tracked_subset_selection.json`` (one entry per
+    ``(eval_id, scenario_uid)`` occurrence, so training-progression across
+    evaluations is preserved) and returns the same payload.
+    """
+    eval_csv = run_dir / "csv" / "eval_episodes.csv"
+    rows = _load_eval_episodes(eval_csv)
+
+    tracked_set = set(tracked_scenario_uids)
+    matched = [row for row in rows if str(row.get("scenario_uid", "")).strip() in tracked_set]
+
+    metadata_dir = run_dir / "videos" / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    json_path = metadata_dir / "tracked_subset_selection.json"
+
+    payload = []
+    for row in matched:
+        payload.append(
+            {
+                "tag": "tracked_progression",
+                "eval_id": row.get("eval_id"),
+                "eval_type": row.get("eval_type"),
+                "episode_id": row.get("episode_id"),
+                "scenario_uid": row.get("scenario_uid"),
+                "scenario_seed": row.get("scenario_seed"),
+                "scenario_id": row.get("scenario_id"),
+                "stage": row.get("stage"),
+                "global_step": row.get("global_step"),
+                "reward": row.get("reward"),
+                "success": row.get("success"),
+                "collision": row.get("collision"),
+                "out_of_road": row.get("out_of_road"),
+                "route_completion": row.get("route_completion"),
+                "error_value": row.get("error_value"),
+                "violated_rules": row.get("violated_rules"),
+                "video_path": _prefer_authoritative_video(row)[0],
+                "video_authoritative_path": row.get("video_authoritative_path"),
+                "video_manifest_path": row.get("video_manifest_path"),
+                "trajectory_log_path": row.get("trajectory_log_path"),
+                "video_recorded_live": row.get("video_recorded_live"),
+                "has_authoritative_video": _prefer_authoritative_video(row)[1],
+            }
+        )
+    json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(f"Selected {len(payload)} tracked-subset episode occurrences for run: {run_dir}")
+    print(f"Wrote tracked-subset selection JSON -> {json_path}")
+    return payload
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Select representative episodes for video rendering.")
     parser.add_argument("--run-dir", required=True, help="Absolute or relative run directory (contains csv/).")

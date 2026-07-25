@@ -458,6 +458,22 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
                 ]
                 self._acl_episode_transitions.pop(key, None)
 
+    def atomic_boundary_remaining(self) -> int:
+        """EVAL-PROTOCOL v1.0 REQ-002/DEC-015: global env transitions still
+        needed to complete the current PPO rollout (the approved atomic
+        collection/update unit). Zero when the buffer is already empty/full
+        (i.e. exactly at a boundary) or when SB3's finer-grained ``pos``
+        offset is unavailable.
+        """
+        buffer = getattr(self.model, "rollout_buffer", None)
+        if buffer is None:
+            return 0
+        pos = int(getattr(buffer, "pos", 0))
+        if pos == 0:
+            return 0
+        buffer_size = int(getattr(buffer, "buffer_size", 0))
+        return max(0, buffer_size - pos) * int(self.n_envs)
+
     def maybe_update(
         self,
         collected_steps: int,

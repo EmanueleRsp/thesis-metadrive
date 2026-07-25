@@ -285,21 +285,25 @@ def scenario_evaluation_runtime_indices(
             **common,
         )
     elif kind == "fixed_sequence":
+        frozen_panel_uids = _resolve_frozen_panel_uids(
+            provider_cfg, split=split, scenario_uids_file_eligible=eligible_uids
+        )
+        effective_uids = frozen_panel_uids if frozen_panel_uids is not None else eligible_uids
         sequence_records = records
-        if eligible_uids is not None:
+        if effective_uids is not None:
             record_by_uid = {record.scenario_uid: record for record in records}
-            missing = [uid for uid in eligible_uids if uid not in record_by_uid]
+            missing = [uid for uid in effective_uids if uid not in record_by_uid]
             if missing:
                 raise ValueError(
-                    "Golden-suite scenario UID is outside the evaluation provider window: "
-                    f"{missing[:5]}"
+                    "Golden-suite/frozen-panel scenario UID is outside the evaluation "
+                    f"provider window: {missing[:5]}"
                 )
-            sequence_records = tuple(record_by_uid[uid] for uid in eligible_uids)
+            sequence_records = tuple(record_by_uid[uid] for uid in effective_uids)
         provider = FixedSequenceScenarioProvider(
             sequence_records,
             repeat=bool(provider_cfg.get("repeat", False)),
             default_arm=str(scenario_arm) if scenario_arm is not None else None,
-            eligible_scenario_uids=eligible_uids,
+            eligible_scenario_uids=effective_uids,
         )
     else:
         raise ValueError(f"Unsupported ScenarioNet provider kind: {kind!r}")
@@ -316,6 +320,50 @@ def scenario_evaluation_runtime_indices(
             raise ValueError(f"Scenario record has no runtime_index: {record.scenario_uid}")
         indices.append(int(record.runtime_index))
     return tuple(indices)
+
+
+def _resolve_frozen_panel_uids(
+    provider_cfg: dict[str, Any],
+    *,
+    split: str,
+    scenario_uids_file_eligible: tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    """EVAL-PROTOCOL v1.0 REQ-004/DEC-005: when a frozen panel manifest is
+    configured (``provider.panel_manifest_path``), it is the authoritative
+    source of the evaluation panel's exact identity and order, replacing
+    catalog-order derivation. If a ``scenario_uids_file`` (golden-suite UID
+    list) is *also* configured, its UID set must agree with the frozen
+    manifest's UID set exactly; any mismatch fails closed with a fatal error
+    rather than silently preferring one source (REQ-004: no fallback
+    sampling).
+
+    Returns ``None`` when no manifest is configured (today's derivation is
+    unaffected).
+    """
+    manifest_path = provider_cfg.get("panel_manifest_path")
+    if manifest_path in (None, "", "null"):
+        return None
+
+    from thesis_rl.scenarios.panel_manifest import load_panel_manifest
+
+    manifest = load_panel_manifest(str(manifest_path))
+    if manifest.split != str(split):
+        raise ValueError(
+            f"Panel manifest {manifest_path!r} is frozen for split={manifest.split!r} "
+            f"but this provider is constructed for split={split!r}."
+        )
+    if scenario_uids_file_eligible is not None:
+        manifest_set = set(manifest.scenario_uids)
+        golden_set = set(scenario_uids_file_eligible)
+        if manifest_set != golden_set:
+            raise ValueError(
+                "Panel manifest and provider.scenario_uids_file disagree on "
+                "the evaluation UID set (EVAL-PROTOCOL REQ-004: no fallback "
+                "sampling). "
+                f"Only in manifest: {sorted(manifest_set - golden_set)[:5]}; "
+                f"only in scenario_uids_file: {sorted(golden_set - manifest_set)[:5]}."
+            )
+    return manifest.scenario_uids
 
 
 def _scenarionet_dataset_root(cfg_env: Any) -> Path | None:
@@ -487,25 +535,33 @@ def make_env(
                     eligible_scenario_uids=eligible_scenario_uids,
                 )
             elif provider_kind == "fixed_sequence":
+                frozen_panel_uids = _resolve_frozen_panel_uids(
+                    provider_cfg,
+                    split=split,
+                    scenario_uids_file_eligible=eligible_scenario_uids,
+                )
+                effective_eligible_uids = (
+                    frozen_panel_uids if frozen_panel_uids is not None else eligible_scenario_uids
+                )
                 sequence_records = records
-                if eligible_scenario_uids is not None:
+                if effective_eligible_uids is not None:
                     record_by_uid = {record.scenario_uid: record for record in records}
                     missing_from_window = [
-                        uid for uid in eligible_scenario_uids if uid not in record_by_uid
+                        uid for uid in effective_eligible_uids if uid not in record_by_uid
                     ]
                     if missing_from_window:
                         raise ValueError(
-                            "Golden-suite scenario UID is outside the configured provider "
-                            f"window: {missing_from_window[:5]}"
+                            "Golden-suite/frozen-panel scenario UID is outside the "
+                            f"configured provider window: {missing_from_window[:5]}"
                         )
                     sequence_records = tuple(
-                        record_by_uid[uid] for uid in eligible_scenario_uids
+                        record_by_uid[uid] for uid in effective_eligible_uids
                     )
                 scenario_provider = FixedSequenceScenarioProvider(
                     sequence_records,
                     repeat=bool(provider_cfg.get("repeat", False)),
                     default_arm=str(scenario_arm) if scenario_arm is not None else None,
-                    eligible_scenario_uids=eligible_scenario_uids,
+                    eligible_scenario_uids=effective_eligible_uids,
                 )
             else:
                 raise ValueError(f"Unsupported ScenarioNet provider kind: {provider_kind!r}")

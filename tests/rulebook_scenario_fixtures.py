@@ -26,7 +26,7 @@ FIXTURE_COMPONENTS: dict[str, tuple[str, ...]] = {
     "vehicle_pedestrian_collision": ("collision", "ttc", "clearance"),
     "vehicle_cyclist_collision": ("collision", "ttc", "clearance"),
     "vehicle_vehicle_collision": ("collision",),
-    "rss_front_vehicle": ("rss", "ttc", "clearance"),
+    "rss_front_vehicle": ("rss", "rss_lateral", "ttc"),
     "rss_rear_vehicle": ("rss",),
     "stop_sign": ("stop",),
     "wrong_way": ("wrongway", "progress"),

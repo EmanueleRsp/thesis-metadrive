@@ -141,6 +141,10 @@ Run commands from the repository root.
 - Full bootstrap verification: `make verify`
 - Rulebook v2 tests, scoped Ruff check, and whitespace check:
   `make rulebook-v2-check`
+- Canonical EVAL-PROTOCOL v1.0 comparison-report regeneration:
+  `make analyze RUN_PROFILE=<profile>` (ablation/factor-effect tables excluded
+  by default per REQ-018; add `ANALYSIS_ARGS="--include-effects-tables"` to
+  include them)
 - Compose validation: `make config` and `make config-gpu`
 - Patch whitespace validation: `git diff --check`
 - CI shell validation: `bash -n setup.sh scripts/*.sh` and

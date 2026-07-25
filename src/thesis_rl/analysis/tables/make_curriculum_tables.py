@@ -5,7 +5,7 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 
-from thesis_rl.analysis.common_stats import mean_ci95, to_float
+from thesis_rl.analysis.common_stats import ci95, mean_sd, to_float
 from thesis_rl.common.paths import default_analysis_root_str
 
 REQUIRED_FINAL_COLUMNS = (
@@ -46,7 +46,9 @@ def _run_key(row: dict[str, str]) -> tuple[str, str, str]:
     )
 
 
-def build_curriculum_tables(aggregated_dir: Path, tables_dir: Path) -> None:
+def build_curriculum_tables(
+    aggregated_dir: Path, tables_dir: Path, *, include_ci: bool = False
+) -> None:
     final_rows = _read_rows(aggregated_dir / "final_eval_all_runs.csv")
     eval_rows = _read_rows(aggregated_dir / "evals_all_runs.csv")
     tables_dir.mkdir(parents=True, exist_ok=True)
@@ -134,39 +136,49 @@ def build_curriculum_tables(aggregated_dir: Path, tables_dir: Path) -> None:
             "rulebook_config",
             "n_seeds",
             "final_stage_reached_rate_mean",
-            "final_stage_reached_rate_ci95",
+            "final_stage_reached_rate_sd",
             "steps_to_final_stage_mean",
-            "steps_to_final_stage_ci95",
+            "steps_to_final_stage_sd",
             "failed_evals_before_promotion_mean",
-            "failed_evals_before_promotion_ci95",
+            "failed_evals_before_promotion_sd",
         ]
+        if include_ci:
+            fieldnames += [
+                "final_stage_reached_rate_ci95",
+                "steps_to_final_stage_ci95",
+                "failed_evals_before_promotion_ci95",
+            ]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for condition_id in sorted(by_condition_stage.keys()):
-            stage_m, stage_ci = mean_ci95(by_condition_stage[condition_id])
-            steps_m, steps_ci = mean_ci95(by_condition_steps[condition_id])
-            fail_m, fail_ci = mean_ci95(by_condition_failed[condition_id])
-            writer.writerow(
-                {
-                    **descriptors[condition_id],
-                    "n_seeds": len(by_condition_seed[condition_id]),
-                    "final_stage_reached_rate_mean": stage_m,
-                    "final_stage_reached_rate_ci95": stage_ci,
-                    "steps_to_final_stage_mean": steps_m,
-                    "steps_to_final_stage_ci95": steps_ci,
-                    "failed_evals_before_promotion_mean": fail_m,
-                    "failed_evals_before_promotion_ci95": fail_ci,
-                }
-            )
+            n_seeds = len(by_condition_seed[condition_id])
+            stage_m, stage_sd = mean_sd(by_condition_stage[condition_id])
+            steps_m, steps_sd = mean_sd(by_condition_steps[condition_id])
+            fail_m, fail_sd = mean_sd(by_condition_failed[condition_id])
+            row = {
+                **descriptors[condition_id],
+                "n_seeds": n_seeds,
+                "final_stage_reached_rate_mean": stage_m,
+                "final_stage_reached_rate_sd": stage_sd,
+                "steps_to_final_stage_mean": steps_m,
+                "steps_to_final_stage_sd": steps_sd,
+                "failed_evals_before_promotion_mean": fail_m,
+                "failed_evals_before_promotion_sd": fail_sd,
+            }
+            if include_ci:
+                row["final_stage_reached_rate_ci95"] = ci95(stage_sd, n_seeds)
+                row["steps_to_final_stage_ci95"] = ci95(steps_sd, n_seeds)
+                row["failed_evals_before_promotion_ci95"] = ci95(fail_sd, n_seeds)
+            writer.writerow(row)
 
     md_path = tables_dir / "curriculum_efficiency.md"
     with md_path.open("w", encoding="utf-8") as handle:
         handle.write("| Condition | n | Final stage reached | Steps to final stage | Failed evals before promotion |\n")
         handle.write("| --- | --- | --- | --- | --- |\n")
         for condition_id in sorted(by_condition_stage.keys()):
-            stage_m, stage_ci = mean_ci95(by_condition_stage[condition_id])
-            steps_m, steps_ci = mean_ci95(by_condition_steps[condition_id])
-            fail_m, fail_ci = mean_ci95(by_condition_failed[condition_id])
+            stage_m, stage_ci = mean_sd(by_condition_stage[condition_id])
+            steps_m, steps_ci = mean_sd(by_condition_steps[condition_id])
+            fail_m, fail_ci = mean_sd(by_condition_failed[condition_id])
             handle.write(
                 "| "
                 + " | ".join(
@@ -188,11 +200,17 @@ def build_curriculum_tables(aggregated_dir: Path, tables_dir: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build curriculum efficiency tables by condition.")
     parser.add_argument("--analysis-root", default=default_analysis_root_str())
+    parser.add_argument(
+        "--include-ci",
+        action="store_true",
+        help="Also emit an optional 1.96*sd/sqrt(n) CI95 column (off by default, REQ-009/DEC-003).",
+    )
     args = parser.parse_args()
     analysis_root = Path(args.analysis_root)
     build_curriculum_tables(
         aggregated_dir=analysis_root / "aggregated",
         tables_dir=analysis_root / "tables",
+        include_ci=bool(args.include_ci),
     )
 
 

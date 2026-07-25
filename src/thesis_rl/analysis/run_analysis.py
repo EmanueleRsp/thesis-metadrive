@@ -25,18 +25,22 @@ def _build_tables_for_root(
     success_threshold: float,
     collision_threshold: float,
     route_completion_threshold: float,
+    include_ci: bool = False,
 ) -> None:
     build_final_tables(
         aggregated_dir=aggregated_dir,
         tables_dir=tables_dir,
+        include_ci=include_ci,
     )
     build_curriculum_tables(
         aggregated_dir=aggregated_dir,
         tables_dir=tables_dir,
+        include_ci=include_ci,
     )
     build_rulebook_tables(
         aggregated_dir=aggregated_dir,
         tables_dir=tables_dir,
+        include_ci=include_ci,
     )
     build_sample_efficiency_tables(
         aggregated_dir=aggregated_dir,
@@ -44,10 +48,12 @@ def _build_tables_for_root(
         success_threshold=success_threshold,
         collision_threshold=collision_threshold,
         route_completion_threshold=route_completion_threshold,
+        include_ci=include_ci,
     )
     build_generalization_tables(
         aggregated_dir=aggregated_dir,
         tables_dir=tables_dir,
+        include_ci=include_ci,
     )
     if include_effects_tables:
         build_factor_effect_tables(
@@ -86,7 +92,9 @@ def main() -> None:
     parser.add_argument("--total-timesteps", default=None)
     parser.add_argument("--eval-episodes", default=None)
     parser.add_argument("--final-eval-episodes", default=None)
-    parser.add_argument("--seed-list", default="0,1,2,3,4,5,6,7,8,9")
+    # EVAL-PROTOCOL v1.0 DEC-001: the official training-seed list is [0,1,2],
+    # replacing the superseded 10-seed candidate-protocol default.
+    parser.add_argument("--seed-list", default="0,1,2")
     parser.add_argument("--only", choices=("all", "aggregate", "tables", "plots"), default="all")
     parser.add_argument(
         "--comparison-dimension",
@@ -117,6 +125,17 @@ def main() -> None:
         "--include-effects-tables",
         action="store_true",
         help="Include ablation/effect tables (non-core).",
+    )
+    parser.add_argument(
+        "--include-ci",
+        action="store_true",
+        help=(
+            "Also compute and report an optional 1.96*sd_a(x)/sqrt(n) 95%% "
+            "confidence-interval column alongside the mandatory mean/SD "
+            "reporting (off by default; EVAL-PROTOCOL v1.0 REQ-009/DEC-003, "
+            "amended 2026-07-25). Never substitutes for raw seed values, "
+            "mean, or sample standard deviation."
+        ),
     )
     parser.add_argument(
         "--include-diagnostic-plots",
@@ -180,6 +199,7 @@ def main() -> None:
                     success_threshold=float(args.success_threshold),
                     collision_threshold=float(args.collision_threshold),
                     route_completion_threshold=float(args.route_completion_threshold),
+                    include_ci=bool(args.include_ci),
                 )
         else:
             _build_tables_for_root(
@@ -189,6 +209,7 @@ def main() -> None:
                 success_threshold=float(args.success_threshold),
                 collision_threshold=float(args.collision_threshold),
                 route_completion_threshold=float(args.route_completion_threshold),
+                include_ci=bool(args.include_ci),
             )
 
     if args.only in ("all", "plots"):

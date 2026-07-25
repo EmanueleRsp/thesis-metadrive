@@ -203,6 +203,8 @@ class LiveEvalEpisodeRecorder:
         save_manifest: bool,
         save_trajectory_log: bool,
         algorithm: str = "unknown",
+        output_dir_name: str = "final_eval",
+        tracked_scenario_uids: frozenset[str] | None = None,
     ) -> None:
         self._run_dir = run_dir
         self._videos_dir = videos_dir
@@ -217,6 +219,17 @@ class LiveEvalEpisodeRecorder:
         self._trajectory_rows: list[dict[str, Any]] = []
         self._warning: str | None = None
         self._diagnostic_state = DiagnosticState(algorithm=str(algorithm))
+        # REQ-014/DEC-014 (amended 2026-07-25): the periodic tracked-subset
+        # recorder writes under a distinct output directory
+        # (``periodic_eval/step_<N>``, vs. the final-test
+        # ``final_eval``/eval_<id>`` convention) and only persists to disk
+        # when the episode's ``scenario_uid`` -- known only after the first
+        # post-reset ``step_info``, see ``record_step`` below -- is in the
+        # tracked-subset allowlist. Both default to the pre-existing
+        # final-test behavior (`output_dir_name="final_eval"`,
+        # `tracked_scenario_uids=None` means "record every episode").
+        self._output_dir_name = str(output_dir_name)
+        self._tracked_scenario_uids = tracked_scenario_uids
 
     def record_step(
         self,
@@ -244,6 +257,10 @@ class LiveEvalEpisodeRecorder:
             )
         )
         self._diagnostic_state.update(float(reward))
+        if self._manifest_payload.get("scenario_uid") is None and isinstance(step_info, dict):
+            step_scenario_uid = step_info.get("scenario_uid")
+            if step_scenario_uid is not None:
+                self._manifest_payload["scenario_uid"] = str(step_scenario_uid)
         if self._warning is not None:
             return
         try:
@@ -269,10 +286,28 @@ class LiveEvalEpisodeRecorder:
             self._frames.clear()
 
     def finalize_episode(self, *, episode_metrics: dict[str, Any]) -> dict[str, Any]:
-        eval_dir = self._videos_dir / "final_eval" / f"eval_{self._eval_id:04d}"
-        video_path = eval_dir / f"episode_{self._episode_id:04d}.gif"
-        manifest_path = eval_dir / f"episode_{self._episode_id:04d}.manifest.json"
-        trajectory_path = eval_dir / f"episode_{self._episode_id:04d}.trajectory.jsonl"
+        if self._tracked_scenario_uids is not None:
+            current_scenario_uid = self._manifest_payload.get("scenario_uid")
+            if current_scenario_uid not in self._tracked_scenario_uids:
+                # Not a tracked-subset scenario_uid (or the episode ended
+                # before any step_info arrived): discard the buffered
+                # frames/trajectory, write nothing to disk, keep on-disk
+                # output bounded to the small fixed tracked subset.
+                return {
+                    "video_path": None,
+                    "video_authoritative_path": None,
+                    "video_manifest_path": None,
+                    "trajectory_log_path": None,
+                    "video_recorded_live": False,
+                    "replay_warning": "periodic_tracked_subset_skip:not_in_tracked_subset",
+                }
+            stem = str(current_scenario_uid)
+        else:
+            stem = f"episode_{self._episode_id:04d}"
+        eval_dir = self._videos_dir / self._output_dir_name / f"eval_{self._eval_id:04d}"
+        video_path = eval_dir / f"{stem}.gif"
+        manifest_path = eval_dir / f"{stem}.manifest.json"
+        trajectory_path = eval_dir / f"{stem}.trajectory.jsonl"
 
         video_rel = None
         recorded_live = False
@@ -441,4 +476,160 @@ def maybe_build_live_final_eval_recorder_factory(
         checkpoint_path=checkpoint_path,
         checkpoint_type=checkpoint_type,
         checkpoint_global_step=checkpoint_global_step,
+    )
+
+
+def build_periodic_tracked_subset_recorder_factory(
+    *,
+    cfg: Any,
+    run_dir: Path,
+    resolved_env_config: dict[str, Any],
+    eval_id: int,
+    global_step: int,
+    stage: str,
+    stage_index: int,
+    checkpoint_path: str,
+    checkpoint_type: str,
+    checkpoint_global_step: int,
+    tracked_scenario_uids: frozenset[str],
+) -> Any:
+    """REQ-014/DEC-014 (amended 2026-07-25): build the recorder factory for
+    the cadence-gated (every 100,000 timesteps, `train_loop
+    ._make_tracked_subset_render_gate`) periodic-validation tracked-subset
+    GIF render.
+
+    A ``scenario_uid`` is only known once the first post-reset ``step_info``
+    arrives (``thesis_scenario_env.reset``/``step`` merge scenario metadata
+    into ``info``, but the parallel evaluation path installs episode
+    recorders *before* resetting slots -- see
+    ``Agent._evaluate_parallel._install_episode``), so this factory installs
+    a real ``LiveEvalEpisodeRecorder`` for every episode of the periodic
+    evaluation, and relies on ``LiveEvalEpisodeRecorder`` itself to persist
+    to disk only when the now-known ``scenario_uid`` is in
+    ``tracked_scenario_uids`` (see ``finalize_episode``). On-disk output is
+    therefore bounded to the small fixed tracked subset regardless of
+    ``eval_episodes``, at the cost of buffering (and discarding) frames for
+    the untracked episodes of the same periodic evaluation -- acceptable
+    because this factory only fires once per 100,000-timestep cadence
+    window, not at every periodic evaluation.
+
+    GIFs land under ``videos_dir/periodic_eval/step_<global_step>/eval_<id>/
+    <scenario_uid>.gif``, distinct from the final-test convention
+    (``videos_dir/final_eval/eval_<id>/episode_<id>.gif``) and named by
+    ``scenario_uid`` so a given tracked case is trivially comparable across
+    evaluations.
+    """
+    fps = int(cfg.video.get("fps", 20))
+    topdown_cfg = cfg.video.get("topdown", {})
+    videos_dir = Path(str(cfg.paths.videos_dir))
+    save_manifest = bool(cfg.video.get("save_manifest", True))
+    save_trajectory_log = bool(cfg.video.get("save_trajectory_log", True))
+    algorithm = algorithm_name_from_cfg(cfg)
+    output_dir_name = f"periodic_eval/step_{int(global_step):07d}"
+
+    base_manifest = {
+        "run_id": Path(str(cfg.paths.get("run_dir", run_dir))).name,
+        "eval_id": int(eval_id),
+        "eval_type": "periodic_tracked_subset",
+        "scenario_set": "curriculum_eval",
+        "checkpoint_path": str(checkpoint_path),
+        "checkpoint_type": str(checkpoint_type),
+        "checkpoint_global_step": int(checkpoint_global_step),
+        "seed": int(cfg.seed),
+        "deterministic": bool(cfg.experiment.eval_deterministic),
+        "curriculum_stage": str(stage),
+        "stage_index": int(stage_index),
+        "env_config_resolved": _json_safe(resolved_env_config),
+        "map_config": _json_safe(resolved_env_config.get("map_config")),
+        "traffic_density": _json_safe(resolved_env_config.get("traffic_density")),
+        "traffic_mode": _json_safe(
+            resolved_env_config.get(
+                "traffic_mode", resolved_env_config.get("traffic_vehicle_config")
+            )
+        ),
+        "termination_flags": _json_safe(
+            {
+                "horizon": resolved_env_config.get("horizon"),
+                "truncate_as_terminate": resolved_env_config.get("truncate_as_terminate"),
+            }
+        ),
+        "reward_type": str(cfg.reward.type),
+        "reward_behavior": str(cfg.reward.behavior),
+        "rulebook_config": str(cfg.reward.get("rulebook_config", "none")),
+        "wrappers": None,
+    }
+
+    def factory(episode_ctx: dict[str, Any]) -> Any:
+        episode_id = int(episode_ctx["episode_id"])
+        scenario_seed = episode_ctx.get("scenario_seed")
+        scenario_uid = episode_ctx.get("scenario_uid")
+        manifest_payload = {
+            **base_manifest,
+            "episode_id": episode_id,
+            "scenario_seed": int(scenario_seed) if scenario_seed is not None else None,
+            "scenario_id": f"seed_{scenario_seed}" if scenario_seed is not None else None,
+            "scenario_uid": str(scenario_uid) if scenario_uid is not None else None,
+        }
+        return LiveEvalEpisodeRecorder(
+            run_dir=run_dir,
+            videos_dir=videos_dir,
+            eval_id=eval_id,
+            episode_id=episode_id,
+            fps=fps,
+            topdown_cfg=topdown_cfg,
+            manifest_payload=manifest_payload,
+            save_manifest=save_manifest,
+            save_trajectory_log=save_trajectory_log,
+            algorithm=algorithm,
+            output_dir_name=output_dir_name,
+            tracked_scenario_uids=tracked_scenario_uids,
+        )
+
+    return factory
+
+
+def maybe_build_periodic_tracked_subset_recorder_factory(
+    *,
+    cfg: Any,
+    run_dir: Path,
+    resolved_env_config: dict[str, Any],
+    eval_id: int,
+    global_step: int,
+    stage: str,
+    stage_index: int,
+    checkpoint_path: str,
+    checkpoint_type: str,
+    checkpoint_global_step: int,
+    tracked_scenario_uids: tuple[str, ...],
+) -> Any:
+    """REQ-014/DEC-014 (amended 2026-07-25): gate for the periodic tracked-
+    subset GIF render. Deliberately independent of
+    ``cfg.video.record_intermediate_evals`` (that flag governs the separate,
+    pre-existing full-panel intermediate-eval recording, not the small fixed
+    tracked subset this DEC-014 amendment approved), but still requires the
+    shared live-recording infra to be enabled
+    (``cfg.video.enabled``/``mode == "live_final_eval"``) and a non-empty
+    ``tracked_scenario_uids`` -- returning ``None`` (never a fallback draw)
+    otherwise, consistent with ``train_loop
+    ._tracked_subset_uids_from_resolved_env_cfg``'s no-manifest-configured
+    precedent.
+    """
+    if not tracked_scenario_uids:
+        return None
+    if not bool(cfg.video.get("enabled", False)):
+        return None
+    if str(cfg.video.get("mode", "offline_replay")).strip().lower() != "live_final_eval":
+        return None
+    return build_periodic_tracked_subset_recorder_factory(
+        cfg=cfg,
+        run_dir=run_dir,
+        resolved_env_config=resolved_env_config,
+        eval_id=eval_id,
+        global_step=global_step,
+        stage=stage,
+        stage_index=stage_index,
+        checkpoint_path=checkpoint_path,
+        checkpoint_type=checkpoint_type,
+        checkpoint_global_step=checkpoint_global_step,
+        tracked_scenario_uids=frozenset(str(uid) for uid in tracked_scenario_uids),
     )

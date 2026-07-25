@@ -95,6 +95,10 @@ class FootprintRouteCoordinates:
     center_s_m: float
     front_s_m: float
     rear_s_m: float
+    center_tangent_xy: tuple[float, float]
+    center_lateral_m: float
+    lateral_min_m: float
+    lateral_max_m: float
 
 
 def associate_route_lane(
@@ -163,7 +167,14 @@ def associate_route_lane(
 def footprint_route_coordinates(
     footprint: BaseGeometry, route: RoutePolyline, *, position_z: float
 ) -> FootprintRouteCoordinates:
-    """Project center then vertices on its local route branch as required by §2.9.2."""
+    """Project center then vertices on its local route branch as required by §2.9.2.
+
+    The center's tangent/lateral projection also anchors the shared
+    tangent/normal frame used by the R2 scoped lateral-RSS metric
+    (rulebook v4.8 specification §7): ``lateral_min_m``/``lateral_max_m`` are
+    the min/max of each vertex's ``lateral_distance_m`` (signed normal-axis
+    offset), mirroring ``front_s_m``/``rear_s_m`` on the tangent axis.
+    """
 
     if footprint.is_empty or not footprint.is_valid:
         raise ValueError("Footprint must be non-empty and valid")
@@ -179,6 +190,10 @@ def footprint_route_coordinates(
         center_s_m=center_projection.s_m,
         front_s_m=max(projection.s_m for projection in vertex_projections),
         rear_s_m=min(projection.s_m for projection in vertex_projections),
+        center_tangent_xy=center_projection.tangent_xy,
+        center_lateral_m=center_projection.lateral_distance_m,
+        lateral_min_m=min(projection.lateral_distance_m for projection in vertex_projections),
+        lateral_max_m=max(projection.lateral_distance_m for projection in vertex_projections),
     )
 
 
@@ -189,3 +204,20 @@ def bumper_to_bumper_gap(
 
     is_front = other.rear_s_m >= ego.front_s_m - SIGNED_DISTANCE_EPSILON_M
     return max(0.0, other.rear_s_m - ego.front_s_m), is_front
+
+
+def lateral_edge_to_edge_gap(
+    ego: FootprintRouteCoordinates, other: FootprintRouteCoordinates
+) -> tuple[float, int]:
+    """Return the non-negative lateral edge-to-edge gap and side of ``other``.
+
+    Mirrors :func:`bumper_to_bumper_gap` on the normal axis instead of the
+    tangent axis (rulebook v4.8 specification §7, ``d_i^lat``). The lateral
+    axis is symmetric (no inherent "front"), so the side is reported as
+    ``+1`` when ``other`` is on the positive-normal side of ``ego``
+    (``other.center_lateral_m >= ego.center_lateral_m``), else ``-1``.
+    """
+
+    if other.center_lateral_m >= ego.center_lateral_m:
+        return max(0.0, other.lateral_min_m - ego.lateral_max_m), 1
+    return max(0.0, ego.lateral_min_m - other.lateral_max_m), -1

@@ -6,7 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from thesis_rl.analysis.common_stats import mean_ci95, to_float
+from thesis_rl.analysis.common_stats import ci95, mean_sd, to_float
 from thesis_rl.common.paths import default_analysis_root_str
 
 METRICS = (
@@ -71,7 +71,9 @@ def _descriptor(row: dict[str, str]) -> dict[str, str]:
     }
 
 
-def build_generalization_tables(*, aggregated_dir: Path, tables_dir: Path) -> None:
+def build_generalization_tables(
+    *, aggregated_dir: Path, tables_dir: Path, include_ci: bool = False
+) -> None:
     eval_rows = _read_rows(aggregated_dir / "evals_all_runs.csv")
     final_rows = _read_rows(aggregated_dir / "final_eval_all_runs.csv")
     tables_dir.mkdir(parents=True, exist_ok=True)
@@ -162,13 +164,21 @@ def build_generalization_tables(*, aggregated_dir: Path, tables_dir: Path) -> No
             fieldnames.extend(
                 [
                     f"{metric}_train_mean",
-                    f"{metric}_train_ci95",
+                    f"{metric}_train_sd",
                     f"{metric}_eval_mean",
-                    f"{metric}_eval_ci95",
+                    f"{metric}_eval_sd",
                     f"{metric}_gap_eval_minus_train_mean",
-                    f"{metric}_gap_eval_minus_train_ci95",
+                    f"{metric}_gap_eval_minus_train_sd",
                 ]
             )
+            if include_ci:
+                fieldnames.extend(
+                    [
+                        f"{metric}_train_ci95",
+                        f"{metric}_eval_ci95",
+                        f"{metric}_gap_eval_minus_train_ci95",
+                    ]
+                )
 
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -191,28 +201,40 @@ def build_generalization_tables(*, aggregated_dir: Path, tables_dir: Path) -> No
                 ]
 
                 if train_values:
-                    train_mean, train_ci = mean_ci95(train_values)
+                    train_mean, train_sd = mean_sd(train_values)
                     row_out[f"{metric}_train_mean"] = train_mean
-                    row_out[f"{metric}_train_ci95"] = train_ci
+                    row_out[f"{metric}_train_sd"] = train_sd
+                    if include_ci:
+                        row_out[f"{metric}_train_ci95"] = ci95(train_sd, len(train_values))
                 else:
                     row_out[f"{metric}_train_mean"] = ""
-                    row_out[f"{metric}_train_ci95"] = ""
+                    row_out[f"{metric}_train_sd"] = ""
+                    if include_ci:
+                        row_out[f"{metric}_train_ci95"] = ""
 
                 if eval_values:
-                    eval_mean, eval_ci = mean_ci95(eval_values)
+                    eval_mean, eval_sd = mean_sd(eval_values)
                     row_out[f"{metric}_eval_mean"] = eval_mean
-                    row_out[f"{metric}_eval_ci95"] = eval_ci
+                    row_out[f"{metric}_eval_sd"] = eval_sd
+                    if include_ci:
+                        row_out[f"{metric}_eval_ci95"] = ci95(eval_sd, len(eval_values))
                 else:
                     row_out[f"{metric}_eval_mean"] = ""
-                    row_out[f"{metric}_eval_ci95"] = ""
+                    row_out[f"{metric}_eval_sd"] = ""
+                    if include_ci:
+                        row_out[f"{metric}_eval_ci95"] = ""
 
                 if gap_values:
-                    gap_mean, gap_ci = mean_ci95(gap_values)
+                    gap_mean, gap_sd = mean_sd(gap_values)
                     row_out[f"{metric}_gap_eval_minus_train_mean"] = gap_mean
-                    row_out[f"{metric}_gap_eval_minus_train_ci95"] = gap_ci
+                    row_out[f"{metric}_gap_eval_minus_train_sd"] = gap_sd
+                    if include_ci:
+                        row_out[f"{metric}_gap_eval_minus_train_ci95"] = ci95(gap_sd, len(gap_values))
                 else:
                     row_out[f"{metric}_gap_eval_minus_train_mean"] = ""
-                    row_out[f"{metric}_gap_eval_minus_train_ci95"] = ""
+                    row_out[f"{metric}_gap_eval_minus_train_sd"] = ""
+                    if include_ci:
+                        row_out[f"{metric}_gap_eval_minus_train_ci95"] = ""
 
             writer.writerow(row_out)
 
@@ -238,9 +260,9 @@ def build_generalization_tables(*, aggregated_dir: Path, tables_dir: Path) -> No
                 ]
                 if not train_values or not eval_values or not gap_values:
                     return "-"
-                train_mean, train_ci = mean_ci95(train_values)
-                eval_mean, eval_ci = mean_ci95(eval_values)
-                gap_mean, gap_ci = mean_ci95(gap_values)
+                train_mean, train_ci = mean_sd(train_values)
+                eval_mean, eval_ci = mean_sd(eval_values)
+                gap_mean, gap_ci = mean_sd(gap_values)
                 return (
                     f"{train_mean:.4f}±{train_ci:.4f} / "
                     f"{eval_mean:.4f}±{eval_ci:.4f} / "
@@ -268,11 +290,17 @@ def build_generalization_tables(*, aggregated_dir: Path, tables_dir: Path) -> No
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build train-vs-eval generalization gap tables by condition.")
     parser.add_argument("--analysis-root", default=default_analysis_root_str())
+    parser.add_argument(
+        "--include-ci",
+        action="store_true",
+        help="Also emit an optional 1.96*sd/sqrt(n) CI95 column (off by default, REQ-009/DEC-003).",
+    )
     args = parser.parse_args()
     analysis_root = Path(args.analysis_root)
     build_generalization_tables(
         aggregated_dir=analysis_root / "aggregated",
         tables_dir=analysis_root / "tables",
+        include_ci=bool(args.include_ci),
     )
 
 

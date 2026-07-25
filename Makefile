@@ -275,6 +275,14 @@ format:
 format-check:
 	docker compose run --rm dev uv run --no-sync ruff format --check $(PYTHON_QUALITY_PATHS)
 
+# Canonical EVAL-PROTOCOL v1.0 analysis entry point (DEC-010). Regenerates the
+# comparison report deterministically from canonical run artifacts under
+# outputs/<RUN_PROFILE>/. Ablation/factor-effect tables are excluded by
+# default per REQ-018; pass ANALYSIS_ARGS="--include-effects-tables" to
+# include them as a separately labeled diagnostic.
+analyze:
+	docker compose run --rm dev uv run --no-sync python -m thesis_rl.analysis.run_analysis --run-profile $(RUN_PROFILE) $(ANALYSIS_ARGS)
+
 gpu-check:
 	docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev uv run --no-sync python -c 'import torch; assert torch.cuda.is_available(); x = torch.tensor([1.0], device="cuda"); assert (x * 2).item() == 2.0; print(f"torch={torch.__version__} gpu={torch.cuda.get_device_name(0)} capability={torch.cuda.get_device_capability(0)}")'
 

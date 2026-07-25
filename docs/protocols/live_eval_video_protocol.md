@@ -1,5 +1,16 @@
 # Live Evaluation Video Protocol
 
+> **Amended (2026-07-24):** this document remains implementation guidance for
+> live/replay video artifacts, but qualitative case-selection requirements are
+> now governed by REQ-014 of
+> `docs/specifications/evaluation_protocol_v1.0_specification.md`
+> (`EVAL-PROTOCOL` v1.0, `AUTHORITATIVE`), per its `DEC-008`: selection is
+> fully post hoc, using the four categories `representative_success`,
+> `representative_failure`, `severe_rule_violation`, `algorithm_disagreement`,
+> with no mandatory predeclaration and no mandatory pre-rendering of all
+> episodes. Where this document's case-selection language conflicts with
+> REQ-014, REQ-014 governs.
+
 ## Objective
 
 Make the videos used for analysis, reporting, and the thesis consistent with

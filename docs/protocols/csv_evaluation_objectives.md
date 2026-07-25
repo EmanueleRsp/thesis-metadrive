@@ -1,5 +1,12 @@
 # CSV Evaluation Objectives
 
+> **Consolidated (2026-07-24):** this document is retained as the subordinate
+> implementation-level CSV schema referenced by
+> `docs/specifications/evaluation_protocol_v1.0_specification.md`
+> (`EVAL-PROTOCOL` v1.0, `AUTHORITATIVE`), per its `DEC-008`. Its schema
+> content remains applicable; normative statistical/seed decisions belong to
+> `EVAL-PROTOCOL`, not to this document.
+
 This document collects the CSV evaluation and logging objectives for runs, with
 an incremental plan designed to avoid incompatibilities across experiments.
 
