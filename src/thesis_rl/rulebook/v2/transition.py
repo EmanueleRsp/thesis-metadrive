@@ -13,6 +13,8 @@ from dataclasses import dataclass, replace
 from math import cos, isfinite, sin
 import time
 
+from shapely.geometry.base import BaseGeometry
+
 from thesis_rl.rulebook.v2.components.controls import signal_group_state
 from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact, RSSCandidate
 from thesis_rl.rulebook.v2.geometry.conflict_zones import (
@@ -511,6 +513,25 @@ def _approach_control_for_movement(cache: EpisodeCache, movement_key) -> Approac
     return ApproachControl.NONE
 
 
+def _cleared_vehicle_yield_illegal_entries(
+    *, cache: EpisodeCache, memory: RulebookMemory, ego_footprint: BaseGeometry
+) -> frozenset[tuple[str, str]]:
+    """Drop illegal-entry latches for zones the ego footprint has already left.
+
+    Section 2.8.2 selection can exclude a zone from "ahead" candidacy
+    (epsilon-scoped) long before the ego footprint stops intersecting it
+    (vehicle-length scoped), so the currently selected zone_id is not a
+    reliable signal for releasing latches on zones ego has fully exited
+    (ADR-025).
+    """
+    active = set(memory.vehicle_yield_illegal_entries)
+    for actor_id, zone_id in memory.vehicle_yield_illegal_entries:
+        record = cache.conflict_zones.get(zone_id)
+        if record is not None and not ego_footprint.intersects(record.polygon):
+            active.discard((actor_id, zone_id))
+    return frozenset(active)
+
+
 def _vehicle_yield_inputs(
     *,
     pre: EnvSnapshot,
@@ -530,6 +551,9 @@ def _vehicle_yield_inputs(
 ) -> tuple[dict[str, object], CacheDelta]:
     """Construct live vehicle-yield inputs without inferring priority from geometry."""
 
+    cleared_illegal_entries = _cleared_vehicle_yield_illegal_entries(
+        cache=cache, memory=memory, ego_footprint=post.ego.footprint
+    )
     association = ego_association
     if association is None:
         association = associate_route_lane(
@@ -553,7 +577,7 @@ def _vehicle_yield_inputs(
         "delta_t_s": delta_t_s,
         "ego_occupied": False,
         "entered_actor_ids": frozenset(),
-        "previous_illegal_entries": memory.vehicle_yield_illegal_entries,
+        "previous_illegal_entries": cleared_illegal_entries,
         "actor_movement_keys": (),
         "previous_frozen_movement_keys": memory.frozen_actor_movement_keys,
         "exited_actor_ids": frozenset(),
@@ -755,7 +779,7 @@ def _vehicle_yield_inputs(
             "delta_t_s": delta_t_s,
             "ego_occupied": ego_occupied,
             "entered_actor_ids": frozenset(prioritized_ids) if ego_entered else frozenset(),
-            "previous_illegal_entries": memory.vehicle_yield_illegal_entries,
+            "previous_illegal_entries": cleared_illegal_entries,
             "preexisting": candidate.zone_id in memory.preexisting_ego_occupancy_zone_ids,
             "actor_movement_keys": tuple(sorted(actor_keys.items())),
             "previous_frozen_movement_keys": memory.frozen_actor_movement_keys,
