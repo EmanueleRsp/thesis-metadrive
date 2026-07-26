@@ -68,7 +68,7 @@ def test_run_metadata_records_eval_protocol_reproducibility_fields(tmp_path) -> 
     assert "metadrive_version" in metadata["dependencies"]
     assert "scenarionet_version" in metadata["dependencies"]
     assert metadata["observation"]["specification_id"] == "OBS-V1.2"
-    assert metadata["encoder"]["specification_id"] == "ENC-V1.1"
+    assert metadata["encoder"]["specification_id"] == "ENC-V1.2"
     assert metadata["acl"]["specification_id"] == "ACL-SN-EMA-001"
     assert metadata["transition_replay"]["specification_id"] == "TRANSITION-REPLAY"
     assert metadata["evaluation_protocol"]["specification_id"] == "EVAL-PROTOCOL"

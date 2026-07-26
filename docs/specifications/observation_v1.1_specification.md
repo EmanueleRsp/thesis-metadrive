@@ -13,8 +13,11 @@ approval: "Explicit user approval in this Codex conversation"
 related_adrs:
   - "docs/decisions/ADR-002-semantic-observation-and-encoder-contract.md"
   - "docs/decisions/ADR-004-assigned-route-metadata-for-pg-and-waymo.md"
+  - "docs/decisions/ADR-026-dynamic-slot-identity-removal-and-context-quota-ranking.md"
 amendments:
   - "2026-07-17: assigned-route task metadata for PG and Waymo"
+  - "2026-07-26: clarified actor-cap fallback in the relative-speed scale (§10.2) for actors without configured_speed_cap_mps (VRUs); fixed corresponding bug in causal_semantic.py"
+  - "2026-07-26: replaced the Context quota ranking key (§8.1) with plain Euclidean distance, removing lane-relation/ahead precedence; see ADR-026"
 ---
 
 # Sintesi esecutiva
@@ -1009,14 +1012,32 @@ Chiave deterministica, in ordine:
 
 Fra i candidati non già selezionati:
 
-1. same lane;
-2. adjacent lane;
-3. davanti sulla route;
-4. minore route lateral distance;
-5. minore Euclidean distance;
-6. actor ID stabile.
+1. minore Euclidean distance;
+2. actor ID stabile.
 
 Il motivo di selezione non entra nel token.
+
+> **Emendamento 2026-07-26 (ADR-026).** La regola precedente (same lane →
+> adjacent lane → davanti sulla route → minore route lateral distance →
+> minore Euclidean distance → actor ID) dava precedenza alla relazione di
+> corsia rispetto alla distanza fisica, permettendo a un attore molto vicino
+> ma su una corsia diversa di perdere uno slot a favore di un attore lontano
+> sulla stessa corsia. La quota conflict-zone (sopra) resta invariata — CPA/
+> TTC restano il criterio corretto per il piccolo insieme di attori
+> effettivamente in conflitto attivo, coerentemente con l'evidenza che un
+> criterio di interattività batte la distanza pura solo per N piccolo
+> (Sun, Zhao, Sadigh, Zhan, Anguelov, *Identifying Driver Interactions via
+> Conditional Behavior Prediction*, ICRA 2021). Per il pool generale
+> (context quota), dove N può essere maggiore, si è scelto la distanza
+> euclidea pura invece di estendere CPA/TTC a tutti gli attori, per due
+> motivi: (1) è la pratica dominante negli encoder agent-centric per guida
+> autonoma quando la capacità è satura (es. GameFormer, Wayformer — selezione
+> per k-nearest); (2) il CPA assume estrapolazione a velocità costante, la
+> stipula meno affidabile proprio per gli attori che stanno per sterzare,
+> frenare o accelerare — gli stessi che il criterio ufficiale di selezione
+> agenti del Waymo Open Motion Dataset individua come "di interesse" tramite
+> variazione di heading, deviazione laterale e accelerazione. Dettagli
+> completi e alternative valutate in ADR-026.
 
 ## 8.2 Static selection
 
@@ -1207,6 +1228,20 @@ Categoriche:
 | Route completion | già \([0,1]\) |
 
 Se una scala è stimata empiricamente, deve usare soltanto il train split ed essere congelata prima di validation/test.
+
+**Nota di chiarimento (actor cap):** quando l'attore osservato non espone una
+capacità di velocità configurata (`configured_speed_cap_mps = None`, il caso
+sistematico per pedoni e ciclisti, che non hanno un analogo di
+`vehicle.max_speed_km_h`), l'`actor cap` usato nella scala "ego cap + actor
+cap" DEVE ricadere sull'`ego cap`, non sulla velocità istantanea dell'attore
+osservato. Far dipendere la scala dalla velocità corrente dell'attore
+renderebbe la stessa velocità relativa fisica codificata in modo diverso a
+seconda del comportamento transitorio dell'attore, con la distorsione
+massima proprio negli incontri più critici (VRU che si avvicina a velocità
+elevata). Questo chiarimento corregge un'implementazione preesistente in
+`causal_semantic.py` che usava `max(ego cap, |velocità attore|, 1.0)` come
+fallback; vedi
+`docs/implementation/semantic_v3_actor_cap_normalization_fix_exec_plan.md`.
 
 # 11. Masks, flattening e schema
 

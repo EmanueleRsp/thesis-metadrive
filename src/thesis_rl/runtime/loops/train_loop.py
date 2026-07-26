@@ -25,6 +25,7 @@ from omegaconf import DictConfig, OmegaConf
 from thesis_rl.agent.agent import Agent
 from thesis_rl.agent.planners.core.utils import call_env_method
 from thesis_rl.contracts.reward_semantics import build_reward_semantics_identity
+from thesis_rl.runtime.wiring.checkpoint_identity import build_current_checkpoint_manifest
 from thesis_rl.runtime.data_abort import RuntimeScenarioQuarantine
 from thesis_rl.curriculum.config import CurriculumConfig
 from thesis_rl.curriculum.manager import CurriculumManager
@@ -544,6 +545,56 @@ def _append_rule_metrics_rows(
         )
 
 
+def _append_subrule_metrics_rows(
+    recorder: CSVRecorder,
+    *,
+    base_fields: dict[str, Any],
+    eval_id: int,
+    eval_type: str,
+    scenario_set: str,
+    chunk_id: int,
+    stage: str,
+    stage_index: int,
+    global_step: int,
+    metrics: dict[str, Any],
+) -> None:
+    """EP-SUBRULE-DIAG: additive R2/R3 sub-rule diagnostics (`DEC-SUB-005`
+    duplicates `_append_rule_metrics_rows` rather than refactoring it)."""
+
+    rows = metrics.get("per_subrule", [])
+    if not isinstance(rows, list):
+        return
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        recorder.append_row(
+            "subrule_metrics.csv",
+            {
+                **base_fields,
+                "eval_id": eval_id,
+                "eval_type": eval_type,
+                "scenario_set": scenario_set,
+                "chunk_id": chunk_id,
+                "stage": stage,
+                "stage_index": stage_index,
+                "global_step": global_step,
+                "scenario_source": row.get("scenario_source"),
+                "macro_rule": row.get("macro_rule"),
+                "subrule_name": row.get("subrule_name"),
+                "applicability_rate": row.get("applicability_rate"),
+                "violation_rate": row.get("violation_rate"),
+                "mean_cost": row.get("mean_cost"),
+                "max_cost": row.get("max_cost"),
+                "dominance_share": row.get("dominance_share"),
+                "worst_component_count": row.get("worst_component_count"),
+                "macro_violated_step_count": row.get("macro_violated_step_count"),
+                "multi_violation_share": row.get("multi_violation_share"),
+                "applicable_episode_count": row.get("applicable_episode_count"),
+                "excluded_episode_count": row.get("excluded_episode_count"),
+            },
+        )
+
+
 def run_training(cfg: DictConfig) -> None:
     # Save metadata for this run (config, git info, etc.)
     artifacts_dir = Path(str(cfg.paths.artifacts_dir))
@@ -826,6 +877,7 @@ def run_training(cfg: DictConfig) -> None:
             preprocessor=preprocessor, planner=planner, adapter=adapter, ema_alpha=ema_alpha_cfg
         )
         agent.set_checkpoint_identity(build_reward_semantics_identity(cfg))
+        agent.set_checkpoint_manifest(build_current_checkpoint_manifest(cfg, env))
 
         async_evaluation_manager: AsyncEvaluationManager | None = None
 
@@ -971,6 +1023,18 @@ def run_training(cfg: DictConfig) -> None:
                 },
             )
             _append_rule_metrics_rows(
+                recorder,
+                base_fields=base_csv_fields,
+                eval_id=job.eval_id,
+                eval_type="intermediate",
+                scenario_set="curriculum_eval",
+                chunk_id=int(job.metadata.get("chunk_id", 0)),
+                stage=job.stage,
+                stage_index=job.stage_index,
+                global_step=job.global_step,
+                metrics=metrics,
+            )
+            _append_subrule_metrics_rows(
                 recorder,
                 base_fields=base_csv_fields,
                 eval_id=job.eval_id,
@@ -1923,6 +1987,18 @@ def run_training(cfg: DictConfig) -> None:
                     global_step=current_global_step,
                     metrics=metrics,
                 )
+                _append_subrule_metrics_rows(
+                    recorder,
+                    base_fields=base_csv_fields,
+                    eval_id=eval_id,
+                    eval_type="intermediate",
+                    scenario_set="curriculum_eval",
+                    chunk_id=chunk_id,
+                    stage=current_stage_name,
+                    stage_index=current_stage_index,
+                    global_step=current_global_step,
+                    metrics=metrics,
+                )
                 save_intermediate_checkpoints(
                     current_global_step=current_global_step,
                     chunk_id=chunk_id,
@@ -2114,6 +2190,18 @@ def run_training(cfg: DictConfig) -> None:
                 },
             )
             _append_rule_metrics_rows(
+                recorder,
+                base_fields=base_csv_fields,
+                eval_id=eval_id,
+                eval_type="intermediate",
+                scenario_set="curriculum_eval",
+                chunk_id=chunk_id,
+                stage=current_stage_name,
+                stage_index=current_stage_index,
+                global_step=current_global_step,
+                metrics=metrics,
+            )
+            _append_subrule_metrics_rows(
                 recorder,
                 base_fields=base_csv_fields,
                 eval_id=eval_id,
@@ -2463,6 +2551,18 @@ def run_training(cfg: DictConfig) -> None:
             },
         )
         _append_rule_metrics_rows(
+            recorder,
+            base_fields=base_csv_fields,
+            eval_id=final_eval_id,
+            eval_type="final",
+            scenario_set="test",
+            chunk_id=chunk_id,
+            stage=final_stage_name,
+            stage_index=final_stage_index,
+            global_step=total_timesteps,
+            metrics=metrics,
+        )
+        _append_subrule_metrics_rows(
             recorder,
             base_fields=base_csv_fields,
             eval_id=final_eval_id,

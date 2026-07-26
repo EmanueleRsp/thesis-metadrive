@@ -19,6 +19,9 @@ from thesis_rl.envs.wrappers import RuleRewardWrapper
 from thesis_rl.rulebook.v2.wrapper import RulebookV2MonitorWrapper
 from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
 from thesis_rl.agent.preprocessors.identity import IdentityPreprocessor
+from thesis_rl.contracts.checkpoint_manifest import (
+    assert_checkpoint_manifest_compatible_if_present,
+)
 from thesis_rl.contracts.reward_semantics import (
     assert_reward_semantics_compatible,
     build_reward_semantics_identity,
@@ -26,6 +29,7 @@ from thesis_rl.contracts.reward_semantics import (
 from thesis_rl.reward.managers.hybrid_rulebook_manager import HybridRulebookRewardManager
 from thesis_rl.reward.scalarization import RulebookScalarizer, ScalarizationConfig
 from thesis_rl.runtime.execution.deterministic_subproc_vec_env import DeterministicSubprocVecEnv
+from thesis_rl.runtime.wiring.checkpoint_identity import build_current_checkpoint_manifest
 
 if TYPE_CHECKING:
     from thesis_rl.agent.planners.interfaces.planner import BasePlanner
@@ -308,6 +312,10 @@ def load_planner(
     assert_reward_semantics_compatible(
         checkpoint_path,
         build_reward_semantics_identity(cfg),
+    )
+    assert_checkpoint_manifest_compatible_if_present(
+        checkpoint_path,
+        build_current_checkpoint_manifest(cfg, env),
     )
     algorithm_name = str(cfg.agent.planner.algorithm.name)
     configured_device = str(cfg.device)

@@ -14,7 +14,7 @@ from omegaconf import DictConfig, OmegaConf
 # Specification identities that are currently frozen repository-wide rather
 # than per-run configurable (EVAL-PROTOCOL REQ-015 / DEC-EP metadata gap).
 OBSERVATION_SPECIFICATION_ID = "OBS-V1.2"
-ENCODER_SPECIFICATION_ID = "ENC-V1.1"
+ENCODER_SPECIFICATION_ID = "ENC-V1.2"
 ACL_SPECIFICATION_ID = "ACL-SN-EMA-001"
 ACL_SPECIFICATION_VERSION = "1.1"
 TRANSITION_REPLAY_SPECIFICATION_ID = "TRANSITION-REPLAY"

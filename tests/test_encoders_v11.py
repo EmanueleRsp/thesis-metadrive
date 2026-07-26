@@ -58,6 +58,34 @@ def test_lq_v11_is_invariant_to_masked_compliance_payload() -> None:
     assert first.grad is not None and torch.isfinite(first.grad).all()
 
 
+def test_lq_v11_dynamic_output_is_invariant_to_which_slot_holds_an_actor() -> None:
+    """Regression for ENC-V1.2/ADR-026: a fixed dynamic_slot_embedding used to
+    tag the buffer index itself, so identical actor content produced different
+    latents depending on which of the 16 sticky slots it happened to occupy."""
+
+    schema = SemanticObservationSchemaV12()
+    encoder = LatentQueryEncoderV3(schema=schema)
+    encoder.eval()
+
+    def _flat_with_actor_in_slot(slot: int) -> torch.Tensor:
+        flat = torch.zeros(1, schema.flat_dim, dtype=torch.float32)
+        dynamic = torch.zeros(1, 16, 5, 22, dtype=torch.float32)
+        dynamic_mask = torch.zeros(1, 16, 5, dtype=torch.float32)
+        dynamic[0, slot, :, 0] = 0.4
+        dynamic[0, slot, :, 1] = -0.2
+        dynamic_mask[0, slot, :] = 1.0
+        flat[:, schema.slices["dynamic"]] = dynamic.reshape(1, -1)
+        flat[:, schema.slices["dynamic_mask"]] = dynamic_mask.reshape(1, -1)
+        return flat
+
+    with torch.no_grad():
+        output_slot_0 = encoder(_flat_with_actor_in_slot(0))
+        output_slot_9 = encoder(_flat_with_actor_in_slot(9))
+
+    torch.testing.assert_close(output_slot_0, output_slot_9)
+    assert not hasattr(encoder, "dynamic_slot_embedding")
+
+
 def test_lq_v3_lite_preserves_semantic_io_contract() -> None:
     schema = SemanticObservationSchemaV12()
     encoder = LatentQueryEncoderV3Lite(schema=schema)

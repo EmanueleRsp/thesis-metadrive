@@ -309,7 +309,11 @@ class LatentQueryEncoderV3(BaseEncoder):
         self.type_embedding = nn.Embedding(10, token_dim)
         self.history_time_embedding = nn.Embedding(21, token_dim)
         self.route_slot_embedding = nn.Embedding(10, token_dim)
-        self.dynamic_slot_embedding = nn.Embedding(16, token_dim)
+        # No dynamic_slot_embedding (ENC-V1.2, ADR-026): the dynamic buffer index
+        # carries no stable meaning under sticky/first-fit slot assignment, so a
+        # learned per-slot identity tag can only encode spurious correlations,
+        # not signal. Route/static/control/interaction slots keep their
+        # embedding because those slot indices ARE semantically stable.
         self.static_slot_embedding = nn.Embedding(8, token_dim)
         self.control_slot_embedding = nn.Embedding(8, token_dim)
         self.interaction_slot_embedding = nn.Embedding(8, token_dim)
@@ -318,7 +322,6 @@ class LatentQueryEncoderV3(BaseEncoder):
             self.type_embedding,
             self.history_time_embedding,
             self.route_slot_embedding,
-            self.dynamic_slot_embedding,
             self.static_slot_embedding,
             self.control_slot_embedding,
             self.interaction_slot_embedding,
@@ -361,9 +364,6 @@ class LatentQueryEncoderV3(BaseEncoder):
         dynamic = dynamic + self.history_time_embedding(
             self._indices(5, device=device, start=16)
         ).view(1, 1, 5, -1)
-        dynamic = dynamic + self.dynamic_slot_embedding(self._indices(16, device=device)).view(
-            1, 16, 1, -1
-        )
         dynamic = dynamic.reshape(batch_size, 80, self.token_dim)
         static = self._type(self.static_projection(observation.static), 4)
         static = static + self.static_slot_embedding(self._indices(8, device=device)).view(1, 8, -1)

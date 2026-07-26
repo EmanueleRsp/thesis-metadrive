@@ -27,7 +27,10 @@ from thesis_rl.agent.planners.interfaces.planner import BasePlanner
 from thesis_rl.agent.adapters.interfaces.base import BaseAdapter
 from thesis_rl.agent.types import Transition
 from thesis_rl.agent.transition_boundary import normalize_vector_transition_boundary
-from thesis_rl.contracts.checkpoint_manifest import CheckpointManifest
+from thesis_rl.contracts.checkpoint_manifest import (
+    CheckpointManifest,
+    write_checkpoint_manifest_sidecar,
+)
 from thesis_rl.contracts.reward_semantics import write_reward_semantics_sidecar
 from thesis_rl.sb3_extensions.checkpointing import (
     CheckpointGeneration,
@@ -35,6 +38,10 @@ from thesis_rl.sb3_extensions.checkpointing import (
 )
 from thesis_rl.runtime.execution.deterministic_subproc_vec_env import RuntimeScenarioDataAbort
 from thesis_rl.runtime.data_abort import append_data_abort_record
+from thesis_rl.rulebook.v2.subrule_diagnostics import (
+    SubruleEpisodeAccumulator,
+    aggregate_subrule_episodes,
+)
 
 
 class _LiveEventLogHandler(logging.Handler):
@@ -135,6 +142,9 @@ class _ParallelEvaluationEpisode:
         self.ep_hybrid_return = 0.0
         self.ep_has_hybrid_reward = False
         self.rule_priority_by_name: dict[str, int] = {}
+        # EP-SUBRULE-DIAG: additive R2/R3 sub-rule diagnostics, not a rulebook
+        # or reward change; see `subrule_diagnostics.py`.
+        self._subrule_acc = SubruleEpisodeAccumulator()
 
     def observe_step(
         self,
@@ -181,6 +191,7 @@ class _ParallelEvaluationEpisode:
         )
         if agent._has_top_rule_violation(step_info):
             self.ep_top_rule_violating_steps += 1
+        self._subrule_acc.observe(step_info)
         applicability = agent._extract_rule_applicability(step_info)
         for rule_name, rule_priority, margin in agent._extract_rule_margins(step_info):
             self.rule_priority_by_name[rule_name] = int(rule_priority)
@@ -320,6 +331,7 @@ class _ParallelEvaluationEpisode:
             "rule_episode_violation_rates": rule_episode_violation_rate,
             "rule_applicable_step_counts": dict(self.ep_rule_applicable_step_count),
             "rule_priorities": dict(self.rule_priority_by_name),
+            "subrule_summary": self._subrule_acc.finalize(),
             "video_path": artifact_payload.get("video_path"),
             "video_authoritative_path": artifact_payload.get("video_authoritative_path"),
             "video_manifest_path": artifact_payload.get("video_manifest_path"),
@@ -340,6 +352,7 @@ class Agent:
         adapter: BaseAdapter,
         ema_alpha: float | None = None,
         checkpoint_identity: Mapping[str, Any] | None = None,
+        checkpoint_manifest: CheckpointManifest | None = None,
     ) -> None:
         self.preprocessor = preprocessor
         self.planner = planner
@@ -349,11 +362,17 @@ class Agent:
         self.checkpoint_identity = (
             None if checkpoint_identity is None else dict(checkpoint_identity)
         )
+        self.checkpoint_manifest = checkpoint_manifest
 
     def set_checkpoint_identity(self, identity: Mapping[str, Any] | None) -> None:
         """Set the immutable reward identity written beside runtime checkpoints."""
 
         self.checkpoint_identity = None if identity is None else dict(identity)
+
+    def set_checkpoint_manifest(self, manifest: CheckpointManifest | None) -> None:
+        """Set the architecture-compatibility manifest written beside checkpoints."""
+
+        self.checkpoint_manifest = manifest
 
     def atomic_boundary_remaining(self) -> int:
         """EVAL-PROTOCOL v1.0 REQ-002/DEC-015: global env transitions still
@@ -1707,6 +1726,7 @@ class Agent:
         episode_video_recorded_live: list[bool] = []
         episode_replay_warnings: list[str | None] = []
         episode_scenario_metadata: list[dict[str, Any]] = []
+        episode_subrule_summaries: list[dict[str, dict[str, Any]]] = []
         all_rule_names: set[str] = set()
         rule_priority_by_name: dict[str, int] = {}
         per_rule_episode_min_margins: dict[str, list[float]] = {}
@@ -1795,6 +1815,7 @@ class Agent:
                 ep_has_scalar_rule_reward = False
                 ep_hybrid_return = 0.0
                 ep_has_hybrid_reward = False
+                subrule_acc = SubruleEpisodeAccumulator()
 
                 # Loop until episode ends
                 while not (done or truncated):
@@ -1835,6 +1856,7 @@ class Agent:
                     )
                     if self._has_top_rule_violation(step_info):
                         ep_top_rule_violating_steps += 1
+                    subrule_acc.observe(step_info)
                     applicability = self._extract_rule_applicability(step_info)
                     for rule_name, rule_priority, margin in self._extract_rule_margins(step_info):
                         all_rule_names.add(rule_name)
@@ -1990,6 +2012,7 @@ class Agent:
                 episode_metadata["terminated"] = bool(done)
                 episode_metadata["truncated"] = bool(truncated)
                 episode_scenario_metadata.append(episode_metadata)
+                episode_subrule_summaries.append(subrule_acc.finalize())
 
                 if progress is not None and progress_task is not None:
                     progress.advance(progress_task)
@@ -2095,6 +2118,13 @@ class Agent:
             "violated_rules_ratio": float(violated_rules_ratio),
             "unique_violation_patterns": unique_violation_patterns,
             "per_rule": per_rule_rows,
+            # EP-SUBRULE-DIAG: additive R2/R3 sub-rule dominance/cost
+            # diagnostics, aggregated over every evaluation episode (not the
+            # bounded tracked subset), disaggregated by scenario source.
+            "per_subrule": aggregate_subrule_episodes(
+                episode_subrule_summaries,
+                [meta.get("source") for meta in episode_scenario_metadata],
+            ),
         }
         if return_episode_metrics:
             metrics["per_episode"] = {
@@ -2497,6 +2527,11 @@ class Agent:
             / float(max(len(all_rule_names), 1)),
             "unique_violation_patterns": int(len(set(episode_patterns))),
             "per_rule": per_rule_rows,
+            # EP-SUBRULE-DIAG: see the analogous comment in `evaluate()`.
+            "per_subrule": aggregate_subrule_episodes(
+                [record.get("subrule_summary", {}) for record in records],
+                [record["scenario_metadata"].get("source") for record in records],
+            ),
         }
         if return_episode_metrics:
             metrics["per_episode"] = {
@@ -2678,6 +2713,8 @@ class Agent:
             self.adapter.save(str(adapter_ckpt))
         if self.checkpoint_identity is not None:
             write_reward_semantics_sidecar(checkpoint_path, self.checkpoint_identity)
+        if self.checkpoint_manifest is not None:
+            write_checkpoint_manifest_sidecar(checkpoint_path, self.checkpoint_manifest)
 
     def save_generation(
         self,

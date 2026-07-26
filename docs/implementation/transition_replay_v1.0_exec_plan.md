@@ -9,7 +9,7 @@
 - Specification authority: `APPROVED`; `Authoritative: YES`
 - Plan status: `IN_PROGRESS`
 - Created: 2026-07-17
-- Last updated: 2026-07-21
+- Last updated: 2026-07-26
 - Branch: `scenarionet-implementation`
 - Related ADRs: `docs/decisions/ADR-011-rulebook-scalarization-v1.md`
 - Related specifications: `docs/specifications/rulebook_v4.7_specification.md`, `docs/specifications/rulebook_scalarization_v1.0_specification.md`, `docs/specifications/observation_v1.1_specification.md`, `docs/specifications/encoder_v1.0_specification.md`, `docs/specifications/automatic_curriculum_learning_v1_specification.md`
@@ -222,8 +222,8 @@ Do not permit replay reuse when these fields differ.
 | Requirement | Acceptance criteria | Implementation | Tests | Status |
 |---|---|---|---|---|
 | `REQ-001` | `AC-001` | config validation and backend construction | `tests/test_transition_replay_config.py` | Implemented; focused tests pass |
-| `REQ-002`–`REQ-004` | `AC-002`–`AC-004` | uniform/custom buffer construction and scalar reward storage | fork NStep path; `tests/test_transition_replay_nstep.py` | Partial; tests pending |
-| `REQ-005`–`REQ-007` | `AC-005`–`AC-009`, `AC-039` | canonical collector and N-step boundary logic | `tests/test_transition_boundary.py`; fork NStep path | Partial; tests pending |
+| `REQ-002`–`REQ-004` | `AC-002`–`AC-004` | uniform/custom buffer construction and scalar reward storage | fork NStep path (`third_party/stable-baselines3/tests/test_n_step_replay.py`); `tests/test_transition_replay_nstep.py` (deployed `PrioritizedNStepReplayBuffer` hand-calculation) | Implemented; focused tests pass |
+| `REQ-005`–`REQ-007` | `AC-005`–`AC-009`, `AC-039` | canonical collector and N-step boundary logic | `tests/test_transition_boundary.py` (collector); `tests/test_transition_replay_nstep.py` (buffer termination/truncation/frontier); fork NStep path | Implemented; focused tests pass |
 | `REQ-008`–`REQ-009` | `AC-010`–`AC-011`, `AC-035`–`AC-036` | TD3/SAC target integration | fork algorithms; `tests/test_transition_replay_targets.py` | Partial; tests pending |
 | `REQ-010`–`REQ-020` | `AC-012`–`AC-023`, `AC-037` | sum tree, PER buffer, weighted algorithms | `tests/test_transition_replay_per.py` | Implemented; focused tests and PER micro-smoke pass |
 | `REQ-021` | `AC-024`, `AC-038` | replay RNG and trainer beta state | `src/thesis_rl/sb3_extensions/replay/prioritized.py`, `train_loop.py` | Implemented; focused tests pass |
@@ -378,6 +378,43 @@ is provisioned.
 - `make smoke` reached training setup but failed before replay collection because
   the concurrent Rulebook v2 configuration lacks `env.rulebook_v2_adapter`.
 
+### 2026-07-26 — PER N-step arithmetic regression test
+
+- User-triggered verification found that `PrioritizedNStepReplayBuffer`
+  (`src/thesis_rl/sb3_extensions/replay/prioritized.py:357-392`) duplicates
+  the N-step return/discount/bootstrap-mask computation of the vendored
+  `NStepReplayBuffer` (`third_party/stable-baselines3/.../buffers.py:886-955`)
+  instead of delegating to it. The hand-calculated regression tests for this
+  arithmetic (`third_party/stable-baselines3/tests/test_n_step_replay.py`)
+  exercise only the base class. Since production TD3-SB3/SAC-SB3 configs set
+  `prioritized: true` (`conf/agent/planner/algorithm/td3_sb3.yaml:27`,
+  `conf/agent/planner/algorithm/sac_sb3.yaml:30`), the subclass actually
+  deployed had no dedicated numeric test in the repository, closing this was
+  the previously "tests pending" state of `REQ-002`–`REQ-007`.
+- Added `tests/test_transition_replay_nstep.py`, mirroring the fork's
+  hand-calculation style directly against `PrioritizedNStepReplayBuffer`:
+  `AC-004` three-step hand calculation (`G=1+2γ+3γ²`, `discount=γ³`), `AC-003`
+  one-step equivalence, `AC-005` true termination at window position 1/2/3,
+  `AC-006` truncation at window position 1/2/3 with `discount=γ^m`, and
+  `AC-009` ring-buffer frontier isolation (including the manual-`done`-on-frontier
+  case).
+- No bug was found: the duplicated arithmetic matches the vendored base class
+  and the specification formulas exactly (all 9 new tests passed on first
+  correct parametrization; an initial off-by-one in the test's own boundary
+  indexing was caught and fixed before the run reported here).
+- Commands executed in the `dev` container:
+  `uv run --no-sync python -m pytest -q tests/test_transition_replay_nstep.py`:
+  PASS, 9 passed;
+  `uv run --no-sync python -m pytest -q tests/test_transition_replay_per.py tests/test_transition_replay_config.py tests/test_transition_boundary.py`:
+  PASS, 24 passed (no regression in adjacent replay tests);
+  `uv run --no-sync ruff check tests/test_transition_replay_nstep.py`: PASS;
+  `uv run --no-sync ruff format --check tests/test_transition_replay_nstep.py`:
+  PASS after one auto-format pass.
+- Remaining known gap (unchanged, tracked in specification/ExecPlan already):
+  `TEST-RSA-003` still does not separately exercise `n_steps=1` for the PER
+  data-abort boundary; the team judges this non-blocking because that boundary
+  logic is `n_steps`-independent.
+
 ## 12. Deviations
 
 - The pinned local SB3 fork is modified in its `ReplayBufferSamples` type and
@@ -402,6 +439,7 @@ is provisioned.
 | `src/thesis_rl/runtime/loops/train_loop.py` | Modified | Trainer beta state, persistence, pairing, migration |
 | `src/thesis_rl/contracts/checkpoint_manifest.py` | Modified | Replay/reward compatibility fields |
 | `tests/test_transition_boundary.py`, `tests/test_transition_replay_*.py` | Added/modified | Protected acceptance and regressions |
+| `tests/test_transition_replay_nstep.py` | Added | Hand-calculated N-step return/discount regression tests against the deployed `PrioritizedNStepReplayBuffer` (`AC-003`–`AC-006`, `AC-009`) |
 
 ## 14. Validation Results
 
@@ -417,13 +455,17 @@ is provisioned.
 | `make smoke` | `BLOCKED` | 2026-07-17 | Rulebook v2 worker setup fails before replay because `env.rulebook_v2_adapter` is absent. |
 | `make smoke`, retry | `NOT_RECONFIRMED` | 2026-07-26 | The immediate 2026-07-17 setup failure did not reproduce within a bounded 90 s attempt (`ThesisScenarioEnv._install_rulebook_v2_adapter` exists and is wired, unlike the 2026-07-17 finding), suggesting it was already fixed by unrelated work; however the command did not reach completion within 90 s and was terminated rather than let run further, per this session's no-long-training-run constraint. A full uninterrupted `make smoke` run is still required to close M7/`AC-003`-`AC-041` and mark this plan `VERIFIED`. |
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_transition_replay_config.py tests/test_transition_replay_per.py tests/test_transition_replay_persistence.py tests/test_transition_boundary.py` | PASS | 2026-07-26 | `26 passed`, re-confirming all focused deterministic coverage is still green |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_transition_replay_nstep.py` | `PASS` | 2026-07-26 | `9 passed`; hand-calculated N-step return/discount/termination/truncation/frontier tests against `PrioritizedNStepReplayBuffer`. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_transition_replay_per.py tests/test_transition_replay_config.py tests/test_transition_boundary.py` | `PASS` | 2026-07-26 | `24 passed`; no regression from the new N-step test file. |
+| `docker compose run --rm dev uv run --no-sync ruff check tests/test_transition_replay_nstep.py` | `PASS` | 2026-07-26 | All checks passed. |
+| `docker compose run --rm dev uv run --no-sync ruff format --check tests/test_transition_replay_nstep.py` | `PASS` | 2026-07-26 | Passed after one auto-format pass on the new file. |
 
 ## 15. Final Reconciliation
 
 | Requirement/criteria | Status | Evidence |
 |---|---|---|
 | `REQ-001` | `IMPLEMENTED` | Configuration validation and algorithm construction are implemented; focused tests remain unexecuted. |
-| `REQ-002`–`REQ-003` | `IMPLEMENTED` | Uniform one-/three-step selection is wired to the pinned SB3 path; integration tests remain pending. |
+| `REQ-002`–`REQ-003` | `IMPLEMENTED` | Uniform one-/three-step selection is wired to the pinned SB3 path; `tests/test_transition_replay_nstep.py` now covers hand-calculated N-step arithmetic for the deployed `PrioritizedNStepReplayBuffer` (2026-07-26). |
 | `REQ-004`–`REQ-030` | `IMPLEMENTED/PARTIALLY VERIFIED` | Core collection/replay/PER, beta state, diagnostics, and persistence wiring are present; focused tests and PER micro-smoke pass. |
 | `REQ-031` | `IMPLEMENTED` | Canonical collector and backend flag propagation are implemented; tests are authored but unexecuted. |
 | `REQ-032`–`REQ-033` | `IMPLEMENTED` | Reward sidecar/manifest compatibility, migration validation, atomic replay save, beta state, and resume-time pair validation are present and focused-tested. |

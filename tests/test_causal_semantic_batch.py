@@ -304,6 +304,82 @@ def test_waymo_feature_16_equivalent_geometry_is_omitted() -> None:
     assert builder.diagnostics.route_incompatible_static_features == 1
 
 
+def test_vru_relative_velocity_scale_is_invariant_to_the_actors_own_speed() -> None:
+    """Regression for a fixed bug: a VRU (pedestrian/cyclist) never carries a
+    configured_speed_cap_mps, so the relative-velocity normalization scale
+    must fall back to ego_speed_cap alone, not to the VRU's own instantaneous
+    speed. Two scenes below produce the identical relative velocity (25.0,
+    0.0) between ego and a fast-moving pedestrian, but the pedestrian's own
+    absolute speed differs (25.0 vs 35.0 m/s, both above the 20.0 m/s ego
+    cap). Before the fix, the normalization denominator depended on the
+    pedestrian's own speed and the two cases produced different encoded
+    values for the same physical relative velocity; after the fix both must
+    match exactly.
+    """
+    route, lanes = _route()
+
+    def _pedestrian(velocity: tuple[float, float]) -> ActorSnapshot:
+        return replace(
+            _actor("pedestrian", (15.0, 0.0), velocity),
+            actor_class=ActorClass.PEDESTRIAN,
+            configured_speed_cap_mps=None,
+        )
+
+    ego_at_rest = _actor("ego", (0.0, 0.0), (0.0, 0.0))
+    ego_moving = _actor("ego", (0.0, 0.0), (10.0, 0.0))
+    fast_pedestrian = _pedestrian((25.0, 0.0))
+    faster_pedestrian = _pedestrian((35.0, 0.0))
+
+    batch_a = CausalSemanticBatchBuilder(route=route, route_lanes=lanes).build(
+        _Vehicle(), _context(0, ego_at_rest, (fast_pedestrian,), route, lanes)
+    )
+    batch_b = CausalSemanticBatchBuilder(route=route, route_lanes=lanes).build(
+        _Vehicle(), _context(0, ego_moving, (faster_pedestrian,), route, lanes)
+    )
+
+    slot_a = int(np.flatnonzero(batch_a.dynamic_mask[:, -1])[0])
+    slot_b = int(np.flatnonzero(batch_b.dynamic_mask[:, -1])[0])
+    assert batch_a.dynamic[slot_a, -1, 2] == pytest.approx(batch_b.dynamic[slot_b, -1, 2])
+    assert batch_a.dynamic[slot_a, -1, 2] == pytest.approx(25.0 / 40.0)
+
+
+def test_context_quota_ranks_by_distance_not_lane_precedence() -> None:
+    """Regression for OBS-V1.1 SS8.1 amendment / ADR-026: the non-conflict
+    (context quota) dynamic-actor ranking used to prioritize same-lane and
+    then adjacent-lane actors ahead of raw distance, so a much closer actor
+    in a different lane could lose a slot to a far same-lane actor. The
+    ranking key must now put a closer actor first regardless of lane
+    relation.
+    """
+    route, lanes = _route()
+    ego = _actor("ego", (0.0, 0.0), (0.0, 0.0))
+    same_lane_far = _actor("same_lane_far", (30.0, 0.0), (0.0, 0.0))
+    other_lane_close = _actor("other_lane_close", (10.0, 5.0), (0.0, 0.0), lane_id="other-lane")
+
+    builder = CausalSemanticBatchBuilder(route=route, route_lanes=lanes)
+
+    key_far_same_lane = builder._dynamic_key(same_lane_far, ego, conflict_ids=set())
+    key_close_other_lane = builder._dynamic_key(other_lane_close, ego, conflict_ids=set())
+
+    assert key_close_other_lane < key_far_same_lane
+
+
+def test_conflict_quota_ranking_is_unchanged_by_the_context_quota_amendment() -> None:
+    """The context-quota change (OBS-V1.1 SS8.1 amendment) must not alter the
+    conflict-quota ranking, which stays CPA/TTC-based per SS8.1 Conflict quota.
+    """
+    route, lanes = _route()
+    ego = _actor("ego", (0.0, 0.0), (10.0, 0.0))
+    closing_actor = _actor("closing", (20.0, 0.0), (-10.0, 0.0))
+
+    builder = CausalSemanticBatchBuilder(route=route, route_lanes=lanes)
+    key = builder._dynamic_key(closing_actor, ego, conflict_ids={"closing"})
+
+    assert key[0] == 0
+    valid, t_cpa, d_cpa = builder._cpa(closing_actor, ego)
+    assert key[1:4] == (not valid, t_cpa, d_cpa)
+
+
 def test_global_translation_preserves_relative_observation() -> None:
     route_a, lanes_a = _route()
     route_b, lanes_b = _route(100.0)

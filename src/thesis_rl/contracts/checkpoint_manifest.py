@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any, Mapping
 
 from thesis_rl.contracts.observation_schema import (
@@ -55,6 +57,28 @@ CHECKPOINT_MANIFEST_FIELDS = (
     "legacy_scale_source_commit",
     "legacy_rule_scales_digest",
     "legacy_scale_source_digest",
+)
+
+# Subset of CHECKPOINT_MANIFEST_FIELDS that determines state_dict shape
+# compatibility (architecture/observation contract). Deliberately excludes
+# provenance-only fields (git_commit, sb3_version, sb3_commit, seed) that
+# change on every commit/resume and would otherwise make the fail-open
+# sidecar check reject unrelated, harmless drift. Also excludes
+# rulebook_*/scalarization_*/legacy_* fields, which are already exclusively
+# covered by assert_reward_semantics_compatible.
+CHECKPOINT_MANIFEST_SHAPE_FIELDS = (
+    "observation_schema_version",
+    "observation_schema_fingerprint",
+    "observation_type",
+    "flat_dim",
+    "raw_token_count",
+    "encoder_architecture_version",
+    "encoder_type",
+    "encoder_config",
+    "features_dim",
+    "share_features_extractor",
+    "ppo_ortho_init",
+    "algorithm",
 )
 
 
@@ -435,3 +459,66 @@ def assert_checkpoint_compatible(
                 f"checkpoint={checkpoint_values[field]!r}, current={current_values[field]!r}."
             )
     return checkpoint_manifest
+
+
+def checkpoint_manifest_sidecar_path(checkpoint_path: str | Path) -> Path:
+    """Return the sidecar path for a checkpoint stem or ``.zip`` file."""
+
+    checkpoint = Path(checkpoint_path)
+    if checkpoint.suffix == ".zip":
+        checkpoint = checkpoint.with_suffix("")
+    return checkpoint.with_name(f"{checkpoint.name}.manifest.json")
+
+
+def write_checkpoint_manifest_sidecar(
+    checkpoint_path: str | Path,
+    manifest: CheckpointManifest,
+) -> Path:
+    """Atomically write a canonical JSON checkpoint-manifest sidecar."""
+
+    target = checkpoint_manifest_sidecar_path(checkpoint_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.tmp")
+    temporary.write_text(
+        json.dumps(manifest.to_dict(), sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(target)
+    return target
+
+
+def assert_checkpoint_manifest_compatible_if_present(
+    checkpoint_path: str | Path,
+    current: CheckpointManifest,
+) -> None:
+    """Reject a shape-incompatible checkpoint before the backend state_dict load.
+
+    Fails open (no-op) when the sidecar is missing, unlike
+    ``assert_reward_semantics_compatible``'s fail-closed behavior: checkpoints
+    saved before this feature existed (e.g. the running ``td3-0``/``sac-0``/
+    ``ppo-0`` seed-0 trio) must remain resumable without a sidecar.
+
+    Only ``CHECKPOINT_MANIFEST_SHAPE_FIELDS`` are compared, not every field in
+    ``CHECKPOINT_MANIFEST_FIELDS``: provenance fields such as ``git_commit``,
+    ``sb3_version``, ``sb3_commit``, and ``seed`` change across normal
+    development and must not gate whether a checkpoint's state_dict can load.
+    """
+
+    sidecar = checkpoint_manifest_sidecar_path(checkpoint_path)
+    if not sidecar.is_file():
+        return
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CheckpointCompatibilityError(
+            f"Cannot read checkpoint manifest sidecar: {sidecar}"
+        ) from exc
+    checkpoint_manifest = CheckpointManifest.from_mapping(payload)
+    checkpoint_values = checkpoint_manifest.to_dict()
+    current_values = current.to_dict()
+    for field in CHECKPOINT_MANIFEST_SHAPE_FIELDS:
+        if checkpoint_values[field] != current_values[field]:
+            raise CheckpointCompatibilityError(
+                f"Incompatible checkpoint manifest field '{field}': "
+                f"checkpoint={checkpoint_values[field]!r}, current={current_values[field]!r}."
+            )

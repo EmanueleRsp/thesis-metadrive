@@ -15,6 +15,7 @@ from thesis_rl.analysis.tables.make_generalization_tables import build_generaliz
 from thesis_rl.analysis.videos.make_qualitative_manifest import build_qualitative_manifest
 from thesis_rl.analysis.tables.make_rulebook_tables import build_rulebook_tables
 from thesis_rl.analysis.tables.make_sample_efficiency_tables import build_sample_efficiency_tables
+from thesis_rl.analysis.tables.make_subrule_tables import build_subrule_tables
 
 
 def _build_tables_for_root(
@@ -42,6 +43,10 @@ def _build_tables_for_root(
         tables_dir=tables_dir,
         include_ci=include_ci,
     )
+    # EP-SUBRULE-DIAG: additive diagnostic tables, never a primary comparison
+    # (`DEC-SUB-001`); always built, since they carry their own explicit
+    # diagnostic label (`REQ-SUB-07`) rather than requiring a separate flag.
+    build_subrule_tables(aggregated_dir=aggregated_dir, tables_dir=tables_dir)
     build_sample_efficiency_tables(
         aggregated_dir=aggregated_dir,
         tables_dir=tables_dir,

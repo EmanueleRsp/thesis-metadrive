@@ -88,6 +88,56 @@ def _append_rule_metrics_rows(
         )
 
 
+def _append_subrule_metrics_rows(
+    recorder: CSVRecorder,
+    *,
+    base_fields: dict[str, object],
+    eval_id: int,
+    eval_type: str,
+    scenario_set: str,
+    chunk_id: int,
+    stage: str,
+    stage_index: int,
+    global_step: int,
+    metrics: dict[str, object],
+) -> None:
+    """EP-SUBRULE-DIAG: additive R2/R3 sub-rule diagnostics (`DEC-SUB-005`
+    duplicates `_append_rule_metrics_rows` rather than refactoring it)."""
+
+    rows = metrics.get("per_subrule", [])
+    if not isinstance(rows, list):
+        return
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        recorder.append_row(
+            "subrule_metrics.csv",
+            {
+                **base_fields,
+                "eval_id": eval_id,
+                "eval_type": eval_type,
+                "scenario_set": scenario_set,
+                "chunk_id": chunk_id,
+                "stage": stage,
+                "stage_index": stage_index,
+                "global_step": global_step,
+                "scenario_source": row.get("scenario_source"),
+                "macro_rule": row.get("macro_rule"),
+                "subrule_name": row.get("subrule_name"),
+                "applicability_rate": row.get("applicability_rate"),
+                "violation_rate": row.get("violation_rate"),
+                "mean_cost": row.get("mean_cost"),
+                "max_cost": row.get("max_cost"),
+                "dominance_share": row.get("dominance_share"),
+                "worst_component_count": row.get("worst_component_count"),
+                "macro_violated_step_count": row.get("macro_violated_step_count"),
+                "multi_violation_share": row.get("multi_violation_share"),
+                "applicable_episode_count": row.get("applicable_episode_count"),
+                "excluded_episode_count": row.get("excluded_episode_count"),
+            },
+        )
+
+
 def _resolve_eval_env_overrides(
     curriculum_cfg: CurriculumConfig,
 ) -> tuple[dict[str, object] | None, str | None]:
@@ -385,6 +435,18 @@ def run_evaluation(cfg: DictConfig) -> None:
             },
         )
         _append_rule_metrics_rows(
+            recorder,
+            base_fields=base_csv_fields,
+            eval_id=eval_id,
+            eval_type="final",
+            scenario_set="test",
+            chunk_id=0,
+            stage=stage_name,
+            stage_index=stage_index,
+            global_step=0,
+            metrics=metrics,
+        )
+        _append_subrule_metrics_rows(
             recorder,
             base_fields=base_csv_fields,
             eval_id=eval_id,

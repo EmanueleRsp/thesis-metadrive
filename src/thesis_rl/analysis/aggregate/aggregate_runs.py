@@ -16,6 +16,9 @@ CSV_FILENAMES = (
     "eval_episodes.csv",
     "promotions.csv",
     "rule_metrics.csv",
+    # EP-SUBRULE-DIAG: additive diagnostic, `DEC-SUB-003` -- runs recorded
+    # before this feature simply have no rows here, not an error.
+    "subrule_metrics.csv",
     "final_eval.csv",
 )
 
@@ -57,6 +60,7 @@ INFERRED_FIELDS_BY_FILE = {
     "evals.csv": ("eval_type", "scenario_set"),
     "eval_episodes.csv": ("eval_type", "scenario_set"),
     "rule_metrics.csv": ("eval_type", "scenario_set"),
+    "subrule_metrics.csv": ("eval_type", "scenario_set"),
 }
 
 

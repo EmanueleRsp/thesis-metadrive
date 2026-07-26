@@ -38,7 +38,15 @@ def _ego(velocity_xy: tuple[float, float] = (0.0, 0.0)) -> ActorSnapshot:
     )
 
 
-def test_collision_cost_uses_pre_state_normal_speed_and_floor() -> None:
+def test_collision_cost_uses_pre_state_normal_speed() -> None:
+    """Rulebook v4.9: cost is the MAIS3+F risk at the pre-state normal speed.
+
+    The v4.7 expectation here was ``(5/10)^2 = 0.0625``, i.e. the closing speed
+    normalized by the configured speed cap.  ADR-027 replaced that mapping; the
+    pre-state normal closing speed itself (5 m/s) is unchanged and is still
+    what the cost is a function of.
+    """
+
     result, memory_delta, _ = evaluate_collision_impact(
         scenario_id="scenario", step_index=1,
         ego_configured_speed_cap_mps=10.0,
@@ -47,7 +55,8 @@ def test_collision_cost_uses_pre_state_normal_speed_and_floor() -> None:
         onset_records=(_onset("other"),), previous_contact_ids=frozenset(),
         post_active_contact_ids=frozenset({"other"}),
     )
-    assert result.cost == pytest.approx(0.0625)
+    assert result.raw["worst_closing_speed_mps"] == pytest.approx(5.0)
+    assert result.cost == pytest.approx(0.0038685, abs=1e-6)
     assert result.raw["new_collision"] is True
     assert memory_delta.writer == "collision"
 
@@ -121,13 +130,15 @@ def test_collision_uses_pre_state_centerline_for_front_rear_and_side_impacts(
         previous_contact_ids=frozenset(),
         post_active_contact_ids=frozenset({"other"}),
     )
-    assert result.cost == pytest.approx(0.0625)
+    assert result.cost == pytest.approx(0.0038685, abs=1e-6)
     assert result.diagnostics["normal_source"] == "pre_state_canonical_footprint_centers"
     assert result.raw["actors"] == (
         {
             "actor_id": "other",
-            "raw_speed_squared": 25.0,
-            "cost": 0.0625,
+            "actor_class": "vehicle",
+            "closing_speed_mps": pytest.approx(5.0),
+            "injury_risk_curve": "car_driver_mais3f",
+            "cost": pytest.approx(0.0038685, abs=1e-6),
             "normal_source": "pre_state_canonical_footprint_centers",
             "normal_ego_to_other_xy": expected_normal,
         },

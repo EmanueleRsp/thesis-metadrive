@@ -1,6 +1,6 @@
 name: latent_query_v3
 type: latent_query_v3
-architecture_version: 1.1-perception-bounded
+architecture_version: 1.2-perception-bounded
 required_observation_schema: 1.2-perception-bounded
 token_dim: 64
 num_latents: 16
@@ -15,5 +15,8 @@ attention_dropout: 0.0
 residual_gating: false
 type_embedding: true
 time_embedding: true
+# route/static/control/interaction slots only; dynamic has none as of
+# ENC-V1.2 (ADR-026) since the dynamic buffer index has no stable meaning
+# under sticky/first-fit slot assignment (OBS-V1.1 SS7).
 slot_embedding: true
 pooling: mean

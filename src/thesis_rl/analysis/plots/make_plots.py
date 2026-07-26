@@ -385,6 +385,89 @@ def _plot_error_boxplot(rows: list[dict[str, str]], output_path: Path) -> None:
     print(f"Wrote plot -> {output_path}")
 
 
+def _plot_subrule_dominance_stacked_bar(rows: list[dict[str, str]], output_path: Path) -> None:
+    """EP-SUBRULE-DIAG (`REQ-SUB-02`/`REQ-SUB-04`): diagnostic only, never a
+    primary comparison metric (`DEC-SUB-001`). One segment filling a bar
+    means that macro rule is, in practice, a single sub-rule."""
+
+    # (condition, source, macro_rule) -> subrule -> dominance_share values
+    bucket: dict[tuple[str, str, str], dict[str, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for row in rows:
+        condition_id = _condition_label(row)
+        source = str(row.get("scenario_source", "")).strip() or "unknown"
+        macro_rule = str(row.get("macro_rule", "")).strip()
+        subrule = str(row.get("subrule_name", "")).strip()
+        share = _to_float(row.get("dominance_share"))
+        if macro_rule and subrule and share is not None:
+            bucket[(condition_id, source, macro_rule)][subrule].append(float(share))
+    if not bucket:
+        return
+
+    categories = sorted(bucket.keys())
+    labels_by_condition, common_text, _legend_title = _legend_and_common_info(
+        rows, sorted({key[0] for key in categories})
+    )
+    x_labels = [
+        f"{labels_by_condition.get(cond, cond)} | {source} | {macro}"
+        for cond, source, macro in categories
+    ]
+    all_subrules = sorted({name for data in bucket.values() for name in data.keys()})
+
+    plt.figure(figsize=(max(10, len(categories) * 1.1), 6))
+    bottoms = [0.0] * len(categories)
+    for subrule in all_subrules:
+        heights = []
+        for category in categories:
+            values = bucket[category].get(subrule, [])
+            heights.append(_mean_sd(values)[0] if values else 0.0)
+        plt.bar(x_labels, heights, bottom=bottoms, label=subrule)
+        bottoms = [b + h for b, h in zip(bottoms, heights)]
+
+    plt.xticks(rotation=45, ha="right")
+    plt.title("Sub-Rule Dominance Share Within Macro Rule (diagnostic, EP-SUBRULE-DIAG)")
+    plt.ylabel("dominance_share (of macro-violated steps)")
+    legend = plt.legend(fontsize=8, title="Sub-rule", loc="upper left")
+    _place_common_box_below_legend(common_text, legend)
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"Wrote plot -> {output_path}")
+
+
+def _plot_subrule_cost_distribution_boxplot(rows: list[dict[str, str]], output_path: Path) -> None:
+    """EP-SUBRULE-DIAG (`REQ-SUB-03`): calibration view -- why a dominance
+    pattern occurs. Each box is the cross-seed distribution of a sub-rule's
+    seed-level mean cost (over applicable steps), grouped by macro rule;
+    `subrule_metrics.csv` carries seed-level statistics, not raw per-step
+    costs, so this is not a per-step distribution."""
+
+    bucket: dict[str, list[float]] = defaultdict(list)
+    for row in rows:
+        macro_rule = str(row.get("macro_rule", "")).strip()
+        subrule = str(row.get("subrule_name", "")).strip()
+        cost = _to_float(row.get("mean_cost"))
+        if macro_rule and subrule and cost is not None:
+            bucket[f"{macro_rule}:{subrule}"].append(float(cost))
+    if not bucket:
+        return
+
+    keys = sorted(bucket.keys())
+    data = [bucket[key] for key in keys]
+    plt.figure(figsize=(max(10, len(keys) * 0.9), 6))
+    plt.boxplot(data, labels=keys, showfliers=False)
+    plt.xticks(rotation=45, ha="right")
+    plt.title("Sub-Rule Cost Distribution (diagnostic, EP-SUBRULE-DIAG)")
+    plt.ylabel("seed-level mean cost (applicable steps)")
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"Wrote plot -> {output_path}")
+
+
 def _read_rows(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         raise FileNotFoundError(f"Missing aggregated file: {path}")
@@ -421,6 +504,16 @@ def make_plots(aggregated_dir: Path, plots_dir: Path, *, include_diagnostics: bo
         _plot_learning_curve(eval_rows, promotions_rows, "avg_error_value", plots_dir / "learning_avg_error_value_vs_global_step.png", "Avg Error Value vs Global Step", "avg_error_value")
         _plot_tradeoff(final_rows, plots_dir / "safety_performance_tradeoff.png")
         _plot_error_boxplot(episode_rows, plots_dir / "episode_error_distribution_boxplot.png")
+        # EP-SUBRULE-DIAG: additive R2/R3 diagnostics (`DEC-SUB-003`: absent
+        # for runs recorded before this feature, handled by `_read_optional_rows`).
+        subrule_rows = _read_optional_rows(aggregated_dir / "subrule_metrics_all_runs.csv")
+        if subrule_rows:
+            _plot_subrule_dominance_stacked_bar(
+                subrule_rows, plots_dir / "subrule_dominance_stacked_bar.png"
+            )
+            _plot_subrule_cost_distribution_boxplot(
+                subrule_rows, plots_dir / "subrule_cost_distribution_boxplot.png"
+            )
 
 
 def main() -> None:

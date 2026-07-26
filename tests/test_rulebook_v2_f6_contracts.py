@@ -60,11 +60,22 @@ def test_collision_handles_tangent_static_vru_and_simultaneous_onsets():
     )
     _assert_bounded(result)
     assert {item["actor_id"] for item in result.raw["actors"]} == {"static", "ped"}
-    assert result.raw["worst_raw_closing_speed_squared"] == 0.0
-    assert result.cost > 0.0  # collision floor remains positive for a tangent onset
+    assert result.raw["worst_closing_speed_mps"] == 0.0
+    # Rulebook v4.9: a tangent onset still costs strictly more than zero, now
+    # structurally rather than through the floor -- the injury-risk curve is
+    # positive at zero closing speed.  The pedestrian curve dominates the
+    # car-driver curve used for the static obstacle, so it is the worst actor.
+    assert result.cost == pytest.approx(0.02366, abs=1e-5)
+    assert result.raw["worst_actor_id"] == "ped"
 
 
-def test_collision_saturates_when_pre_state_speed_exceeds_configured_cap():
+def test_collision_cost_approaches_one_at_extreme_closing_speed():
+    """Rulebook v4.9 §7: the cost tends to 1 without ever reaching it.
+
+    This replaces the v4.7 contract that saturated exactly at the configured
+    speed cap; that normalizer no longer takes part in the cost (ADR-027).
+    """
+
     result, _, _ = evaluate_collision_impact(
         scenario_id="s",
         step_index=1,
@@ -76,7 +87,8 @@ def test_collision_saturates_when_pre_state_speed_exceeds_configured_cap():
         post_active_contact_ids=frozenset({"other"}),
     )
     _assert_bounded(result)
-    assert result.cost == pytest.approx(1.0)
+    assert result.raw["worst_closing_speed_mps"] == pytest.approx(105.0)
+    assert 0.999 < result.cost < 1.0
 
 
 def test_rss_no_front_vehicle_is_explicitly_not_applicable_and_bounded():
