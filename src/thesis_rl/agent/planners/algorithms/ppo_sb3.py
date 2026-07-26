@@ -41,6 +41,7 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         cfg_planner: Any,
         model: "PPO",
         device: str = "auto",
+        validate_rollout_geometry: bool = True,
     ) -> None:
         super().__init__(env=env, cfg_planner=cfg_planner, device=device)
         self.model = model
@@ -49,7 +50,8 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         self.global_rollout_size = int(model.n_steps) * int(self.n_envs)
         self.minibatches_per_epoch = self.global_rollout_size // int(model.batch_size)
         self.optimizer_steps_per_update = self.minibatches_per_epoch * int(model.n_epochs)
-        self._validate_rollout_geometry()
+        if validate_rollout_geometry:
+            self._validate_rollout_geometry()
 
         self.last_actor_loss = float("nan")
         self.last_critic_loss = float("nan")
@@ -153,13 +155,20 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
         cfg_encoder: Any | None = None,
         cfg_decoder: Any | None = None,
         cfg_obs: Any | None = None,
+        validate_rollout_geometry: bool = True,
     ) -> "Sb3PpoPlannerBackend":
         del cfg_encoder, cfg_decoder, cfg_obs
         PPO = _require_sb3_ppo()
 
         model = PPO.load(str(normalize_checkpoint_path(checkpoint_path)), env=env, device=device)
         resolved_cfg = {} if cfg_planner is None else to_plain_dict(cfg_planner)
-        return cls(env=env, cfg_planner=resolved_cfg, model=model, device=device)
+        return cls(
+            env=env,
+            cfg_planner=resolved_cfg,
+            model=model,
+            device=device,
+            validate_rollout_geometry=validate_rollout_geometry,
+        )
 
     def begin_training(
         self,

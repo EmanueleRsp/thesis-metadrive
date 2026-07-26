@@ -296,7 +296,13 @@ def build_planner(cfg: DictConfig, env: Any, seed: int | None = None) -> "BasePl
     )
 
 
-def load_planner(cfg: DictConfig, checkpoint_path: str, env: Any) -> "BasePlanner":
+def load_planner(
+    cfg: DictConfig,
+    checkpoint_path: str,
+    env: Any,
+    *,
+    validate_rollout_geometry: bool = True,
+) -> "BasePlanner":
     from thesis_rl.agent.planners.factory import load_planner_backend
 
     assert_reward_semantics_compatible(
@@ -319,6 +325,7 @@ def load_planner(cfg: DictConfig, checkpoint_path: str, env: Any) -> "BasePlanne
         cfg_decoder=cfg.agent.planner.decoder,
         cfg_obs=cfg.get("obs"),
         device=device,
+        validate_rollout_geometry=validate_rollout_geometry,
     )
 
 

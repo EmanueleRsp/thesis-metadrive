@@ -831,7 +831,9 @@ def run_training(cfg: DictConfig) -> None:
 
         def _make_eval_agent(checkpoint_stem: Path, eval_env: Any) -> tuple[Agent, str]:
             checkpoint_zip = f"{checkpoint_stem}.zip"
-            eval_planner = load_planner(cfg, checkpoint_path=checkpoint_zip, env=eval_env)
+            eval_planner = load_planner(
+                cfg, checkpoint_path=checkpoint_zip, env=eval_env, validate_rollout_geometry=False
+            )
             return (
                 Agent(
                     preprocessor=preprocessor,

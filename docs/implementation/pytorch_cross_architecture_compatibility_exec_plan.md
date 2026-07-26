@@ -144,8 +144,20 @@ two real hosts or CI runners.
   `uv pip check` false-positive/metadata-validation failure through ADR-013.
 - [x] Add acceptance/regression coverage before production edits.
 - [x] Update Docker, Compose, setup validation, and user documentation.
-- [ ] Validate CUDA execution on the current ARM64 GPU host after GPU memory is released, and validate the same profile on the x86_64/RTX 50xx host.
+- [x] Validate CUDA execution on the current ARM64 GPU host after GPU memory
+  is released. Re-run 2026-07-26: host GPU memory is now free (58,549 MiB
+  free of 97,871 MiB, versus 2,095 MiB free of 480 GiB previously). Ran the
+  real CUDA tensor smoke directly (`torch.zeros(1000, 1000, device="cuda")`,
+  matrix multiply, `torch.cuda.synchronize()`) via
+  `docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev` —
+  passed: `torch 2.9.1+cu128`, `cuda available: True`, tensor op completed.
+  Also re-ran `scripts/validate_torch_install.py --torch-version 2.9.1
+  --require-cusparselt` (PASS, ARM64 ELF-validated) and
+  `tests/test_validate_torch_install.py` (`3 passed`). The x86_64/RTX 50xx
+  host validation remains open — no such host is available in this
+  session; must be run separately when that hardware is accessible.
 - [ ] Reconcile requirements, update the index, and review the final diff.
+  Blocked only on the still-open x86_64/RTX 50xx host validation above.
 
 ## 11. Progress And Findings Log
 
@@ -219,13 +231,19 @@ two real hosts or CI runners.
 | ARM64 incremental Docker build and import smoke | PASS | 2026-07-19 | `thesis_rl`, MetaDrive, SB3, and `torch 2.9.1+cu128` imported; ARM64 cuSPARSELt payload validated. |
 | Final ARM64 Docker build | PASS | 2026-07-19 | The completed Dockerfile passed `torch 2.9.1+cu128` installation and backend-aware ARM64 ELF validation. |
 | ARM64 CUDA tensor smoke | BLOCKED | 2026-07-19 | GH200 had 2,095 MiB free of 480 GiB; `cudaErrorMemoryAllocation`. Retry after GPU memory is released. |
+| ARM64 CUDA tensor smoke, retry | PASS | 2026-07-26 | GPU memory now free (58,549 MiB free of 97,871 MiB). `torch.zeros(1000,1000,device="cuda")`, matrix multiply, `torch.cuda.synchronize()` all completed via `docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev`. |
+| `scripts/validate_torch_install.py --torch-version 2.9.1 --require-cusparselt`, retry | PASS | 2026-07-26 | `torch=2.9.1+cu128 cuSPARSELt=.../libcusparseLt.so.0 architecture=aarch64` |
+| `tests/test_validate_torch_install.py`, retry | PASS | 2026-07-26 | `3 passed` |
 
 ## 15. Final Reconciliation
 
-`REQ-ENV-TORCH-001` through `REQ-ENV-TORCH-004` are implemented. Build and
-import validation passes on the ARM64 host, but full verification is incomplete:
-the CUDA tensor smoke is blocked by externally occupied GPU memory, and the
-x86_64/RTX 50xx host has not yet run the same command. The repository-wide
-pytest result contains seven unrelated existing failures; the focused regression
-suite passes. The change is ready for dependency/import use, pending those
-environment-specific final checks for `VERIFIED` status.
+`REQ-ENV-TORCH-001` through `REQ-ENV-TORCH-004` are implemented. Build,
+import, and CUDA tensor-op validation now all pass on the ARM64 host
+(2026-07-26 retry, after the previously blocking external GPU memory
+pressure cleared). The x86_64/RTX 50xx host validation remains the only
+open item — no such host was available in this session; it must be run
+there before this plan can be marked `VERIFIED`. The repository-wide
+pytest result contains seven unrelated existing failures (as of the
+2026-07-19 full run); the focused regression suite passes. The change is
+ready for dependency/import use on ARM64, pending only the x86_64 host
+check.

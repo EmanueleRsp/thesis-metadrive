@@ -101,6 +101,7 @@ def load_planner_backend(
     cfg_decoder: Any | None = None,
     cfg_obs: Any | None = None,
     device: str = "auto",
+    validate_rollout_geometry: bool = True,
 ) -> BasePlanner:
     name = str(planner_name).lower()
     planner_backend_family(name)
@@ -164,6 +165,7 @@ def load_planner_backend(
             cfg_decoder=cfg_decoder,
             cfg_obs=cfg_obs,
             device=device,
+            validate_rollout_geometry=validate_rollout_geometry,
         )
     raise ValueError(f"Unsupported planner backend: {planner_name}")
 

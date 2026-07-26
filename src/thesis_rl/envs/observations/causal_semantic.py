@@ -9,7 +9,7 @@ ScenarioDescription track array.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import atan2, cos, hypot, isfinite, sin
 from typing import Any, Callable, Mapping
 
@@ -291,6 +291,10 @@ class CausalSemanticBatchBuilder:
         route, route_mask = self._build_route(ego, route_projection.s_m)
         dynamic, dynamic_mask = self._build_dynamic(context, ego, ego_speed_cap)
         static, static_mask = self._build_static(context, ego)
+        self._last_diagnostics = replace(
+            self._last_diagnostics,
+            route_incompatible_static_features=self._route_incompatible_static_features,
+        )
         lane_road = self._build_lane_road(context, ego, route_projection.s_m, vehicle)
         controls, controls_mask = self._build_controls(context, ego, route_projection.s_m)
         interactions, interactions_mask = self._build_interactions(context, ego)
@@ -759,9 +763,30 @@ class CausalSemanticBatchBuilder:
                 continue
             distance = hypot(point.x - ego.position_xy[0], point.y - ego.position_xy[1])
             if distance <= self.static_radius_m:
-                projection = self.route.project(
-                    (point.x, point.y), position_z=elevation or ego.position_z
-                )
+                projection_z = elevation if elevation is not None else ego.position_z
+                try:
+                    projection = self.route.project((point.x, point.y), position_z=projection_z)
+                except ValueError as error:
+                    diagnostics = self.route.projection_diagnostics(
+                        (point.x, point.y), position_z=projection_z
+                    )
+                    if diagnostics.vertically_compatible_segment_count == 0:
+                        self._route_incompatible_static_features += 1
+                        continue
+                    raise CausalSemanticObservationError(
+                        "Semantic static-map route projection unavailable: "
+                        f"scenario_id={context.snapshot.scenario_id}; step={context.snapshot.step_index}; "
+                        f"feature_id={feature_id}; feature_class={feature.feature_class.value}; "
+                        f"feature_position_xy={(point.x, point.y)}; feature_elevation_m={elevation}; "
+                        f"ego_id={ego.actor_id}; ego_z_m={ego.position_z}; "
+                        f"nearest_planar_segment_index={diagnostics.nearest_planar_segment_index}; "
+                        f"nearest_planar_s_m={diagnostics.nearest_planar_s_m}; "
+                        f"nearest_planar_z_m={diagnostics.nearest_planar_z_m}; "
+                        f"nearest_planar_distance_m={diagnostics.nearest_planar_distance_m}; "
+                        f"minimum_vertical_difference_m={diagnostics.minimum_vertical_difference_m}; "
+                        f"vertically_compatible_segment_count={diagnostics.vertically_compatible_segment_count}; "
+                        f"route_z_range_m=({diagnostics.route_min_z_m},{diagnostics.route_max_z_m})"
+                    ) from error
                 bounds = feature.geometry.bounds
                 candidates.append(
                     (
@@ -1147,7 +1172,14 @@ class CausalSemanticBatchBuilder:
             if abs(elevation - ego.position_z) > self.vertical_tolerance_m:
                 continue
             centroid = feature.geometry.representative_point()
-            projection = self.route.project((centroid.x, centroid.y), position_z=elevation)
+            try:
+                projection = self.route.project((centroid.x, centroid.y), position_z=elevation)
+            except ValueError:
+                # Crosswalk elevation is within ego's vertical tolerance but
+                # has no vertically compatible route segment nearby; exclude
+                # it from interaction candidates rather than crashing the
+                # whole observation build.
+                continue
             for actor in self._dynamic_candidates(context, ego):
                 if actor.actor_class not in {ActorClass.PEDESTRIAN, ActorClass.CYCLIST}:
                     continue
@@ -1953,6 +1985,10 @@ class PerceptionBoundedSemanticBatchBuilderV12(CausalSemanticBatchBuilder):
         route, route_mask = self._build_route(ego, route_projection.s_m)
         dynamic, dynamic_mask = self._build_dynamic(context, ego, ego_speed_cap)
         static, static_mask = self._build_static(context, ego)
+        self._last_diagnostics = replace(
+            self._last_diagnostics,
+            route_incompatible_static_features=self._route_incompatible_static_features,
+        )
         lane_road = self._build_lane_road(context, ego, route_projection.s_m, vehicle)
         controls, controls_mask, active_control = self._build_controls_v12(
             context, ego, route_projection.s_m, vehicle
@@ -2119,9 +2155,30 @@ class PerceptionBoundedSemanticBatchBuilderV12(CausalSemanticBatchBuilder):
             distance = float(feature.geometry.distance(ego.footprint))
             if distance > self.static_radius_m:
                 continue
-            projection = self.route.project(
-                (nearest.x, nearest.y), position_z=elevation if elevation is not None else ego.position_z
-            )
+            projection_z = elevation if elevation is not None else ego.position_z
+            try:
+                projection = self.route.project((nearest.x, nearest.y), position_z=projection_z)
+            except ValueError as error:
+                diagnostics = self.route.projection_diagnostics(
+                    (nearest.x, nearest.y), position_z=projection_z
+                )
+                if diagnostics.vertically_compatible_segment_count == 0:
+                    self._route_incompatible_static_features += 1
+                    continue
+                raise CausalSemanticObservationError(
+                    "Semantic static-map route projection unavailable: "
+                    f"scenario_id={context.snapshot.scenario_id}; step={context.snapshot.step_index}; "
+                    f"feature_id={feature_id}; feature_class={feature.feature_class.value}; "
+                    f"feature_position_xy={(nearest.x, nearest.y)}; feature_elevation_m={elevation}; "
+                    f"ego_id={ego.actor_id}; ego_z_m={ego.position_z}; "
+                    f"nearest_planar_segment_index={diagnostics.nearest_planar_segment_index}; "
+                    f"nearest_planar_s_m={diagnostics.nearest_planar_s_m}; "
+                    f"nearest_planar_z_m={diagnostics.nearest_planar_z_m}; "
+                    f"nearest_planar_distance_m={diagnostics.nearest_planar_distance_m}; "
+                    f"minimum_vertical_difference_m={diagnostics.minimum_vertical_difference_m}; "
+                    f"vertically_compatible_segment_count={diagnostics.vertically_compatible_segment_count}; "
+                    f"route_z_range_m=({diagnostics.route_min_z_m},{diagnostics.route_max_z_m})"
+                ) from error
             bounds = feature.geometry.bounds
             candidates.append(
                 (

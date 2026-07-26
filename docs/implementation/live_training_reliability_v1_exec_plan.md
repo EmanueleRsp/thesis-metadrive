@@ -4,8 +4,8 @@
 
 - Feature and plan ID: `LIVE-TRAINING-RELIABILITY-V1`.
 - Authoritative contracts: `docs/specifications/observation_v1.2_specification.md` (APPROVED), `docs/specifications/rulebook_v4.7_specification.md` §7.6 (APPROVED), `docs/specifications/automatic_curriculum_learning_v1_specification.md` §§12--13 and §28 (AUTHORITATIVE), and `docs/specifications/rl_baselines_v1_specification.md` (APPROVED).
-- Status: `IN_PROGRESS` (static-map projection fix implemented; validation pending).
-- Created/updated: 2026-07-23.
+- Status: `IN_PROGRESS` (static-map projection fix implemented and now verified with a real container run 2026-07-26; the frozen-catalog UNKNOWN-signal scenario exclusion and the live scenario smoke remain open, requiring real dataset acquisition/curation work out of scope for this session).
+- Created/updated: 2026-07-26.
 - Related ADRs: ADR-014, ADR-016, ADR-022.
 
 ## 2. Objective and scope
@@ -81,5 +81,8 @@ No deviations identified.
 | Scenario smoke for `waymo:training_20s:14139de6bce54874` | NOT_RUN | 2026-07-23 | Primary runtime/container unavailable in this workspace; exact follow-up remains the requested `make run` command with each SB3 algorithm. |
 | `.venv/bin/python -m ruff format --check ...` and `ruff check ...` | NOT_RUN | 2026-07-23 | The checked project environment has no Ruff module. |
 | `git diff --check` | PASS | 2026-07-23 | No whitespace errors. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_causal_semantic_batch.py tests/test_scenario_acl_mab.py tests/test_sb3_direct_backends.py` | PASS | 2026-07-26 | `33 passed`, run in the actually provisioned container, superseding the earlier environment-blocked attempts. |
+| `docker compose run --rm dev uv run --no-sync ruff check` (all files listed in Section 8) | PASS | 2026-07-26 | `All checks passed!` |
+| `git diff --check` | PASS | 2026-07-26 | No whitespace errors. |
 
-REQ-001, PPO device/event parity, and ACL monitor visibility are implemented pending primary-environment validation. REQ-002 remains partial: the Rulebook correctly fails closed, but the selected catalog contains a scenario whose live pertinent signal reaches `UNKNOWN`; rebuild/filter the frozen catalog before resuming experiments.
+REQ-001, PPO device/event parity, and ACL monitor visibility are implemented and now verified with a real primary-environment run (2026-07-26): `33 passed`, ruff clean. REQ-002 remains partial for a different reason than validation access: the Rulebook correctly fails closed (this is the intended, approved behavior, not a bug), but the selected catalog still contains a scenario whose live pertinent signal reaches `UNKNOWN`; excluding/rebuilding that scenario in the frozen catalog is a dataset-curation task against the real ScenarioNet catalog, out of scope for this session (excluded "long run"/data-acquisition work, same category as the ScenarioNet v1.1 M4/M5 gap). The scenario smoke (`waymo:training_20s:14139de6bce54874`) remains `NOT_RUN` for the same reason.

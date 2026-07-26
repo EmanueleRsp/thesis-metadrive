@@ -239,7 +239,13 @@ def _rss_candidates(
     ego_heading = (cos(ego.heading_rad), sin(ego.heading_rad))
     if ego_heading[0] * ego_lane.tangent_xy[0] + ego_heading[1] * ego_lane.tangent_xy[1] <= 0.0:
         return ()
-    ego_coords = footprint_route_coordinates(ego.footprint, route, position_z=ego.position_z)
+    try:
+        ego_coords = footprint_route_coordinates(ego.footprint, route, position_z=ego.position_z)
+    except ValueError:
+        # Ego's footprint has no vertically compatible route segment nearby
+        # (e.g. a grade-separated overpass/underpass); no RSS-longitudinal
+        # candidate can be scoped this step.
+        return ()
     candidates: list[RSSCandidate] = []
     for actor in actors:
         if actor.actor_class is not ActorClass.VEHICLE:
@@ -263,9 +269,16 @@ def _rss_candidates(
             <= 0.0
         ):
             continue
-        other_coords = footprint_route_coordinates(
-            actor.footprint, route, position_z=actor.position_z
-        )
+        try:
+            other_coords = footprint_route_coordinates(
+                actor.footprint, route, position_z=actor.position_z
+            )
+        except ValueError:
+            # Actor's footprint has no vertically compatible route segment
+            # nearby (e.g. it is on a grade-separated overpass/underpass
+            # relative to ego's route); exclude it from this step's
+            # candidates rather than aborting the whole evaluation.
+            continue
         gap, is_front = bumper_to_bumper_gap(ego_coords, other_coords)
         if is_front:
             candidates.append(
@@ -352,7 +365,13 @@ def _rss_lateral_candidates(
     ego_heading = (cos(ego.heading_rad), sin(ego.heading_rad))
     if ego_heading[0] * ego_lane.tangent_xy[0] + ego_heading[1] * ego_lane.tangent_xy[1] <= 0.0:
         return ()
-    ego_coords = footprint_route_coordinates(ego.footprint, route, position_z=ego.position_z)
+    try:
+        ego_coords = footprint_route_coordinates(ego.footprint, route, position_z=ego.position_z)
+    except ValueError:
+        # Ego's footprint has no vertically compatible route segment nearby
+        # (e.g. a grade-separated overpass/underpass); no lateral-RSS
+        # candidate can be scoped this step.
+        return ()
     tangent = ego_coords.center_tangent_xy
     normal = (-tangent[1], tangent[0])
     ego_tangent_speed = ego.velocity_xy[0] * tangent[0] + ego.velocity_xy[1] * tangent[1]
@@ -380,9 +399,16 @@ def _rss_lateral_candidates(
             <= 0.0
         ):
             continue
-        actor_coords = footprint_route_coordinates(
-            actor.footprint, route, position_z=actor.position_z
-        )
+        try:
+            actor_coords = footprint_route_coordinates(
+                actor.footprint, route, position_z=actor.position_z
+            )
+        except ValueError:
+            # Actor's footprint has no vertically compatible route segment
+            # nearby (e.g. it is on a grade-separated overpass/underpass
+            # relative to ego's route); exclude it from this step's
+            # candidates rather than aborting the whole evaluation.
+            continue
         gap, direction = lateral_edge_to_edge_gap(ego_coords, actor_coords)
         actor_tangent_speed = actor.velocity_xy[0] * tangent[0] + actor.velocity_xy[1] * tangent[1]
         actor_normal_speed = actor.velocity_xy[0] * normal[0] + actor.velocity_xy[1] * normal[1]
@@ -453,6 +479,26 @@ def _empty_interval() -> OccupancyInterval:
     return OccupancyInterval(0.0, 0.0)
 
 
+def _cleared_crosswalk_illegal_entries(
+    *, cache: EpisodeCache, memory: RulebookMemory, ego_footprint: BaseGeometry
+) -> frozenset[tuple[str, str]]:
+    """Drop crosswalk illegal-entry latches for zones ego has already left.
+
+    Same rationale as ``_cleared_vehicle_yield_illegal_entries`` (ADR-025):
+    ``select_first_ahead_or_occupied_zone``'s epsilon-scoped "ahead" filter
+    can exclude a crosswalk zone from candidacy before the ego footprint
+    (vehicle-length scoped) actually stops intersecting it, so the zone_id
+    selected for this step's cost evaluation is not a reliable signal for
+    releasing latches on zones ego has fully exited.
+    """
+    active = set(memory.crosswalk_illegal_entries)
+    for actor_id, zone_id in memory.crosswalk_illegal_entries:
+        record = cache.conflict_zones.get(zone_id)
+        if record is not None and not ego_footprint.intersects(record.polygon):
+            active.discard((actor_id, zone_id))
+    return frozenset(active)
+
+
 def _crosswalk_inputs(
     *,
     pre: EnvSnapshot,
@@ -465,12 +511,15 @@ def _crosswalk_inputs(
     prediction_horizon_s: float,
     minimum_history_samples: int,
     ego_association: LaneAssociation | None = None,
-):
+) -> tuple[dict, CacheDelta]:
     from thesis_rl.rulebook.v2.geometry.conflict_zones import (
         build_crosswalk_conflict_zone_candidates,
         attach_route_intervals,
     )
 
+    cleared_illegal_entries = _cleared_crosswalk_illegal_entries(
+        cache=cache, memory=memory, ego_footprint=post.ego.footprint
+    )
     crosswalks = tuple(
         feature
         for feature in cache.map_feature_catalog.values()
@@ -496,9 +545,9 @@ def _crosswalk_inputs(
             "ego_occupied": False,
             "ego_entered": False,
             "preexisting_zone_ids": memory.preexisting_ego_occupancy_zone_ids,
-            "previous_illegal_entries": memory.crosswalk_illegal_entries,
+            "previous_illegal_entries": cleared_illegal_entries,
             "vertical_applicable": False,
-        }
+        }, CacheDelta()
     elevation = PolylineElevation(lane.centerline.points_xyz)
     movement_key = derive_lane_movement_key(lane, assigned_route_lane_ids=cache.task_route.lane_ids)
     if movement_key is None:
@@ -512,9 +561,9 @@ def _crosswalk_inputs(
             "ego_occupied": False,
             "ego_entered": False,
             "preexisting_zone_ids": memory.preexisting_ego_occupancy_zone_ids,
-            "previous_illegal_entries": memory.crosswalk_illegal_entries,
+            "previous_illegal_entries": cleared_illegal_entries,
             "vertical_applicable": False,
-        }
+        }, CacheDelta()
     corridor = MovementCorridor(
         movement_key=movement_key,
         polygon=lane.polygon_xy,
@@ -547,9 +596,9 @@ def _crosswalk_inputs(
             "ego_occupied": False,
             "ego_entered": False,
             "preexisting_zone_ids": memory.preexisting_ego_occupancy_zone_ids,
-            "previous_illegal_entries": memory.crosswalk_illegal_entries,
+            "previous_illegal_entries": cleared_illegal_entries,
             "vertical_applicable": False,
-        }
+        }, CacheDelta()
     selected = select_first_ahead_or_occupied_zone(
         candidates=tuple(candidates),
         ego_footprint=post.ego.footprint,
@@ -566,9 +615,9 @@ def _crosswalk_inputs(
             "ego_occupied": False,
             "ego_entered": False,
             "preexisting_zone_ids": memory.preexisting_ego_occupancy_zone_ids,
-            "previous_illegal_entries": memory.crosswalk_illegal_entries,
+            "previous_illegal_entries": cleared_illegal_entries,
             "vertical_applicable": False,
-        }
+        }, CacheDelta()
     zone = selected.candidate.polygon
     ego_interval, vru_intervals, _ = predict_conflict_zone_occupancy_intervals(
         ego=post.ego,
@@ -584,6 +633,17 @@ def _crosswalk_inputs(
         horizon_s=prediction_horizon_s,
         minimum_history_samples=minimum_history_samples,
     )
+    record = ConflictZoneRecord(
+        zone_id=selected.candidate.zone_id,
+        polygon=zone,
+        ego_movement_key=selected.candidate.ego_movement_key,
+        other_movement_key=None,
+        route_entry_s_m=selected.route_entry_s_m,
+        route_exit_s_m=selected.route_exit_s_m,
+        elevation_m=post.ego.position_z,
+        component_index=selected.candidate.component_index,
+    )
+    cache_delta = CacheDelta(new_conflict_zones=(record,))
     if ego_interval is None:
         return {
             "zone_id": selected.candidate.zone_id,
@@ -599,9 +659,9 @@ def _crosswalk_inputs(
             "ego_occupied": False,
             "ego_entered": False,
             "preexisting_zone_ids": memory.preexisting_ego_occupancy_zone_ids,
-            "previous_illegal_entries": memory.crosswalk_illegal_entries,
+            "previous_illegal_entries": cleared_illegal_entries,
             "vertical_applicable": False,
-        }
+        }, cache_delta
     return {
         "zone_id": selected.candidate.zone_id,
         "ego_interval": ego_interval,
@@ -614,13 +674,22 @@ def _crosswalk_inputs(
         ),
         "delta_t_s": delta_t_s,
         "ego_occupied": bool(post.ego.footprint.intersects(zone)),
+        # REQ-VY-02-equivalent: the entry event uses the swept front bumper
+        # pre->post, not the plain post-state footprint, so a fast crossing
+        # that only overlaps the zone mid-step is still detected.
         "ego_entered": bool(
-            not pre.ego.footprint.intersects(zone) and post.ego.footprint.intersects(zone)
+            not pre.ego.footprint.intersects(zone)
+            and swept_front_bumper(
+                pre.ego.footprint,
+                post.ego.footprint,
+                pre_heading_rad=pre.ego.heading_rad,
+                post_heading_rad=post.ego.heading_rad,
+            ).intersects(zone)
         ),
         "preexisting_zone_ids": memory.preexisting_ego_occupancy_zone_ids,
-        "previous_illegal_entries": memory.crosswalk_illegal_entries,
+        "previous_illegal_entries": cleared_illegal_entries,
         "vertical_applicable": True,
-    }
+    }, cache_delta
 
 
 def _approach_control_for_movement(cache: EpisodeCache, movement_key) -> ApproachControl:
@@ -1169,7 +1238,7 @@ def evaluate_transition(
         "crossing": stop_distances[2],
     }
     phase_started = time.perf_counter()
-    crosswalk_input = _crosswalk_inputs(
+    crosswalk_input, crosswalk_cache_delta = _crosswalk_inputs(
         pre=pre_state,
         post=post_state,
         cache=cache,
@@ -1325,6 +1394,11 @@ def evaluate_transition(
         excluded_components = frozenset({"vehicle_yield"})
     else:
         component_inputs["vehicle_yield"] = vehicle_input
+    combined_cache_delta = replace(
+        vehicle_cache_delta,
+        new_conflict_zones=vehicle_cache_delta.new_conflict_zones
+        + crosswalk_cache_delta.new_conflict_zones,
+    )
     phase_started = time.perf_counter()
     result, next_memory, cache_delta = evaluate_registered_transition(
         memory=memory,
@@ -1333,7 +1407,7 @@ def evaluate_transition(
         progress_margin=0.0,
         post_state=post_state,
         history_window_s=config.history_window_s,
-        pending_cache_delta=vehicle_cache_delta,
+        pending_cache_delta=combined_cache_delta,
         excluded_normative_components=excluded_components,
     )
     registry_seconds = time.perf_counter() - phase_started

@@ -415,6 +415,8 @@ is provisioned.
 | `make lint` | `PASS` | 2026-07-17 | Full `src tests scripts` Ruff lint passed in container. |
 | `make config` | `PASS` | 2026-07-17 | Docker Compose configuration valid. |
 | `make smoke` | `BLOCKED` | 2026-07-17 | Rulebook v2 worker setup fails before replay because `env.rulebook_v2_adapter` is absent. |
+| `make smoke`, retry | `NOT_RECONFIRMED` | 2026-07-26 | The immediate 2026-07-17 setup failure did not reproduce within a bounded 90 s attempt (`ThesisScenarioEnv._install_rulebook_v2_adapter` exists and is wired, unlike the 2026-07-17 finding), suggesting it was already fixed by unrelated work; however the command did not reach completion within 90 s and was terminated rather than let run further, per this session's no-long-training-run constraint. A full uninterrupted `make smoke` run is still required to close M7/`AC-003`-`AC-041` and mark this plan `VERIFIED`. |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_transition_replay_config.py tests/test_transition_replay_per.py tests/test_transition_replay_persistence.py tests/test_transition_boundary.py` | PASS | 2026-07-26 | `26 passed`, re-confirming all focused deterministic coverage is still green |
 
 ## 15. Final Reconciliation
 

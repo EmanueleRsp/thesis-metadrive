@@ -812,18 +812,26 @@ def _run_scenario_acl_vectorized_training(
                     (item for item in buffer.records() if item.scenario_id == scenario_uid), None
                 )
                 if record is None:
-                    raise ValueError(
-                        f"Replay ACL record is missing from the parent buffer: {scenario_uid}"
+                    # A concurrent, legitimate buffer churn (another vectorized
+                    # slot's completion inserted a more useful scenario and
+                    # evicted this one) can remove the record this in-flight
+                    # replay episode was selected against before this episode
+                    # finishes. The episode's outcome cannot update a record
+                    # that no longer exists, but the rest of ACL bookkeeping
+                    # (MAB update above, event logging below) already
+                    # completed correctly, so skip the buffer update rather
+                    # than aborting the whole training run.
+                    action = "skipped_evicted_before_commit"
+                else:
+                    updated = _update_replay_record(
+                        record,
+                        episode_id=completion.episode_id,
+                        learning_potential=lp,
+                        normalized_usefulness=normalized,
+                        metrics=_episode_record_metrics(metrics),
                     )
-                updated = _update_replay_record(
-                    record,
-                    episode_id=completion.episode_id,
-                    learning_potential=lp,
-                    normalized_usefulness=normalized,
-                    metrics=_episode_record_metrics(metrics),
-                )
-                buffer.update(updated)
-                action = "updated"
+                    buffer.update(updated)
+                    action = "updated"
             else:
                 catalog_record = catalog.get_by_uid(scenario_uid).record
                 inserted = buffer.insert(
@@ -1230,7 +1238,10 @@ def _run_scenario_acl_vectorized_training(
     final_eval_agent = Agent(
         preprocessor=preprocessor,
         planner=load_planner(
-            cfg, checkpoint_path=f"{paths.final_checkpoint_stem}.zip", env=final_eval_env
+            cfg,
+            checkpoint_path=f"{paths.final_checkpoint_stem}.zip",
+            env=final_eval_env,
+            validate_rollout_geometry=False,
         ),
         adapter=adapter,
         ema_alpha=float(getattr(agent, "ema_alpha", 0.1)),
@@ -2223,6 +2234,7 @@ def run_scenario_acl_training(
                 cfg,
                 checkpoint_path=f"{paths.final_checkpoint_stem}.zip",
                 env=final_eval_env,
+                validate_rollout_geometry=False,
             ),
             adapter=adapter,
             ema_alpha=ema_alpha_cfg,

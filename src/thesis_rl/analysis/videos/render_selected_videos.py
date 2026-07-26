@@ -460,7 +460,9 @@ def render_selected_videos(run_dir: Path) -> None:
             seed_env_spaces(env, run_seed + 500_000)
             preprocessor = build_preprocessor(cfg)
             adapter: BaseAdapter = build_adapter(cfg, adapter_space_kwargs(env.action_space))
-            planner = load_planner(cfg, checkpoint_path=str(checkpoint_path), env=env)
+            planner = load_planner(
+                cfg, checkpoint_path=str(checkpoint_path), env=env, validate_rollout_geometry=False
+            )
             agent = Agent(preprocessor=preprocessor, planner=planner, adapter=adapter)
             agent.load_adapter(checkpoint_path=checkpoint_path, strict=True)
 

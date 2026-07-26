@@ -8,6 +8,7 @@ import numpy as np
 
 from thesis_rl.scenarios.pg.exporter import export_pg_scenario
 from thesis_rl.scenarios.pg.profiles import GenerationSpec, get_pg_profile, validate_native_tokens
+from thesis_rl.scenarios.pg.roundabout_priority import roundabout_priority_records
 from thesis_rl.scenarios.pg.validation import PGValidationResult
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 
@@ -88,6 +89,11 @@ def generate_pg_scenario(
         if scenario is None:
             raise RuntimeError(f"MetaDrive export did not return scenario seed {seed}")
         map_metadata = env.current_map.get_meta_data()
+        roundabout_priorities = roundabout_priority_records(env.current_map)
+        if roundabout_priorities:
+            scenario.setdefault("metadata", {}).setdefault("rulebook_vehicle_yield", {})[
+                "roundabout_priorities"
+            ] = roundabout_priorities
         map_config = env.config.get("map_config", {})
         spec = replace(
             spec,

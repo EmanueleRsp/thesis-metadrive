@@ -273,6 +273,15 @@ def test_all_incompatible_static_features_preserve_shape_and_empty_mask() -> Non
 def test_structural_static_projection_error_is_propagated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A projection failure that is NOT a vertical-compatibility gap (the
+    synthetic monkeypatch below is unrelated to the feature's actual, real
+    vertical compatibility) must not be silently swallowed as an
+    incompatible-feature skip. It is re-raised as
+    ``CausalSemanticObservationError`` (a ``ValueError`` subclass) carrying
+    the original failure plus route-projection diagnostics, mirroring the
+    same structural-vs-incompatible distinction already established by
+    ``_build_static_v12``."""
+
     builder, context = _static_fixture({"broken": _static_feature("broken", 0.1515)})
     original_project = RoutePolyline.project
 
@@ -282,7 +291,7 @@ def test_structural_static_projection_error_is_propagated(
         return original_project(self, point_xy, position_z=position_z, previous_s_m=previous_s_m)
 
     monkeypatch.setattr(RoutePolyline, "project", fail_feature_projection)
-    with pytest.raises(ValueError, match="synthetic structural projection failure"):
+    with pytest.raises(CausalSemanticObservationError, match="route projection unavailable"):
         builder.build(_Vehicle(), context)
 
 

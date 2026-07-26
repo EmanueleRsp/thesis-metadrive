@@ -127,14 +127,29 @@ Mandatory matrix frozen before the production edit:
 
 - [x] M1 — Confirm native flag conflation and freeze deterministic regression matrix.
 - [x] M2 — Refine physical-boundary classification, shared native predicate, and aggregate termination.
-- [x] M3 — Run focused validation and reconcile final diff. The repository
-  `.venv` still lacks pytest/Ruff, so the supported `uv run --no-sync` commands
-  remain unavailable; the system pytest ran the environment, Rulebook wrapper,
-  evaluation artifacts, and Waymo adapter suite with test-process-only import
-  stubs: `52 passed`.
+- [x] M3 — Run focused validation and reconcile final diff. Originally run
+  2026-07-20/21 with test-process-only import stubs because Docker access
+  was denied in that session (`52`/`53 passed`). Re-run 2026-07-26 in the
+  actually provisioned `docker compose run --rm dev` environment (no
+  stubs): `docker compose run --rm dev uv run --no-sync python -m pytest -q
+  tests/test_thesis_scenario_env.py tests/test_rulebook_v2_waymo_adapter.py
+  tests/test_rulebook_v2_wrapper.py tests/test_eval_artifacts.py` — `61
+  passed`. This supersedes the earlier stub-based run with the actual
+  supported command from `AGENTS.md`.
 - [ ] M4 — Run the affected ScenarioNet evaluation in the provisioned runtime
   and confirm that a boundary-only trajectory remains non-terminal, while a
   fully off-surface trajectory terminates even if `contact_results` is empty.
+  **Still open as of 2026-07-26**: the exact original failing scenario
+  (`waymo:training_20s:3976d7f407ac1ca2`) is referenced in
+  `data/scenarionet/frozen/scenario_selection_index.json` but its converted
+  ScenarioNet database is not present in this working tree (only the raw
+  MetaDrive Waymo assets under `third_party/metadrive/metadrive/assets/waymo/`
+  exist locally); reproducing it would require running the ScenarioNet
+  conversion pipeline and a live evaluation rollout, both explicitly
+  excluded from this session's scope (user requested no long test/training
+  runs). Remains the one concrete prerequisite before this plan can be
+  marked `VERIFIED`; must be run in a session where that scenario's
+  converted data is available or can be rebuilt.
 
 ## 11. Progress and findings log
 
@@ -218,6 +233,7 @@ No deviations identified.
 | Focused Ruff | NOT_RUN | 2026-07-20 | `uv run --no-sync` could not spawn Ruff because `.venv` lacks it; Docker socket is inaccessible |
 | `git diff --check` | PASS | 2026-07-20 | No whitespace errors |
 | Focused equivalent suite | PASS | 2026-07-21 | `53 passed`: environment, Rulebook wrapper, evaluation artifacts, and Waymo adapter with process-only `omegaconf`/`rich` compatibility stubs |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_thesis_scenario_env.py tests/test_rulebook_v2_waymo_adapter.py tests/test_rulebook_v2_wrapper.py tests/test_eval_artifacts.py` | PASS | 2026-07-26 | `61 passed`, run in the actually provisioned container (no stubs), superseding the earlier stub-based confirmation |
 
 ## 15. Final reconciliation
 

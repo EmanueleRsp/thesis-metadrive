@@ -191,6 +191,20 @@ external credentials and must not overwrite frozen data.
   intended stale-runtime-fixture skip after the import-cycle fix.
   Documentation reconciliation and non-mutating final audit remain pending.
   Validates `TEST-SN-015` and mandatory checks.
+  **Update 2026-07-26**: this milestone describes an open-ended catalog-scaling
+  effort (growing the candidate pool toward and past 28,483 records) that is
+  separate from, and does not block, the frozen 3,500-record dataset
+  established by M8-M10 below. Re-verified the frozen dataset is real and
+  current: `data/scenarionet/frozen/scenario_selection_index.json`
+  (`created_at` 2026-07-23) lists 3,500 source files, all confirmed present
+  via `docker compose run --rm dataset-pipeline uv run --no-sync python -m
+  thesis_rl.cli.scenarios.replay_frozen_dataset --verify-only --data-root
+  /workspace/data/scenarionet --index
+  /workspace/data/scenarionet/frozen/scenario_selection_index.json`; the
+  corresponding `catalog/split_report.json` (also dated 2026-07-23) reports
+  `total_arm_deficit: 0` and `balance_total_arm_deficit: 0` across all six
+  arms and both sources. This frozen dataset is what training/evaluation
+  actually consumes today and is not blocked by M4's remaining scope.
 - [ ] M5 — In progress. Complete correctness-preserving incremental feasibility
   validation: reuse deterministic PG seeds unless explicit PG overwrite is
   requested; skip duplicate full Waymo status scans when the caller already

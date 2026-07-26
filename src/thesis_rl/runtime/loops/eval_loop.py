@@ -266,7 +266,9 @@ def run_evaluation(cfg: DictConfig) -> None:
             cfg,
             adapter_space_kwargs(env.action_space),
         )
-        planner = load_planner(cfg, checkpoint_path=str(ckpt), env=env)
+        planner = load_planner(
+            cfg, checkpoint_path=str(ckpt), env=env, validate_rollout_geometry=False
+        )
         ema_alpha_cfg = (
             float(cfg.agent.planner.algorithm.get("monitor_ema_alpha", 0.1))
             if hasattr(cfg, "agent")

@@ -80,7 +80,12 @@ def _evaluation_worker_main(job: EvaluationJob, output_queue: Any) -> None:
         seed_env_spaces(env, job.env_seed)
         preprocessor = build_preprocessor(cfg)
         adapter = build_adapter(cfg, adapter_space_kwargs(env.action_space))
-        planner = load_planner(cfg, checkpoint_path=f"{job.checkpoint_stem}.zip", env=env)
+        planner = load_planner(
+            cfg,
+            checkpoint_path=f"{job.checkpoint_stem}.zip",
+            env=env,
+            validate_rollout_geometry=False,
+        )
         agent = Agent(
             preprocessor=preprocessor,
             planner=planner,

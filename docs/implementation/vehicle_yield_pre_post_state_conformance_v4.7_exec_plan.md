@@ -12,7 +12,7 @@
   `ACCETTATA`/approved as part of the v4.7 implementation)
 - Status: `VERIFIED`
 - Created: 2026-07-24
-- Last updated: 2026-07-24
+- Last updated: 2026-07-25
 - Branch: `scenarionet-implementation`
 - Related ADRs: none new (conformance fix to an already-approved decision,
   not a new material decision)
@@ -291,14 +291,24 @@ scenario. The formula itself is correct and covered at the pure-function
 level. No deferred required work remains within this plan's scope; this
 limitation is reported to the user as an independent follow-up candidate.
 
-Update 2026-07-24: the user reports this was investigated and fixed in a
-separate session (`ADR-025-vehicle-yield-latch-cleanup-decoupled-from-zone-selection`,
-a different ADR-025 than this repository's own `ADR-025-r2-lateral-rss-clearance-replacement`
-— the numbering collided because the two sessions ran in isolated
-worktrees). That fix is **not present in this working tree**: it was not
-observed here, could not be verified from this session, and has not been
-merged. Do not treat this limitation as resolved in this branch until the
-other session's changes are actually merged and its own tests re-run here.
+Update 2026-07-25: resolved and merged into this working tree. The fix
+(`_cleared_vehicle_yield_illegal_entries` in `transition.py`, documented in
+`ADR-025-vehicle-yield-latch-cleanup-decoupled-from-zone-selection.md`, a
+different ADR-025 than this repository's own
+`ADR-025-r2-lateral-rss-clearance-replacement` — the numbering collided
+because the two fixes were developed in isolated worktrees) was merged via
+`git rebase` of `scenarionet-implementation` onto
+`origin/scenarionet-implementation` (commit `e4be417`). It decouples
+illegal-entry latch cleanup from the current step's zone selection: a latch
+is now dropped as soon as the ego footprint stops intersecting the zone
+polygon directly (via `cache.conflict_zones`), independent of whether that
+zone is still an "ahead" selection candidate. This is complementary to, not
+a replacement for, the DEC-005 pre/post-state fix in this plan — the two
+compose in `_vehicle_yield_inputs`: `_cleared_vehicle_yield_illegal_entries`
+governs when a latch is released, `_pre_state_priority_and_gap` governs when
+one is created. Full `tests/test_rulebook_v2_*.py` suite re-run here after
+the merge: 272 passed; `make rulebook-v2-check` clean (tests, `ruff check`,
+`git diff --check`). The known limitation described above is resolved.
 
 Behavior: vehicle-yield now judges illegal entries from the pre-state
 occupancy view and keeps an active latch reflected in the aggregated cost

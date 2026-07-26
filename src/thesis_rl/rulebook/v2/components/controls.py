@@ -300,6 +300,12 @@ def evaluate_crosswalk_yield(
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
     """Evaluate crosswalk temporal gap and commit gate for live VRU intervals."""
     if not vertical_applicable:
+        # The illegal-entry latch must still be persisted here (already
+        # pruned upstream against live zone geometry, independent of this
+        # step's selection): an empty MemoryDelta would silently keep any
+        # stale entry from a previous step forever, since no other branch
+        # revisits a zone once it stops being selected (same bug class as
+        # ADR-025 for vehicle_yield).
         return (
             RuleComponentResult(
                 "crosswalk",
@@ -310,7 +316,10 @@ def evaluate_crosswalk_yield(
                 ComponentStatus.NOT_APPLICABLE,
                 {},
             ),
-            MemoryDelta(),
+            MemoryDelta(
+                writer="crosswalk",
+                writes=(("crosswalk_illegal_entries", previous_illegal_entries),),
+            ),
             CacheDelta(),
         )
     if ego_interval is None:

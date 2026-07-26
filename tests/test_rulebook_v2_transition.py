@@ -22,6 +22,8 @@ from thesis_rl.rulebook.v2.types import (
     EpisodeCache,
     EnvSnapshot,
     ContactOnsetRecord,
+    MapFeatureClass,
+    MapFeatureRecord,
     RulebookMemory,
     TaskRouteRecord,
     ApproachControl,
@@ -424,6 +426,60 @@ def test_transition_clears_vehicle_yield_illegal_entry_latch_after_ego_fully_exi
 
     assert illegal_entry_observed, "test setup must actually record an illegal entry first"
     assert memory.vehicle_yield_illegal_entries == frozenset()
+
+
+def test_transition_clears_crosswalk_illegal_entry_latch_after_ego_fully_exits_zone() -> None:
+    """Regression test for the same bug class as ADR-025, on the crosswalk
+    component: ``select_first_ahead_or_occupied_zone``'s epsilon-scoped
+    "ahead" filter can exclude the crosswalk zone from selection before the
+    ego footprint (length 2 m here, via ``_snapshot``) actually stops
+    intersecting it, so the illegal-entry latch must clear once ego's
+    footprint has geometrically left the zone, independent of which zone (if
+    any) is selected for the step's own cost evaluation.
+    """
+
+    base_cache = _cache()
+    crosswalk_polygon = Polygon(((8.0, -5.0), (12.0, -5.0), (12.0, 5.0), (8.0, 5.0)))
+    feature = MapFeatureRecord("crosswalk-1", MapFeatureClass.CROSSWALK, crosswalk_polygon, 0.0)
+    cache = replace(base_cache, map_feature_catalog={"crosswalk-1": feature})
+    config = RulebookTransitionConfig(
+        rss_calibration=RSSCalibrationArtifact("calibration", 4.0),
+        expected_config_hash="calibration",
+    )
+    # A stationary pedestrian sitting inside the crosswalk zone the whole
+    # time keeps the temporal gap unsafe (worst > 0) whenever the zone is
+    # selected and occupied, so ego's first entry is recorded as illegal.
+    ped = ActorSnapshot(
+        "ped",
+        ActorClass.PEDESTRIAN,
+        (10.0, 0.0),
+        0.0,
+        0.0,
+        (0.0, 0.0),
+        Polygon(((9.5, -0.5), (10.5, -0.5), (10.5, 0.5), (9.5, 0.5))),
+        None,
+        2.0,
+    )
+    ego_positions = (6.0, 9.0, 10.5, 11.5, 13.5, 15.0)
+    pre = replace(_snapshot(0, 0.0, ego_positions[0]), actors=(ped,))
+    memory = initial_memory_for_snapshot(pre, cache)
+    illegal_entry_observed = False
+    for index, x in enumerate(ego_positions[1:], start=1):
+        post = replace(_snapshot(index, index * 0.1, x), actors=(ped,))
+        result, memory, delta = evaluate_transition(
+            pre_state=pre,
+            post_state=post,
+            memory=memory,
+            cache=cache,
+            config=config,
+        )
+        cache = apply_cache_delta(cache, delta)
+        if ("ped", result.components["crosswalk"].raw["zone_id"]) in memory.crosswalk_illegal_entries:
+            illegal_entry_observed = True
+        pre = post
+
+    assert illegal_entry_observed, "test setup must actually record an illegal crosswalk entry first"
+    assert memory.crosswalk_illegal_entries == frozenset()
 
 
 def test_transition_vehicle_yield_latches_illegal_entry_from_pre_state_even_if_actor_exits_same_step() -> (
