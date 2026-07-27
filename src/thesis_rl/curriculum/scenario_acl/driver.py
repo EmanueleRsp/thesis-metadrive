@@ -29,6 +29,7 @@ from thesis_rl.curriculum.scenario_acl.arms import (
 from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer
 from thesis_rl.curriculum.scenario_acl.mab import ScenarioArmBandit
 from thesis_rl.curriculum.scenario_acl.record import ScenarioRecord
+from thesis_rl.curriculum.scenario_acl.selection import select_acl_slot_decision
 from thesis_rl.curriculum.scenario_acl.usefulness import (
     compute_learning_potential,
     compute_scenario_usefulness,
@@ -581,95 +582,57 @@ def _run_scenario_acl_vectorized_training(
     coordinator = AclVectorSelectionCoordinator(vector_state)
     transaction = AclVectorTransaction(vector_state)
     initial_observations: Any | None = None
+    ineligible_generate_arms: frozenset[str] = frozenset()
 
     def select_batch(slots: list[int]) -> dict[int, AclSlotSelection]:
         def selector(slot: int, excluded: frozenset[str]) -> AclSlotSelection:
-            nonlocal generate_count, replay_count
+            nonlocal generate_count, replay_count, ineligible_generate_arms
             episode_id = vector_state.next_episode_id
             vector_state.next_episode_id += 1
             generation = vector_state.next_generation
-            effective_excluded = set(excluded)
-            effective_excluded.update(str(record.scenario_id) for record in buffer.records())
-            can_replay = bool(
-                scenario_cfg.use_replay and len(buffer) >= int(scenario_cfg.warmup_buffer_size)
-            )
-            if can_replay and float(rng.random()) < float(scenario_cfg.exploit_probability):
-                replay = buffer.sample_replay(
-                    rng=rng,
-                    current_step=episode_id,
-                    cfg=scenario_cfg.replay_sampling,
-                    use_staleness=bool(scenario_cfg.use_staleness),
-                )
-                record = replay.record
-                replay_count += 1
-                return AclSlotSelection(
-                    slot_id=slot,
-                    episode_id=episode_id,
-                    generation=generation,
-                    mode="replay",
-                    arm_index=SCENARIO_ARM_NAMES.index(
-                        str(record.scenario_arm or record.generator_arm or record.source)
-                    ),
-                    arm_name=str(record.scenario_arm or record.generator_arm or record.source),
-                    reset_seed=int(record.reset_seed),
-                    scenario_uid=str(record.scenario_id),
-                    runtime_index=int(record.scenario_index),
-                    source=str(record.source),
-                )
-
-            if bool(scenario_cfg.use_mab):
-                arm_index, probabilities = bandit.sample_arm(rng)
-            else:
-                arm_index = int(rng.integers(0, len(arms)))
-                probabilities = np.full(len(arms), 1.0 / len(arms), dtype=np.float64)
-            arm_name = arms[arm_index].name
-            candidates = [
-                record
-                for record in train_records
-                if record.primary_arm == arm_name and record.scenario_uid not in effective_excluded
-            ]
-            if not candidates:
-                if not len(buffer):
-                    raise RuntimeError(
-                        f"Selected ACL arm {arm_name!r} has no fresh catalog record and replay is empty."
-                    )
-                replay = buffer.sample_replay(
-                    rng=rng,
-                    current_step=episode_id,
-                    cfg=scenario_cfg.replay_sampling,
-                    use_staleness=bool(scenario_cfg.use_staleness),
-                )
-                record = replay.record
-                replay_count += 1
-                return AclSlotSelection(
-                    slot_id=slot,
-                    episode_id=episode_id,
-                    generation=generation,
-                    mode="replay",
-                    arm_index=SCENARIO_ARM_NAMES.index(
-                        str(record.scenario_arm or record.generator_arm or record.source)
-                    ),
-                    arm_name=str(record.scenario_arm or record.generator_arm or record.source),
-                    reset_seed=int(record.reset_seed),
-                    scenario_uid=str(record.scenario_id),
-                    runtime_index=int(record.scenario_index),
-                    source=str(record.source),
-                )
-            record = candidates[int(rng.integers(0, len(candidates)))]
-            generate_count += 1
-            return AclSlotSelection(
-                slot_id=slot,
+            decision = select_acl_slot_decision(
+                slot=slot,
                 episode_id=episode_id,
                 generation=generation,
-                mode="generate",
-                arm_index=int(arm_index),
-                arm_name=arm_name,
-                reset_seed=int(record.runtime_index),
-                scenario_uid=str(record.scenario_uid),
-                runtime_index=int(record.runtime_index),
-                source=str(record.source),
-                selection_probability=float(probabilities[arm_index]),
+                excluded_scenario_uids=excluded,
+                buffer=buffer,
+                bandit=bandit,
+                arms=arms,
+                train_records=train_records,
+                scenario_cfg=scenario_cfg,
+                rng=rng,
             )
+            if decision.selection.mode == "generate":
+                generate_count += 1
+            else:
+                replay_count += 1
+            # ACL-SN-EXH-001 / ADR-028: surface every transition in which arm
+            # exhausts (or recovers) its Generate pool. Logged once per
+            # transition, not once per episode, so a long-exhausted arm does
+            # not spam the event log while still leaving an audit trail of
+            # exactly when the MAB's Generate distribution narrowed.
+            if decision.eligible_arm_mask is not None:
+                current_ineligible = frozenset(
+                    arms[index].name
+                    for index, eligible in enumerate(decision.eligible_arm_mask)
+                    if not eligible
+                )
+                if current_ineligible != ineligible_generate_arms:
+                    log_event(
+                        paths.events_log_path,
+                        "scenario_acl_generate_pool_eligibility_changed",
+                        episode_id=int(episode_id),
+                        newly_ineligible_arms=sorted(
+                            current_ineligible - ineligible_generate_arms
+                        ),
+                        newly_eligible_arms=sorted(
+                            ineligible_generate_arms - current_ineligible
+                        ),
+                        ineligible_arms=sorted(current_ineligible),
+                        scores=[float(value) for value in bandit.scores.tolist()],
+                    )
+                    ineligible_generate_arms = current_ineligible
+            return decision.selection
 
         selected = coordinator.select_batch(slots, selector=selector)
         for slot in sorted(selected):
@@ -1147,6 +1110,9 @@ def _run_scenario_acl_vectorized_training(
                     "timing_seconds", {}
                 ),
                 "mab": bandit.state_dict(),
+                # ACL-SN-EXH-001 / ADR-028: arms with no fresh Generate record
+                # as of this chunk boundary; empty when every arm is eligible.
+                "generate_ineligible_arms": sorted(ineligible_generate_arms),
             }
             _append_jsonl(artifact_paths["history"], history_payload)
             _append_jsonl(artifact_paths["iterations"], history_payload)
