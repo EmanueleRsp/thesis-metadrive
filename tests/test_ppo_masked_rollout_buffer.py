@@ -65,11 +65,42 @@ def test_data_abort_boundary_bootstraps_reward_and_marks_next_row_invalid() -> N
     assert buffer.pos == 3
 
 
+def test_close_previous_transition_is_a_noop_at_a_fresh_collection_cycle_start() -> None:
+    """An abort on an env's first step of a fresh rollout is routine, not a bug.
+
+    Regression for the ppo-0 production crash: SB3 resets this buffer's
+    ``pos`` to 0 at the start of every ``n_steps`` rollout collection cycle
+    (not just once at the start of training), so ``row < 0`` happens
+    repeatedly throughout a run. The "previous" transition in that case
+    belongs to the just-flushed prior rollout, already correctly
+    bootstrapped by SB3's own end-of-rollout truncation handling, so there
+    is nothing to fix here and this must not raise.
+    """
+
+    buffer = _make_buffer()
+    buffer.close_previous_transition_as_data_abort(env_index=0, terminal_value=1.0)
+    assert buffer.pos == 0
+    assert np.array_equal(buffer.rewards, np.zeros_like(buffer.rewards))
+
+
+def test_close_previous_transition_is_a_noop_immediately_after_a_mid_training_reset() -> None:
+    """Same no-op guarantee after a real rollout has already been collected once."""
+
+    buffer = _make_buffer()
+    _add(buffer, reward=[1.0, 1.0], episode_start=[True, True])
+    _add(buffer, reward=[1.0, 1.0], episode_start=[False, False])
+    _add(buffer, reward=[1.0, 1.0], episode_start=[False, False])
+    assert buffer.full
+    buffer.reset()
+    assert buffer.pos == 0
+
+    buffer.close_previous_transition_as_data_abort(env_index=1, terminal_value=5.0)
+    assert buffer.pos == 0
+    assert np.array_equal(buffer.rewards, np.zeros_like(buffer.rewards))
+
+
 def test_close_previous_transition_raises_without_a_preceding_valid_row() -> None:
     buffer = _make_buffer()
-    with pytest.raises(ValueError, match="No previous rollout transition"):
-        buffer.close_previous_transition_as_data_abort(env_index=0, terminal_value=1.0)
-
     _add(buffer, reward=[1.0, 1.0], episode_start=[True, True])
     _add(
         buffer,

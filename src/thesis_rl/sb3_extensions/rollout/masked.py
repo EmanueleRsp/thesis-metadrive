@@ -95,13 +95,25 @@ class MaskedRolloutBuffer(RolloutBuffer):
         crossing the reset with a synthetic transition. The caller marks the
         *next* transition written for this env as an episode start, exactly
         as for an ordinary truncated episode.
+
+        Unlike the off-policy replay buffer (a circular buffer spanning the
+        whole run, where ``pos == 0`` genuinely means "nothing has ever been
+        collected"), this on-policy buffer is periodically reset to
+        ``pos == 0`` by SB3 at the start of every ``n_steps`` rollout
+        collection cycle. An abort on an env's first step of a fresh
+        collection cycle is therefore a routine occurrence, not a caller
+        bug: the "previous" transition belongs to the just-flushed prior
+        rollout, whose boundary reward was already correctly bootstrapped by
+        SB3's own standard end-of-rollout truncation handling before this
+        buffer was reset. There is nothing left to retroactively fix in
+        that case, so this is a no-op rather than an error.
         """
 
         if not 0 <= int(env_index) < self.n_envs:
             raise IndexError("Rollout environment index is out of range.")
         row = int(self.pos) - 1
         if row < 0:
-            raise ValueError("No previous rollout transition exists for data-abort closure.")
+            return
         if not bool(self.valid_transitions[row, int(env_index)]):
             raise ValueError("Data-abort closure requires a preceding valid transition.")
         self.rewards[row, int(env_index)] += float(self.gamma * terminal_value)
