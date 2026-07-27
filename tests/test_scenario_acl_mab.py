@@ -126,6 +126,51 @@ def test_legacy_v1_checkpoint_schema_is_rejected() -> None:
         ScenarioArmBandit.from_state_dict(bandit.config, legacy_state)
 
 
+def test_probabilities_zero_ineligible_arms_and_renormalize_the_floor() -> None:
+    """ACL-SN-EXH-001 / DEC-EXH-001, DEC-EXH-002 (ADR-028).
+
+    An ineligible arm gets exactly probability zero, and the `eta/K`
+    exploration floor is renormalized over the eligible subset -- an eligible
+    arm's floor share grows as fewer arms remain eligible instead of staying
+    fixed at `eta/K` over all arms.
+    """
+
+    bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=6, eta=0.2, temperature=0.5))
+    eligible_mask = np.array([True, True, False, False, False, True])
+
+    probabilities = bandit.probabilities(eligible_mask)
+
+    assert np.isclose(probabilities.sum(), 1.0)
+    assert np.all(probabilities[~eligible_mask] == 0.0)
+    assert np.all(probabilities[eligible_mask] >= 0.2 / 3.0)
+    # Uniform scores across the three eligible arms split the mass evenly.
+    assert np.allclose(probabilities[eligible_mask], 1.0 / 3.0)
+
+
+def test_probabilities_reduce_to_the_unrestricted_contract_without_a_mask() -> None:
+    bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=6, eta=0.2, temperature=0.5))
+    bandit.update(arm_index=0, normalized_usefulness=1.0)
+
+    assert np.allclose(bandit.probabilities(), bandit.probabilities(np.ones(6, dtype=bool)))
+
+
+def test_probabilities_rejects_an_all_false_eligible_mask() -> None:
+    bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=3))
+    with pytest.raises(ValueError, match="At least one arm"):
+        bandit.probabilities(np.zeros(3, dtype=bool))
+
+
+def test_sample_arm_never_draws_an_ineligible_arm() -> None:
+    bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=4, eta=0.2, temperature=0.5))
+    bandit.scores = np.array([0.9, 0.9, 0.9, 0.9])
+    eligible_mask = np.array([True, False, True, False])
+    rng = np.random.default_rng(2026)
+
+    drawn = {bandit.sample_arm(rng, eligible_mask)[0] for _ in range(200)}
+
+    assert drawn <= {0, 2}
+
+
 def test_target_mab_is_available_but_disabled_by_default() -> None:
     bandit = ScenarioArmBandit(
         ScenarioAclMabConfig(num_arms=2, alpha=1.0, use_target_mab=True, target_sync_interval=2)

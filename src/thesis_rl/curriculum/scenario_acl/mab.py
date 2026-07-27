@@ -48,28 +48,51 @@ class ScenarioArmBandit:
         """Compatibility alias for diagnostics; scores are not logits."""
         return self.scores
 
-    def probabilities(self) -> np.ndarray:
+    def probabilities(self, eligible_mask: np.ndarray | None = None) -> np.ndarray:
+        """Return the Generate selection distribution.
+
+        ``eligible_mask`` restricts sampling to arms that currently have a
+        fresh catalog record (ACL-SN-EXH-001, `DEC-EXH-001`/`DEC-EXH-002`,
+        ADR-028). A `False` entry gets exactly probability zero; the
+        exploration floor `eta/K` is renormalized over the eligible subset so
+        every *eligible* arm keeps a non-zero floor instead of every arm.
+        Omitting the mask (or passing an all-`True` mask) reproduces the
+        unrestricted ACL v1.1 REQ-002 distribution.
+        """
+
         scores = np.asarray(
             self.target_scores if self.config.use_target_mab else self.scores,
             dtype=np.float64,
         )
-        if scores.shape != (int(self.config.num_arms),) or not np.isfinite(scores).all():
+        num_arms = int(self.config.num_arms)
+        if scores.shape != (num_arms,) or not np.isfinite(scores).all():
             raise ValueError("MAB scores must be a finite vector with num_arms entries.")
+        if eligible_mask is None:
+            mask = np.ones(num_arms, dtype=bool)
+        else:
+            mask = np.asarray(eligible_mask, dtype=bool)
+            if mask.shape != (num_arms,):
+                raise ValueError("MAB eligible_mask must have num_arms entries.")
+            if not mask.any():
+                raise ValueError("At least one arm must be eligible for Generate sampling.")
         tau = float(self.config.temperature)
-        logits = scores / tau
+        logits = np.where(mask, scores / tau, -np.inf)
         logits -= float(np.max(logits))
-        softmax = np.exp(logits)
+        softmax = np.where(mask, np.exp(logits), 0.0)
         softmax /= float(np.sum(softmax))
         eta = float(self.config.eta)
         if not 0.0 <= eta <= 1.0:
             raise ValueError("MAB eta must be in [0, 1].")
-        probabilities = (1.0 - eta) * softmax + eta / float(self.config.num_arms)
+        num_eligible = int(mask.sum())
+        probabilities = np.where(mask, (1.0 - eta) * softmax + eta / num_eligible, 0.0)
         if not np.isfinite(probabilities).all() or not np.isclose(probabilities.sum(), 1.0):
             raise ValueError("MAB probabilities are not finite or do not sum to one.")
         return probabilities
 
-    def sample_arm(self, rng: np.random.Generator) -> tuple[int, np.ndarray]:
-        probabilities = self.probabilities()
+    def sample_arm(
+        self, rng: np.random.Generator, eligible_mask: np.ndarray | None = None
+    ) -> tuple[int, np.ndarray]:
+        probabilities = self.probabilities(eligible_mask)
         return int(rng.choice(np.arange(len(probabilities)), p=probabilities)), probabilities
 
     def update(

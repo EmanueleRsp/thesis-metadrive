@@ -9,7 +9,7 @@
 - Date: `2026-07-23`
 - Supersedes: `docs/specifications/automatic_curriculum_learning_v1_specification.md` only for the selected ScenarioNet scalar ACL core
 - Related specifications: `docs/specifications/scenarionet_integration_v1.1_specification.md`, `docs/specifications/rl_baselines_v1_specification.md`
-- Related ADRs: `docs/decisions/ADR-014-scenarionet-acl-learning-potential-only.md`, `docs/decisions/ADR-016-scenario-acl-vectorized-execution.md`
+- Related ADRs: `docs/decisions/ADR-014-scenarionet-acl-learning-potential-only.md`, `docs/decisions/ADR-016-scenario-acl-vectorized-execution.md`, `docs/decisions/ADR-028-scenario-acl-generate-eligibility-renormalization.md` (REQ-002/REQ-003 amendment, approved 2026-07-27)
 - Authoritative: `YES`
 
 ## 1. Purpose and context
@@ -67,11 +67,11 @@ No inverse-probability correction is applied. Scores remain finite and in `[0,1]
 
 ### REQ-002: Temperature and exploration
 
-Before Generate sampling, compute `p_i=(1-eta) softmax(q_i/tau)+eta/K`. Require `0<eta<=1`, `tau>0`, `0<alpha<=1`; probabilities must be finite, sum to one within numerical tolerance, and satisfy `p_i >= eta/K`.
+Before Generate sampling, compute `p_i=(1-eta) softmax(q_i/tau)+eta/K` over the arms currently eligible for Generate (`K_eligible <= K`; an arm is eligible when at least one of its frozen catalog records is not already held by the scenario buffer or claimed elsewhere in the same vectorized batch). An ineligible arm receives `p_i=0`. Require `0<eta<=1`, `tau>0`, `0<alpha<=1`; probabilities must be finite, sum to one within numerical tolerance, and satisfy `p_i >= eta/K_eligible` for every eligible arm. **Amended 2026-07-27 by ADR-028** (`DEC-EXH-001`, `DEC-EXH-002`): the original wording used `K` unconditionally, which let an arm whose entire pool had been absorbed into the buffer keep being drawn, silently degrade to Replay, and freeze its EMA score (FIND-001). When every arm is simultaneously ineligible, sampling falls back to the existing missing-frozen-record Replay/fatal path unchanged.
 
 ### REQ-003: Generate/Replay schedule
 
-While `len(buffer)<warmup_buffer_size`, select Generate. Afterwards select Generate with probability `0.40` and Replay with probability `0.60`. Replay never creates or mutates a ScenarioDescription.
+While `len(buffer)<warmup_buffer_size`, select Generate. Afterwards select Generate with probability `0.40` and Replay with probability `0.60`. Replay never creates or mutates a ScenarioDescription. **Amended 2026-07-27 by ADR-028**: the 0.40/0.60 split is measured over Generate draws that produce a committed Generate episode; an arm made ineligible by REQ-002 is excluded from the Generate arm draw rather than counted as a degraded Replay, so the split holds even while one or more arms are temporarily ineligible.
 
 ### REQ-004: Replay ranking preservation
 
@@ -168,6 +168,7 @@ Required: nominal/boundary, invalid configuration, numerical stability, update o
 |---|---|---|---|
 | DEC-001 | Approve EMA/temperature/40-60 as frozen scientific defaults? | Approve this v1.1 specification | APPROVED 2026-07-23 |
 | DEC-002 | Migrate old cumulative checkpoints? | Reject and restart unless a separately reviewed converter is required | APPROVED 2026-07-23 |
+| DEC-003 | An arm whose entire frozen pool is absorbed by the buffer keeps being drawn, silently degrades to Replay, and freezes its EMA score forever (FIND-001, ADR-028) — how should REQ-002/REQ-003 handle it? | Exclude ineligible arms before sampling and renormalize the softmax and `eta/K` floor over the eligible subset | APPROVED 2026-07-27 |
 
 ## 16. References
 
