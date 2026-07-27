@@ -88,13 +88,21 @@ def compute_ppo_learning_potential(
 
 
 def compute_td3_learning_potential(td_residuals: Any) -> float:
-    """Compute TD3 learning potential as mean absolute TD residual."""
-    return float(np.abs(_finite_vector(td_residuals, name="TD3 residuals")).mean())
+    """Compute TD3 learning potential as mean positive-part TD residual.
+
+    DEC-006: `max(delta, 0)` instead of `|delta|`, matching the production
+    computation at `agent/planners/core/lifecycle.py:acl_learning_potential`
+    and restoring the ZPD hopelessness filter PPO already has structurally.
+    """
+    return float(np.maximum(_finite_vector(td_residuals, name="TD3 residuals"), 0.0).mean())
 
 
 def compute_sac_learning_potential(td_residuals: Any) -> float:
-    """Compute SAC learning potential as mean absolute entropy-aware residual."""
-    return float(np.abs(_finite_vector(td_residuals, name="SAC residuals")).mean())
+    """Compute SAC learning potential as mean positive-part entropy-aware residual.
+
+    DEC-006: `max(delta, 0)` instead of `|delta|`; see `compute_td3_learning_potential`.
+    """
+    return float(np.maximum(_finite_vector(td_residuals, name="SAC residuals"), 0.0).mean())
 
 
 def compute_td3_td_residuals(

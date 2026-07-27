@@ -256,6 +256,33 @@ def test_lifecycle_assigns_collection_residuals_to_slot_and_episode() -> None:
     assert lifecycle.acl_learning_potential(0, 3) is None
 
 
+def test_lifecycle_collection_learning_potential_uses_positive_part_not_absolute() -> None:
+    # DEC-006: production LP at the collection-time attribution site
+    # (FIND-002) must use max(delta, 0), not |delta| -- a negative residual
+    # (worse-than-expected outcome) must contribute zero, not inflate LP.
+    class Backend:
+        def observe_transition_batch(self, **_kwargs):
+            return None
+
+        def collection_learning_potential_batch(self, **_kwargs):
+            return np.asarray([-6.0, 2.0], dtype=np.float32)
+
+    lifecycle = _DelegatingLifecycle(Backend())
+    lifecycle.observe_transition_batch(
+        observations=np.zeros((2, 1), dtype=np.float32),
+        buffer_actions=np.zeros((2, 1), dtype=np.float32),
+        rewards=np.zeros(2, dtype=np.float32),
+        dones=np.asarray([False, True]),
+        next_observations=np.zeros((2, 1), dtype=np.float32),
+        infos=[
+            {"acl_slot_id": 0, "acl_episode_id": 1},
+            {"acl_slot_id": 0, "acl_episode_id": 1},
+        ],
+    )
+    # mean(max([-6.0, 2.0], 0)) = mean([0.0, 2.0]) = 1.0, not mean(|.|) = 4.0
+    assert lifecycle.acl_learning_potential(0, 1) == pytest.approx(1.0)
+
+
 def test_worker_rng_derivation_is_stable() -> None:
     left = derive_worker_rng(7, 1).random(4)
     right = derive_worker_rng(7, 1).random(4)

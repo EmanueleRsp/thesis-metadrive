@@ -146,11 +146,16 @@ class _DelegatingLifecycle:
                 )
 
     def acl_learning_potential(self, slot_id: int, episode_id: int) -> float | None:
-        """Return the mean absolute collection residual for one ACL episode."""
+        """Return the mean positive-part collection residual for one ACL episode.
+
+        DEC-006: `max(delta, 0)` instead of `|delta|`, restoring for TD3/SAC the
+        ZPD hopelessness filter PPO already has via `max(GAE, 0)` (worse-than-
+        expected outcomes contribute zero rather than inflating LP).
+        """
 
         values = self._acl_collection_residuals.pop((int(slot_id), int(episode_id)), None)
         if values:
-            return float(np.abs(np.asarray(values, dtype=np.float64)).mean())
+            return float(np.maximum(np.asarray(values, dtype=np.float64), 0.0).mean())
         backend_value = getattr(self.backend, "pop_acl_episode_learning_potential", None)
         if callable(backend_value):
             return backend_value(int(slot_id), int(episode_id))
@@ -160,7 +165,7 @@ class _DelegatingLifecycle:
         """Expose completed collection-time LP values without replay attribution."""
 
         ready: dict[tuple[int, int], float] = {
-            key: float(np.abs(np.asarray(values, dtype=np.float64)).mean())
+            key: float(np.maximum(np.asarray(values, dtype=np.float64), 0.0).mean())
             for key, values in self._acl_collection_residuals.items()
             if values
         }

@@ -81,6 +81,51 @@ def test_generator_arm_bandit_probability_contract_and_checkpoint_schema() -> No
         ScenarioArmBandit.from_state_dict(bandit.config, {"weights": [1.0] * 6})
 
 
+def test_reward_scale_estimator_initializes_uniformly_and_updates_with_ema() -> None:
+    # DEC-006: shared initial value across arms means normalization is a
+    # no-op until an arm's estimate has actually diverged from the prior.
+    bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=3, alpha=0.5))
+    assert bandit.reward_scale_estimate(0) == pytest.approx(1.0)
+    assert bandit.normalize_learning_potential_by_reward_scale(0, 5.0) == pytest.approx(5.0)
+
+    bandit.update_reward_scale(0, episode_reward=9.0)
+    # (1 - 0.5) * 1.0 + 0.5 * 9.0 = 5.0
+    assert bandit.reward_scale_estimate(0) == pytest.approx(5.0)
+    assert bandit.reward_scale_estimate(1) == pytest.approx(1.0)
+    assert bandit.normalize_learning_potential_by_reward_scale(0, 5.0) == pytest.approx(1.0)
+
+    bandit.update_reward_scale(0, episode_reward=-9.0)
+    # Negative rewards contribute their magnitude: (1-0.5)*5.0 + 0.5*9.0 = 7.0
+    assert bandit.reward_scale_estimate(0) == pytest.approx(7.0)
+
+
+def test_reward_scale_estimate_is_clamped_away_from_zero() -> None:
+    bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=2, alpha=1.0))
+    bandit.update_reward_scale(0, episode_reward=0.0)
+    assert bandit.reward_scale_estimate(0) == pytest.approx(1e-3)
+    assert bandit.normalize_learning_potential_by_reward_scale(0, 2.0) == pytest.approx(2000.0)
+
+
+def test_reward_scale_state_round_trips_through_checkpoint() -> None:
+    bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=3, alpha=0.5))
+    bandit.update_reward_scale(1, episode_reward=12.0)
+    restored = ScenarioArmBandit.from_state_dict(bandit.config, bandit.state_dict())
+    assert np.allclose(restored.reward_scale, bandit.reward_scale)
+    assert restored.state_dict()["schema"] == "acl_ema_v2"
+
+
+def test_legacy_v1_checkpoint_schema_is_rejected() -> None:
+    bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=6))
+    legacy_state = {
+        "schema": "acl_ema_v1",
+        "scores": bandit.scores.tolist(),
+        "target_scores": bandit.target_scores.tolist(),
+        "update_count": 0,
+    }
+    with pytest.raises(ValueError, match="acl_ema_v2"):
+        ScenarioArmBandit.from_state_dict(bandit.config, legacy_state)
+
+
 def test_target_mab_is_available_but_disabled_by_default() -> None:
     bandit = ScenarioArmBandit(
         ScenarioAclMabConfig(num_arms=2, alpha=1.0, use_target_mab=True, target_sync_interval=2)

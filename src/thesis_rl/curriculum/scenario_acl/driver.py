@@ -717,7 +717,9 @@ def _run_scenario_acl_vectorized_training(
         }
         # An aborted scenario must still be replaced in its slot, but cannot
         # produce completion, LP, MAB, or scenario-buffer effects.
-        payloads = [payload for payload in payloads if int(payload["worker_id"]) not in aborted_slots]
+        payloads = [
+            payload for payload in payloads if int(payload["worker_id"]) not in aborted_slots
+        ]
         completed: dict[tuple[int, int], AclCompletion] = {}
         learning_potentials: dict[tuple[int, int], float] = {}
         ready: dict[tuple[int, int], float] = {}
@@ -776,7 +778,15 @@ def _run_scenario_acl_vectorized_training(
             key = (int(event["worker_id"]), int(event["episode_id"]))
             completion = pending_by_key[key]
             lp = float(event["learning_potential"])
-            normalized = _normalize_learning_potential(lp, recent_usefulness)
+            arm_index = int(completion.selection.arm_index)
+            metrics = dict(completion.metrics)
+            # DEC-006: normalize the raw LP by the arm's reward-scale EMA
+            # before it enters the shared rank window, removing the
+            # cross-arm reward-magnitude confound identified in FIND-004.
+            # Applied to both Generate and Replay episodes so the window
+            # stays in consistent units (RAT-002/MEAS-001 invariance).
+            lp_scaled = bandit.normalize_learning_potential_by_reward_scale(arm_index, lp)
+            normalized = _normalize_learning_potential(lp_scaled, recent_usefulness)
             live_event_context = {
                 "slot": int(completion.worker_id),
                 "episode_id": int(completion.episode_id),
@@ -784,6 +794,7 @@ def _run_scenario_acl_vectorized_training(
                 "source": completion.selection.source,
                 "origin": ("replay" if completion.selection.mode == "replay" else "new"),
                 "U": f"{lp:.4f}",
+                "U_scaled": f"{lp_scaled:.4f}",
                 "U_norm": f"{normalized:.4f}",
             }
             if isinstance(completion.metrics, dict):
@@ -791,7 +802,7 @@ def _run_scenario_acl_vectorized_training(
             payload = payload_by_key.get(key)
             if payload is not None:
                 payload["live_event_context"] = live_event_context
-            recent_usefulness.append(lp)
+            recent_usefulness.append(lp_scaled)
             max_recent = int(scenario_cfg.recent_window_size)
             if len(recent_usefulness) > max_recent:
                 del recent_usefulness[:-max_recent]
@@ -799,11 +810,11 @@ def _run_scenario_acl_vectorized_training(
                 if completion.selection.selection_probability is None:
                     raise ValueError("Fresh ACL selection is missing its MAB probability.")
                 bandit.update(
-                    arm_index=completion.selection.arm_index,
+                    arm_index=arm_index,
                     normalized_usefulness=normalized,
                     selection_probability=float(completion.selection.selection_probability),
                 )
-            metrics = dict(completion.metrics)
+                bandit.update_reward_scale(arm_index, float(metrics.get("reward", 0.0)))
             scenario_uid = completion.selection.scenario_uid
             if scenario_uid is None:
                 raise ValueError("ACL completion is missing scenario identity.")
@@ -823,10 +834,14 @@ def _run_scenario_acl_vectorized_training(
                     # than aborting the whole training run.
                     action = "skipped_evicted_before_commit"
                 else:
+                    # DEC-006/LIM-001: buffer retention/eviction priority uses
+                    # the reward-scale-normalized LP, not the raw value, so
+                    # the same cross-arm confound (FIND-004) does not persist
+                    # through this second channel after the MAB itself is fixed.
                     updated = _update_replay_record(
                         record,
                         episode_id=completion.episode_id,
-                        learning_potential=lp,
+                        learning_potential=lp_scaled,
                         normalized_usefulness=normalized,
                         metrics=_episode_record_metrics(metrics),
                     )
@@ -839,7 +854,7 @@ def _run_scenario_acl_vectorized_training(
                         catalog_record=catalog_record,
                         cfg=cfg,
                         episode_id=completion.episode_id,
-                        learning_potential=lp,
+                        learning_potential=lp_scaled,
                         normalized_usefulness=normalized,
                         metrics=_episode_record_metrics(metrics),
                     )
@@ -1749,6 +1764,7 @@ def run_scenario_acl_training(
                 selection = getattr(base_env, "_acl_episode_selection", {})
                 episode_usefulness: float | None = None
                 normalized_episode_usefulness: float | None = None
+                scaled_episode_usefulness: float | None = None
                 try:
                     episode_usefulness = compute_learning_potential(
                         episode_metrics,
@@ -1759,10 +1775,22 @@ def run_scenario_acl_training(
                     # episode remains valid but provides no MAB feedback.
                     pass
                 if episode_usefulness is not None:
-                    normalized_episode_usefulness = _normalize_learning_potential(
-                        episode_usefulness, recent_usefulness
+                    # DEC-006: mirrors the vectorized `commit_event` path.
+                    # Replay iterations carry `arm_index=-1` here (unlike the
+                    # vectorized selector, which resolves a real index), so
+                    # resolve the arm by name for scale lookup only.
+                    scale_arm_index = (
+                        spec.arm_index
+                        if spec.arm_index >= 0
+                        else SCENARIO_ARM_NAMES.index(spec.arm_name)
                     )
-                    recent_usefulness.append(episode_usefulness)
+                    scaled_episode_usefulness = bandit.normalize_learning_potential_by_reward_scale(
+                        scale_arm_index, episode_usefulness
+                    )
+                    normalized_episode_usefulness = _normalize_learning_potential(
+                        scaled_episode_usefulness, recent_usefulness
+                    )
+                    recent_usefulness.append(scaled_episode_usefulness)
                     max_recent = int(scenario_cfg.recent_window_size)
                     if len(recent_usefulness) > max_recent:
                         del recent_usefulness[:-max_recent]
@@ -1772,13 +1800,18 @@ def run_scenario_acl_training(
                             normalized_usefulness=normalized_episode_usefulness,
                             selection_probability=float(spec.arm_probabilities[spec.arm_index]),
                         )
+                        bandit.update_reward_scale(
+                            spec.arm_index, float(episode_metrics.get("reward", 0.0))
+                        )
                     selection["usefulness"] = episode_usefulness
                     selection["usefulness_norm"] = normalized_episode_usefulness
                     episode_metrics["usefulness"] = episode_usefulness
                     episode_metrics["usefulness_norm"] = normalized_episode_usefulness
                 current_episode_id += 1
                 if bool(scenario_cfg.use_scenario_buffer):
-                    learning_value = episode_usefulness or 0.0
+                    # DEC-006/LIM-001: buffer retention uses the reward-scale-
+                    # normalized value, matching the vectorized commit_event path.
+                    learning_value = scaled_episode_usefulness or 0.0
                     normalized_value = normalized_episode_usefulness or 0.0
                     if _is_replay_iteration(spec):
                         if spec.replay_record is None:

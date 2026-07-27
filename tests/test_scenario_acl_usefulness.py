@@ -81,9 +81,12 @@ def test_ppo_learning_potential_bootstraps_truncation_final_value() -> None:
     ) == pytest.approx(2.0)
 
 
-def test_td3_and_sac_learning_potential_use_absolute_residuals() -> None:
-    assert compute_td3_learning_potential([-2.0, 1.0, 3.0]) == pytest.approx(2.0)
-    assert compute_sac_learning_potential([-2.0, 1.0, 3.0]) == pytest.approx(2.0)
+def test_td3_and_sac_learning_potential_use_positive_part_residuals() -> None:
+    # DEC-006: max(delta, 0), not |delta| -- negative residuals (worse-than-
+    # expected outcomes) contribute zero, matching PPO's hopelessness filter.
+    assert compute_td3_learning_potential([-2.0, 1.0, 3.0]) == pytest.approx(4.0 / 3.0)
+    assert compute_sac_learning_potential([-2.0, 1.0, 3.0]) == pytest.approx(4.0 / 3.0)
+    assert compute_td3_learning_potential([-2.0, -1.0]) == pytest.approx(0.0)
 
 
 def test_td3_and_sac_residuals_apply_terminal_and_entropy_terms() -> None:
