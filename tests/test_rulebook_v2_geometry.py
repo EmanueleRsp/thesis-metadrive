@@ -38,6 +38,9 @@ from thesis_rl.rulebook.v2.geometry.footprint import (
     swept_front_bumper,
 )
 from thesis_rl.rulebook.v2.geometry.lanes import (
+    anchored_frame_extent,
+    anchored_lateral_gap,
+    tangent_intervals_overlap,
     RouteLaneRecord,
     associate_route_lane,
     bumper_to_bumper_gap,
@@ -184,6 +187,48 @@ def test_route_projection_uses_reset_and_previous_s_tie_breaks_at_self_intersect
     assert near_final_crossing.segment_index == 2
 
 
+def test_route_point_at_interpolates_inside_the_containing_segment() -> None:
+    """TEST-EF-01 / REQ-EF-01.
+
+    Regression for the nearest-endpoint segment selection, which returned the
+    preceding vertex for every arc length in the first half of a segment:
+    ``point_at(14.0)`` used to return ``(10.0, 0.0, 0.0)``.
+    """
+
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 1.0), (20.0, 0.0, 2.0)))
+    assert route.point_at(4.0) == pytest.approx((4.0, 0.0, 0.4))
+    assert route.point_at(6.0) == pytest.approx((6.0, 0.0, 0.6))
+    assert route.point_at(14.0) == pytest.approx((14.0, 0.0, 1.4))
+    assert route.point_at(16.0) == pytest.approx((16.0, 0.0, 1.6))
+
+
+def test_route_point_at_is_exact_at_vertices_and_clamps_outside_the_route() -> None:
+    """TEST-EF-02 / REQ-EF-01."""
+
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 1.0), (20.0, 0.0, 2.0)))
+    assert route.point_at(0.0) == pytest.approx((0.0, 0.0, 0.0))
+    assert route.point_at(10.0) == pytest.approx((10.0, 0.0, 1.0))
+    assert route.point_at(20.0) == pytest.approx((20.0, 0.0, 2.0))
+    assert route.point_at(-5.0) == pytest.approx((0.0, 0.0, 0.0))
+    assert route.point_at(25.0) == pytest.approx((20.0, 0.0, 2.0))
+    with pytest.raises(ValueError, match="finite"):
+        route.point_at(float("nan"))
+
+
+def test_route_point_at_has_no_sawtooth_on_a_finely_sampled_polyline() -> None:
+    """TEST-EF-03 / REQ-EF-01.
+
+    MetaDrive exports lane polylines with ``interval=2`` m, which is what made
+    the historical error a sawtooth of up to 1 m in the policy's route
+    waypoints rather than a single isolated wrong value.
+    """
+
+    route = RoutePolyline(tuple((float(x), 0.0, 0.0) for x in range(0, 101, 2)))
+    for step in range(0, 1001):
+        target = step / 10.0
+        assert route.point_at(target)[0] == pytest.approx(target, abs=1.0e-9)
+
+
 def test_route_consolidates_noisy_xy_points_with_median_elevation_and_rejects_large_spread() -> (
     None
 ):
@@ -284,6 +329,58 @@ def test_lateral_edge_to_edge_gap_and_side_on_shared_route_frame() -> None:
     assert gap == pytest.approx(0.0)
 
 
+def test_anchored_frame_extent_measures_both_footprints_on_one_shared_axis() -> None:
+    """TEST-EF-11 / REQ-EF-04 (rulebook v4.8 §3, ADR-035).
+
+    ``footprint_route_coordinates`` lets every vertex select its own nearest
+    route segment, so two extents compared as if homogeneous are only valid on
+    a straight route. The anchored frame is a scalar product against a single
+    ``(tangent, normal)`` pair, which is what the lateral metric requires.
+    """
+
+    origin = (5.0, 0.0)
+    tangent = (1.0, 0.0)
+    ego = anchored_frame_extent(
+        oriented_bounding_box(center_xy=(5.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0),
+        origin_xy=origin,
+        tangent_xy=tangent,
+    )
+    left = anchored_frame_extent(
+        oriented_bounding_box(center_xy=(5.0, 3.0), heading_rad=0.0, length_m=4.0, width_m=2.0),
+        origin_xy=origin,
+        tangent_xy=tangent,
+    )
+    assert ego.tangent_min_m == pytest.approx(-2.0)
+    assert ego.tangent_max_m == pytest.approx(2.0)
+    assert ego.normal_min_m == pytest.approx(-1.0)
+    assert ego.normal_max_m == pytest.approx(1.0)
+    assert anchored_lateral_gap(ego, left) == pytest.approx((1.0, 1))
+    assert anchored_lateral_gap(left, ego) == pytest.approx((1.0, -1))
+    assert tangent_intervals_overlap(ego, left) is True
+
+
+def test_tangent_intervals_overlap_separates_abreast_from_leading_pairs() -> None:
+    """TEST-EF-11 / REQ-EF-02: the ADR-035 applicability predicate."""
+
+    origin = (0.0, 0.0)
+    tangent = (1.0, 0.0)
+
+    def extent(center_x: float, center_y: float):
+        return anchored_frame_extent(
+            oriented_bounding_box(
+                center_xy=(center_x, center_y), heading_rad=0.0, length_m=4.0, width_m=2.0
+            ),
+            origin_xy=origin,
+            tangent_xy=tangent,
+        )
+
+    ego = extent(0.0, 0.0)
+    assert tangent_intervals_overlap(ego, extent(0.0, 3.0)) is True
+    assert tangent_intervals_overlap(ego, extent(3.0, 3.0)) is True
+    assert tangent_intervals_overlap(ego, extent(10.0, 0.0)) is False
+    assert tangent_intervals_overlap(ego, extent(-10.0, 0.0)) is False
+
+
 def test_drivable_surface_uses_current_vertical_layer_and_width_fallback() -> None:
     lower = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
     upper = RoutePolyline(((0.0, 0.0, 10.0), (10.0, 0.0, 10.0)))
@@ -338,7 +435,10 @@ def test_derived_control_line_is_orthogonal_and_signed_upstream_positive() -> No
         "lane", Polygon(((0.0, -2.0), (10.0, -2.0), (10.0, 2.0), (0.0, 2.0))), route
     )
     control = derive_control_line(
-        control_point_xy=(5.0, 0.0), control_point_z=0.0, controlled_lane=lane
+        control_point_xy=(5.0, 0.0),
+        control_point_z=0.0,
+        controlled_lane=lane,
+        route=lane.centerline,
     )
     assert control.geometry.bounds == pytest.approx((5.0, -2.0, 5.0, 2.0))
     assert control.route_s_m == pytest.approx(5.0)
@@ -679,3 +779,35 @@ def test_roundabout_corridor_intersection_remains_2_5d_filtered() -> None:
         )
         == ()
     )
+
+
+def test_route_projection_continuity_bound_rejects_a_far_branch_jump() -> None:
+    """OPEN-EF-03 / `F12`.
+
+    On a route that folds back on itself, a point near the crossing is strictly
+    closer to the far branch, so `previous_s_m` — which only breaks ties within
+    `eps_geom` of the minimum planar distance — cannot prevent the coordinate
+    from jumping and reporting spurious progress. The bound makes the choice
+    explicit and fails closed when nothing is plausible.
+    """
+
+    route = RoutePolyline(
+        ((0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 0.4, 0.0), (0.0, 0.4, 0.0))
+    )
+    near_the_fold = (9.0, 0.35)
+
+    # Unbounded: continuity is only a tie-break, so the far branch can win.
+    unbounded = route.project(near_the_fold, previous_s_m=9.0)
+
+    # Bounded to a plausible one-step advance from s=9.0.
+    bounded = route.project(near_the_fold, previous_s_m=9.0, max_s_jump_m=2.0)
+    assert abs(bounded.s_m - 9.0) <= 2.0 + GEOMETRY_EPSILON_M
+    assert bounded.s_m <= unbounded.s_m
+
+    # The bound is a preference, not a gate: with nothing plausible the
+    # unbounded choice is kept, so a rare geometry never becomes an abort.
+    degenerate = route.project(near_the_fold, previous_s_m=0.0, max_s_jump_m=0.01)
+    assert degenerate.s_m == pytest.approx(unbounded.s_m)
+
+    with pytest.raises(ValueError, match="requires previous_s_m"):
+        route.project(near_the_fold, max_s_jump_m=1.0)

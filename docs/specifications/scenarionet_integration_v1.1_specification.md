@@ -948,7 +948,7 @@ traffic_density:
   max: 0.18
 num_blocks:
   choices: [2, 3, 4]
-accident_prob: 0.0
+accident_prob: 0.03
 max_episode_length: 500
 ```
 
@@ -969,7 +969,7 @@ traffic_density:
   max: 0.18
 num_blocks:
   choices: [2, 3, 4]
-accident_prob: 0.0
+accident_prob: 0.08
 max_episode_length: 500
 ```
 
@@ -992,7 +992,7 @@ traffic_density:
   max: 0.18
 num_blocks:
   choices: [2, 3, 4]
-accident_prob: 0.0
+accident_prob: 0.08
 max_episode_length: 500
 ```
 
@@ -1016,7 +1016,7 @@ traffic_density:
   max: 0.25
 num_blocks:
   choices: [4, 5]
-accident_prob: 0.0
+accident_prob: 0.15
 max_episode_length: 500
 ```
 
@@ -1030,9 +1030,12 @@ La copertura di pedoni e ciclisti può provenire principalmente da Waymo. Un gen
 
 ### 9.8 Ostacoli statici
 
-`accident_prob` rimane a zero nei profili principali.
+`accident_prob` is a probability per eligible MetaDrive road block, not a
+per-scenario probability. From 2026-07-29 the core profiles use the schedule
+P0 `0.00`, P1 `0.03`, P2 `0.08`, P3 `0.08`, P5 `0.15`.
 
-Gli ostacoli statici non definiscono un arm autonomo nella v1.1. Possono essere conservati tramite il tag:
+Static obstacles do not define an autonomous arm in v1.1. The tag is present
+only when an accident-scene static object was actually generated and exported:
 
 ```text
 has_static_obstacle
@@ -1471,7 +1474,9 @@ has_unknown_signal
 ### 16.2 Algoritmo
 
 ```python
-def assign_primary_arm(f: ScenarioFeatures) -> str:
+def assign_primary_arm(
+    f: ScenarioFeatures, *, has_static_obstacle: bool = False
+) -> str:
     topology = (
         f.has_merge_or_roundabout is True
         or f.has_intersection is True
@@ -1515,7 +1520,11 @@ def assign_primary_arm(f: ScenarioFeatures) -> str:
         f.has_merge_or_roundabout is False
         and f.has_intersection is False
     )
-    if known_simple and f.relevant_vehicles_q90 <= 8.0:
+    if (
+        known_simple
+        and f.relevant_vehicles_q90 <= 8.0
+        and not has_static_obstacle
+    ):
         return "A0_simple_low_traffic"
 
     return "A1_traffic"
@@ -1523,6 +1532,11 @@ def assign_primary_arm(f: ScenarioFeatures) -> str:
 
 Uno scenario con `topology_tag="unknown"` non viene forzato in A0: può essere
 classificato A1 o A4 sulla base delle feature affidabili disponibili.
+
+A static obstacle makes A0 ineligible; an otherwise simple scenario therefore
+uses the A1 fallback. Tag presence alone does not change A2--A5 conditions or
+precedence and never promotes a scenario automatically to A5. The tag remains
+available for analysis and secondary sampling.
 
 ### 16.3 Controllo distribuzione e uso delle label
 
@@ -2830,7 +2844,12 @@ pg:
     - P3_intersection
     - P5_complex_mixed
   mutation: false
-  accident_prob_core_profiles: 0.0
+  accident_prob_by_profile:
+    P0_simple: 0.00
+    P1_vehicle_interaction: 0.03
+    P2_merge_or_roundabout: 0.08
+    P3_intersection: 0.08
+    P5_complex_mixed: 0.15
   enforce_minimum_scenarios_per_arm_during_generation: false
 
 arms:

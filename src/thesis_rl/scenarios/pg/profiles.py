@@ -48,8 +48,8 @@ class PGProfile:
             raise ValueError(f"invalid traffic density range for {self.name}")
         if not self.num_blocks_choices or any(value < 2 for value in self.num_blocks_choices):
             raise ValueError(f"{self.name} requires at least two blocks")
-        if self.accident_prob != 0.0:
-            raise ValueError("ScenarioNet v1 PG profiles require accident_prob=0")
+        if not 0.0 <= self.accident_prob <= 1.0:
+            raise ValueError("accident_prob must be within [0, 1]")
 
     @property
     def required_native_tokens(self) -> tuple[str, ...]:
@@ -97,7 +97,9 @@ class PGProfile:
 
 PG_PROFILES: tuple[PGProfile, ...] = (
     PGProfile("P0_simple", ("S", "C"), 0.00, 0.05, (2, 3)),
-    PGProfile("P1_vehicle_interaction", ("S", "C"), 0.07, 0.18, (2, 3, 4)),
+    PGProfile(
+        "P1_vehicle_interaction", ("S", "C"), 0.07, 0.18, (2, 3, 4), accident_prob=0.03
+    ),
     PGProfile(
         "P2_merge_or_roundabout",
         ("S", "C"),
@@ -106,6 +108,7 @@ PG_PROFILES: tuple[PGProfile, ...] = (
         (2, 3, 4),
         complex_tokens=("y", "r", "R", "O"),
         min_complex_tokens=1,
+        accident_prob=0.08,
     ),
     PGProfile(
         "P3_intersection",
@@ -115,6 +118,7 @@ PG_PROFILES: tuple[PGProfile, ...] = (
         (2, 3, 4),
         complex_tokens=("X", "T"),
         min_complex_tokens=1,
+        accident_prob=0.08,
     ),
     PGProfile(
         "P5_complex_mixed",
@@ -124,6 +128,7 @@ PG_PROFILES: tuple[PGProfile, ...] = (
         (4, 5),
         complex_tokens=("y", "r", "R", "O", "X", "T"),
         min_complex_tokens=2,
+        accident_prob=0.15,
     ),
 )
 

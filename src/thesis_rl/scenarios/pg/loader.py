@@ -119,6 +119,8 @@ def _load_pg_entry(
             return None
     block_sequence = realized_metadata.get("block_sequence", []) if realized_metadata else []
     map_id = "".join(str(token) for token in block_sequence) or profile
+    static_metadata = realized_metadata.get("static_obstacle", {}) if realized_metadata else {}
+    static_obstacle = isinstance(static_metadata, dict) and static_metadata.get("realized") is True
     record = ScenarioRecord(
         scenario_uid=f"pg:{dataset_version}:{scenario_id}",
         scenario_id=scenario_id,
@@ -135,8 +137,8 @@ def _load_pg_entry(
         pg_profile=profile,
         pg_seed=seed,
         map_id=map_id,
-        primary_arm=assign_primary_arm(features),
-        tags=derive_scenario_tags(features),
+        primary_arm=assign_primary_arm(features, has_static_obstacle=static_obstacle),
+        tags=derive_scenario_tags(features, has_static_obstacle=static_obstacle),
         signal_reliability=features.signal_reliability,
         validation_status=validation.status,  # type: ignore[arg-type]
         validation_warnings=validation.warnings,

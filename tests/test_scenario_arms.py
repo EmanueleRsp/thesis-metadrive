@@ -108,6 +108,24 @@ def test_complex_junction_below_critical_threshold_is_a3() -> None:
     assert assign_primary_arm(features) == "A3_complex_junction"
 
 
+def test_static_obstacle_excludes_an_otherwise_simple_scenario_from_a0() -> None:
+    assert assign_primary_arm(_features(), has_static_obstacle=True) == "A1_traffic"
+
+
+@pytest.mark.parametrize(
+    ("features", "expected"),
+    [
+        (_features(has_intersection=True, relevant_agents_q90=25.0), "A3_complex_junction"),
+        (_features(vru_interaction=True), "A4_vru"),
+        (_features(has_intersection=True, vru_conflict_count=1), "A5_critical_mixed"),
+    ],
+)
+def test_static_obstacle_does_not_change_non_a0_arm_precedence(
+    features: ScenarioFeatures, expected: str
+) -> None:
+    assert assign_primary_arm(features, has_static_obstacle=True) == expected
+
+
 def test_tags_keep_signal_uncertainty_independent() -> None:
     features = replace(
         _features(),

@@ -197,6 +197,115 @@ def footprint_route_coordinates(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class AnchoredFrameExtent:
+    """Footprint extents on one shared tangent/normal frame.
+
+    Unlike :class:`FootprintRouteCoordinates`, whose per-vertex projections
+    each select their own nearest route segment, every value here is a scalar
+    product against a **single** ``(tangent, normal)`` pair anchored at one
+    origin.  Rulebook v4.8 specification §3 requires exactly this for the
+    scoped lateral-RSS metric: two extents may only be compared when they were
+    measured on the same axis, which is not guaranteed on curved routes when
+    each vertex projects independently.
+    """
+
+    tangent_min_m: float
+    tangent_max_m: float
+    normal_min_m: float
+    normal_max_m: float
+    center_tangent_m: float
+    center_normal_m: float
+
+
+def anchored_frame_extent(
+    footprint: BaseGeometry,
+    *,
+    origin_xy: tuple[float, float],
+    tangent_xy: tuple[float, float],
+) -> AnchoredFrameExtent:
+    """Project one footprint on the shared frame ``(origin, tangent, normal)``."""
+
+    if footprint.is_empty or not footprint.is_valid:
+        raise ValueError("Footprint must be non-empty and valid")
+    norm = (tangent_xy[0] ** 2 + tangent_xy[1] ** 2) ** 0.5
+    if not isfinite(norm) or norm <= 0.0:
+        raise ValueError("Anchored frame tangent must be a finite non-degenerate vector")
+    tangent = (tangent_xy[0] / norm, tangent_xy[1] / norm)
+    normal = (-tangent[1], tangent[0])
+    vertices = tuple(footprint.exterior.coords[:-1])
+    if not vertices:
+        raise ValueError("Footprint must contain exterior vertices")
+    tangent_values: list[float] = []
+    normal_values: list[float] = []
+    for x, y, *_ in vertices:
+        offset = (x - origin_xy[0], y - origin_xy[1])
+        tangent_values.append(offset[0] * tangent[0] + offset[1] * tangent[1])
+        normal_values.append(offset[0] * normal[0] + offset[1] * normal[1])
+    center = footprint.centroid
+    center_offset = (center.x - origin_xy[0], center.y - origin_xy[1])
+    return AnchoredFrameExtent(
+        tangent_min_m=min(tangent_values),
+        tangent_max_m=max(tangent_values),
+        normal_min_m=min(normal_values),
+        normal_max_m=max(normal_values),
+        center_tangent_m=center_offset[0] * tangent[0] + center_offset[1] * tangent[1],
+        center_normal_m=center_offset[0] * normal[0] + center_offset[1] * normal[1],
+    )
+
+
+def tangent_intervals_overlap(ego: AnchoredFrameExtent, other: AnchoredFrameExtent) -> bool:
+    """Return whether the two footprints are abreast on the shared tangent axis.
+
+    This is the applicability predicate of ADR-035: the scoped lateral-RSS
+    model assumes both vehicles travel along the shared tangent with the
+    safety-relevant dynamics normal to it, which only holds for a pair that
+    overlaps longitudinally.
+    """
+
+    return not (
+        ego.tangent_max_m < other.tangent_min_m - SIGNED_DISTANCE_EPSILON_M
+        or other.tangent_max_m < ego.tangent_min_m - SIGNED_DISTANCE_EPSILON_M
+    )
+
+
+def anchored_lateral_gap(ego: AnchoredFrameExtent, other: AnchoredFrameExtent) -> tuple[float, int]:
+    """Return the non-negative lateral edge-to-edge gap and the side of ``other``.
+
+    Mirrors :func:`lateral_edge_to_edge_gap` on the shared anchored frame
+    instead of on independent per-vertex route projections.
+    """
+
+    if other.center_normal_m >= ego.center_normal_m:
+        return max(0.0, other.normal_min_m - ego.normal_max_m), 1
+    return max(0.0, ego.normal_min_m - other.normal_max_m), -1
+
+
+def same_traffic_stream(
+    ego_lane_id: str,
+    actor_lane_id: str,
+    route_lanes: tuple[RouteLaneRecord, ...],
+) -> bool:
+    """Return whether two lanes carry the same stream of traffic (REQ-EF-11).
+
+    Exact ``lane_id`` equality — the historical RSS-longitudinal predicate —
+    drops a lead vehicle the moment it crosses a lane-segment boundary of the
+    very same road, which happens every few seconds on a PG route because the
+    map is segmented per block.
+    """
+
+    if ego_lane_id == actor_lane_id:
+        return True
+    by_id = {lane.lane_id: lane for lane in route_lanes}
+    ego_lane = by_id.get(ego_lane_id)
+    actor_lane = by_id.get(actor_lane_id)
+    if ego_lane is not None and actor_lane_id in ego_lane.successor_lane_ids:
+        return True
+    if actor_lane is not None and ego_lane_id in actor_lane.successor_lane_ids:
+        return True
+    return False
+
+
 def bumper_to_bumper_gap(
     ego: FootprintRouteCoordinates, other: FootprintRouteCoordinates
 ) -> tuple[float, bool]:

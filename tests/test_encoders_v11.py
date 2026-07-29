@@ -13,15 +13,15 @@ from thesis_rl.agent.planners.encoders.mlp_encoder import FlatMLPEncoder
 from thesis_rl.contracts.observation_schema import SemanticObservationSchemaV12
 
 
-def test_flat_mlp_v11_has_3064_input_and_exact_parameter_count() -> None:
-    encoder = FlatMLPEncoder(input_dim=3064)
-    observation = torch.randn(2, 3064, dtype=torch.float32, requires_grad=True)
+def test_flat_mlp_v11_has_3009_input_and_exact_parameter_count() -> None:
+    encoder = FlatMLPEncoder(input_dim=3009)
+    observation = torch.randn(2, 3009, dtype=torch.float32, requires_grad=True)
 
     output = encoder(observation)
     output.square().mean().backward()
 
     assert output.shape == (2, 256)
-    assert sum(parameter.numel() for parameter in encoder.parameters()) == 2_032_128
+    assert sum(parameter.numel() for parameter in encoder.parameters()) == 2_003_968
     assert observation.grad is not None and torch.isfinite(observation.grad).all()
 
 
@@ -42,7 +42,7 @@ def test_lq_v11_has_143_tokens_and_21_step_time_embedding() -> None:
 
 
 def test_lq_v11_is_invariant_to_masked_compliance_payload() -> None:
-    torch.manual_seed(17)
+    torch.manual_seed(15)
     schema = SemanticObservationSchemaV12()
     encoder = LatentQueryEncoderV3(schema=schema)
     first = torch.zeros(2, schema.flat_dim, dtype=torch.float32, requires_grad=True)

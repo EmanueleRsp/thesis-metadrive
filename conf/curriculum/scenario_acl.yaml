@@ -2,7 +2,9 @@ name: scenario_acl
 enabled: true
 kind: scenario_acl
 scenario_acl:
-  buffer_capacity: 1000
+  # ACL v1.3 `DEC-010` (ADR-032): selective active set, 12.5% of the frozen
+  # 2,000-record training catalog.
+  buffer_capacity: 250
   warmup_buffer_size: 100
 
   generate_probability: 0.40

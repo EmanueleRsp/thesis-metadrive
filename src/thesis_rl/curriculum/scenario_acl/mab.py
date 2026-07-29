@@ -24,7 +24,11 @@ class ScenarioArmBandit:
     target_scores: np.ndarray = field(init=False, repr=False)
     reward_scale: np.ndarray = field(init=False, repr=False)
     update_count: int = 0
-    state_schema: str = field(init=False, default="acl_ema_v2")
+    # ACL v1.3 REQ-005: `acl_ema_v3` marks the Generate/catalog decoupling
+    # (ADR-032, `DEC-008`/`DEC-009`). The stored fields are unchanged from
+    # `acl_ema_v2`, but the scores they hold were produced under different
+    # selection semantics, so resuming across the boundary is forbidden.
+    state_schema: str = field(init=False, default="acl_ema_v3")
 
     def __post_init__(self) -> None:
         if self.config.update_method != "ema":
@@ -168,11 +172,13 @@ class ScenarioArmBandit:
         config: ScenarioAclMabConfig,
         state: dict[str, object],
     ) -> "ScenarioArmBandit":
-        if state.get("schema") != "acl_ema_v2":
+        schema = state.get("schema")
+        if schema != "acl_ema_v3":
             raise ValueError(
-                "Incompatible Scenario ACL MAB checkpoint: expected schema 'acl_ema_v2'. "
-                "DEC-006 added a per-arm reward-scale estimator; 'acl_ema_v1' checkpoints "
-                "predate it and cannot be resumed."
+                "Incompatible Scenario ACL MAB checkpoint: expected schema 'acl_ema_v3', got "
+                f"{schema!r}. ADR-032 (`DEC-008`/`DEC-009`) changed the Generate selection "
+                "semantics the EMA scores were estimated under, so 'acl_ema_v2' and "
+                "'acl_ema_v1' checkpoints cannot be resumed and require a fresh run."
             )
         bandit = cls(config)
         scores = state.get("scores")

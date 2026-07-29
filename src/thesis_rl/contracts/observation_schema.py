@@ -239,7 +239,7 @@ class SemanticObservationSchemaV12:
     """The approved perception-bounded OBS-V1.2 layout and token contract."""
 
     version: ClassVar[str] = "1.2-perception-bounded"
-    flat_dim: ClassVar[int] = 3064
+    flat_dim: ClassVar[int] = 3009
     raw_token_count: ClassVar[int] = 143
     group_shapes: ClassVar[dict[str, tuple[int, ...]]] = {
         "ego_history": (5, 10),
@@ -251,12 +251,12 @@ class SemanticObservationSchemaV12:
         "dynamic_mask": (16, 5),
         "static": (8, 13),
         "static_mask": (8,),
-        "lane_road": (14,),
-        "controls": (8, 17),
+        "lane_road": (12,),
+        "controls": (8, 15),
         "controls_mask": (8,),
-        "interactions": (8, 35),
+        "interactions": (8, 33),
         "interactions_mask": (8,),
-        "compliance_history": (21, 24),
+        "compliance_history": (21, 23),
         "compliance_history_mask": (21,),
         "yellow_onset_memory": (3,),
     }

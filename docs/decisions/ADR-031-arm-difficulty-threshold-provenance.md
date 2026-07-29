@@ -1,4 +1,4 @@
-# ADR-028: Arm Difficulty Threshold Provenance And Status
+# ADR-031: Arm Difficulty Threshold Provenance And Status
 
 - Status: `Approved`
 - Date: `2026-07-27`

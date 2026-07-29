@@ -83,7 +83,11 @@ def test_missing_dynamic_pre_state_is_ignored_for_first_frame() -> None:
         post_active_contact_ids=frozenset({"other"}),
     )
     assert result.status.value == "not_applicable"
-    assert result.diagnostics["ignored_missing_pre_state_actor_ids"] == ("other",)
+    # REQ-EF-13: with no ``post_actor_ids`` supplied the actor was in neither
+    # snapshot, which is the instrumentation-gap branch, not the "appeared this
+    # step" one.  Key renamed from ``ignored_missing_pre_state_actor_ids``.
+    assert result.diagnostics["unobserved_onset_actor_ids"] == ("other",)
+    assert result.diagnostics["appeared_onset_actor_ids"] == ()
     assert memory_delta.writes[0] == ("previous_contact_ids", frozenset({"other"}))
     with pytest.raises(RulebookEvaluationError, match="speed normalization cap"):
         evaluate_collision_impact(
@@ -157,3 +161,48 @@ def test_collision_rejects_coincident_pre_state_centers() -> None:
             previous_contact_ids=frozenset(),
             post_active_contact_ids=frozenset({"other"}),
         )
+
+
+def test_actor_that_appeared_this_step_is_separated_from_one_never_observed() -> None:
+    """TEST-EF-20 / REQ-EF-13.
+
+    A contact onset without a pre-state record has no computable closing speed
+    (v4.9 §4.1 needs the pre-state normal). Two situations produce it and the
+    post-state distinguishes them:
+
+    * present in the post-state -> the actor genuinely appeared during this
+      control step. At decision time nothing was there, so the ego had no
+      alternative action and R1 = 0 is the correct causal attribution.
+    * in neither snapshot -> the snapshot pipeline never observed an object the
+      physics engine did. That is an instrumentation gap, and it must not read
+      as a clean R1 = 0.
+    """
+
+    appeared, _, _ = evaluate_collision_impact(
+        scenario_id="scenario",
+        step_index=1,
+        ego_configured_speed_cap_mps=10.0,
+        pre_ego=_ego((1.0, 0.0)),
+        pre_actors_by_id={},
+        onset_records=(_onset("spawned"),),
+        previous_contact_ids=frozenset(),
+        post_active_contact_ids=frozenset({"spawned"}),
+        post_actor_ids=frozenset({"spawned"}),
+    )
+    assert appeared.cost == 0.0
+    assert appeared.raw["appeared_onset_actor_ids"] == ("spawned",)
+    assert appeared.raw["unobserved_onset_actor_ids"] == ()
+
+    unobserved, _, _ = evaluate_collision_impact(
+        scenario_id="scenario",
+        step_index=1,
+        ego_configured_speed_cap_mps=10.0,
+        pre_ego=_ego((1.0, 0.0)),
+        pre_actors_by_id={},
+        onset_records=(_onset("ghost"),),
+        previous_contact_ids=frozenset(),
+        post_active_contact_ids=frozenset({"ghost"}),
+        post_actor_ids=frozenset({"someone-else"}),
+    )
+    assert unobserved.raw["appeared_onset_actor_ids"] == ()
+    assert unobserved.raw["unobserved_onset_actor_ids"] == ("ghost",)

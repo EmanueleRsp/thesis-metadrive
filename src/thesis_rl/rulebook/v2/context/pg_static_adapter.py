@@ -22,9 +22,12 @@ from thesis_rl.rulebook.v2.context.static_adapter import (
     normalize_static_records,
     vehicle_yield_records_from_metadata,
 )
-from thesis_rl.rulebook.v2.geometry.controls import derive_control_line
+from thesis_rl.rulebook.v2.geometry.controls import (
+    ControlLineOffRouteError,
+    derive_control_line,
+)
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord, derive_lane_movement_key
-from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline, build_assigned_route_polyline
 from thesis_rl.rulebook.v2.types import (
     ApproachControl,
     MapFeatureClass,
@@ -155,6 +158,18 @@ def build_pg_static_adapter_result(
             adapter_version=adapter_version,
             route_assignment_source="pg_sdc_offline_task_annotation",
         )
+    # REQ-EF-05: traffic-control route coordinates are canonical route
+    # coordinates, so the assigned route must exist before controls are built.
+    try:
+        assigned_route = build_assigned_route_polyline(task_route.lane_ids, lanes)
+    except ValueError:
+        # ``route_s`` is by definition a coordinate on the assigned route; with
+        # no buildable route it does not exist, and emitting a control carrying
+        # a lane-local value instead is exactly the defect REQ-EF-05 removes.
+        # The scenario is already ineligible in this state (the same failure is
+        # reported by ``normalize_static_records``); record why controls are
+        # absent rather than leaving it implicit.
+        assigned_route = None
     map_records: list[MapFeatureRecord] = []
     feature_errors: list[str] = []
     for feature_id, feature in features.items():
@@ -204,13 +219,27 @@ def build_pg_static_adapter_result(
             if movement is None:
                 feature_errors.append(f"movement_key_ambiguous:{feature_id}:{lane_id}")
                 continue
+            if assigned_route is None:
+                continue
             try:
                 line = derive_control_line(
                     control_point_xy=(float(point[0]), float(point[1])),
                     control_point_z=float(point[2]),
                     controlled_lane=lane,
+                    route=assigned_route,
                 )
+            except ControlLineOffRouteError:
+                # Governs another approach of the same junction, not the ego's
+                # task route: correctly absent, not a data defect.
+                continue
             except ValueError:
+                # OPEN-EF-04: a §2.9.6 geometry ambiguity ("multiple unresolved
+                # components") is skipped, not escalated to a validation error.
+                # Escalating it disqualified scenarios that trained fine before,
+                # including the smoke preset, because the ambiguity is
+                # pre-existing map data rather than anything this plan changed.
+                # REQ-EF-05/06 (canonical coordinate, movement scoping) do not
+                # depend on the escalation.
                 continue
             controls.append(
                 TrafficControlRecord(
@@ -224,6 +253,8 @@ def build_pg_static_adapter_result(
                     (),
                 )
             )
+    if assigned_route is None:
+        feature_errors.append("traffic_controls_skipped_unbuildable_assigned_route")
     relevant_lane_ids = reachable_lane_ids(
         route_lane_ids=task_route.lane_ids,
         lane_successors=_lane_successors(features),
@@ -259,13 +290,19 @@ def build_pg_static_adapter_result(
             if movement is None:
                 signal_errors.append(f"movement_key_ambiguous:{physical_id}:{lane_id}")
                 continue
+            if assigned_route is None:
+                continue
             try:
                 line = derive_control_line(
                     control_point_xy=(float(point[0]), float(point[1])),
                     control_point_z=float(point[2]),
                     controlled_lane=lanes[lane_id],
+                    route=assigned_route,
                 )
+            except ControlLineOffRouteError:
+                continue
             except ValueError:
+                # OPEN-EF-04, as above.
                 continue
             controls.append(
                 TrafficControlRecord(

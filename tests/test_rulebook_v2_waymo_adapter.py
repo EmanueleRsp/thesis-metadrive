@@ -69,8 +69,79 @@ def test_bundled_waymo_fixture_converts_to_canonical_static_records():
     assert not any(
         error.startswith("task_route_lane_missing") for error in result.validation_errors
     )
-    assert any(control.control_type.value == "stop" for control in result.traffic_controls)
     assert result.movement_priority_records == ()
+
+    # REQ-EF-05 / OPEN-EF-01: this bundled fixture's assigned route is not
+    # contiguous (`assigned_route_invalid: ... 242->264`, reported by
+    # `normalize_static_records`), so no canonical `RoutePolyline` exists and a
+    # traffic control has no `route_s`. The scenario is already ineligible —
+    # `build_episode_cache` rejects any result carrying validation errors — and
+    # emitting a control with a lane-local coordinate instead is precisely the
+    # defect REQ-EF-05 removes. The adapter therefore emits no controls and says
+    # why. The "a stop control is produced with a correct canonical coordinate"
+    # behaviour is covered by
+    # `test_waymo_adapter_derives_a_canonical_stop_control_on_a_contiguous_route`.
+    assert any(
+        error.startswith("assigned_route_invalid") for error in result.validation_errors
+    )
+    assert "traffic_controls_skipped_unbuildable_assigned_route" in result.validation_errors
+    assert result.traffic_controls == ()
+
+
+def test_waymo_adapter_derives_a_canonical_stop_control_on_a_contiguous_route():
+    """REQ-EF-05 / OPEN-EF-01 + OPEN-EF-04.
+
+    Two 20 m lanes in series, with the stop sign placed 5 m into the *second*
+    lane and offset 4 m to the roadside — which is where Waymo actually puts
+    `STOP_SIGN.position` (measured over 991 sign/lane pairs: 99.4% fall outside
+    the lane polygon, median lateral offset 4.32 m).
+
+    Two regressions in one:
+    - `route_s_m` must be the canonical route coordinate (25 m), not the
+      lane-local one (5 m);
+    - the control line must be derived at `q_c` on the centerline (§2.9.6 steps
+      3 and 5), so a roadside sign position still yields a line across the lane
+      rather than being offset or aborting with "multiple unresolved
+      components".
+    """
+
+    def lane(lane_id, x0, x1, successors):
+        return {
+            "type": "LANE_SURFACE_STREET",
+            "polyline": [[float(x), 0.0, 0.0] for x in range(x0, x1 + 1, 2)],
+            "width": [[1.75, 1.75] for _ in range(x0, x1 + 1, 2)],
+            "exit_lanes": list(successors),
+        }
+
+    scenario = {
+        "map_features": {
+            "lane-a": lane("lane-a", 0, 20, ("lane-b",)),
+            "lane-b": lane("lane-b", 20, 40, ()),
+            "stop-1": {
+                "type": "STOP_SIGN",
+                "position": [25.0, 4.0, 0.0],
+                "lane": ["lane-b"],
+            },
+        },
+        "metadata": {
+            "assigned_route_lane_ids": ["lane-a", "lane-b"],
+            "assigned_route_source": "test",
+        },
+    }
+    result = build_waymo_static_adapter_result(scenario, scenario_uid="synthetic-stop")
+
+    assert not result.validation_errors
+    stops = [
+        control for control in result.traffic_controls if control.control_type.value == "stop"
+    ]
+    assert len(stops) == 1
+    assert stops[0].route_s_m == pytest.approx(25.0, abs=0.05)
+    # The line spans the lane across the centerline, not the sign's offset.
+    min_x, min_y, max_x, max_y = stops[0].control_line.bounds
+    assert min_x == pytest.approx(25.0, abs=0.05)
+    assert max_x == pytest.approx(25.0, abs=0.05)
+    assert min_y == pytest.approx(-1.75, abs=0.05)
+    assert max_y == pytest.approx(1.75, abs=0.05)
 
 
 def test_waymo_adapter_fails_fast_without_lane_geometry():

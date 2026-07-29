@@ -9,7 +9,7 @@
 - Date: `2026-07-27`
 - Supersedes: `docs/specifications/automatic_curriculum_learning_v1.1_specification.md`
 - Related specifications: `docs/specifications/scenarionet_integration_v1.1_specification.md`, `docs/specifications/rl_baselines_v1_specification.md`
-- Related ADRs: `docs/decisions/ADR-014-scenarionet-acl-learning-potential-only.md`, `docs/decisions/ADR-016-scenario-acl-vectorized-execution.md`, `docs/decisions/ADR-028-acl-recorded-rationale-record.md`, `docs/decisions/ADR-029-acl-reward-scale-normalization.md`
+- Related ADRs: `docs/decisions/ADR-014-scenarionet-acl-learning-potential-only.md`, `docs/decisions/ADR-016-scenario-acl-vectorized-execution.md`, `docs/decisions/ADR-030-acl-recorded-rationale-record.md`, `docs/decisions/ADR-029-acl-reward-scale-normalization.md`
 - Authoritative: `YES`
 - Source ExecPlan: `docs/implementation/automatic_curriculum_learning_v1.2_exec_plan.md` (`ACL-SN-INIT-002`)
 
@@ -243,7 +243,7 @@ The following mechanisms were already implemented and approved under `v1.1` but 
 
 ## 16. References
 
-`automatic_curriculum_learning_v1.1_specification.md`; `automatic_curriculum_learning_v1_specification.md` §§12–13/28; ADR-014; ADR-016; ADR-028; ADR-029; `docs/implementation/automatic_curriculum_learning_v1.2_exec_plan.md`; Peng et al., 2024, IROS (`docs/papers/curriculum learning/`); stable-baselines3 and repository deterministic vector execution contracts.
+`automatic_curriculum_learning_v1.1_specification.md`; `automatic_curriculum_learning_v1_specification.md` §§12–13/28; ADR-014; ADR-016; ADR-030; ADR-029; `docs/implementation/automatic_curriculum_learning_v1.2_exec_plan.md`; Peng et al., 2024, IROS (`docs/papers/curriculum learning/`); stable-baselines3 and repository deterministic vector execution contracts.
 
 ## 17. Implementation handoff checklist
 

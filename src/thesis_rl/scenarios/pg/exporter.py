@@ -44,7 +44,15 @@ def _realized_metadata(spec: GenerationSpec, map_metadata: dict[str, Any]) -> di
             "has_crosswalk": False,
         },
         "block_sequence": list(ids),
+        "static_obstacle": map_metadata.get(
+            "static_obstacle", {"realized": False, "object_types": []}
+        ),
     }
+
+
+def _has_realized_static_obstacle(realized: dict[str, Any]) -> bool:
+    metadata = realized.get("static_obstacle", {})
+    return isinstance(metadata, dict) and metadata.get("realized") is True
 
 
 def _write_yaml(path: Path, payload: dict[str, Any], *, overwrite: bool) -> None:
@@ -64,6 +72,7 @@ def _scenario_record(
     spec: GenerationSpec,
     validation: PGValidationResult,
     entry_features: Any,
+    has_static_obstacle: bool,
 ) -> ScenarioRecord:
     scenario_id = validation.scenario_id
     relative_path = scenario_path.resolve().relative_to(data_root.resolve()).as_posix()
@@ -83,8 +92,12 @@ def _scenario_record(
         pg_profile=spec.profile,
         pg_seed=spec.seed,
         map_id="".join(spec.block_sequence),
-        primary_arm=assign_primary_arm(entry_features),
-        tags=derive_scenario_tags(entry_features),
+        primary_arm=assign_primary_arm(
+            entry_features, has_static_obstacle=has_static_obstacle
+        ),
+        tags=derive_scenario_tags(
+            entry_features, has_static_obstacle=has_static_obstacle
+        ),
         signal_reliability=entry_features.signal_reliability,
         validation_status=validation.status,  # type: ignore[arg-type]
         validation_warnings=validation.warnings,
@@ -140,6 +153,7 @@ def export_pg_scenario(
         spec=spec,
         validation=validation,
         entry_features=features,
+        has_static_obstacle=_has_realized_static_obstacle(realized),
     )
     record = apply_catalog_quality_policy(record, features)
     entry = ScenarioCatalogEntry(record=record, features=features)

@@ -30,7 +30,7 @@ from thesis_rl.runtime.wiring.checkpoint_identity import build_current_checkpoin
 def _manifest(**overrides):
     defaults = dict(
         observation_type="semantic_v3",
-        flat_dim=3064,
+        flat_dim=3009,
         raw_token_count=143,
         encoder_type="latent_query_v3",
         encoder_config={
@@ -88,7 +88,7 @@ def _cfg(**overrides):
     return OmegaConf.create(base)
 
 
-def _env(flat_dim: int = 3064):
+def _env(flat_dim: int = 3009):
     return SimpleNamespace(observation_space=SimpleNamespace(shape=(flat_dim,)))
 
 

@@ -104,7 +104,10 @@ class ScenarioAclScenarioEnvConfig:
 
 @dataclass(frozen=True)
 class ScenarioAclConfig:
-    buffer_capacity: int = 1000
+    # ACL v1.3 `DEC-010` (ADR-032): 250 = 12.5% of the 2,000-record frozen
+    # training catalog, so the buffer is a selective active set rather than an
+    # index over half the catalog.
+    buffer_capacity: int = 250
     warmup_buffer_size: int = 100
     generate_probability: float = 0.4
     exploit_probability: float = 0.6
@@ -256,7 +259,7 @@ def _parse_staged_config(data: DictConfig | dict[str, Any]) -> StagedCurriculumC
 def _parse_scenario_acl_config(data: DictConfig | dict[str, Any]) -> ScenarioAclConfig:
     payload = _to_plain_mapping(data)
 
-    buffer_capacity = int(payload.get("buffer_capacity", 1000))
+    buffer_capacity = int(payload.get("buffer_capacity", 250))
     warmup_buffer_size = int(payload.get("warmup_buffer_size", 100))
     recent_window_size = int(payload.get("recent_window_size", 100))
     exploit_probability = float(payload.get("exploit_probability", 0.6))

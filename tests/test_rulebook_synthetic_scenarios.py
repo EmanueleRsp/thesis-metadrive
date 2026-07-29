@@ -130,7 +130,12 @@ def test_descriptors_reset_and_step_in_scenario_online_env(fixture_id: str) -> N
         ("vehicle_vehicle_collision", "collision", False, False),
         ("rss_front_vehicle", "rss", True, False),
         ("rss_front_vehicle", "ttc", True, False),
-        ("rss_front_vehicle", "rss_lateral", True, False),
+        # ADR-035 / DEV-EF-01: a same-lane leader is no longer a lateral-RSS
+        # pair.  Two vehicles in one lane have a lateral gap of exactly zero
+        # against d_safe^lat ~= 0.1625 m, so this scenario used to report
+        # q_RSS,lat = 1.0 and mask the graded q_RSS,long.  The pair is now
+        # NOT_APPLICABLE and stays covered by "rss" and "ttc" above.
+        ("rss_front_vehicle", "rss_lateral", False, False),
         ("rss_rear_vehicle", "rss", False, False),
         ("rss_rear_vehicle", "rss_lateral", False, False),
         ("stop_sign", "stop", True, False),
@@ -205,6 +210,14 @@ def test_descriptors_evaluate_one_live_rulebook_transition(
             cache=cache,
         )
         assert result.complete_evaluation
+        # TEST-EF-22 / REQ-EF-15 (M6a): the route-adherence diagnostics must be
+        # wired through the live transition, not just computable in isolation.
+        # They are diagnostic only and must never move a cost or a margin.
+        progress = result.components["progress"]
+        assert "route_outside_fraction" in progress.diagnostics
+        outside = progress.diagnostics["route_outside_fraction"]
+        assert 0.0 <= outside <= 1.0
+        assert progress.diagnostics["route_adherence"] == pytest.approx(1.0 - outside)
         component = result.components[component_name]
         assert component.evaluable
         assert component.applicable is expected_applicable

@@ -195,3 +195,55 @@ def test_scenario_acl_config_rejects_rulebook_usefulness_scope() -> None:
                 },
             }
         )
+
+
+def test_approved_v13_buffer_capacity_resolves_and_keeps_the_warmup_guard() -> None:
+    """`TEST-CAT-010` / ACL v1.3 §9, `DEC-010` (ADR-032).
+
+    `buffer_capacity` drops 1000 -> 250 so the scenario buffer is a selective
+    active set (12.5% of the 2,000-record frozen training catalog) instead of
+    an index over half of it (`RAT-011`). The `warmup <= capacity` guard must
+    keep holding, both for the approved pair and for an invalid one.
+    """
+
+    curriculum = CurriculumConfig.from_mapping(
+        {
+            "enabled": True,
+            "kind": "scenario_acl",
+            "scenario_acl": {
+                "buffer_capacity": 250,
+                "warmup_buffer_size": 100,
+                "mab": {"num_arms": 6},
+            },
+        }
+    )
+
+    assert curriculum.scenario_acl.buffer_capacity == 250
+    assert curriculum.scenario_acl.warmup_buffer_size == 100
+
+    with pytest.raises(ValueError, match="warmup_buffer_size must be <="):
+        CurriculumConfig.from_mapping(
+            {
+                "enabled": True,
+                "kind": "scenario_acl",
+                "scenario_acl": {
+                    "buffer_capacity": 250,
+                    "warmup_buffer_size": 251,
+                    "mab": {"num_arms": 6},
+                },
+            }
+        )
+
+
+def test_scenario_acl_buffer_capacity_default_is_the_approved_value() -> None:
+    """`TEST-CAT-010`: the code default matches `conf/curriculum/scenario_acl.yaml`."""
+
+    curriculum = CurriculumConfig.from_mapping(
+        {
+            "enabled": True,
+            "kind": "scenario_acl",
+            "scenario_acl": {"mab": {"num_arms": 6}},
+        }
+    )
+
+    assert curriculum.scenario_acl.buffer_capacity == 250

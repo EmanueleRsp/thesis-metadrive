@@ -12,6 +12,7 @@ from thesis_rl.curriculum.scenario_acl.driver import (
     _save_acl_checkpoint_pair,
     _save_acl_replay_buffer,
     _persist_buffer_state,
+    _update_buffered_record,
 )
 
 
@@ -137,3 +138,70 @@ def test_scenario_acl_replay_persistence_publishes_buffer_and_pair(tmp_path) -> 
     assert replay_path.read_bytes() == b"serialized-per-tree"
     assert pair_path.is_file()
     assert pair_path.read_text(encoding="utf-8").find('"training_timestep": 2000') >= 0
+
+
+def test_generate_on_buffered_record_updates_in_place() -> None:
+    """`TEST-CAT-004` / ACL v1.3 REQ-010, `AC-012` (ADR-032, `DEC-008`).
+
+    Since Generate no longer excludes buffered records, a Generate episode can
+    land on a record the buffer already holds. The commit must update that
+    entry in place -- refreshing `LP_scaled`, the normalized usefulness,
+    `num_seen`, and the `last_seen_step` staleness reference (REQ-004) -- and
+    must never produce a second entry for the same `scenario_uid`.
+
+    This exercises the exact helper and buffer calls the driver's Generate
+    commit branch makes. The `commit_event` closure itself remains without an
+    isolated harness (`LIM-004`).
+    """
+
+    buffer = ScenarioBuffer(capacity=4)
+    assert (
+        buffer.insert(_record("s1", usefulness=0.2, scenario_hash="h1", last_seen_step=5)) is True
+    )
+    assert buffer.insert(_record("s2", usefulness=0.9, scenario_hash="h2")) is True
+    buffered = next(record for record in buffer.records() if record.scenario_id == "s1")
+
+    updated = _update_buffered_record(
+        buffered,
+        episode_id=42,
+        learning_potential=0.75,
+        normalized_usefulness=0.6,
+        metrics={
+            "mean_reward": 1.0,
+            "success_rate": 1.0,
+            "route_completion": 1.0,
+            "collision_rate": 0.0,
+            "out_of_road_rate": 0.0,
+            "top_rule_violation_rate": 0.0,
+            "termination_reason": "success",
+        },
+    )
+    buffer.update(updated)
+
+    matches = [record for record in buffer.records() if record.scenario_id == "s1"]
+    assert len(matches) == 1
+    assert len(buffer) == 2
+    entry = matches[0]
+    assert entry.learning_potential == 0.75
+    assert entry.usefulness == 0.75
+    assert entry.usefulness_norm == 0.6
+    assert entry.num_seen == 2
+    # REQ-004: a Generate visit refreshes the staleness reference too.
+    assert entry.last_seen_step == 42
+
+
+def test_a_duplicate_insert_would_have_been_rejected_instead() -> None:
+    """`TEST-CAT-004` (contrast): why the update-or-insert branch is required.
+
+    Without REQ-010 the Generate commit would call `insert` on a record the
+    buffer already holds; hash dedup reports `False` ("rejected") and the stale
+    learning potential survives in the replay ranking.
+    """
+
+    buffer = ScenarioBuffer(capacity=4)
+    buffer.insert(_record("s1", usefulness=0.2, scenario_hash="h1"))
+
+    assert buffer.insert(_record("s1", usefulness=0.9, scenario_hash="h1")) is False
+    assert next(record for record in buffer.records() if record.scenario_id == "s1").usefulness == (
+        0.2
+    )

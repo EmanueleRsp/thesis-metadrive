@@ -1,4 +1,4 @@
-# ADR-028: Automatic Curriculum Learning v1.1 Retrospective Rationale Record
+# ADR-030: Automatic Curriculum Learning v1.1 Retrospective Rationale Record
 
 - Status: APPROVED
 - Date: 2026-07-27

@@ -13,11 +13,22 @@ degraded into a Replay, and Replay never feeds the MAB — an absorbing state
 that grew, never shrank, the exhausted arm's Generate share.
 
 The approved correction (`DEC-EXH-001` option A, `DEC-EXH-002`) restricts the
-Generate arm draw to arms that currently have at least one fresh catalog
+Generate arm draw to arms that currently have at least one admissible catalog
 record, renormalizing the softmax and the `eta/K` exploration floor over that
 eligible subset (`ScenarioArmBandit.probabilities(eligible_mask=...)`). These
 tests pin the corrected behaviour; `test_exhausted_arm_no_longer_starves_the_mab`
 used to pin the defect itself before the fix and is inverted here, not deleted.
+
+**Updated for ACL v1.3 (`ADR-032`, `DEC-008`).** The *root cause* of `FIND-001`
+is gone: scenario-buffer membership no longer removes a record from the Generate
+pool, so an absorbed arm can no longer become ineligible at all -- pinned by
+`tests/test_scenario_acl_catalog_coverage.py` and, here, by
+`test_buffer_absorption_alone_no_longer_makes_an_arm_ineligible`. The `ADR-028`
+renormalization is retained as a safety net for the residual case in which an
+arm's whole pool is simultaneously quarantined (`ADR-024`) or in flight
+(`ADR-016`). The fixtures below therefore construct unavailability through that
+exclusion set rather than through the buffer; the protections being asserted are
+unchanged.
 """
 
 from __future__ import annotations
@@ -33,6 +44,7 @@ from thesis_rl.curriculum.config import (
 )
 from thesis_rl.curriculum.scenario_acl.arms import build_default_scenario_arms
 from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer
+from thesis_rl.curriculum.scenario_acl.catalog_state import ScenarioCatalogVisitState
 from thesis_rl.curriculum.scenario_acl.mab import ScenarioArmBandit
 from thesis_rl.curriculum.scenario_acl.record import ScenarioRecord
 from thesis_rl.curriculum.scenario_acl.selection import (
@@ -112,12 +124,16 @@ def _config() -> ScenarioAclConfig:
 
 def _exhausted_fixture(
     *, pool_per_arm: int = 6
-) -> tuple[tuple[_CatalogRecord, ...], ScenarioBuffer]:
-    """Build a catalog and buffer where only ``EXHAUSTED_ARM`` has no fresh record.
+) -> tuple[tuple[_CatalogRecord, ...], ScenarioBuffer, frozenset[str]]:
+    """Build a catalog where only ``EXHAUSTED_ARM`` has no admissible record.
 
-    Every arm owns ``pool_per_arm`` frozen records. The buffer holds the whole
-    pool of ``EXHAUSTED_ARM`` plus one record of every other arm, so the other
-    arms keep fresh candidates while the exhausted one has none.
+    Every arm owns ``pool_per_arm`` frozen records. Since ACL v1.3 (`DEC-008`)
+    unavailability can only come from the exclusion set the driver supplies --
+    quarantined (`ADR-024`) and in-flight (`ADR-016`) UIDs -- so the whole pool
+    of ``EXHAUSTED_ARM`` is excluded there. The buffer additionally holds that
+    arm's whole pool plus one record of every other arm, which under `DEC-008`
+    must have no effect whatsoever on eligibility; keeping it populated is what
+    makes these fixtures a regression test for `FIND-001`'s root cause.
     """
 
     train_records = tuple(
@@ -130,18 +146,24 @@ def _exhausted_fixture(
             buffer.insert(_buffer_record(record, usefulness=0.9))
         elif record.runtime_index == 0:
             buffer.insert(_buffer_record(record, usefulness=0.1))
-    return train_records, buffer
+    blocked = frozenset(
+        record.scenario_uid for record in train_records if record.primary_arm == EXHAUSTED_ARM
+    )
+    return train_records, buffer, blocked
 
 
-def test_fresh_generate_candidates_empty_once_buffer_absorbed_the_arm_pool() -> None:
-    """The exhaustion trigger: buffer membership removes a record from Generate."""
+def _visit_state() -> ScenarioCatalogVisitState:
+    return ScenarioCatalogVisitState(ARM_NAMES)
 
-    train_records, buffer = _exhausted_fixture()
-    excluded = frozenset(str(record.scenario_id) for record in buffer.records())
+
+def test_generate_candidates_empty_once_the_whole_arm_pool_is_blocked() -> None:
+    """The residual exhaustion trigger: every record of the arm is unavailable."""
+
+    train_records, _buffer, blocked = _exhausted_fixture()
 
     assert (
         fresh_generate_candidates(
-            train_records, arm_name=EXHAUSTED_ARM, excluded_scenario_uids=excluded
+            train_records, arm_name=EXHAUSTED_ARM, excluded_scenario_uids=blocked
         )
         == []
     )
@@ -149,17 +171,36 @@ def test_fresh_generate_candidates_empty_once_buffer_absorbed_the_arm_pool() -> 
         if arm == EXHAUSTED_ARM:
             continue
         assert fresh_generate_candidates(
-            train_records, arm_name=arm, excluded_scenario_uids=excluded
-        ), f"arm {arm} must keep fresh candidates for this fixture to isolate the defect"
+            train_records, arm_name=arm, excluded_scenario_uids=blocked
+        ), f"arm {arm} must keep candidates for this fixture to isolate the defect"
 
 
 def test_eligible_generate_arm_mask_excludes_only_the_exhausted_arm() -> None:
-    train_records, buffer = _exhausted_fixture()
-    excluded = frozenset(str(record.scenario_id) for record in buffer.records())
+    train_records, _buffer, blocked = _exhausted_fixture()
 
-    mask = eligible_generate_arm_mask(train_records, arms=ARMS, excluded_scenario_uids=excluded)
+    mask = eligible_generate_arm_mask(train_records, arms=ARMS, excluded_scenario_uids=blocked)
 
     assert mask.tolist() == [name != EXHAUSTED_ARM for name in ARM_NAMES]
+
+
+def test_buffer_absorption_alone_no_longer_makes_an_arm_ineligible() -> None:
+    """`FIND-001` root cause removed (ACL v1.3 `DEC-008`, `ADR-032`).
+
+    The same fixture that made `EXHAUSTED_ARM` ineligible under `v1.1`/`v1.2` --
+    its entire pool held by the scenario buffer -- now leaves every arm
+    eligible, because the buffer is not consulted at all. `ADR-028` only fires
+    when the exclusion set itself blocks the pool.
+    """
+
+    train_records, buffer, _blocked = _exhausted_fixture()
+    assert len(buffer) > 0
+
+    mask = eligible_generate_arm_mask(train_records, arms=ARMS, excluded_scenario_uids=frozenset())
+
+    assert mask.all()
+    assert fresh_generate_candidates(
+        train_records, arm_name=EXHAUSTED_ARM, excluded_scenario_uids=frozenset()
+    )
 
 
 def test_exhausted_arm_generate_draw_is_reassigned_to_an_eligible_arm() -> None:
@@ -170,7 +211,7 @@ def test_exhausted_arm_generate_draw_is_reassigned_to_an_eligible_arm() -> None:
     decision records that the exhausted arm was excluded before sampling.
     """
 
-    train_records, buffer = _exhausted_fixture()
+    train_records, buffer, blocked = _exhausted_fixture()
     scenario_cfg = _config()
     bandit = ScenarioArmBandit(replace(scenario_cfg.mab, eta=1e-12, temperature=0.01))
     bandit.scores = np.array([0.0, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float64)
@@ -179,7 +220,7 @@ def test_exhausted_arm_generate_draw_is_reassigned_to_an_eligible_arm() -> None:
         slot=0,
         episode_id=0,
         generation=0,
-        excluded_scenario_uids=frozenset(),
+        excluded_scenario_uids=blocked,
         buffer=buffer,
         bandit=bandit,
         arms=ARMS,
@@ -187,6 +228,7 @@ def test_exhausted_arm_generate_draw_is_reassigned_to_an_eligible_arm() -> None:
         # Force the Generate branch: no replay coin flip may intercept the draw.
         scenario_cfg=replace(scenario_cfg, exploit_probability=0.0),
         rng=np.random.default_rng(20260726),
+        visit_state=_visit_state(),
     )
 
     assert decision.eligible_arm_mask is not None
@@ -209,13 +251,14 @@ def test_exhausted_arm_no_longer_starves_the_mab() -> None:
     instead of growing without bound.
     """
 
-    train_records, buffer = _exhausted_fixture()
+    train_records, buffer, blocked = _exhausted_fixture()
     scenario_cfg = replace(_config(), exploit_probability=0.0)
     bandit = ScenarioArmBandit(scenario_cfg.mab)
     bandit.scores = np.array([0.10, 0.10, 0.10, 0.10, 0.72, 0.10], dtype=np.float64)
     frozen_score = float(bandit.scores[EXHAUSTED_ARM_INDEX])
 
     rng = np.random.default_rng(20260726)
+    visit_state = _visit_state()
     sampled_exhausted = 0
     generated_exhausted = 0
     for episode_id in range(400):
@@ -223,13 +266,14 @@ def test_exhausted_arm_no_longer_starves_the_mab() -> None:
             slot=0,
             episode_id=episode_id,
             generation=episode_id,
-            excluded_scenario_uids=frozenset(),
+            excluded_scenario_uids=blocked,
             buffer=buffer,
             bandit=bandit,
             arms=ARMS,
             train_records=train_records,
             scenario_cfg=scenario_cfg,
             rng=rng,
+            visit_state=visit_state,
         )
         assert decision.eligible_arm_mask is not None
         assert decision.eligible_arm_mask[EXHAUSTED_ARM_INDEX] == np.False_
@@ -260,7 +304,7 @@ def test_exhausted_arm_no_longer_starves_the_mab() -> None:
     eligible_mask = eligible_generate_arm_mask(
         train_records,
         arms=ARMS,
-        excluded_scenario_uids=frozenset(str(record.scenario_id) for record in buffer.records()),
+        excluded_scenario_uids=blocked,
     )
     assert bandit.probabilities(eligible_mask)[EXHAUSTED_ARM_INDEX] == 0.0
 
@@ -268,7 +312,7 @@ def test_exhausted_arm_no_longer_starves_the_mab() -> None:
 def test_generate_on_a_non_exhausted_arm_still_feeds_the_mab() -> None:
     """Control case: an arm with fresh records still updates its own score."""
 
-    train_records, buffer = _exhausted_fixture()
+    train_records, buffer, blocked = _exhausted_fixture()
     scenario_cfg = replace(_config(), exploit_probability=0.0)
     bandit = ScenarioArmBandit(replace(scenario_cfg.mab, eta=1e-12, temperature=0.01))
     bandit.scores = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
@@ -277,13 +321,14 @@ def test_generate_on_a_non_exhausted_arm_still_feeds_the_mab() -> None:
         slot=0,
         episode_id=0,
         generation=0,
-        excluded_scenario_uids=frozenset(),
+        excluded_scenario_uids=blocked,
         buffer=buffer,
         bandit=bandit,
         arms=ARMS,
         train_records=train_records,
         scenario_cfg=scenario_cfg,
         rng=np.random.default_rng(20260726),
+        visit_state=_visit_state(),
     )
 
     assert decision.generate_arm_exhausted is False
@@ -301,20 +346,22 @@ def test_generate_on_a_non_exhausted_arm_still_feeds_the_mab() -> None:
 
 
 def test_all_arms_exhausted_falls_back_to_replay_and_flags_exhaustion() -> None:
-    """When every arm lacks a fresh record, Generate degrades to Replay.
+    """When every arm lacks an admissible record, Generate degrades to Replay.
 
-    This is the only case that still degrades silently into a Replay -- it can
-    only happen once the whole frozen catalog has been absorbed by the buffer,
-    not just one arm's slice of it, and the buffer is non-empty by
-    construction. `generate_arm_exhausted` flags exactly this case.
+    This is the only case that still degrades silently into a Replay. Since ACL
+    v1.3 (`DEC-008`) it requires every record of every arm to be simultaneously
+    quarantined or in flight -- buffer absorption, which used to be sufficient,
+    now has no effect. The buffer is non-empty by construction, so Replay has
+    something to fall back on. `generate_arm_exhausted` flags exactly this case.
     """
 
-    train_records, buffer = _exhausted_fixture()
-    # Absorb the rest of the catalog into the buffer too, so every arm is
-    # exhausted, not just EXHAUSTED_ARM.
+    train_records, buffer, _blocked = _exhausted_fixture()
+    # Keep the rest of the catalog in the buffer too, to show that absorption
+    # is not what produces the degradation any more.
     for record in train_records:
         if record.primary_arm != EXHAUSTED_ARM:
             buffer.insert(_buffer_record(record, usefulness=0.2))
+    all_blocked = frozenset(record.scenario_uid for record in train_records)
     scenario_cfg = replace(_config(), exploit_probability=0.0)
     bandit = ScenarioArmBandit(scenario_cfg.mab)
 
@@ -322,13 +369,14 @@ def test_all_arms_exhausted_falls_back_to_replay_and_flags_exhaustion() -> None:
         slot=0,
         episode_id=0,
         generation=0,
-        excluded_scenario_uids=frozenset(),
+        excluded_scenario_uids=all_blocked,
         buffer=buffer,
         bandit=bandit,
         arms=ARMS,
         train_records=train_records,
         scenario_cfg=scenario_cfg,
         rng=np.random.default_rng(20260726),
+        visit_state=_visit_state(),
     )
 
     assert decision.eligible_arm_mask is not None
@@ -366,4 +414,5 @@ def test_no_eligible_arm_with_an_empty_buffer_is_fatal() -> None:
             train_records=train_records,
             scenario_cfg=scenario_cfg,
             rng=np.random.default_rng(20260726),
+            visit_state=_visit_state(),
         )

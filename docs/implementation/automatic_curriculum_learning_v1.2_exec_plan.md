@@ -9,7 +9,7 @@
 - Created: 2026-07-27
 - Last updated: 2026-07-27
 - Branch: `scenarionet-implementation`
-- Related ADRs: ADR-014, ADR-016 (existing); ADR-028, ADR-029 (new, this plan)
+- Related ADRs: ADR-014, ADR-016 (existing); ADR-030 (renumbered from ADR-028 on 2026-07-29, numbering collision), ADR-029 (new, this plan)
 - Reference paper: Peng et al., 2024, *Reward-Driven Automated Curriculum Learning for Interaction-Aware Self-Driving at Unsignalized Intersections*, IROS. Local copy: `docs/papers/curriculum learning/`
 
 ## 2. Objective and scope
@@ -318,7 +318,7 @@ No type-checking target is configured repository-wide; static checking is not cl
 - [x] **M0** — Analysis: read reference paper (Eq. 8, 10, 11, 12, 17, 18), current implementation, both ACL specifications, ADR-014/016, and the v1.1 ExecPlan. Establish the documentation gap (§4.10) and the Replay-window finding (§4.7).
 - [x] **M1** — Write this ExecPlan with the recorded rationales (§6.2).
 - [x] **M2** — Obtain approval for `DEC-001`, `DEC-004`, `DEC-005`, `DEC-006`. `DEC-002`/`DEC-003` moot (superseded by `DEC-001` closing as "keep uniform").
-- [x] **M3** — Author specification v1.2 (`docs/specifications/automatic_curriculum_learning_v1.2_specification.md`, `APPROVED`) and two ADRs: `ADR-028` (RAT-001..RAT-009 retrospective rationale), `ADR-029` (DEC-006 reward-scale normalization + positive-part TD3/SAC formula). Update `docs/project_index.md`.
+- [x] **M3** — Author specification v1.2 (`docs/specifications/automatic_curriculum_learning_v1.2_specification.md`, `APPROVED`) and two ADRs: `ADR-030` (RAT-001..RAT-009 retrospective rationale), `ADR-029` (DEC-006 reward-scale normalization + positive-part TD3/SAC formula). Update `docs/project_index.md`.
 - [x] **M4** — Implement `mab.py` (reward-scale EMA, checkpoint schema `acl_ema_v2`), `driver.py` (both the vectorized `commit_event` path and the sequential `collect_catalog_episode` path), `lifecycle.py` (`acl_learning_potential`/`acl_ready_learning_potentials` positive-part), `usefulness.py` (fallback formulas kept consistent with production).
 - [x] **M5** — Implement/extend tests in `test_scenario_acl_mab.py`, `test_scenario_acl_usefulness.py`, `test_scenario_acl_vectorized_state.py`; run focused tests, lint, focused format check. All pass (§14).
 - [x] **M6** — `TEST-008`/`REQ-105` (`DEC-004`) executed against existing run logs in the analysis session; resolved as no-code-change (`MEAS-001`).
@@ -526,7 +526,7 @@ User confirmed ("D'accordo comunque, procedi con l'implementazione") and impleme
 - `usefulness.py`: `compute_td3_learning_potential`/`compute_sac_learning_potential` updated identically, keeping the documented fallback consistent with production even though `FIND-002` established it is not reached in the current pipeline.
 - Tests: 4 new tests in `test_scenario_acl_mab.py` (reward-scale init/EMA/floor, checkpoint round-trip, legacy-schema rejection); `test_scenario_acl_usefulness.py` updated for positive-part semantics including an all-negative case; one new test in `test_scenario_acl_vectorized_state.py` locking in positive-part behavior at the real production call site, not only the fallback.
 - Validation: 102 focused tests pass (`acl`/`lifecycle`/`curriculum`, run in an isolated `docker compose run --rm dev` container separate from the three in-progress training containers); `ruff check`/`ruff format --check` clean on all touched files after one auto-format pass.
-- Documentation: `docs/specifications/automatic_curriculum_learning_v1.2_specification.md` (APPROVED), `ADR-028` (RAT-001..009), `ADR-029` (DEC-006 design), `docs/project_index.md`.
+- Documentation: `docs/specifications/automatic_curriculum_learning_v1.2_specification.md` (APPROVED), `ADR-030` (RAT-001..009), `ADR-029` (DEC-006 design), `docs/project_index.md`.
 
 ### 2026-07-27 — `DEC-007`: extend `REQ-007` to replay-buffer retention priority
 

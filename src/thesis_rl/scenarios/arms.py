@@ -26,7 +26,9 @@ ARM_CRITICAL_RELEVANT_AGENTS_Q90 = 30.0
 ARM_CRITICAL_VEHICLE_CONFLICT_COUNT = 6
 
 
-def assign_primary_arm(features: ScenarioFeatures) -> str:
+def assign_primary_arm(
+    features: ScenarioFeatures, *, has_static_obstacle: bool = False
+) -> str:
     topology = (
         features.has_merge_or_roundabout is True
         or features.has_intersection is True
@@ -74,6 +76,7 @@ def assign_primary_arm(features: ScenarioFeatures) -> str:
     if (
         known_simple
         and features.relevant_vehicles_q90 <= A0_MAX_RELEVANT_VEHICLES_Q90
+        and not has_static_obstacle
     ):
         return "A0_simple_low_traffic"
     return "A1_traffic"
@@ -118,16 +121,23 @@ def classify_catalog_entry(
     entry: ScenarioCatalogEntry,
     thresholds: ArmThresholds,
     *,
-    has_static_obstacle: bool = False,
+    has_static_obstacle: bool | None = None,
 ) -> ScenarioCatalogEntry:
     thresholded = apply_traffic_thresholds(entry, thresholds)
     features = thresholded.features
+    resolved_has_static_obstacle = (
+        "has_static_obstacle" in thresholded.record.tags
+        if has_static_obstacle is None
+        else has_static_obstacle
+    )
     return ScenarioCatalogEntry(
         record=replace(
             thresholded.record,
-            primary_arm=assign_primary_arm(features),
+            primary_arm=assign_primary_arm(
+                features, has_static_obstacle=resolved_has_static_obstacle
+            ),
             tags=derive_scenario_tags(
-                features, has_static_obstacle=has_static_obstacle
+                features, has_static_obstacle=resolved_has_static_obstacle
             ),
             signal_reliability=features.signal_reliability,
         ),

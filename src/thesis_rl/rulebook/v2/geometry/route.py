@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from math import hypot, isfinite
 from statistics import median
@@ -109,17 +110,24 @@ class RoutePolyline:
         return self._segment_starts_m[-1] + self._segment_lengths_m[-1]
 
     def point_at(self, s_m: float) -> tuple[float, float, float]:
-        """Return the canonical centerline point at clamped XY arc length."""
+        """Return the canonical centerline point at clamped XY arc length.
+
+        The segment is the one that *contains* ``target``; selecting instead
+        the segment with the nearest endpoint (the historical behaviour)
+        returned the preceding vertex for every ``target`` in the first half
+        of a segment, because the interpolation fraction was then clamped to
+        ``1.0``.  With MetaDrive's 2 m polyline sampling that produced a
+        sawtooth error of up to 1 m, biased backwards, in the route waypoints
+        and curvature exposed to the policy observation.
+        """
 
         if not isfinite(s_m):
             raise ValueError("Route point arc length must be finite")
         target = min(max(float(s_m), 0.0), self.length_m)
-        index = min(
-            range(len(self._segment_lengths_m)),
-            key=lambda candidate: abs(
-                target - (self._segment_starts_m[candidate] + self._segment_lengths_m[candidate])
-            ),
-        )
+        # ``_segment_starts_m`` is strictly increasing, so the containing
+        # segment is the last one whose start does not exceed ``target``.
+        index = bisect_right(self._segment_starts_m, target) - 1
+        index = min(max(index, 0), len(self._segment_lengths_m) - 1)
         start = self._segment_starts_m[index]
         length = self._segment_lengths_m[index]
         fraction = min(1.0, max(0.0, (target - start) / length))
@@ -132,8 +140,19 @@ class RoutePolyline:
         *,
         position_z: float | None = None,
         previous_s_m: float | None = None,
+        max_s_jump_m: float | None = None,
     ) -> RouteProjection:
-        """Project with the fixed vertical, distance, continuity and index ties."""
+        """Project with the fixed vertical, distance, continuity and index ties.
+
+        ``max_s_jump_m`` bounds how far the arc-length coordinate may move from
+        ``previous_s_m``.  Without it, ``previous_s_m`` only breaks ties among
+        candidates already within ``eps_geom`` of the minimum planar distance,
+        so on a self-intersecting or closely parallel route (a roundabout, in
+        practice) a strictly-closer far branch wins outright and the coordinate
+        jumps, producing spurious route progress.  When no candidate is within
+        the bound the projection fails closed rather than selecting an
+        implausible branch (v4.7 §3.4 forbids silent recovery).
+        """
 
         if not all(isfinite(value) for value in point_xy):
             raise ValueError("Route projection XY coordinates must be finite")
@@ -141,6 +160,11 @@ class RoutePolyline:
             raise ValueError("Route projection position_z must be finite when supplied")
         if previous_s_m is not None and not isfinite(previous_s_m):
             raise ValueError("Route projection previous_s_m must be finite when supplied")
+        if max_s_jump_m is not None:
+            if previous_s_m is None:
+                raise ValueError("Route projection max_s_jump_m requires previous_s_m")
+            if not isfinite(max_s_jump_m) or max_s_jump_m < 0.0:
+                raise ValueError("Route projection max_s_jump_m must be finite and non-negative")
 
         candidates: list[RouteProjection] = []
         for index, (first, second) in enumerate(zip(self.points_xyz, self.points_xyz[1:])):
@@ -171,6 +195,20 @@ class RoutePolyline:
             )
         if not candidates:
             raise ValueError("Route projection has no vertically compatible segment")
+        if max_s_jump_m is not None:
+            assert previous_s_m is not None
+            plausible = [
+                candidate
+                for candidate in candidates
+                if abs(candidate.s_m - previous_s_m) <= max_s_jump_m + GEOMETRY_EPSILON_M
+            ]
+            # A *preference*, not a hard gate.  When no candidate is plausible
+            # the unbounded selection is kept: the bound exists to stop a far
+            # branch from winning while a plausible one is available, and
+            # turning its absence into a failure would convert a rare geometric
+            # situation into an episode abort with no compensating benefit.
+            if plausible:
+                candidates = plausible
 
         def planar_distance(candidate: RouteProjection) -> float:
             first = self.points_xyz[candidate.segment_index]

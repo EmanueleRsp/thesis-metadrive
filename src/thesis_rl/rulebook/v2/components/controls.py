@@ -148,11 +148,18 @@ def evaluate_stop(
         return result, MemoryDelta(), CacheDelta()
     if pre_delta_m is None or post_delta_m is None:
         raise ValueError("Stop evaluator requires pre/post signed distances")
+    # REQ-EF-09: the dwell state belongs to the control group it was accrued
+    # at.  Carrying it across a group change let a second stop sign inherit a
+    # standstill performed at the first one and be crossed at speed for zero
+    # cost (v4.7 §7.7.5-6 scope both timers to the active group).
+    same_group = previous_group_id == control.control_group_id
+    carried_continuous_s = previous_continuous_s if same_group else 0.0
+    carried_best_s = previous_best_s if same_group else 0.0
     in_zone = 0.0 <= post_delta_m <= STOP_ZONE_M
     continuous = (
-        previous_continuous_s + delta_t_s if in_zone and speed_mps <= STOP_SPEED_MPS else 0.0
+        carried_continuous_s + delta_t_s if in_zone and speed_mps <= STOP_SPEED_MPS else 0.0
     )
-    best = max(previous_best_s, continuous)
+    best = max(carried_best_s, continuous)
     illegal = crossing and best < STOP_MIN_DWELL_S
     cost = max(0.0, 1.0 - best / STOP_MIN_DWELL_S) if illegal else 0.0
     next_resolved = frozenset(
@@ -229,18 +236,27 @@ def evaluate_signal_transition(
         raise ValueError("Signal transition requires valid distances, speed and timestep")
     if ego_brake_mps2 is None or ego_brake_mps2 <= 0.0:
         raise ValueError("Signal transition requires calibrated positive ego braking")
+    # REQ-EF-10: the frozen yellow commitment belongs to the signal group it
+    # was decided at (v4.7 §7.6.3 freezes it "per la stessa fase").  Carrying
+    # it into a different group made a newly encountered yellow inherit the
+    # previous intersection's decision.
+    same_group = previous_group_id == control.control_group_id
+    carried_yellow_must_stop = previous_yellow_must_stop if same_group else False
     if pre_state == "FLASHING_YELLOW" or post_state == "FLASHING_YELLOW":
         must_stop = False
         cost = 0.0
         status = ComponentStatus.NOT_APPLICABLE
     else:
         d_req = speed_mps * delta_t_s + speed_mps * speed_mps / (2.0 * ego_brake_mps2)
-        must_stop = previous_yellow_must_stop
+        must_stop = carried_yellow_must_stop
         if post_state == "YELLOW" and pre_state != "YELLOW":
-            must_stop = pre_delta_m >= d_req
-        cross_must_stop = pre_state == "RED" or (
-            pre_state == "YELLOW" and previous_yellow_must_stop
-        )
+            # REQ-EF-14: v4.7 §7.6.3-4 evaluates delta_sig(t) and v_app(t) at
+            # the same instant t, and Y_must_stop^+ is by definition the
+            # current (post-action) value.  Pairing the pre-state distance
+            # with the post-state approach speed was temporally incoherent and
+            # misclassified cases near the threshold.
+            must_stop = post_delta_m >= d_req
+        cross_must_stop = pre_state == "RED" or (pre_state == "YELLOW" and carried_yellow_must_stop)
         approach_must_stop = post_state == "RED" or (post_state == "YELLOW" and must_stop)
         if crossing and cross_must_stop:
             cost = 1.0
@@ -354,16 +370,23 @@ def evaluate_crosswalk_yield(
         active.update((actor_id, zone_id) for actor_id, _ in vru_intervals)
     elif not ego_occupied:
         active = {entry for entry in active if entry[1] != zone_id}
-    cost = 1.0 if ego_occupied and active else approach_cost
+    active_latch_for_zone = bool(ego_occupied and any(entry[1] == zone_id for entry in active))
+    cost = 1.0 if active_latch_for_zone else approach_cost
+    # REQ-EF-08: an active latch must keep the component applicable, otherwise
+    # ``aggregate_max_component`` — which filters on ``applicable`` — silently
+    # discards a cost of 1.0 and reports R3 = 0.  ``evaluate_vehicle_yield``
+    # already applies this rule; the crosswalk branch did not, so an illegal
+    # entry stopped being charged as soon as the VRU left the prediction set.
+    applicable = bool(vru_intervals) or active_latch_for_zone
     result = RuleComponentResult(
         "crosswalk",
         cost,
         {"zone_id": zone_id, "candidate_gaps_s": candidate_gaps, "commit": commit},
-        bool(vru_intervals),
+        applicable,
         True,
         ComponentStatus.VIOLATED
         if cost > 0.0
-        else (ComponentStatus.SATISFIED if vru_intervals else ComponentStatus.NOT_APPLICABLE),
+        else (ComponentStatus.SATISFIED if applicable else ComponentStatus.NOT_APPLICABLE),
         {"before_gate": before},
     )
     delta = MemoryDelta(

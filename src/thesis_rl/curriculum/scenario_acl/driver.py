@@ -8,6 +8,7 @@ import pickle
 import random
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,7 @@ from thesis_rl.curriculum.scenario_acl.arms import (
     build_default_scenario_arms,
 )
 from thesis_rl.curriculum.scenario_acl.buffer import ScenarioBuffer
+from thesis_rl.curriculum.scenario_acl.catalog_state import ScenarioCatalogVisitState
 from thesis_rl.curriculum.scenario_acl.mab import ScenarioArmBandit
 from thesis_rl.curriculum.scenario_acl.record import ScenarioRecord
 from thesis_rl.curriculum.scenario_acl.selection import select_acl_slot_decision
@@ -309,6 +311,9 @@ def _scenario_acl_artifact_paths(artifacts_dir: Path) -> dict[str, Path]:
         "iterations": root / "iterations.jsonl",
         "buffer": root / "scenario_buffer.json",
         "buffer_events": root / "scenario_buffer_events.jsonl",
+        # ACL v1.3 REQ-005/`DEC-009`: per-arm coverage cycles are run-local
+        # state and must survive a resume like the buffer does.
+        "coverage": root / "scenario_coverage_state.json",
         "vector_state": root / "scenario_acl_vector_state.json",
         "scenarios": root / "scenarios",
     }
@@ -405,7 +410,7 @@ def _build_record_from_catalog_entry(
     )
 
 
-def _update_replay_record(
+def _update_buffered_record(
     record: ScenarioRecord,
     *,
     episode_id: int,
@@ -413,6 +418,15 @@ def _update_replay_record(
     normalized_usefulness: float,
     metrics: dict[str, Any],
 ) -> ScenarioRecord:
+    """Refresh a buffered record in place from one committed episode.
+
+    Mode-neutral since ACL `v1.3` REQ-010 (`DEC-008`): a Generate episode can
+    legitimately land on a record the buffer already holds, and it must update
+    that entry rather than attempt a duplicate insert. ``last_seen_step`` is
+    therefore refreshed by Generate visits too (REQ-004): a Generate visit is an
+    equally valid observation of the current policy on that scenario.
+    """
+
     usefulness = compute_scenario_usefulness(
         metrics,
         learning_potential=learning_potential,
@@ -442,18 +456,36 @@ def _persist_buffer_state(
     )
 
 
+def _persist_coverage_state(
+    *,
+    path: Path,
+    visit_state: ScenarioCatalogVisitState,
+) -> None:
+    """Persist the per-arm coverage-cycle state (ACL `v1.3` REQ-005, `DEC-009`)."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(visit_state.state_dict(), ensure_ascii=True, indent=2),
+        encoding="utf-8",
+    )
+
+
 def _load_scenario_acl_resume_state(
     *,
     cfg: DictConfig,
     artifact_paths: dict[str, Path],
     scenario_cfg: Any,
+    arm_names: Sequence[str],
     rng: np.random.Generator,
-) -> tuple[ScenarioBuffer, ScenarioArmBandit, int, int, int, int, list[float]]:
+) -> tuple[
+    ScenarioBuffer, ScenarioArmBandit, ScenarioCatalogVisitState, int, int, int, int, list[float]
+]:
     resume_cfg = cfg.checkpoint.get("resume", {})
     if not bool(resume_cfg.get("enabled", False)):
         return (
             ScenarioBuffer(capacity=int(scenario_cfg.buffer_capacity)),
             ScenarioArmBandit(scenario_cfg.mab),
+            ScenarioCatalogVisitState(arm_names),
             0,
             0,
             0,
@@ -470,14 +502,34 @@ def _load_scenario_acl_resume_state(
     resume_root = resume_run_dir / "artifacts" / "curriculum"
     state_path = resume_root / "scenario_acl_state.json"
     buffer_path = resume_root / "scenario_buffer.json"
+    coverage_path = resume_root / "scenario_coverage_state.json"
     if not state_path.exists() or not buffer_path.exists():
         raise FileNotFoundError(
             "Scenario ACL resume requires both state and buffer artifacts: "
             f"state={state_path}, buffer={buffer_path}"
         )
+    # ACL `v1.3` REQ-005: coverage state is mandatory on resume. A missing file
+    # means the run predates `DEC-009`, and silently restarting every arm's
+    # cycle would let the resumed run re-draw records the interrupted run had
+    # already covered. Fail explicitly instead.
+    if not coverage_path.exists():
+        raise FileNotFoundError(
+            "Scenario ACL resume requires the per-arm coverage state introduced by "
+            f"ADR-032/`DEC-009`: {coverage_path}. Runs started before ACL v1.3 cannot be "
+            "resumed and must be restarted."
+        )
     state = json.loads(state_path.read_text(encoding="utf-8"))
     buffer_payload = json.loads(buffer_path.read_text(encoding="utf-8"))
     buffer = ScenarioBuffer.from_state_dict(buffer_payload)
+    visit_state = ScenarioCatalogVisitState.from_state_dict(
+        json.loads(coverage_path.read_text(encoding="utf-8"))
+    )
+    if set(visit_state.arm_names) != {str(name) for name in arm_names}:
+        raise ValueError(
+            "Scenario ACL coverage state arms do not match the configured arm set: "
+            f"expected {sorted(str(name) for name in arm_names)}, "
+            f"got {sorted(visit_state.arm_names)}."
+        )
     bandit_payload = state.get("mab", {})
     if not isinstance(bandit_payload, dict):
         raise ValueError("Scenario ACL resume state has invalid MAB payload.")
@@ -490,6 +542,7 @@ def _load_scenario_acl_resume_state(
     return (
         buffer,
         bandit,
+        visit_state,
         int(state.get("global_step", 0)),
         int(state.get("chunk_id", 0)),
         int(state.get("eval_id", 0)),
@@ -528,6 +581,7 @@ def _run_scenario_acl_vectorized_training(
     current_episode_id: int,
     buffer: ScenarioBuffer,
     bandit: ScenarioArmBandit,
+    visit_state: ScenarioCatalogVisitState,
     rng: np.random.Generator,
     recent_usefulness: list[float],
     generate_count: int,
@@ -601,11 +655,24 @@ def _run_scenario_acl_vectorized_training(
                 train_records=train_records,
                 scenario_cfg=scenario_cfg,
                 rng=rng,
+                visit_state=visit_state,
             )
             if decision.selection.mode == "generate":
                 generate_count += 1
             else:
                 replay_count += 1
+            # `DEC-009`: one event per coverage-cycle closure, so the audit
+            # trail records exactly when each arm finished a full pass over
+            # its frozen pool.
+            if decision.coverage_cycle_closed and decision.sampled_arm_name is not None:
+                log_event(
+                    paths.events_log_path,
+                    "scenario_acl_coverage_cycle_closed",
+                    episode_id=int(episode_id),
+                    arm_name=decision.sampled_arm_name,
+                    coverage_cycle_id=int(decision.coverage_cycle_id or 0),
+                    coverage=visit_state.coverage_summary(),
+                )
             # ACL-SN-EXH-001 / ADR-028: surface every transition in which arm
             # exhausts (or recovers) its Generate pool. Logged once per
             # transition, not once per episode, so a long-exhausted arm does
@@ -622,12 +689,8 @@ def _run_scenario_acl_vectorized_training(
                         paths.events_log_path,
                         "scenario_acl_generate_pool_eligibility_changed",
                         episode_id=int(episode_id),
-                        newly_ineligible_arms=sorted(
-                            current_ineligible - ineligible_generate_arms
-                        ),
-                        newly_eligible_arms=sorted(
-                            ineligible_generate_arms - current_ineligible
-                        ),
+                        newly_ineligible_arms=sorted(current_ineligible - ineligible_generate_arms),
+                        newly_eligible_arms=sorted(ineligible_generate_arms - current_ineligible),
                         ineligible_arms=sorted(current_ineligible),
                         scores=[float(value) for value in bandit.scores.tolist()],
                     )
@@ -801,7 +864,7 @@ def _run_scenario_acl_vectorized_training(
                     # the reward-scale-normalized LP, not the raw value, so
                     # the same cross-arm confound (FIND-004) does not persist
                     # through this second channel after the MAB itself is fixed.
-                    updated = _update_replay_record(
+                    updated = _update_buffered_record(
                         record,
                         episode_id=completion.episode_id,
                         learning_potential=lp_scaled,
@@ -811,18 +874,40 @@ def _run_scenario_acl_vectorized_training(
                     buffer.update(updated)
                     action = "updated"
             else:
-                catalog_record = catalog.get_by_uid(scenario_uid).record
-                inserted = buffer.insert(
-                    _build_record_from_catalog_entry(
-                        catalog_record=catalog_record,
-                        cfg=cfg,
-                        episode_id=completion.episode_id,
-                        learning_potential=lp_scaled,
-                        normalized_usefulness=normalized,
-                        metrics=_episode_record_metrics(metrics),
-                    )
+                # ACL `v1.3` REQ-010 (`DEC-008`): a Generate episode may now
+                # legitimately land on a record the buffer already holds,
+                # because buffer membership no longer removes a record from
+                # the Generate pool. Update that entry in place instead of
+                # attempting a duplicate insert, which `ScenarioBuffer.insert`
+                # would silently report as "rejected" and which would leave
+                # the stale learning potential in the replay ranking.
+                buffered = next(
+                    (item for item in buffer.records() if item.scenario_id == scenario_uid), None
                 )
-                action = "inserted" if inserted else "rejected"
+                if buffered is not None:
+                    buffer.update(
+                        _update_buffered_record(
+                            buffered,
+                            episode_id=completion.episode_id,
+                            learning_potential=lp_scaled,
+                            normalized_usefulness=normalized,
+                            metrics=_episode_record_metrics(metrics),
+                        )
+                    )
+                    action = "generate_on_buffered_record"
+                else:
+                    catalog_record = catalog.get_by_uid(scenario_uid).record
+                    inserted = buffer.insert(
+                        _build_record_from_catalog_entry(
+                            catalog_record=catalog_record,
+                            cfg=cfg,
+                            episode_id=completion.episode_id,
+                            learning_potential=lp_scaled,
+                            normalized_usefulness=normalized,
+                            metrics=_episode_record_metrics(metrics),
+                        )
+                    )
+                    action = "inserted" if inserted else "rejected"
             _append_jsonl(
                 artifact_paths["buffer_events"],
                 {
@@ -1071,6 +1156,7 @@ def _run_scenario_acl_vectorized_training(
                     }
                 )
             _persist_buffer_state(path=artifact_paths["buffer"], buffer=buffer)
+            _persist_coverage_state(path=artifact_paths["coverage"], visit_state=visit_state)
             save_acl_vector_state(artifact_paths["vector_state"], vector_state)
             recorder.append_row(
                 "train_chunks.csv",
@@ -1125,9 +1211,13 @@ def _run_scenario_acl_vectorized_training(
                     "timing_seconds", {}
                 ),
                 "mab": bandit.state_dict(),
-                # ACL-SN-EXH-001 / ADR-028: arms with no fresh Generate record
-                # as of this chunk boundary; empty when every arm is eligible.
+                # ACL-SN-EXH-001 / ADR-028: arms with no admissible Generate
+                # record as of this chunk boundary; empty when every arm is
+                # eligible, which is the normal case since `DEC-008`.
                 "generate_ineligible_arms": sorted(ineligible_generate_arms),
+                # `DEC-009`: per-arm coverage-cycle index and progress inside
+                # the current cycle.
+                "coverage": visit_state.coverage_summary(),
             }
             _append_jsonl(artifact_paths["history"], history_payload)
             _append_jsonl(artifact_paths["iterations"], history_payload)
@@ -1140,6 +1230,7 @@ def _run_scenario_acl_vectorized_training(
                         "episode_id": vector_state.next_episode_id,
                         "buffer_size": len(buffer),
                         "mab": bandit.state_dict(),
+                        "coverage": visit_state.coverage_summary(),
                         "rng_state": rng.bit_generator.state,
                     },
                     ensure_ascii=True,
@@ -1422,6 +1513,7 @@ def run_scenario_acl_training(
     (
         buffer,
         bandit,
+        visit_state,
         current_global_step,
         current_chunk_id,
         current_eval_id,
@@ -1431,6 +1523,7 @@ def run_scenario_acl_training(
         cfg=cfg,
         artifact_paths=artifact_paths,
         scenario_cfg=scenario_cfg,
+        arm_names=[arm.name for arm in arms],
         rng=rng,
     )
     generate_count = 0
@@ -1528,6 +1621,7 @@ def run_scenario_acl_training(
             current_episode_id=current_episode_id,
             buffer=buffer,
             bandit=bandit,
+            visit_state=visit_state,
             rng=rng,
             recent_usefulness=recent_usefulness,
             generate_count=generate_count,
@@ -1643,11 +1737,30 @@ def run_scenario_acl_training(
                     rng=rng,
                     episode_id=current_episode_id + 1,
                 )
+                excluded_uids: set[str] = set()
                 if not _is_replay_iteration(spec):
-                    excluded_uids = {str(record.scenario_id) for record in buffer.records()}
+                    # `DEC-011`: keep this unreachable sequential path
+                    # semantically aligned with the vectorized one. Under
+                    # `DEC-008` the scenario buffer no longer restricts the
+                    # Generate pool; the only exclusion is the arm's coverage
+                    # cycle (`DEC-009`), and an exhausted cycle closes and
+                    # restarts before the draw instead of degrading to Replay.
+                    excluded_uids = set(visit_state.visited_uids(spec.arm_name))
                     provider = getattr(base_env, "scenario_provider", None)
                     has_candidate = getattr(provider, "has_candidate", None)
                     source = _selection_source_override(spec)
+                    if (
+                        callable(has_candidate)
+                        and excluded_uids
+                        and not has_candidate(
+                            split=str(base_env.split),
+                            source=source,
+                            arm=spec.arm_name,
+                            excluded_scenario_uids=excluded_uids,
+                        )
+                    ):
+                        visit_state.close_cycle(spec.arm_name)
+                        excluded_uids = set()
                     if callable(has_candidate) and not has_candidate(
                         split=str(base_env.split),
                         source=source,
@@ -1688,9 +1801,7 @@ def run_scenario_acl_training(
                 else:
                     base_env.scenario_arm = spec.arm_name
                     base_env.scenario_source = _selection_source_override(spec)
-                    base_env.scenario_excluded_uids = {
-                        str(record.scenario_id) for record in buffer.records()
-                    }
+                    base_env.scenario_excluded_uids = set(excluded_uids)
                 base_env._acl_episode_selection = {
                     "origin": (
                         "fallback_replay_exhausted_arm"
@@ -1774,6 +1885,15 @@ def run_scenario_acl_training(
                     episode_metrics["usefulness"] = episode_usefulness
                     episode_metrics["usefulness_norm"] = normalized_episode_usefulness
                 current_episode_id += 1
+                # `DEC-009`/`DEC-011`: the provider performs the draw on this
+                # path, so the visited set is marked from the record it
+                # actually returned.
+                if not _is_replay_iteration(spec) and record is not None:
+                    visit_state.mark_visited(
+                        str(record.scenario_uid),
+                        arm_name=spec.arm_name,
+                        episode_id=current_episode_id,
+                    )
                 if bool(scenario_cfg.use_scenario_buffer):
                     # DEC-006/LIM-001: buffer retention uses the reward-scale-
                     # normalized value, matching the vectorized commit_event path.
@@ -1782,7 +1902,7 @@ def run_scenario_acl_training(
                     if _is_replay_iteration(spec):
                         if spec.replay_record is None:
                             raise RuntimeError("Replay selection requires a scenario record.")
-                        updated_record = _update_replay_record(
+                        updated_record = _update_buffered_record(
                             spec.replay_record,
                             episode_id=current_episode_id,
                             learning_potential=learning_value,
@@ -1793,17 +1913,41 @@ def run_scenario_acl_training(
                         buffer_action = "updated"
                         scenario_record_id = updated_record.scenario_id
                     elif record is not None:
-                        buffer_record = _build_record_from_catalog_entry(
-                            catalog_record=record,
-                            cfg=cfg,
-                            episode_id=current_episode_id,
-                            learning_potential=learning_value,
-                            normalized_usefulness=normalized_value,
-                            metrics=_episode_record_metrics(episode_metrics),
+                        # ACL `v1.3` REQ-010 (`DEC-011` alignment): update in
+                        # place when the Generate draw landed on a record the
+                        # buffer already holds.
+                        scenario_record_id = str(record.scenario_uid)
+                        buffered = next(
+                            (
+                                item
+                                for item in buffer.records()
+                                if item.scenario_id == scenario_record_id
+                            ),
+                            None,
                         )
-                        inserted = buffer.insert(buffer_record)
-                        buffer_action = "inserted" if inserted else "rejected"
-                        scenario_record_id = buffer_record.scenario_id
+                        if buffered is not None:
+                            buffer.update(
+                                _update_buffered_record(
+                                    buffered,
+                                    episode_id=current_episode_id,
+                                    learning_potential=learning_value,
+                                    normalized_usefulness=normalized_value,
+                                    metrics=_episode_record_metrics(episode_metrics),
+                                )
+                            )
+                            buffer_action = "generate_on_buffered_record"
+                        else:
+                            buffer_record = _build_record_from_catalog_entry(
+                                catalog_record=record,
+                                cfg=cfg,
+                                episode_id=current_episode_id,
+                                learning_potential=learning_value,
+                                normalized_usefulness=normalized_value,
+                                metrics=_episode_record_metrics(episode_metrics),
+                            )
+                            inserted = buffer.insert(buffer_record)
+                            buffer_action = "inserted" if inserted else "rejected"
+                            scenario_record_id = buffer_record.scenario_id
                     _append_jsonl(
                         artifact_paths["buffer_events"],
                         {
@@ -2012,6 +2156,7 @@ def run_scenario_acl_training(
             # The buffer was updated synchronously in each episode callback;
             # only its durable snapshot is batched by evaluation chunk.
             _persist_buffer_state(path=artifact_paths["buffer"], buffer=buffer)
+            _persist_coverage_state(path=artifact_paths["coverage"], visit_state=visit_state)
 
             if eval_metrics:
                 recorder.append_row(
@@ -2150,6 +2295,7 @@ def run_scenario_acl_training(
                             for record in buffer.top_k(5)
                         ],
                         "mab": bandit.state_dict(),
+                        "coverage": visit_state.coverage_summary(),
                         "rng_state": rng.bit_generator.state,
                     },
                     ensure_ascii=True,

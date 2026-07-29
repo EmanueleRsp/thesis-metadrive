@@ -111,18 +111,28 @@ def test_reward_scale_state_round_trips_through_checkpoint() -> None:
     bandit.update_reward_scale(1, episode_reward=12.0)
     restored = ScenarioArmBandit.from_state_dict(bandit.config, bandit.state_dict())
     assert np.allclose(restored.reward_scale, bandit.reward_scale)
-    assert restored.state_dict()["schema"] == "acl_ema_v2"
+    assert restored.state_dict()["schema"] == "acl_ema_v3"
 
 
-def test_legacy_v1_checkpoint_schema_is_rejected() -> None:
+@pytest.mark.parametrize("legacy_schema", ["acl_ema_v1", "acl_ema_v2"])
+def test_legacy_checkpoint_schemas_are_rejected(legacy_schema: str) -> None:
+    """`TEST-CAT-008` / ACL v1.3 REQ-005, `AC-005`.
+
+    `acl_ema_v1` predates the per-arm reward-scale estimator (`DEC-006`);
+    `acl_ema_v2` predates the Generate/catalog decoupling (ADR-032,
+    `DEC-008`/`DEC-009`), which changed the selection semantics its scores were
+    estimated under. Neither may be silently reinterpreted as `acl_ema_v3`.
+    """
+
     bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=6))
     legacy_state = {
-        "schema": "acl_ema_v1",
+        "schema": legacy_schema,
         "scores": bandit.scores.tolist(),
         "target_scores": bandit.target_scores.tolist(),
+        "reward_scale": bandit.reward_scale.tolist(),
         "update_count": 0,
     }
-    with pytest.raises(ValueError, match="acl_ema_v2"):
+    with pytest.raises(ValueError, match="acl_ema_v3"):
         ScenarioArmBandit.from_state_dict(bandit.config, legacy_state)
 
 

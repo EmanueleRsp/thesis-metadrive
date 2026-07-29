@@ -33,9 +33,7 @@ CENTER_COINCIDENCE_TOLERANCE_M = 1.0e-6
 
 
 def _fail(scenario_id: str, step_index: int, cause: str) -> NoReturn:
-    raise RulebookEvaluationError(
-        EvaluationFailure(scenario_id, step_index, "collision", cause)
-    )
+    raise RulebookEvaluationError(EvaluationFailure(scenario_id, step_index, "collision", cause))
 
 
 def _canonical_footprint_center(
@@ -64,6 +62,7 @@ def evaluate_collision_impact(
     onset_records: tuple[ContactOnsetRecord, ...],
     previous_contact_ids: frozenset[str],
     post_active_contact_ids: frozenset[str],
+    post_actor_ids: frozenset[str] = frozenset(),
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
     """Evaluate only new contact onsets and atomically propose contact memory.
 
@@ -106,14 +105,32 @@ def evaluate_collision_impact(
         )
 
     actor_costs: list[tuple[str, ActorSnapshot, float, float, tuple[float, float]]] = []
-    missing_pre_state_ids: list[str] = []
+    appeared_ids: list[str] = []
+    unobserved_ids: list[str] = []
     for actor_id, records in onset_by_actor.items():
         actor = pre_actors_by_id.get(actor_id)
         if actor is None:
-            # Actors may appear between two simulator snapshots.  They cannot
-            # contribute a pre-state closing-speed estimate on this transition;
-            # the transition memory will include them from the current snapshot.
-            missing_pre_state_ids.append(actor_id)
+            # REQ-EF-13: no pre-state record, so v4.9 §4.1's normal closing
+            # speed is not computable.  Two very different situations produce
+            # this, and they are distinguished by the post-state:
+            #
+            # * the actor is present in the post-state -> it genuinely appeared
+            #   during this control step (spawn, activation, a track becoming
+            #   valid).  At decision time there was nothing there, so no
+            #   alternative action was available to the ego and R1 = 0 is the
+            #   correct causal attribution, not a fallback.  The Rulebook is
+            #   causal by construction: it charges the ego for the risk its
+            #   action creates.
+            # * the actor is in neither snapshot -> the snapshot pipeline never
+            #   observed an object the physics engine did (e.g. a class that is
+            #   excluded from the live actor registry but can still produce a
+            #   Bullet contact).  That is an instrumentation gap, not an
+            #   exculpation, and it must stay visible instead of reading as a
+            #   clean R1 = 0.
+            if actor_id in post_actor_ids:
+                appeared_ids.append(actor_id)
+            else:
+                unobserved_ids.append(actor_id)
             continue
         assert actor is not None
         if actor.actor_class == ActorClass.STATIC_COLLIDABLE:
@@ -126,7 +143,11 @@ def evaluate_collision_impact(
                 if actor.configured_speed_cap_mps is None or actor.configured_speed_cap_mps <= 0.0:
                     _fail(scenario_id, step_index, f"vehicle {actor_id!r} speed cap is invalid")
         else:
-            _fail(scenario_id, step_index, f"actor class {actor.actor_class.value!r} is not collidable")
+            _fail(
+                scenario_id,
+                step_index,
+                f"actor class {actor.actor_class.value!r} is not collidable",
+            )
         del records
         ego_center = _canonical_footprint_center(
             pre_ego, scenario_id=scenario_id, step_index=step_index
@@ -163,13 +184,22 @@ def evaluate_collision_impact(
             RuleComponentResult(
                 name="collision",
                 cost=0.0,
-                raw={"new_collision": False, "actors": ()},
+                raw={
+                    "new_collision": False,
+                    "actors": (),
+                    # REQ-EF-13: an actor that appeared during this step is not
+                    # attributable to the ego (see above); one that was never
+                    # observed in either snapshot is an instrumentation gap.
+                    "appeared_onset_actor_ids": tuple(sorted(appeared_ids)),
+                    "unobserved_onset_actor_ids": tuple(sorted(unobserved_ids)),
+                },
                 applicable=False,
                 evaluable=True,
                 status=ComponentStatus.NOT_APPLICABLE,
                 diagnostics={
                     "new_collision": False,
-                    "ignored_missing_pre_state_actor_ids": tuple(sorted(missing_pre_state_ids)),
+                    "appeared_onset_actor_ids": tuple(sorted(appeared_ids)),
+                    "unobserved_onset_actor_ids": tuple(sorted(unobserved_ids)),
                 },
             ),
             MemoryDelta("collision", (("previous_contact_ids", post_active_contact_ids),)),
@@ -183,6 +213,8 @@ def evaluate_collision_impact(
             "new_collision": True,
             "worst_actor_id": worst_actor,
             "worst_closing_speed_mps": worst_speed,
+            "appeared_onset_actor_ids": tuple(sorted(appeared_ids)),
+            "unobserved_onset_actor_ids": tuple(sorted(unobserved_ids)),
             "actors": tuple(
                 {
                     "actor_id": actor_id,
@@ -201,7 +233,8 @@ def evaluate_collision_impact(
         status=ComponentStatus.VIOLATED,
         diagnostics={
             "onset_actor_ids": tuple(sorted(onset_by_actor)),
-            "ignored_missing_pre_state_actor_ids": tuple(sorted(missing_pre_state_ids)),
+            "appeared_onset_actor_ids": tuple(sorted(appeared_ids)),
+            "unobserved_onset_actor_ids": tuple(sorted(unobserved_ids)),
             "normal_source": "pre_state_canonical_footprint_centers",
             "injury_risk_model": {
                 "severity": INJURY_SEVERITY,

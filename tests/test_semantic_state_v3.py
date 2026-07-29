@@ -21,12 +21,12 @@ def _valid_batch() -> SemanticObservationBatchV12:
         dynamic_mask=np.zeros((16, 5), dtype=np.float32),
         static=np.zeros((8, 13), dtype=np.float32),
         static_mask=np.zeros(8, dtype=np.float32),
-        lane_road=np.zeros(14, dtype=np.float32),
-        controls=np.zeros((8, 17), dtype=np.float32),
+        lane_road=np.zeros(12, dtype=np.float32),
+        controls=np.zeros((8, 15), dtype=np.float32),
         controls_mask=np.zeros(8, dtype=np.float32),
-        interactions=np.zeros((8, 35), dtype=np.float32),
+        interactions=np.zeros((8, 33), dtype=np.float32),
         interactions_mask=np.zeros(8, dtype=np.float32),
-        compliance_history=np.zeros((21, 24), dtype=np.float32),
+        compliance_history=np.zeros((21, 23), dtype=np.float32),
         compliance_history_mask=np.asarray([0] * 20 + [1], dtype=np.float32),
         yellow_onset_memory=np.zeros(3, dtype=np.float32),
     )
@@ -34,7 +34,7 @@ def _valid_batch() -> SemanticObservationBatchV12:
 
 def test_semantic_v3_requires_explicit_batch_builder() -> None:
     observation = SemanticStateObservationV3({})
-    assert observation.observation_space.shape == (3064,)
+    assert observation.observation_space.shape == (3009,)
     with pytest.raises(RuntimeError, match="perception-bounded batch builder"):
         observation.observe(object())
 
@@ -50,7 +50,7 @@ def test_semantic_v3_flattens_only_schema_owned_batch() -> None:
     batch = _valid_batch()
     observation.set_batch_builder(lambda vehicle: batch)
     result = observation.observe(object())
-    assert result.shape == (3064,)
+    assert result.shape == (3009,)
     assert result.dtype == np.float32
     assert np.array_equal(result, observation.schema.flatten_numpy(batch))
 

@@ -60,6 +60,26 @@ def _build_env(spec: GenerationSpec):
     )
 
 
+def _realized_static_obstacle_metadata(env: Any) -> dict[str, Any]:
+    """Return static accident-scene objects present in the generated MetaDrive episode."""
+    get_objects = getattr(env.engine, "get_objects", None)
+    objects = get_objects() if callable(get_objects) else {}
+    values = objects.values() if isinstance(objects, dict) else ()
+    static_types = tuple(
+        sorted(
+            {
+                type(obj).__name__
+                for obj in values
+                if any(
+                    token in type(obj).__name__.lower()
+                    for token in ("trafficwarning", "trafficbarrier", "trafficcone")
+                )
+            }
+        )
+    )
+    return {"realized": bool(static_types), "object_types": list(static_types)}
+
+
 def generate_pg_scenario(
     profile: str,
     *,
@@ -89,6 +109,7 @@ def generate_pg_scenario(
         if scenario is None:
             raise RuntimeError(f"MetaDrive export did not return scenario seed {seed}")
         map_metadata = env.current_map.get_meta_data()
+        map_metadata["static_obstacle"] = _realized_static_obstacle_metadata(env)
         roundabout_priorities = roundabout_priority_records(env.current_map)
         if roundabout_priorities:
             scenario.setdefault("metadata", {}).setdefault("rulebook_vehicle_yield", {})[

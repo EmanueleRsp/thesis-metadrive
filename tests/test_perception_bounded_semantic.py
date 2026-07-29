@@ -64,7 +64,10 @@ def test_v12_reacquired_track_reuses_its_persistent_slot(monkeypatch) -> None:
     assert np.flatnonzero(reacquired.dynamic_mask[:, -1]).tolist() == [first_slot]
 
 
-def test_v12_route_width_is_local_and_unavailable_adjacency_is_fail_closed(monkeypatch) -> None:
+def test_v13_route_width_is_local_and_adjacency_fields_are_gone(monkeypatch) -> None:
+    """OBS-V1.3 (DEC-002, ADR-033): the two permanently-zero adjacent-lane
+    fields are removed rather than emitted as fail-closed constants."""
+
     route, lanes = _route()
     ego = _actor("ego", (0.0, 0.0), (5.0, 0.0))
     monkeypatch.setattr(
@@ -77,7 +80,7 @@ def test_v12_route_width_is_local_and_unavailable_adjacency_is_fail_closed(monke
     batch = builder.build(_Vehicle(), _context(0, ego, (), route, lanes))
 
     assert batch.route[0, 5] == pytest.approx(4.0 / 6.0)
-    assert batch.lane_road[11:13].tolist() == [0.0, 0.0]
+    assert batch.lane_road.shape == (12,)
 
 
 def test_v12_rejects_route_samples_without_a_containing_lane(monkeypatch) -> None:
@@ -137,7 +140,7 @@ def test_v12_compliance_trace_is_right_aligned_and_does_not_expose_rulebook_time
 
     batch = builder.build(_Vehicle(), _context(0, ego, (), route, lanes))
 
-    assert batch.compliance_history.shape == (21, 24)
+    assert batch.compliance_history.shape == (21, 23)
     assert batch.compliance_history_mask.tolist() == [0.0] * 20 + [1.0]
     assert batch.yellow_onset_memory.shape == (3,)
     assert np.isfinite(batch.compliance_history).all()

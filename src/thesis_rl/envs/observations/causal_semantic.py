@@ -14,8 +14,8 @@ from math import atan2, cos, hypot, isfinite, sin
 from typing import Any, Callable, Mapping
 
 import numpy as np
-from shapely.geometry import Point
-from shapely.ops import nearest_points
+from shapely.geometry import LineString, Point
+from shapely.ops import nearest_points, split
 from thesis_rl.contracts.causal_scene_context import CausalSceneContext
 from thesis_rl.contracts.observation_schema import (
     SemanticObservationBatch,
@@ -155,6 +155,113 @@ def _actor_type_index(actor_class: ActorClass) -> int:
         ActorClass.PEDESTRIAN: 1,
         ActorClass.CYCLIST: 2,
     }.get(actor_class, 3)
+
+
+# OBS-V1.3 feature offsets. They are exported so tests and the encoder can
+# reference positions by name instead of re-deriving them from the field order.
+DYNAMIC_ROUTE_LATERAL_INDEX = 18
+STATIC_TYPE_SLICE = slice(6, 11)
+CONTROL_GOVERNS_INDEX = 12
+CONTROL_ACTIVE_INDEX = 13
+CONTROL_STATE_VALID_INDEX = 14
+INTERACTION_EGO_INSIDE_INDEX = 8
+INTERACTION_EGO_APPROACH_CONTROL_SLICE = slice(21, 25)
+INTERACTION_OTHER_APPROACH_CONTROL_SLICE = slice(25, 29)
+INTERACTION_PREEXISTING_INDEX = 32
+
+# Radius of the window used to describe a long map geometry locally, instead of
+# by the bounding box of its whole extent (OBS-V1.3 REQ-005).
+STATIC_LOCAL_WINDOW_M = 10.0
+
+# OBS-V1.3 static taxonomy: the classes the source can actually discriminate.
+STATIC_TYPE_DETECTED_OBSTACLE = 0
+STATIC_TYPE_ROAD_BOUNDARY = 1
+STATIC_TYPE_OTHER_NON_DRIVABLE = 2
+STATIC_TYPE_STATIONARY_VEHICLE = 3
+STATIC_TYPE_UNKNOWN = 4
+
+
+def _local_window(geometry: Any, ego_position_xy: tuple[float, float]) -> Any:
+    """Clip a map geometry to the neighbourhood that the ego can act on."""
+
+    window = Point(ego_position_xy).buffer(STATIC_LOCAL_WINDOW_M)
+    local = geometry.intersection(window)
+    return geometry if local.is_empty else local
+
+
+def _local_tangent_rad(geometry: Any, point_xy: tuple[float, float]) -> float:
+    """Return the orientation of the geometry segment nearest to ``point_xy``.
+
+    Map features carry no heading of their own.  Emitting a constant zero would
+    make the ego-relative sin/cos pair a direct encoding of the ego world
+    heading (OBS-V1.3 REQ-006), so the local tangent is measured instead.
+    """
+
+    boundary = geometry.exterior if hasattr(geometry, "exterior") else geometry
+    coordinates = list(getattr(boundary, "coords", ()))
+    if len(coordinates) < 2:
+        return 0.0
+    target = Point(point_xy)
+    best_angle = 0.0
+    best_distance = float("inf")
+    for first, second in zip(coordinates, coordinates[1:]):
+        segment = LineString((first, second))
+        distance = segment.distance(target)
+        if distance < best_distance:
+            best_distance = distance
+            best_angle = atan2(second[1] - first[1], second[0] - first[0])
+    return best_angle
+
+
+def _local_extent(local: Any) -> tuple[float, float]:
+    """Rotation-invariant (length, width) of a clipped map geometry.
+
+    The axis-aligned bounding box is not invariant under a rigid rotation of
+    the scene, so it cannot describe a map feature in the ego frame.  A
+    line-like geometry has no minimum rotated rectangle, and falls back to its
+    own length.
+    """
+
+    rectangle = local.minimum_rotated_rectangle
+    boundary = getattr(rectangle, "exterior", rectangle)
+    coordinates = list(getattr(boundary, "coords", ()))
+    lengths = [
+        hypot(second[0] - first[0], second[1] - first[1])
+        for first, second in zip(coordinates, coordinates[1:])
+    ]
+    lengths = [length for length in lengths if length > 1.0e-6]
+    if len(lengths) >= 2:
+        return max(lengths), min(lengths)
+    return max(float(local.length), 0.1), 0.1
+
+
+def _signed_footprint_clearance(geometry: Any, footprint: Any) -> float:
+    """Signed clearance: positive before contact, negative during overlap.
+
+    ``shapely`` reports distance ``0`` for any pair of intersecting geometries,
+    so the negative branch required by the contract is unreachable without
+    measuring how deep the footprint has crossed.  The footprint is convex, so
+    the deepest point of the crossed piece is always one of its vertices.
+    """
+
+    if not geometry.intersects(footprint):
+        return float(geometry.distance(footprint))
+    try:
+        pieces = list(split(footprint, geometry).geoms)
+    except Exception:  # pragma: no cover - shapely raises several types here
+        pieces = []
+    if len(pieces) < 2:
+        return 0.0
+    centre = footprint.centroid
+    beyond = [piece for piece in pieces if not piece.contains(centre)]
+    if not beyond:
+        return 0.0
+    depth = max(
+        geometry.distance(Point(coordinate))
+        for piece in beyond
+        for coordinate in piece.exterior.coords
+    )
+    return -float(depth)
 
 
 class CausalSemanticBatchBuilder:
@@ -871,129 +978,6 @@ class CausalSemanticBatchBuilder:
             ),
         )
 
-    def _build_controls_v12(
-        self, context: CausalSceneContext, ego: ActorSnapshot, current_s: float, vehicle: object
-    ) -> tuple[np.ndarray, np.ndarray, tuple[TrafficControlRecord, str, bool] | None]:
-        candidates = self._control_candidates(context, ego, current_s)
-        payload = np.zeros((8, 17), dtype=np.float32)
-        mask = np.zeros(8, dtype=np.float32)
-        active: tuple[TrafficControlRecord, str, bool] | None = None
-        for index, control in enumerate(candidates[:8]):
-            midpoint = control.control_line.centroid
-            line_coords = list(control.control_line.coords) if hasattr(control.control_line, "coords") else []
-            direction = (
-                atan2(line_coords[-1][1] - line_coords[0][1], line_coords[-1][0] - line_coords[0][0])
-                if len(line_coords) >= 2
-                else 0.0
-            )
-            state, valid = self._visible_signal_state(control, context, vehicle)
-            state_index = {"green": 0, "yellow": 1, "red": 2, "flashing-yellow": 3}.get(state)
-            signal_state = _one_hot(state_index if valid and state_index is not None else 4, 5)
-            governs = ego.live_lane_id in control.controlled_lane_ids
-            if active is None and governs and control.route_s_m >= current_s:
-                active = (control, state, valid)
-            relative = _relative_position((midpoint.x, midpoint.y), ego.position_xy, ego.heading_rad)
-            payload[index] = np.asarray(
-                [
-                    _clip(relative[0], 80.0),
-                    _clip(relative[1], 80.0),
-                    _clip(control.route_s_m - current_s, 80.0),
-                    sin(direction - ego.heading_rad),
-                    cos(direction - ego.heading_rad),
-                    *_one_hot(0 if control.control_type == ApproachControl.SIGNAL else 1, 2),
-                    *signal_state,
-                    float(governs),
-                    float(active is not None and active[0].control_group_id == control.control_group_id),
-                    float(valid),
-                    0.0,
-                    0.0,
-                ],
-                dtype=np.float32,
-            )
-            mask[index] = 1.0
-        return payload, mask, active
-
-    def _active_dashed_key(self, context: CausalSceneContext, ego: ActorSnapshot) -> str | None:
-        candidates: list[tuple[float, str]] = []
-        for feature in context.episode_cache.map_feature_catalog.values():
-            if feature.feature_class != MapFeatureClass.LANE_MARKING_DASHED:
-                continue
-            elevation = feature.elevation_m if feature.elevation_m is not None else ego.position_z
-            if abs(elevation - ego.position_z) > self.vertical_tolerance_m:
-                continue
-            if feature.geometry.intersects(ego.footprint):
-                candidates.append((float(feature.geometry.distance(ego.footprint)), feature.feature_id))
-        return min(candidates)[1] if candidates else None
-
-    def _build_compliance_v12(
-        self,
-        *,
-        context: CausalSceneContext,
-        ego: ActorSnapshot,
-        ego_speed_cap: float,
-        lane_road: np.ndarray,
-        active_control: tuple[TrafficControlRecord, str, bool] | None,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        dashed_key = self._active_dashed_key(context, ego)
-        control, state, state_valid = active_control if active_control is not None else (None, "unknown", False)
-        control_key = control.control_group_id if control is not None else None
-        signal_index = {"red": 0, "yellow": 1, "green": 2, "off": 3}.get(
-            state if state_valid else "unknown", 4
-        )
-        control_distance = (
-            _clip(control.route_s_m - self._route_s(ego, ego), 80.0) if control is not None else 0.0
-        )
-        row = np.asarray(
-            [
-                _clip(hypot(*ego.velocity_xy), ego_speed_cap, lower=0.0),
-                float(lane_road[1]), float(lane_road[2]),
-                *lane_road[3:7].tolist(), *lane_road[7:11].tolist(),
-                float(dashed_key is not None),
-                float(dashed_key is not None and dashed_key == self._previous_dashed_key),
-                float(control is not None),
-                float(control_key is not None and control_key == self._previous_control_key),
-                *_one_hot(0 if control and control.control_type == ApproachControl.SIGNAL else 1 if control else None, 2),
-                *_one_hot(signal_index, 5),
-                control_distance,
-                float(control is not None and ego.live_lane_id in control.controlled_lane_ids),
-            ],
-            dtype=np.float32,
-        )
-        if row.shape != (24,):
-            raise RuntimeError("OBS-V1.2 compliance history row must contain 24 values")
-        self._previous_dashed_key = dashed_key
-        self._previous_control_key = control_key
-        if control is not None and state == "yellow" and state_valid:
-            if self._yellow_group_id != control_key:
-                self._yellow_group_id = control_key
-                self._yellow_onset_distance_m = control.route_s_m - self._route_s(ego, ego)
-                self._yellow_onset_speed_mps = hypot(*ego.velocity_xy)
-        else:
-            self._yellow_group_id = None
-            self._yellow_onset_distance_m = 0.0
-            self._yellow_onset_speed_mps = 0.0
-        step = context.snapshot.step_index
-        self._compliance_history.append(row)
-        self._compliance_steps.append(step)
-        history = np.zeros((21, 24), dtype=np.float32)
-        mask = np.zeros(21, dtype=np.float32)
-        expected_steps = range(step - 20, step + 1)
-        by_step = dict(zip(self._compliance_steps, self._compliance_history))
-        for index, source_step in enumerate(expected_steps):
-            source = by_step.get(source_step)
-            if source is not None:
-                history[index] = source
-                mask[index] = 1.0
-        yellow_memory = np.asarray(
-            [
-                float(self._yellow_group_id is not None),
-                _clip(self._yellow_onset_distance_m, 80.0),
-                _clip(self._yellow_onset_speed_mps, ego_speed_cap, lower=0.0),
-            ],
-            dtype=np.float32,
-        )
-        return history, mask, yellow_memory
-
     def _build_lane_road(
         self, context: CausalSceneContext, ego: ActorSnapshot, current_s: float, vehicle: object
     ) -> np.ndarray:
@@ -1353,6 +1337,11 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         self._previous_dashed_feature_id: str | None = None
         self._previous_control_id: str | None = None
         self._last_compliance_step: int | None = None
+        self._preexisting_zone_occupancy: dict[str, bool] = {}
+        self._dynamic_diagnostics: tuple[Any, ...] = (0, 0, 0, (), ())
+        self._static_diagnostics: tuple[int, int] = (0, 0)
+        self._control_diagnostics: tuple[int, int] = (0, 0)
+        self._interaction_diagnostics: tuple[int, int] = (0, 0)
 
     def reset(self) -> None:
         super().reset()
@@ -1365,6 +1354,11 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         self._previous_dashed_feature_id = None
         self._previous_control_id = None
         self._last_compliance_step = None
+        self._preexisting_zone_occupancy.clear()
+        self._dynamic_diagnostics = (0, 0, 0, (), ())
+        self._static_diagnostics = (0, 0)
+        self._control_diagnostics = (0, 0)
+        self._interaction_diagnostics = (0, 0)
 
     def commit_context(self, context: CausalSceneContext, vehicle: object | None = None) -> None:
         """Commit only currently LiDAR-admitted measurements at their true step."""
@@ -1440,6 +1434,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         compliance_history, compliance_history_mask = self._append_compliance_row(
             context, ego, lane_road, control_trace, ego_speed_cap
         )
+        self._publish_diagnostics()
         return SemanticObservationBatchV12(
             ego_history=ego_history,
             ego_history_mask=ego_history_mask,
@@ -1562,16 +1557,41 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                     snapshot, ego, ego_speed_cap, context
                 )
                 mask[slot, history_index] = 1.0
-        self._last_diagnostics = SemanticOverflowDiagnostics(
-            {"dynamic": len(candidates)},
-            {"dynamic": len(selected)},
-            {"dynamic": max(0, len(candidates) - len(selected))},
+        self._dynamic_diagnostics = (
+            len(candidates),
+            len(selected),
             len(conflicts[8:]),
-            {"dynamic": self._dynamic_key(selected[-1], ego, conflict_ids) if selected else ()},
-            {"dynamic": self._dynamic_key(ordered[len(selected)], ego, conflict_ids) if len(ordered) > len(selected) else ()},
-            self._route_incompatible_static_features,
+            self._dynamic_key(selected[-1], ego, conflict_ids) if selected else (),
+            self._dynamic_key(ordered[len(selected)], ego, conflict_ids)
+            if len(ordered) > len(selected)
+            else (),
         )
         return payload, mask
+
+    def _publish_diagnostics(self) -> None:
+        """REQ-014: OBS-V1.1 SS8.5 requires all four groups, not just dynamic."""
+
+        totals, selected, last_key, first_excluded = {}, {}, {}, {}
+        groups = {
+            "dynamic": self._dynamic_diagnostics[:2],
+            "static": self._static_diagnostics,
+            "controls": self._control_diagnostics,
+            "interactions": self._interaction_diagnostics,
+        }
+        for name, (total, chosen) in groups.items():
+            totals[name] = total
+            selected[name] = chosen
+        last_key["dynamic"] = self._dynamic_diagnostics[3]
+        first_excluded["dynamic"] = self._dynamic_diagnostics[4]
+        self._last_diagnostics = SemanticOverflowDiagnostics(
+            totals,
+            selected,
+            {name: max(0, totals[name] - selected[name]) for name in totals},
+            self._dynamic_diagnostics[2],
+            last_key,
+            first_excluded,
+            self._route_incompatible_static_features,
+        )
 
     def _conflict_zone_type_index(
         self, context: CausalSceneContext, zone: ConflictZoneRecord
@@ -1597,36 +1617,426 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 return 3
         return None
 
+    # ------------------------------------------------------------------
+    # OBS-V1.3 overrides.  The base implementations stay untouched so the
+    # legacy ``semantic_v2`` path keeps its historical contract (DEC-008).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _transverse_lane_width(lane: Any) -> float:
+        """Measure the lane width along the centerline normal (REQ-001)."""
+
+        centerline = lane.centerline
+        length = float(centerline.length_m)
+        if length > 0.0:
+            midpoint = centerline.point_at(length / 2.0)
+            tangent = centerline.project(midpoint[:2]).tangent_xy
+            normal = (-tangent[1], tangent[0])
+            reach = max(length, 50.0)
+            probe = LineString(
+                (
+                    (midpoint[0] - normal[0] * reach, midpoint[1] - normal[1] * reach),
+                    (midpoint[0] + normal[0] * reach, midpoint[1] + normal[1] * reach),
+                )
+            )
+            chord = probe.intersection(lane.polygon_xy)
+            if not chord.is_empty and chord.length > 0.0:
+                return float(chord.length)
+            area = float(lane.polygon_xy.area)
+            if area > 0.0:
+                return area / length
+        return 0.0
+
+    def _lane_width(self, lane_id: str | None, vehicle: object | None = None) -> float:
+        if lane_id is not None:
+            for lane in self.route_lanes:
+                if lane.lane_id == lane_id:
+                    width = self._transverse_lane_width(lane)
+                    if width > 0.0:
+                        return width
+        if vehicle is not None:
+            navigation = getattr(vehicle, "navigation", None)
+            getter = getattr(navigation, "get_current_lane_width", None)
+            if callable(getter):
+                width = _finite(getter(), name="navigation.current_lane_width")
+                if width > 0.0:
+                    return width
+        for lane in self.route_lanes:
+            width = self._transverse_lane_width(lane)
+            if width > 0.0:
+                return width
+        raise CausalSemanticObservationError("Canonical lane width is unavailable")
+
+    def _front_bumper_s(self, ego: ActorSnapshot) -> float:
+        """Route abscissa of the ego front bumper (REQ-009).
+
+        The Rulebook decides control-line crossing and zone entry with the
+        swept front bumper, so a centre-based distance would offset every
+        threshold the policy has to learn by half a vehicle length.
+        """
+
+        half_length = _dimensions(ego.footprint)[0] / 2.0
+        bumper = (
+            ego.position_xy[0] + cos(ego.heading_rad) * half_length,
+            ego.position_xy[1] + sin(ego.heading_rad) * half_length,
+        )
+        try:
+            return self.route.project(bumper, position_z=ego.position_z).s_m
+        except ValueError:
+            return self.route.project(ego.position_xy, position_z=ego.position_z).s_m
+
+    def _build_lane_road(
+        self, context: CausalSceneContext, ego: ActorSnapshot, current_s: float, vehicle: object
+    ) -> np.ndarray:
+        lane_width = self._lane_width(ego.live_lane_id, vehicle)
+        boundaries: dict[str, tuple[float, int]] = {
+            "left": (float("inf"), 3),
+            "right": (float("inf"), 3),
+        }
+        for feature in context.episode_cache.map_feature_catalog.values():
+            if feature.feature_class not in {
+                MapFeatureClass.LANE_MARKING_SOLID,
+                MapFeatureClass.LANE_MARKING_DASHED,
+                MapFeatureClass.ROAD_BOUNDARY,
+            }:
+                continue
+            elevation = (
+                feature.elevation_m if feature.elevation_m is not None else ego.position_z
+            )
+            if abs(elevation - ego.position_z) > self.vertical_tolerance_m:
+                continue
+            signed = _signed_footprint_clearance(feature.geometry, ego.footprint)
+            if signed > 10.0:
+                continue
+            # REQ-004: the side must be read at the same place as the distance.
+            source, _target = nearest_points(feature.geometry, ego.footprint)
+            relative = _relative_position(
+                (float(source.x), float(source.y)), ego.position_xy, ego.heading_rad
+            )
+            side = "left" if relative[1] >= 0.0 else "right"
+            type_index = (
+                0
+                if feature.feature_class == MapFeatureClass.LANE_MARKING_SOLID
+                else 1
+                if feature.feature_class == MapFeatureClass.LANE_MARKING_DASHED
+                else 2
+            )
+            if signed < boundaries[side][0]:
+                boundaries[side] = (signed, type_index)
+        left = boundaries["left"][0]
+        right = boundaries["right"][0]
+        values = [
+            _clip(lane_width, 6.0, lower=0.0),
+            _clip(50.0 if left == float("inf") else left, 50.0),
+            _clip(50.0 if right == float("inf") else right, 50.0),
+            *_one_hot(boundaries["left"][1], 4),
+            *_one_hot(boundaries["right"][1], 4),
+            _clip(self._route_curvature(current_s), 0.2),
+        ]
+        if len(values) != 12:
+            raise RuntimeError(f"OBS-V1.3 lane/road contract produced {len(values)} values")
+        return np.asarray(values, dtype=np.float32)
+
+    def _dynamic_features(
+        self,
+        actor: ActorSnapshot,
+        ego: ActorSnapshot,
+        ego_speed_cap: float,
+        context: CausalSceneContext,
+    ) -> np.ndarray:
+        values = super()._dynamic_features(actor, ego, ego_speed_cap, context)
+        # REQ-012: the base clamps a signed offset to [0, 1], collapsing the
+        # whole right half-plane onto zero.
+        projection = self._route_projection_or_raise(actor, ego, context)
+        values[DYNAMIC_ROUTE_LATERAL_INDEX] = _clip(projection.lateral_distance_m, 50.0)
+        return values
+
+    def _approach_control_in_horizon(
+        self, actor: ActorSnapshot, context: CausalSceneContext, current_s: float
+    ) -> ApproachControl:
+        """Associate a control only inside the local horizon (REQ-025)."""
+
+        if actor.live_lane_id is None:
+            return ApproachControl.UNKNOWN
+        for control in context.traffic_controls:
+            if abs(control.route_s_m - current_s) > self.control_radius_m:
+                continue
+            if abs(control.elevation_m - actor.position_z) > self.vertical_tolerance_m:
+                continue
+            if actor.live_lane_id in control.controlled_lane_ids:
+                return control.control_type
+        return ApproachControl.NONE
+
+    def _zone_route_limits(
+        self, polygon: Any, fallback_s: float
+    ) -> tuple[float, float]:
+        """True curvilinear entry/exit of a zone along the assigned route."""
+
+        centerline = LineString([(x, y) for x, y, _z in self.route.points_xyz])
+        crossing = centerline.intersection(polygon)
+        if crossing.is_empty:
+            return fallback_s, fallback_s
+        geometries = getattr(crossing, "geoms", (crossing,))
+        abscissas: list[float] = []
+        for geometry in geometries:
+            for coordinate in getattr(geometry, "coords", ()):
+                try:
+                    abscissas.append(
+                        self.route.project((coordinate[0], coordinate[1])).s_m
+                    )
+                except ValueError:
+                    continue
+        if not abscissas:
+            return fallback_s, fallback_s
+        return min(abscissas), max(abscissas)
+
+    def _build_interactions(
+        self, context: CausalSceneContext, ego: ActorSnapshot
+    ) -> tuple[np.ndarray, np.ndarray]:
+        candidates: list[_InteractionCandidate] = []
+        ego_front_s = self._front_bumper_s(ego)
+        for zone in context.conflict_zones.values():
+            if zone.other_movement_key is None:
+                continue
+            for actor in self._dynamic_candidates(context, ego):
+                if actor.live_lane_id != zone.other_movement_key.approach_lane_id:
+                    continue
+                ego_interval = self._interval(ego, zone)
+                other_interval = self._interval(actor, zone)
+                if (
+                    ego_interval is None
+                    and other_interval is None
+                    and not ego.footprint.intersects(zone.polygon)
+                    and not actor.footprint.intersects(zone.polygon)
+                ):
+                    continue
+                candidates.append(
+                    _InteractionCandidate(
+                        zone_id=zone.zone_id,
+                        polygon=zone.polygon,
+                        zone_type_index=self._conflict_zone_type_index(context, zone),
+                        route_entry_s_m=zone.route_entry_s_m,
+                        route_exit_s_m=zone.route_exit_s_m,
+                        actor=actor,
+                        ego_interval=ego_interval,
+                        other_interval=other_interval,
+                        ego_movement_key=zone.ego_movement_key,
+                        other_movement_key=zone.other_movement_key,
+                    )
+                )
+        for feature in context.episode_cache.map_feature_catalog.values():
+            if feature.feature_class != MapFeatureClass.CROSSWALK:
+                continue
+            elevation = feature.elevation_m if feature.elevation_m is not None else ego.position_z
+            if abs(elevation - ego.position_z) > self.vertical_tolerance_m:
+                continue
+            centroid = feature.geometry.representative_point()
+            try:
+                fallback = self.route.project((centroid.x, centroid.y), position_z=elevation).s_m
+            except ValueError:
+                continue
+            # REQ-015: real curvilinear limits instead of the centroid twice.
+            entry_s, exit_s = self._zone_route_limits(feature.geometry, fallback)
+            for actor in self._dynamic_candidates(context, ego):
+                if actor.actor_class not in {ActorClass.PEDESTRIAN, ActorClass.CYCLIST}:
+                    continue
+                ego_interval = predict_occupancy_interval(
+                    actor_footprint=ego.footprint,
+                    actor_velocity_xy=ego.velocity_xy,
+                    zone=feature.geometry,
+                    horizon_s=self.prediction_horizon_s,
+                )
+                other_interval = predict_occupancy_interval(
+                    actor_footprint=actor.footprint,
+                    actor_velocity_xy=actor.velocity_xy,
+                    zone=feature.geometry,
+                    horizon_s=self.prediction_horizon_s,
+                )
+                if (
+                    ego_interval is None
+                    and other_interval is None
+                    and not ego.footprint.intersects(feature.geometry)
+                    and not actor.footprint.intersects(feature.geometry)
+                ):
+                    continue
+                candidates.append(
+                    _InteractionCandidate(
+                        zone_id=feature.feature_id,
+                        polygon=feature.geometry,
+                        zone_type_index=0,
+                        route_entry_s_m=entry_s,
+                        route_exit_s_m=exit_s,
+                        actor=actor,
+                        ego_interval=ego_interval,
+                        other_interval=other_interval,
+                    )
+                )
+
+        # REQ-008: pre-existing occupancy is recorded the first time a zone
+        # becomes a candidate, from geometry the observation already holds.
+        for candidate in candidates:
+            if candidate.zone_id not in self._preexisting_zone_occupancy:
+                self._preexisting_zone_occupancy[candidate.zone_id] = bool(
+                    ego.footprint.intersects(candidate.polygon)
+                )
+
+        def ranking_key(candidate: _InteractionCandidate) -> tuple[object, ...]:
+            ego_in = ego.footprint.intersects(candidate.polygon)
+            other_in = candidate.actor.footprint.intersects(candidate.polygon)
+            overlap = (
+                candidate.ego_interval is not None
+                and candidate.other_interval is not None
+                and candidate.ego_interval.start_s
+                <= (candidate.other_interval.end_s or self.prediction_horizon_s)
+                and candidate.other_interval.start_s
+                <= (candidate.ego_interval.end_s or self.prediction_horizon_s)
+            )
+            preexisting = self._preexisting_zone_occupancy.get(candidate.zone_id, False)
+            entry_distance = abs(candidate.route_entry_s_m - ego_front_s)
+            t_in = (
+                candidate.other_interval.start_s
+                if candidate.other_interval is not None
+                else self.prediction_horizon_s
+            )
+            actor_distance = hypot(
+                candidate.actor.position_xy[0] - ego.position_xy[0],
+                candidate.actor.position_xy[1] - ego.position_xy[1],
+            )
+            return (
+                not (ego_in or other_in),
+                not overlap,
+                not preexisting,
+                entry_distance,
+                t_in,
+                actor_distance,
+                candidate.zone_id,
+                candidate.actor.actor_id,
+            )
+
+        candidates.sort(key=ranking_key)
+        payload = np.zeros((8, 33), dtype=np.float32)
+        mask = np.zeros(8, dtype=np.float32)
+        for index, candidate in enumerate(candidates[:8]):
+            polygon, actor = candidate.polygon, candidate.actor
+            centroid = polygon.centroid
+            relative = _relative_position(
+                (centroid.x, centroid.y), ego.position_xy, ego.heading_rad
+            )
+            priority = MovementPriority.UNDEFINED
+            for record in context.episode_cache.movement_priority_records:
+                if (
+                    record.ego_movement_key == candidate.ego_movement_key
+                    and record.other_movement_key == candidate.other_movement_key
+                ):
+                    priority = record.relation
+            priority_index = {
+                MovementPriority.EGO_HAS_PRIORITY: 0,
+                MovementPriority.OTHER_HAS_PRIORITY: 1,
+                MovementPriority.UNDEFINED: 2,
+            }[priority]
+            ego_control = self._approach_control_in_horizon(ego, context, ego_front_s)
+            other_control = self._approach_control_in_horizon(actor, context, ego_front_s)
+            control_index = {
+                ApproachControl.NONE: 0,
+                ApproachControl.STOP: 1,
+                ApproachControl.SIGNAL: 2,
+                ApproachControl.UNKNOWN: 3,
+            }
+            ego_interval, other_interval = candidate.ego_interval, candidate.other_interval
+            values = [
+                _clip(relative[0], 50.0),
+                _clip(relative[1], 50.0),
+                _clip(candidate.route_entry_s_m - ego_front_s, 50.0),
+                _clip(candidate.route_exit_s_m - ego_front_s, 50.0),
+                *_one_hot(candidate.zone_type_index, 4),
+                float(ego.footprint.intersects(polygon)),
+                float(actor.footprint.intersects(polygon)),
+                *_one_hot(_actor_type_index(actor.actor_class), 3),
+                _clip(ego_interval.start_s if ego_interval else 0.0, 3.0, lower=0.0),
+                _clip(
+                    ego_interval.end_s
+                    if ego_interval and ego_interval.end_s is not None
+                    else 3.0,
+                    3.0,
+                    lower=0.0,
+                ),
+                _clip(other_interval.start_s if other_interval else 0.0, 3.0, lower=0.0),
+                _clip(
+                    other_interval.end_s
+                    if other_interval and other_interval.end_s is not None
+                    else 3.0,
+                    3.0,
+                    lower=0.0,
+                ),
+                float(ego_interval is not None),
+                float(ego_interval.is_open_end if ego_interval else False),
+                float(other_interval is not None),
+                float(other_interval.is_open_end if other_interval else False),
+                *_one_hot(control_index[ego_control], 4),
+                *_one_hot(control_index[other_control], 4),
+                *_one_hot(priority_index, 3),
+                float(self._preexisting_zone_occupancy.get(candidate.zone_id, False)),
+            ]
+            if len(values) != 33:
+                raise RuntimeError(f"OBS-V1.3 interaction contract produced {len(values)} values")
+            payload[index] = np.asarray(values, dtype=np.float32)
+            mask[index] = 1.0
+        self._interaction_diagnostics = (len(candidates), min(len(candidates), 8))
+        return payload, mask
+
     def _build_static_v12(
         self, context: CausalSceneContext, ego: ActorSnapshot
     ) -> tuple[np.ndarray, np.ndarray]:
-        candidates: list[tuple[str, tuple[float, float], float, tuple[float, float], int, float, float]] = []
+        candidates: list[
+            tuple[str, tuple[float, float], float, tuple[float, float], int, float, float]
+        ] = []
         for actor in context.snapshot.actors:
-            if actor.actor_class != ActorClass.STATIC_COLLIDABLE or actor.actor_id not in self._visible_actor_ids:
+            if (
+                actor.actor_class != ActorClass.STATIC_COLLIDABLE
+                or actor.actor_id not in self._visible_actor_ids
+            ):
                 continue
-            distance = hypot(actor.position_xy[0] - ego.position_xy[0], actor.position_xy[1] - ego.position_xy[1])
-            if distance <= self.static_radius_m and abs(actor.position_z - ego.position_z) <= self.vertical_tolerance_m:
-                candidates.append(
-                    (
-                        actor.actor_id,
-                        actor.position_xy,
-                        actor.heading_rad,
-                        _dimensions(actor.footprint),
-                        4,  # generic: the live source exposes no confirmed finer taxonomy.
-                        self._route_s(actor, ego),
-                        self._route_lateral(actor),
-                    )
+            distance = hypot(
+                actor.position_xy[0] - ego.position_xy[0],
+                actor.position_xy[1] - ego.position_xy[1],
+            )
+            if distance > self.static_radius_m or (
+                abs(actor.position_z - ego.position_z) > self.vertical_tolerance_m
+            ):
+                continue
+            # REQ-023: a static actor the route cannot accept degrades its own
+            # token instead of failing the whole observation.
+            try:
+                projection = self.route.project(actor.position_xy, position_z=actor.position_z)
+            except ValueError:
+                self._route_incompatible_static_features += 1
+                continue
+            candidates.append(
+                (
+                    actor.actor_id,
+                    actor.position_xy,
+                    actor.heading_rad,
+                    _dimensions(actor.footprint),
+                    STATIC_TYPE_DETECTED_OBSTACLE,
+                    projection.s_m,
+                    projection.lateral_distance_m,
                 )
+            )
         ego_point = Point(ego.position_xy)
         for feature_id, feature in context.episode_cache.map_feature_catalog.items():
-            if feature.feature_class not in {MapFeatureClass.OTHER_NON_DRIVABLE, MapFeatureClass.ROAD_BOUNDARY}:
+            if feature.feature_class not in {
+                MapFeatureClass.OTHER_NON_DRIVABLE,
+                MapFeatureClass.ROAD_BOUNDARY,
+            }:
                 continue
             _source, closest = nearest_points(feature.geometry, ego_point)
             position = (float(closest.x), float(closest.y))
             elevation = feature.elevation_at_xy(position)
             if elevation is not None and abs(elevation - ego.position_z) > self.vertical_tolerance_m:
                 continue
-            distance = hypot(position[0] - ego.position_xy[0], position[1] - ego.position_xy[1])
+            distance = hypot(
+                position[0] - ego.position_xy[0], position[1] - ego.position_xy[1]
+            )
             if distance > self.static_radius_m:
                 continue
             projection_z = elevation if elevation is not None else ego.position_z
@@ -1639,33 +2049,31 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                     continue
                 raise CausalSemanticObservationError(
                     "Semantic static-map route projection unavailable: "
-                    f"scenario_id={context.snapshot.scenario_id}; step={context.snapshot.step_index}; "
-                    f"feature_id={feature_id}; feature_class={feature.feature_class.value}; "
-                    f"feature_position_xy={position}; feature_elevation_m={elevation}; "
-                    f"ego_id={ego.actor_id}; ego_z_m={ego.position_z}; "
-                    f"nearest_planar_segment_index={diagnostics.nearest_planar_segment_index}; "
-                    f"nearest_planar_s_m={diagnostics.nearest_planar_s_m}; "
-                    f"nearest_planar_z_m={diagnostics.nearest_planar_z_m}; "
-                    f"nearest_planar_distance_m={diagnostics.nearest_planar_distance_m}; "
-                    f"minimum_vertical_difference_m={diagnostics.minimum_vertical_difference_m}; "
-                    f"vertically_compatible_segment_count={diagnostics.vertically_compatible_segment_count}; "
-                    f"route_z_range_m=({diagnostics.route_min_z_m},{diagnostics.route_max_z_m})"
+                    f"scenario_id={context.snapshot.scenario_id}; "
+                    f"step={context.snapshot.step_index}; feature_id={feature_id}; "
+                    f"feature_class={feature.feature_class.value}; "
+                    f"feature_position_xy={position}; feature_elevation_m={elevation}"
                 ) from error
-            bounds = feature.geometry.bounds
+            # REQ-005 / REQ-006: describe the geometry locally, and carry its
+            # local tangent instead of a constant world-frame zero.
+            local = _local_window(feature.geometry, ego.position_xy)
             candidates.append(
                 (
                     str(feature_id),
                     position,
-                    0.0,
-                    (max(bounds[2] - bounds[0], 0.1), max(bounds[3] - bounds[1], 0.1)),
-                    4,
+                    _local_tangent_rad(feature.geometry, position),
+                    _local_extent(local),
+                    STATIC_TYPE_ROAD_BOUNDARY
+                    if feature.feature_class == MapFeatureClass.ROAD_BOUNDARY
+                    else STATIC_TYPE_OTHER_NON_DRIVABLE,
                     projection.s_m,
                     projection.lateral_distance_m,
                 )
             )
+        ego_front_s = self._front_bumper_s(ego)
         candidates.sort(
             key=lambda item: (
-                not (item[5] >= self._route_s(ego, ego)),
+                not (item[5] >= ego_front_s),
                 abs(item[6]),
                 hypot(item[1][0] - ego.position_xy[0], item[1][1] - ego.position_xy[1]),
                 item[0],
@@ -1673,7 +2081,9 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         )
         payload = np.zeros((8, 13), dtype=np.float32)
         mask = np.zeros(8, dtype=np.float32)
-        for index, (_id, position, heading, dimensions, type_index, route_s, lateral) in enumerate(candidates[:8]):
+        for index, (_id, position, heading, dimensions, type_index, route_s, lateral) in enumerate(
+            candidates[:8]
+        ):
             relative = _relative_position(position, ego.position_xy, ego.heading_rad)
             payload[index] = np.asarray(
                 [
@@ -1683,12 +2093,13 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                     _clip(dimensions[0], 10.0, lower=0.0),
                     _clip(dimensions[1], 5.0, lower=0.0),
                     *_one_hot(type_index, 5),
-                    _clip(route_s - self._route_s(ego, ego), 50.0),
-                    _clip(lateral, 50.0, lower=0.0),
+                    _clip(route_s - ego_front_s, 50.0),
+                    _clip(lateral, 50.0),
                 ],
                 dtype=np.float32,
             )
             mask[index] = 1.0
+        self._static_diagnostics = (len(candidates), min(len(candidates), 8))
         return payload, mask
 
     def _build_controls_v12(
@@ -1698,17 +2109,21 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         current_s: float,
         vehicle: object,
         ego_speed_cap: float,
-    ) -> tuple[np.ndarray, np.ndarray, tuple[str | None, str, float, bool]]:
+    ) -> tuple[np.ndarray, np.ndarray, tuple[str | None, ApproachControl | None, str, float, bool]]:
+        front_s = self._front_bumper_s(ego)
         candidates = [
             control
             for control in context.traffic_controls
-            if abs(control.route_s_m - current_s) <= self.control_radius_m
+            if abs(control.route_s_m - front_s) <= self.control_radius_m
             and abs(control.elevation_m - ego.position_z) <= self.vertical_tolerance_m
         ]
+        # REQ-016: OBS-V1.1 SS8.3 criteria 1-2. Criterion 3 is permanently
+        # dropped because it required a Rulebook latch (ADR-033, DEC-009).
         candidates.sort(
             key=lambda control: (
-                control.route_s_m < current_s,
-                abs(control.route_s_m - current_s),
+                ego.live_lane_id not in control.controlled_lane_ids,
+                control.route_s_m < front_s,
+                abs(control.route_s_m - front_s),
                 control.control_group_id,
             )
         )
@@ -1719,65 +2134,98 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             for physical_id in control.physical_control_ids
         )
         visible_signals = mapped_signal_visibility(vehicle, signal_ids) if signal_ids else {}
-        payload = np.zeros((8, 17), dtype=np.float32)
+        payload = np.zeros((8, 15), dtype=np.float32)
         mask = np.zeros(8, dtype=np.float32)
-        active_trace: tuple[str | None, str, float, bool] = (None, "unknown", 0.0, False)
+        active_trace: tuple[str | None, ApproachControl | None, str, float, bool] = (
+            None,
+            None,
+            "unknown",
+            0.0,
+            False,
+        )
         for index, control in enumerate(candidates[:8]):
             midpoint = control.control_line.centroid
-            relative = _relative_position((midpoint.x, midpoint.y), ego.position_xy, ego.heading_rad)
-            coordinates = list(control.control_line.coords) if hasattr(control.control_line, "coords") else []
+            relative = _relative_position(
+                (midpoint.x, midpoint.y), ego.position_xy, ego.heading_rad
+            )
+            coordinates = (
+                list(control.control_line.coords)
+                if hasattr(control.control_line, "coords")
+                else []
+            )
             direction = (
-                atan2(coordinates[-1][1] - coordinates[0][1], coordinates[-1][0] - coordinates[0][0])
+                atan2(
+                    coordinates[-1][1] - coordinates[0][1],
+                    coordinates[-1][0] - coordinates[0][0],
+                )
                 if len(coordinates) >= 2
                 else 0.0
             )
             controls_ego = ego.live_lane_id in control.controlled_lane_ids
-            route_distance = control.route_s_m - current_s
-            state = "not-signal"
-            state_valid = control.control_type == ApproachControl.STOP
-            if control.control_type == ApproachControl.SIGNAL:
-                state_valid = bool(control.physical_control_ids) and all(
-                    visible_signals.get(physical_id, False) for physical_id in control.physical_control_ids
-                )
-                if state_valid:
-                    state = next(
+            route_distance = control.route_s_m - front_s
+            # REQ-010/REQ-011: the observable state never decides the type, and
+            # a stop control keeps its own `not-signal` slot.
+            if control.control_type == ApproachControl.STOP:
+                state, state_valid = "not-signal", True
+                state_index: int | None = 4
+            else:
+                state, state_valid, state_index = "unknown", False, None
+                if control.physical_control_ids and all(
+                    visible_signals.get(physical_id, False)
+                    for physical_id in control.physical_control_ids
+                ):
+                    observed = next(
                         (
-                            str(context.snapshot.signal_states_by_physical_id.get(physical_id, "UNKNOWN")).lower()
+                            str(
+                                context.snapshot.signal_states_by_physical_id.get(
+                                    physical_id, "UNKNOWN"
+                                )
+                            ).lower()
                             for physical_id in control.physical_control_ids
                         ),
                         "unknown",
                     )
-                    state_valid = state in {"green", "yellow", "red", "flashing_yellow", "flashing-yellow"}
-            state_index = {"green": 0, "yellow": 1, "red": 2, "flashing-yellow": 3, "flashing_yellow": 3}.get(state)
-            signal_state = _one_hot(state_index, 5) if state_valid and state_index is not None else [0.0] * 5
+                    state_index = {
+                        "green": 0,
+                        "yellow": 1,
+                        "red": 2,
+                        "flashing-yellow": 3,
+                        "flashing_yellow": 3,
+                    }.get(observed)
+                    if state_index is not None:
+                        state, state_valid = observed, True
+            signal_state = _one_hot(state_index, 5) if state_valid else [0.0] * 5
             is_active = bool(controls_ego and route_distance >= 0.0 and active_trace[0] is None)
             if is_active:
-                active_trace = (control.control_group_id, state, route_distance, controls_ego)
-                self._update_yellow_memory(control.control_group_id, state, route_distance, ego, ego_speed_cap)
-            payload[index] = np.asarray(
-                [
-                    _clip(relative[0], 80.0),
-                    _clip(relative[1], 80.0),
-                    _clip(route_distance, 80.0),
-                    sin(direction - ego.heading_rad),
-                    cos(direction - ego.heading_rad),
-                    *_one_hot(0 if control.control_type == ApproachControl.SIGNAL else 1, 2),
-                    *signal_state,
-                    float(controls_ego),
-                    float(is_active),
-                    float(state_valid),
-                    _clip(self._yellow_onset_distance_m, 80.0, lower=0.0)
-                    if self._yellow_control_id == control.control_group_id
-                    else 0.0,
-                    _clip(self._yellow_required_stop_distance(), 80.0, lower=0.0)
-                    if self._yellow_control_id == control.control_group_id
-                    else 0.0,
-                ],
-                dtype=np.float32,
-            )
+                active_trace = (
+                    control.control_group_id,
+                    control.control_type,
+                    state,
+                    route_distance,
+                    controls_ego,
+                )
+                self._update_yellow_memory(
+                    control.control_group_id, state, route_distance, ego, ego_speed_cap
+                )
+            values = [
+                _clip(relative[0], 80.0),
+                _clip(relative[1], 80.0),
+                _clip(route_distance, 80.0),
+                sin(direction - ego.heading_rad),
+                cos(direction - ego.heading_rad),
+                *_one_hot(0 if control.control_type == ApproachControl.SIGNAL else 1, 2),
+                *signal_state,
+                float(controls_ego),
+                float(is_active),
+                float(state_valid),
+            ]
+            if len(values) != 15:
+                raise RuntimeError(f"OBS-V1.3 control contract produced {len(values)} values")
+            payload[index] = np.asarray(values, dtype=np.float32)
             mask[index] = 1.0
         if active_trace[0] is None:
             self._clear_yellow_memory()
+        self._control_diagnostics = (len(candidates), min(len(candidates), 8))
         return payload, mask, active_trace
 
     def _update_yellow_memory(
@@ -1801,11 +2249,6 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         self._yellow_onset_distance_m = 0.0
         self._yellow_onset_speed_mps = 0.0
 
-    def _yellow_required_stop_distance(self) -> float:
-        if self._yellow_control_id is None or self.brake_mps2 is None:
-            return 0.0
-        return self._yellow_onset_speed_mps * self.dt + self._yellow_onset_speed_mps**2 / (2.0 * self.brake_mps2)
-
     def _yellow_memory(self, ego_speed_cap: float) -> np.ndarray:
         return np.asarray(
             [
@@ -1816,28 +2259,39 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             dtype=np.float32,
         )
 
+    def _nearest_dashed_feature_id(
+        self, context: CausalSceneContext, ego: ActorSnapshot
+    ) -> str | None:
+        """Nearest intersecting dashed marking at the ego's own level."""
+
+        candidates: list[tuple[float, str]] = []
+        for feature in context.episode_cache.map_feature_catalog.values():
+            if feature.feature_class != MapFeatureClass.LANE_MARKING_DASHED:
+                continue
+            elevation = feature.elevation_m if feature.elevation_m is not None else ego.position_z
+            if abs(elevation - ego.position_z) > self.vertical_tolerance_m:
+                continue
+            if feature.geometry.intersects(ego.footprint):
+                candidates.append((float(feature.geometry.distance(ego.footprint)), feature.feature_id))
+        return min(candidates)[1] if candidates else None
+
     def _append_timestamped_compliance_row(
         self,
         context: CausalSceneContext,
         ego: ActorSnapshot,
         lane_road: np.ndarray,
-        control_trace: tuple[str | None, str, float, bool],
+        control_trace: tuple[str | None, ApproachControl | None, str, float, bool],
         ego_speed_cap: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Append one actual-step trace row without reading Rulebook memory."""
 
-        dashed_feature_id = next(
-            (
-                feature.feature_id
-                for feature in context.episode_cache.map_feature_catalog.values()
-                if feature.feature_class == MapFeatureClass.LANE_MARKING_DASHED
-                and feature.geometry.intersects(ego.footprint)
-            ),
-            None,
-        )
-        control_id, state, control_distance, controls_ego = control_trace
+        step = context.snapshot.step_index
+        dashed_feature_id = self._nearest_dashed_feature_id(context, ego)
+        control_id, control_type, state, control_distance, _controls_ego = control_trace
         signal_index = {"red": 0, "yellow": 1, "green": 2, "off": 3}.get(state, 4)
-        active_control = control_id is not None
+        # REQ-026: continuity is only meaningful against the immediately
+        # preceding step.
+        contiguous = self._last_compliance_step == step - 1
         row = np.asarray(
             [
                 _clip(hypot(*ego.velocity_xy), ego_speed_cap, lower=0.0),
@@ -1847,31 +2301,38 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 *lane_road[7:11].tolist(),
                 float(dashed_feature_id is not None),
                 float(
-                    dashed_feature_id is not None
+                    contiguous
+                    and dashed_feature_id is not None
                     and dashed_feature_id == self._previous_dashed_feature_id
                 ),
-                float(active_control),
-                float(control_id is not None and control_id == self._previous_control_id),
-                *_one_hot(0 if state != "not-signal" and active_control else 1 if active_control else None, 2),
+                float(control_id is not None),
+                float(
+                    contiguous
+                    and control_id is not None
+                    and control_id == self._previous_control_id
+                ),
+                *_one_hot(
+                    None
+                    if control_type is None
+                    else (0 if control_type == ApproachControl.SIGNAL else 1),
+                    2,
+                ),
                 *_one_hot(signal_index, 5),
                 _clip(control_distance, 80.0),
-                float(controls_ego),
             ],
             dtype=np.float32,
         )
-        if row.shape != (24,):
-            raise RuntimeError("OBS-V1.2 compliance history row must contain 24 values")
+        if row.shape != (23,):
+            raise RuntimeError("OBS-V1.3 compliance history row must contain 23 values")
         self._previous_dashed_feature_id = dashed_feature_id
         self._previous_control_id = control_id
-        self._compliance_rows.append((context.snapshot.step_index, row))
-        history = np.zeros((self.compliance_history_length, 24), dtype=np.float32)
+        self._last_compliance_step = step
+        self._compliance_rows.append((step, row))
+        history = np.zeros((self.compliance_history_length, 23), dtype=np.float32)
         mask = np.zeros(self.compliance_history_length, dtype=np.float32)
         by_step = dict(self._compliance_rows)
         for index, source_step in enumerate(
-            range(
-                context.snapshot.step_index - self.compliance_history_length + 1,
-                context.snapshot.step_index + 1,
-            )
+            range(step - self.compliance_history_length + 1, step + 1)
         ):
             source = by_step.get(source_step)
             if source is not None:
@@ -1884,26 +2345,12 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         context: CausalSceneContext,
         ego: ActorSnapshot,
         lane_road: np.ndarray,
-        control_trace: tuple[str | None, str, float, bool],
+        control_trace: tuple[str | None, ApproachControl | None, str, float, bool],
         ego_speed_cap: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         return self._append_timestamped_compliance_row(
             context, ego, lane_road, control_trace, ego_speed_cap
         )
-
-    def _active_dashed_feature_id(
-        self, context: CausalSceneContext, ego: ActorSnapshot
-    ) -> str | None:
-        candidates: list[tuple[float, str]] = []
-        for feature in context.episode_cache.map_feature_catalog.values():
-            if feature.feature_class != MapFeatureClass.LANE_MARKING_DASHED:
-                continue
-            elevation = feature.elevation_m if feature.elevation_m is not None else ego.position_z
-            if abs(elevation - ego.position_z) > self.vertical_tolerance_m:
-                continue
-            if feature.geometry.intersects(ego.footprint):
-                candidates.append((feature.geometry.distance(ego.footprint), feature.feature_id))
-        return min(candidates)[1] if candidates else None
 
 
 __all__ = [
