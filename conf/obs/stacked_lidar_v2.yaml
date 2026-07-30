@@ -1,0 +1,37 @@
+name: stacked_lidar_v2
+type: stacked_lidar_v2
+history_length: 21
+frame_dim: 308
+mask_dim: 21
+navigation:
+  implementation: MapRouteNavigationObservation22
+  source: assigned_route_metadata_and_map_geometry
+  replace_native_scenario_navigation: true
+  num_waypoints: 10
+  waypoint_spacing_m: 5.0
+  output_dim: 22
+  future_sdc_trajectory: false
+lidar:
+  num_lasers: 240
+  distance_m: 50.0
+  num_others: 4
+  add_others_navi: false
+  native_gaussian_noise: 0.0
+  native_dropout_prob: 0.0
+side_detector:
+  enabled: true
+  num_lasers: 12
+  distance_m: 50.0
+  native_gaussian_noise: 0.0
+  native_dropout_prob: 0.0
+lane_line_detector:
+  enabled: true
+  num_lasers: 12
+  distance_m: 50.0
+  native_gaussian_noise: 0.0
+  native_dropout_prob: 0.0
+ray_noise_wrapper:
+  enabled: true
+  sole_noise_owner: true
+  sigma_normalized: 0.001
+  dropout_prob: 0.0

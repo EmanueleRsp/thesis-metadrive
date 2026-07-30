@@ -75,6 +75,34 @@ def _configure_agent_observation(
             )
         return
 
+    if obs_type in {"stacked_lidar_v2", "stackedlidarobservationv2"}:
+        from thesis_rl.envs.observations.stacked_lidar_v2 import StackedLidarObservationV2
+
+        env_cfg["agent_observation"] = StackedLidarObservationV2
+        vehicle_cfg = env_cfg.setdefault("vehicle_config", {})
+        lidar_cfg = vehicle_cfg.setdefault("lidar", {})
+        lidar_cfg.update(
+            {
+                "num_lasers": 240,
+                "distance": 50.0,
+                "num_others": 4,
+                "add_others_navi": False,
+                "gaussian_noise": 0.0,
+                "dropout_prob": 0.0,
+            }
+        )
+        for detector_name in ("side_detector", "lane_line_detector"):
+            detector_cfg = vehicle_cfg.setdefault(detector_name, {})
+            detector_cfg.update(
+                {
+                    "num_lasers": 12,
+                    "distance": 50.0,
+                    "gaussian_noise": 0.0,
+                    "dropout_prob": 0.0,
+                }
+            )
+        return
+
     if obs_type in {"lidar", "lidar_state", "lidarstateobservation"}:
         # MetaDrive default when `agent_observation` is unset and image_observation=False.
         return
@@ -137,7 +165,7 @@ def _configure_agent_observation(
 
     raise ValueError(
         f"Unsupported observation type '{obs_type}'. Supported values: lidar_state, "
-        "stacked_lidar_state, semantic_state, semantic_v2, semantic_v3"
+        "stacked_lidar_state, stacked_lidar_v2, semantic_state, semantic_v2, semantic_v3"
     )
 
 

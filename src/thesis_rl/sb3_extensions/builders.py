@@ -189,6 +189,8 @@ def validate_sb3_bridge_configs(
         "latent_query_v3_lite",
         "lq_v3_micro",
         "latent_query_v3_micro",
+        "lq_lidar",
+        "latent_query_lidar",
     }:
         errors.append(
             f"encoder type '{encoder_type}' is not supported by the current SB3 "

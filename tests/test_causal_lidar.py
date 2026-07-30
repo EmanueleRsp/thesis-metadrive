@@ -70,6 +70,50 @@ def test_causal_lidar_frame_builder_produces_exact_308_dimensions() -> None:
     assert np.all(np.isfinite(frame))
 
 
+class _MappingLikeConfig:
+    """Duck-typed stand-in for `metadrive.utils.config.Config`.
+
+    Regression for the discovery (2026-07-30) that real MetaDrive vehicles
+    carry a `Config` object, not a `dict`, so `isinstance(config, dict)`
+    rejected every real vehicle at runtime while unit tests only ever passed a
+    plain dict. `CausalLidarFrameBuilder.build` now duck-types on `.get`.
+    """
+
+    def __init__(self, data: dict) -> None:
+        self._data = data
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+
+def test_causal_lidar_builder_accepts_mapping_like_config_not_a_dict_subclass() -> None:
+    vehicle = _Vehicle()
+    vehicle.config = _MappingLikeConfig(dict(_Vehicle.config))
+    builder = CausalLidarFrameBuilder(
+        MapRouteNavigationObservation22(
+            AssignedRouteWaypointAdapter(RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0))))
+        ),
+        RayNoiseWrapper(enabled=False),
+    )
+
+    frame = builder.build(vehicle)
+
+    assert frame.shape == (308,)
+
+
+def test_causal_lidar_builder_rejects_non_mapping_config() -> None:
+    vehicle = _Vehicle()
+    vehicle.config = object()
+    builder = CausalLidarFrameBuilder(
+        MapRouteNavigationObservation22(
+            AssignedRouteWaypointAdapter(RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0))))
+        ),
+        RayNoiseWrapper(enabled=False),
+    )
+    with pytest.raises(ValueError, match="mapping"):
+        builder.build(vehicle)
+
+
 def test_causal_lidar_builder_rejects_missing_sensor_block() -> None:
     vehicle = _Vehicle()
 

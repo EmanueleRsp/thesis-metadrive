@@ -39,7 +39,7 @@ class CausalLidarFrameBuilder:
         if engine is None:
             raise RuntimeError("Causal LiDAR frame requires vehicle.engine")
         config = getattr(vehicle, "config", {})
-        if not isinstance(config, dict):
+        if not callable(getattr(config, "get", None)):
             raise ValueError("Vehicle sensor configuration must be a mapping")
         self.ray_noise.validate_native_noise_disabled(
             {

@@ -5,7 +5,7 @@ policy: MlpPolicy
 verbose: 0
 learning_starts: 100
 batch_size: 256
-buffer_size: 1000000
+buffer_size: 300000
 train_freq: 1
 gradient_steps: auto
 learning_rate: 3e-4

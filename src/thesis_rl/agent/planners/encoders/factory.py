@@ -11,6 +11,7 @@ from thesis_rl.agent.planners.encoders.lq_encoder import (
     LatentQueryEncoderV3Lite,
     LatentQueryEncoderV3Micro,
 )
+from thesis_rl.agent.planners.encoders.lq_lidar_encoder import LatentQueryEncoderLidar
 from thesis_rl.agent.planners.encoders.mlp_encoder import FlatMLPEncoder
 from thesis_rl.agent.planners.encoders.none_encoder import NoneEncoder
 from thesis_rl.contracts.observation_schema import (
@@ -114,6 +115,26 @@ def build_encoder(
             latent_dim=int(_get(cfg_encoder, "latent_dim", 128)),
             output_dim=int(_get(cfg_encoder, "output_dim", 256)),
             depth=int(_get(cfg_encoder, "depth", 1)),
+            num_heads=int(_get(cfg_encoder, "num_heads", 4)),
+            ff_dim=int(_get(cfg_encoder, "ff_dim", 256)),
+            pooling=str(_get(cfg_encoder, "pooling", "mean")),
+        )
+    if encoder_type in {"lq_lidar", "latent_query_lidar"}:
+        if input_dim != LatentQueryEncoderLidar.input_dim:
+            raise ValueError(
+                f"LatentQueryEncoderLidar requires stacked_lidar_v2 observation, D="
+                f"{LatentQueryEncoderLidar.input_dim}."
+            )
+        if bool(_get(cfg_encoder, "residual_gating", False)):
+            raise ValueError(
+                "Residual gating is not supported by the encoder v1.4 core configuration."
+            )
+        return LatentQueryEncoderLidar(
+            token_dim=int(_get(cfg_encoder, "token_dim", _get(cfg_encoder, "d_model", 64))),
+            num_latents=int(_get(cfg_encoder, "num_latents", 16)),
+            latent_dim=int(_get(cfg_encoder, "latent_dim", 128)),
+            output_dim=int(_get(cfg_encoder, "output_dim", 256)),
+            depth=int(_get(cfg_encoder, "depth", 4)),
             num_heads=int(_get(cfg_encoder, "num_heads", 4)),
             ff_dim=int(_get(cfg_encoder, "ff_dim", 256)),
             pooling=str(_get(cfg_encoder, "pooling", "mean")),

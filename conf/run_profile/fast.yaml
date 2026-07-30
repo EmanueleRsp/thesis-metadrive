@@ -15,9 +15,11 @@ planner:
   td3:
     learning_starts: 5000
     batch_size: 256
+    buffer_size: 24000
   sac:
     learning_starts: 1000
     batch_size: 256
+    buffer_size: 24000
 
 checkpoint:
   periodic_interval_steps: 50000

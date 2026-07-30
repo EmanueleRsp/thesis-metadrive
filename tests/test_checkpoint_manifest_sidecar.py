@@ -189,3 +189,62 @@ def test_build_current_checkpoint_manifest_flat_dim_from_env_observation_space()
 
     assert manifest.flat_dim == 1234
     assert manifest.raw_token_count is None
+
+
+def test_build_current_checkpoint_manifest_records_stacked_lidar_v2_and_lq_lidar() -> None:
+    cfg = _cfg(
+        **{
+            "obs.type": "stacked_lidar_v2",
+            "agent.planner.encoder.type": "lq_lidar",
+            "agent.planner.encoder.architecture_version": "1.4-lidar-tokenized",
+        }
+    )
+    manifest = build_current_checkpoint_manifest(cfg, _env(6489))
+
+    assert manifest.observation_type == "stacked_lidar_v2"
+    assert manifest.flat_dim == 6489
+    assert manifest.encoder_type == "lq_lidar"
+
+
+def test_load_planner_refuses_mismatched_stacked_lidar_v2_dimension(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint_path = tmp_path / "ckpt.zip"
+    checkpoint_path.write_bytes(b"fake-zip")
+    sidecar_manifest = _manifest(
+        observation_type="stacked_lidar_v2",
+        flat_dim=6489,
+        raw_token_count=None,
+        encoder_type="lq_lidar",
+        encoder_config={
+            "type": "lq_lidar",
+            "architecture_version": "1.4-lidar-tokenized",
+            "output_dim": 256,
+        },
+        encoder_architecture_version="1.4-lidar-tokenized",
+    )
+    checkpoint_manifest_sidecar_path(checkpoint_path).write_text(
+        json.dumps(sidecar_manifest.to_dict()), encoding="utf-8"
+    )
+
+    cfg = _cfg(
+        **{
+            "obs.type": "stacked_lidar_v2",
+            "agent.planner.encoder.type": "lq_lidar",
+            "agent.planner.encoder.architecture_version": "1.4-lidar-tokenized",
+        }
+    )
+
+    loader_called = False
+
+    def _fake_backend_loader(**_kwargs):
+        nonlocal loader_called
+        loader_called = True
+        return object()
+
+    monkeypatch.setattr(
+        "thesis_rl.agent.planners.factory.load_planner_backend", _fake_backend_loader
+    )
+    with pytest.raises(CheckpointCompatibilityError, match="flat_dim"):
+        load_planner(cfg, checkpoint_path=str(checkpoint_path), env=_env(1540))
+    assert not loader_called

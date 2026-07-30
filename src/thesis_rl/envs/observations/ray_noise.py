@@ -45,7 +45,7 @@ class RayNoiseWrapper:
 
         for sensor_name in ("lidar", "side_detector", "lane_line_detector"):
             sensor = config.get(sensor_name, {})
-            if not isinstance(sensor, dict):
+            if not callable(getattr(sensor, "get", None)):
                 raise ValueError(f"{sensor_name} configuration must be a mapping")
             gaussian = float(sensor.get("gaussian_noise", sensor.get("native_gaussian_noise", 0.0)))
             dropout = float(sensor.get("dropout_prob", sensor.get("native_dropout_prob", 0.0)))

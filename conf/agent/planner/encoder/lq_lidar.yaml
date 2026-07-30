@@ -1,0 +1,23 @@
+name: latent_query_lidar
+type: lq_lidar
+architecture_version: 1.4-lidar-tokenized
+required_observation: stacked_lidar_v2
+token_dim: 64
+num_latents: 16
+latent_dim: 128
+output_dim: 256
+depth: 4
+num_heads: 4
+ff_dim: 256
+activation: relu
+dropout: 0.0
+attention_dropout: 0.0
+residual_gating: false
+type_embedding: true
+# No per-slot identity embedding on the neighbor block (ENC-V1.4, DEC-008,
+# ADR-026 precedent): the k-nearest ranking has no stable per-slot identity
+# across frames. Sector slots carry a fixed circular positional encoding
+# instead of a learned embedding, since the ring index IS stable.
+slot_embedding: false
+circular_positional_encoding: true
+pooling: mean
