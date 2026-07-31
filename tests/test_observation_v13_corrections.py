@@ -36,9 +36,11 @@ from thesis_rl.rulebook.v2.types import (
     MapFeatureRecord,
     MovementKey,
     RulebookMemory,
+    StaticSubclass,
     TaskRouteRecord,
     TrafficControlRecord,
 )
+from thesis_rl.rulebook.v2.context.live_adapter import actor_snapshot_from_payload
 
 LANE_WIDTH_M = 4.0
 EGO_LENGTH_M = 2.0
@@ -411,7 +413,7 @@ def test_009_a_populated_rulebook_memory_cannot_change_the_observation(monkeypat
 
     assert np.array_equal(clean.interactions, dirty.interactions)
     assert np.array_equal(clean.controls, dirty.controls)
-    assert np.array_equal(clean.compliance_history, dirty.compliance_history)
+    assert np.array_equal(clean.context_history, dirty.context_history)
 
 
 # --------------------------------------------------------------------------
@@ -489,7 +491,7 @@ def test_012_control_distance_is_measured_from_the_front_bumper(monkeypatch) -> 
     assert batch.controls[0, 2] == pytest.approx(expected, abs=1e-6)
 
 
-def test_013_compliance_row_and_control_token_agree_on_the_distance(monkeypatch) -> None:
+def test_013_context_row_and_control_token_agree_on_the_distance(monkeypatch) -> None:
     route, lanes = _route_x()
     _all_visible(monkeypatch, frozenset())
     _no_signals_visible(monkeypatch)
@@ -498,7 +500,7 @@ def test_013_compliance_row_and_control_token_agree_on_the_distance(monkeypatch)
 
     batch = builder.build(_Vehicle(), _ctx(0, _ego(), (), route, lanes, controls=(control,)))
 
-    assert batch.compliance_history[-1, 22] == pytest.approx(batch.controls[0, 2], abs=1e-6)
+    assert batch.context_history[-1, 22] == pytest.approx(batch.controls[0, 2], abs=1e-6)
 
 
 # --------------------------------------------------------------------------
@@ -518,7 +520,7 @@ def test_014_an_occluded_signal_is_not_encoded_as_a_stop_control(monkeypatch) ->
         _ctx(0, _ego(), (), route, lanes, controls=(control,), signals={"light-0": "RED"}),
     )
 
-    row = batch.compliance_history[-1]
+    row = batch.context_history[-1]
     assert row[15:17].tolist() == [1.0, 0.0]  # signal, not stop
     assert row[17:22].tolist() == [0.0, 0.0, 0.0, 0.0, 1.0]  # unknown
     assert batch.controls[0, 5:7].tolist() == [1.0, 0.0]  # token type: signal
@@ -767,14 +769,14 @@ def test_031_continuity_indicators_reset_after_a_step_gap(monkeypatch) -> None:
     contiguous = builder.build(
         _Vehicle(), _ctx(1, _ego(), (), route, lanes, controls=(control,), features=dashed)
     )
-    assert contiguous.compliance_history[-1, 12] == 1.0
-    assert contiguous.compliance_history[-1, 14] == 1.0
+    assert contiguous.context_history[-1, 12] == 1.0
+    assert contiguous.context_history[-1, 14] == 1.0
 
     gapped = builder.build(
         _Vehicle(), _ctx(5, _ego(), (), route, lanes, controls=(control,), features=dashed)
     )
-    assert gapped.compliance_history[-1, 12] == 0.0
-    assert gapped.compliance_history[-1, 14] == 0.0
+    assert gapped.context_history[-1, 12] == 0.0
+    assert gapped.context_history[-1, 14] == 0.0
 
 
 # --------------------------------------------------------------------------
@@ -874,7 +876,7 @@ def test_028b_dashed_feature_lookup_filters_elevation_and_takes_the_nearest(
 
     batch = builder.build(_Vehicle(), _ctx(0, _ego(), (), route, lanes, features={"u": upper}))
 
-    assert batch.compliance_history[-1, 11] == 0.0
+    assert batch.context_history[-1, 11] == 0.0
 
 
 # --------------------------------------------------------------------------
@@ -901,6 +903,95 @@ def test_027_static_taxonomy_separates_a_detected_obstacle_from_a_map_boundary(
 
 
 # --------------------------------------------------------------------------
+# REQ-028 — every static taxonomy slot is reachable (TEST-034..TEST-036)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("subclass", "expected_index"),
+    [
+        (StaticSubclass.TRAFFIC_CONE, causal_semantic.STATIC_TYPE_TRAFFIC_CONE),
+        (StaticSubclass.TRAFFIC_BARRIER, causal_semantic.STATIC_TYPE_TRAFFIC_BARRIER),
+        (StaticSubclass.TRAFFIC_WARNING, causal_semantic.STATIC_TYPE_OTHER_OBSTACLE),
+        (StaticSubclass.OTHER, causal_semantic.STATIC_TYPE_OTHER_OBSTACLE),
+        (None, causal_semantic.STATIC_TYPE_OTHER_OBSTACLE),
+    ],
+)
+def test_034_static_subclass_selects_its_taxonomy_slot(
+    monkeypatch, subclass, expected_index
+) -> None:
+    route, lanes = _route_x()
+    obstacle = replace(
+        _actor("static", (12.0, 0.0)),
+        actor_class=ActorClass.STATIC_COLLIDABLE,
+        static_subclass=subclass,
+    )
+    _all_visible(monkeypatch, frozenset({"static"}))
+    builder = _builder(route, lanes)
+
+    batch = builder.build(_Vehicle(), _ctx(0, _ego(), (obstacle,), route, lanes))
+
+    expected = np.zeros(5, dtype=np.float32)
+    expected[expected_index] = 1.0
+    assert batch.static_mask[0] == 1.0
+    assert np.array_equal(batch.static[0, causal_semantic.STATIC_TYPE_SLICE], expected)
+
+
+def test_035_every_static_taxonomy_slot_is_reachable(monkeypatch) -> None:
+    """No slot may be dead: the previous 5-way one-hot had two constant columns."""
+
+    route, lanes = _route_x()
+    actors = tuple(
+        replace(
+            _actor(f"static_{index}", (10.0 + 3.0 * index, 0.0)),
+            actor_class=ActorClass.STATIC_COLLIDABLE,
+            static_subclass=subclass,
+        )
+        for index, subclass in enumerate(
+            (StaticSubclass.TRAFFIC_CONE, StaticSubclass.TRAFFIC_BARRIER, StaticSubclass.OTHER)
+        )
+    )
+    features = {
+        "rail": _feature(
+            "rail", LineString(((-20.0, 6.0), (20.0, 6.0))), MapFeatureClass.ROAD_BOUNDARY
+        ),
+        "verge": _feature(
+            "verge",
+            LineString(((-20.0, -6.0), (20.0, -6.0))),
+            MapFeatureClass.OTHER_NON_DRIVABLE,
+        ),
+    }
+    _all_visible(monkeypatch, frozenset(actor.actor_id for actor in actors))
+    builder = _builder(route, lanes)
+
+    batch = builder.build(_Vehicle(), _ctx(0, _ego(), actors, route, lanes, features=features))
+
+    visible = batch.static[batch.static_mask == 1.0, causal_semantic.STATIC_TYPE_SLICE]
+    observed = {int(np.argmax(row)) for row in visible}
+    assert observed == {0, 1, 2, 3, 4}
+
+
+def test_036_static_subclass_is_rejected_on_non_static_actors() -> None:
+    """The refinement must not silently attach to a vehicle or a pedestrian."""
+
+    with pytest.raises(ValueError, match="STATIC_COLLIDABLE"):
+        actor_snapshot_from_payload(
+            {
+                "actor_id": "vehicle",
+                "actor_class": ActorClass.VEHICLE,
+                "position_xy": (0.0, 0.0),
+                "position_z": 0.0,
+                "heading_rad": 0.0,
+                "velocity_xy": (0.0, 0.0),
+                "length_m": 4.0,
+                "width_m": 2.0,
+                "configured_speed_cap_mps": 10.0,
+                "static_subclass": StaticSubclass.TRAFFIC_CONE,
+            }
+        )
+
+
+# --------------------------------------------------------------------------
 # REQ-017..020 — OBS-V1.3 dimensions (TEST-022..TEST-026)
 # --------------------------------------------------------------------------
 
@@ -913,7 +1004,7 @@ def test_022_to_025_group_shapes_match_obs_v13(monkeypatch) -> None:
     batch = builder.build(_Vehicle(), _ctx(0, _ego(), (), route, lanes))
 
     assert batch.controls.shape == (8, 15)
-    assert batch.compliance_history.shape == (21, 23)
+    assert batch.context_history.shape == (21, 23)
     assert batch.interactions.shape == (8, 33)
     assert batch.lane_road.shape == (12,)
 

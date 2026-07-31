@@ -207,9 +207,9 @@ class SemanticObservationBatchV12:
     controls_mask: np.ndarray
     interactions: np.ndarray
     interactions_mask: np.ndarray
-    compliance_history: np.ndarray
-    compliance_history_mask: np.ndarray
-    yellow_onset_memory: np.ndarray
+    context_history: np.ndarray
+    context_history_mask: np.ndarray
+    signal_onset_state: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -230,9 +230,9 @@ class SemanticObservationTensorBatchV12:
     controls_mask: torch.Tensor
     interactions: torch.Tensor
     interactions_mask: torch.Tensor
-    compliance_history: torch.Tensor
-    compliance_history_mask: torch.Tensor
-    yellow_onset_memory: torch.Tensor
+    context_history: torch.Tensor
+    context_history_mask: torch.Tensor
+    signal_onset_state: torch.Tensor
 
 
 class SemanticObservationSchemaV12:
@@ -256,9 +256,9 @@ class SemanticObservationSchemaV12:
         "controls_mask": (8,),
         "interactions": (8, 33),
         "interactions_mask": (8,),
-        "compliance_history": (21, 23),
-        "compliance_history_mask": (21,),
-        "yellow_onset_memory": (3,),
+        "context_history": (21, 23),
+        "context_history_mask": (21,),
+        "signal_onset_state": (3,),
     }
     token_order: ClassVar[tuple[str, ...]] = (
         "ego_history",
@@ -269,8 +269,8 @@ class SemanticObservationSchemaV12:
         "lane_road",
         "controls",
         "interactions",
-        "compliance_history",
-        "yellow_onset_memory",
+        "context_history",
+        "signal_onset_state",
     )
     mask_order: ClassVar[tuple[str, ...]] = (
         "ego_history_mask",
@@ -279,7 +279,7 @@ class SemanticObservationSchemaV12:
         "static_mask",
         "controls_mask",
         "interactions_mask",
-        "compliance_history_mask",
+        "context_history_mask",
     )
 
     def __init__(self) -> None:

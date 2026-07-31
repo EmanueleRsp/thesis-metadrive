@@ -44,6 +44,25 @@ class ActorClass(str, Enum):
     INFRASTRUCTURE_NON_COLLIDABLE = "infrastructure_non_collidable"
 
 
+class StaticSubclass(str, Enum):
+    """Sub-taxonomy of `ActorClass.STATIC_COLLIDABLE` road furniture.
+
+    OBS-V1.3 assumes ideal semantic classification after physical admission
+    (OBS-V1.3 SS10.1), which a fused camera/LiDAR stack supports: cones,
+    barriers and warning triangles differ in appearance and in how a driver
+    must respond to them.  The distinction exists in the source taxonomy and
+    was previously discarded before reaching the observation.
+
+    The Rulebook itself does not branch on this field; it is carried for the
+    observation only.
+    """
+
+    TRAFFIC_CONE = "traffic_cone"
+    TRAFFIC_BARRIER = "traffic_barrier"
+    TRAFFIC_WARNING = "traffic_warning"
+    OTHER = "other"
+
+
 class MapFeatureClass(str, Enum):
     DRIVABLE_LANE = "drivable_lane"
     SIDEWALK = "sidewalk"
@@ -132,6 +151,9 @@ class ActorSnapshot:
     footprint: BaseGeometry
     live_lane_id: str | None
     configured_speed_cap_mps: float | None
+    # Observation-only refinement of STATIC_COLLIDABLE; None for every other
+    # actor class and for statics whose source type is not recognised.
+    static_subclass: "StaticSubclass | None" = None
 
     def __post_init__(self) -> None:
         _require_finite(

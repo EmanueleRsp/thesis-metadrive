@@ -81,7 +81,7 @@ class SemanticStateObservationV3(BaseObservation):
             "static": "static_mask",
             "controls": "controls_mask",
             "interactions": "interactions_mask",
-            "compliance_history": "compliance_history_mask",
+            "context_history": "context_history_mask",
         }
         for group_name, mask_name in masked_groups.items():
             values = np.asarray(getattr(batch, group_name), dtype=np.float32)

@@ -47,7 +47,7 @@ def test_lq_v11_is_invariant_to_masked_compliance_payload() -> None:
     encoder = LatentQueryEncoderV3(schema=schema)
     first = torch.zeros(2, schema.flat_dim, dtype=torch.float32, requires_grad=True)
     second = first.detach().clone()
-    compliance = schema.slices["compliance_history"]
+    compliance = schema.slices["context_history"]
     second[:, compliance] = torch.randn_like(second[:, compliance])
 
     first_output = encoder(first)

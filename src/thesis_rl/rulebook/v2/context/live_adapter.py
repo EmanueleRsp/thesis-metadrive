@@ -12,7 +12,13 @@ from math import isfinite
 from typing import Any, Callable, Mapping, cast
 
 from thesis_rl.rulebook.v2.context.snapshotter import capture_env_snapshot
-from thesis_rl.rulebook.v2.types import ActorClass, ActorSnapshot, ContactOnsetRecord, EnvSnapshot
+from thesis_rl.rulebook.v2.types import (
+    ActorClass,
+    ActorSnapshot,
+    ContactOnsetRecord,
+    EnvSnapshot,
+    StaticSubclass,
+)
 from thesis_rl.rulebook.v2.geometry.footprint import oriented_bounding_box
 
 
@@ -99,7 +105,30 @@ def actor_snapshot_from_payload(payload: Mapping[str, object]) -> ActorSnapshot:
     live_lane_id = payload.get("live_lane_id")
     if live_lane_id is not None and (not isinstance(live_lane_id, str) or not live_lane_id):
         raise ValueError("Live actor live_lane_id must be a non-empty string when supplied")
-    return ActorSnapshot(actor_id, canonical_class, position_xy, position_z, heading, velocity_xy, footprint, live_lane_id, cap)
+    subclass_value = payload.get("static_subclass")
+    if subclass_value is None:
+        static_subclass = None
+    elif isinstance(subclass_value, StaticSubclass):
+        static_subclass = subclass_value
+    else:
+        try:
+            static_subclass = StaticSubclass(str(subclass_value))
+        except ValueError as error:
+            raise ValueError(f"Unknown live static subclass: {subclass_value!r}") from error
+    if static_subclass is not None and canonical_class is not ActorClass.STATIC_COLLIDABLE:
+        raise ValueError("Live actor static_subclass is only valid for STATIC_COLLIDABLE actors")
+    return ActorSnapshot(
+        actor_id,
+        canonical_class,
+        position_xy,
+        position_z,
+        heading,
+        velocity_xy,
+        footprint,
+        live_lane_id,
+        cap,
+        static_subclass,
+    )
 
 
 def contact_onset_from_payload(payload: Mapping[str, object]) -> ContactOnsetRecord:

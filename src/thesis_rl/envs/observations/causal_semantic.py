@@ -34,6 +34,7 @@ from thesis_rl.rulebook.v2.types import (
     ConflictZoneRecord,
     MapFeatureClass,
     MovementPriority,
+    StaticSubclass,
     TrafficControlRecord,
 )
 
@@ -174,11 +175,27 @@ INTERACTION_PREEXISTING_INDEX = 32
 STATIC_LOCAL_WINDOW_M = 10.0
 
 # OBS-V1.3 static taxonomy: the classes the source can actually discriminate.
-STATIC_TYPE_DETECTED_OBSTACLE = 0
-STATIC_TYPE_ROAD_BOUNDARY = 1
-STATIC_TYPE_OTHER_NON_DRIVABLE = 2
-STATIC_TYPE_STATIONARY_VEHICLE = 3
-STATIC_TYPE_UNKNOWN = 4
+# OBS-V1.3 REQ-028 static taxonomy.  Every slot is reachable: 0-2 come from the
+# STATIC_COLLIDABLE sub-taxonomy MetaDrive already carries, 3-4 from the map
+# feature catalogue.  The previous `stationary_vehicle` slot was unreachable by
+# construction (a parked car is ActorClass.VEHICLE and is emitted in the dynamic
+# group), and `unknown` was never assigned because the upstream class mapping
+# fails closed on unrecognised actors.
+STATIC_TYPE_TRAFFIC_CONE = 0
+STATIC_TYPE_TRAFFIC_BARRIER = 1
+STATIC_TYPE_OTHER_OBSTACLE = 2
+STATIC_TYPE_ROAD_BOUNDARY = 3
+STATIC_TYPE_OTHER_NON_DRIVABLE = 4
+
+STATIC_SUBCLASS_TYPE_INDEX = {
+    StaticSubclass.TRAFFIC_CONE: STATIC_TYPE_TRAFFIC_CONE,
+    StaticSubclass.TRAFFIC_BARRIER: STATIC_TYPE_TRAFFIC_BARRIER,
+    # A warning triangle is a hazard marker, not a rigid barrier; it shares the
+    # generic obstacle slot with unrefined statics rather than claiming one of
+    # the two physically distinct categories.
+    StaticSubclass.TRAFFIC_WARNING: STATIC_TYPE_OTHER_OBSTACLE,
+    StaticSubclass.OTHER: STATIC_TYPE_OTHER_OBSTACLE,
+}
 
 
 def _local_window(geometry: Any, ego_position_xy: tuple[float, float]) -> Any:
@@ -270,6 +287,16 @@ class CausalSemanticBatchBuilder:
     ``commit_context`` is idempotent per scenario/step.  The builder retains
     only observations it has actually received, so a newly selected actor
     cannot acquire retroactive history from the scenario's future tracks.
+
+    LEGACY OBS-V1.1 BUILDER.  Retained only to reproduce historical runs; it is
+    no longer the repository default (``conf/config.yaml`` selects
+    ``obs=semantic_v3``).  Unlike the OBS-V1.3 subclass, this builder DOES read
+    Rulebook state into the policy observation: resolved signal/stop group ids
+    in the control ranking, ``previous_signal_delta_m``, and the dashed/stop
+    timers in the compliance row.  Because the Rulebook also produces the
+    reward, that coupling is label leakage; it is a known defect recorded in
+    ADR-033.  Do not select this observation for new experiments, and do not
+    copy its memory reads into the perception-bounded path.
     """
 
     def __init__(
@@ -1285,6 +1312,25 @@ class CausalSemanticBatchBuilder:
                 *_one_hot(priority_index, 3),
                 float(candidate.zone_type_index == 3),
                 float(zone_id in context.memory.preexisting_ego_occupancy_zone_ids),
+                # DO NOT "FIX" THE TUPLE ORDER BELOW.  ADR-033.
+                #
+                # `pair` is (zone_id, actor_id) while both latch sets are keyed
+                # (actor_id, zone_id), so this membership test is constant 0.0.
+                # That looks like an ordinary bug and is not: the Rulebook
+                # produces the reward, so feeding one of its violation latches
+                # back into the policy input is label leakage, and correcting
+                # the order would activate it for the first time.  The latch is
+                # also set *after* the incompatible entry, so it can only
+                # support reacting to a violation already committed, never
+                # preventing one.
+                #
+                # This whole legacy OBS-V1.1 path is retained solely to
+                # reproduce historical runs; it is no longer the default
+                # (see conf/config.yaml).  OBS-V1.3 removes the field, and
+                # `PerceptionBoundedSemanticBatchBuilder` reads no Rulebook
+                # memory at all — pinned by TEST-009, which builds an
+                # observation from a poisoned `RulebookMemory` and asserts it is
+                # bit-identical to one built from an empty memory.
                 float(
                     pair in context.memory.vehicle_yield_illegal_entries
                     or pair in context.memory.crosswalk_illegal_entries
@@ -1319,7 +1365,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
     history.
     """
 
-    compliance_history_length = 21
+    context_history_length = 21
 
     def __init__(self, *, brake_mps2: float | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -1328,15 +1374,15 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         self.brake_mps2 = brake_mps2
         self._v12_actor_cache: dict[str, deque[tuple[int, ActorSnapshot]]] = {}
         self._visible_actor_ids: frozenset[str] = frozenset()
-        self._compliance_rows: deque[tuple[int, np.ndarray]] = deque(
-            maxlen=self.compliance_history_length
+        self._context_rows: deque[tuple[int, np.ndarray]] = deque(
+            maxlen=self.context_history_length
         )
         self._yellow_control_id: str | None = None
         self._yellow_onset_distance_m = 0.0
         self._yellow_onset_speed_mps = 0.0
         self._previous_dashed_feature_id: str | None = None
         self._previous_control_id: str | None = None
-        self._last_compliance_step: int | None = None
+        self._last_context_row_step: int | None = None
         self._preexisting_zone_occupancy: dict[str, bool] = {}
         self._dynamic_diagnostics: tuple[Any, ...] = (0, 0, 0, (), ())
         self._static_diagnostics: tuple[int, int] = (0, 0)
@@ -1347,13 +1393,13 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         super().reset()
         self._v12_actor_cache.clear()
         self._visible_actor_ids = frozenset()
-        self._compliance_rows.clear()
+        self._context_rows.clear()
         self._yellow_control_id = None
         self._yellow_onset_distance_m = 0.0
         self._yellow_onset_speed_mps = 0.0
         self._previous_dashed_feature_id = None
         self._previous_control_id = None
-        self._last_compliance_step = None
+        self._last_context_row_step = None
         self._preexisting_zone_occupancy.clear()
         self._dynamic_diagnostics = (0, 0, 0, (), ())
         self._static_diagnostics = (0, 0)
@@ -1431,7 +1477,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             context, ego, route_projection.s_m, vehicle, ego_speed_cap
         )
         interactions, interactions_mask = self._build_interactions(context, ego)
-        compliance_history, compliance_history_mask = self._append_compliance_row(
+        context_history, context_history_mask = self._append_context_row(
             context, ego, lane_road, control_trace, ego_speed_cap
         )
         self._publish_diagnostics()
@@ -1450,9 +1496,9 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             controls_mask=controls_mask,
             interactions=interactions,
             interactions_mask=interactions_mask,
-            compliance_history=compliance_history,
-            compliance_history_mask=compliance_history_mask,
-            yellow_onset_memory=self._yellow_memory(ego_speed_cap),
+            context_history=context_history,
+            context_history_mask=context_history_mask,
+            signal_onset_state=self._yellow_memory(ego_speed_cap),
         )
 
     def _dynamic_candidates(
@@ -2017,7 +2063,9 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                     actor.position_xy,
                     actor.heading_rad,
                     _dimensions(actor.footprint),
-                    STATIC_TYPE_DETECTED_OBSTACLE,
+                    STATIC_SUBCLASS_TYPE_INDEX.get(
+                        actor.static_subclass, STATIC_TYPE_OTHER_OBSTACLE
+                    ),
                     projection.s_m,
                     projection.lateral_distance_m,
                 )
@@ -2275,7 +2323,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 candidates.append((float(feature.geometry.distance(ego.footprint)), feature.feature_id))
         return min(candidates)[1] if candidates else None
 
-    def _append_timestamped_compliance_row(
+    def _append_timestamped_context_row(
         self,
         context: CausalSceneContext,
         ego: ActorSnapshot,
@@ -2291,7 +2339,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         signal_index = {"red": 0, "yellow": 1, "green": 2, "off": 3}.get(state, 4)
         # REQ-026: continuity is only meaningful against the immediately
         # preceding step.
-        contiguous = self._last_compliance_step == step - 1
+        contiguous = self._last_context_row_step == step - 1
         row = np.asarray(
             [
                 _clip(hypot(*ego.velocity_xy), ego_speed_cap, lower=0.0),
@@ -2323,16 +2371,16 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             dtype=np.float32,
         )
         if row.shape != (23,):
-            raise RuntimeError("OBS-V1.3 compliance history row must contain 23 values")
+            raise RuntimeError("OBS-V1.3 context history row must contain 23 values")
         self._previous_dashed_feature_id = dashed_feature_id
         self._previous_control_id = control_id
-        self._last_compliance_step = step
-        self._compliance_rows.append((step, row))
-        history = np.zeros((self.compliance_history_length, 23), dtype=np.float32)
-        mask = np.zeros(self.compliance_history_length, dtype=np.float32)
-        by_step = dict(self._compliance_rows)
+        self._last_context_row_step = step
+        self._context_rows.append((step, row))
+        history = np.zeros((self.context_history_length, 23), dtype=np.float32)
+        mask = np.zeros(self.context_history_length, dtype=np.float32)
+        by_step = dict(self._context_rows)
         for index, source_step in enumerate(
-            range(step - self.compliance_history_length + 1, step + 1)
+            range(step - self.context_history_length + 1, step + 1)
         ):
             source = by_step.get(source_step)
             if source is not None:
@@ -2340,7 +2388,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 mask[index] = 1.0
         return history, mask
 
-    def _append_compliance_row(
+    def _append_context_row(
         self,
         context: CausalSceneContext,
         ego: ActorSnapshot,
@@ -2348,7 +2396,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         control_trace: tuple[str | None, ApproachControl | None, str, float, bool],
         ego_speed_cap: float,
     ) -> tuple[np.ndarray, np.ndarray]:
-        return self._append_timestamped_compliance_row(
+        return self._append_timestamped_context_row(
             context, ego, lane_road, control_trace, ego_speed_cap
         )
 

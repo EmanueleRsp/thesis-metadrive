@@ -110,10 +110,15 @@ class CausalLidarFrameBuilder:
             distance=self.distance_m,
             show=False,
         )
-        cloud = np.asarray(getattr(result, "cloud_points", result), dtype=np.float32).reshape(-1)
+        # `metadrive.component.sensors.lidar.Lidar.perceive` returns a plain
+        # `(cloud_points, detected_objects)` tuple, not the `detect_result`
+        # namedtuple `DistanceDetector.perceive` (used by `_ray_block`)
+        # returns; it has no `.cloud_points`/`.detected_objects` attributes,
+        # so attribute access must not be attempted here.
+        raw_cloud, detected = result
+        cloud = np.asarray(raw_cloud, dtype=np.float32).reshape(-1)
         if cloud.size != self.num_lidar_rays:
             raise ValueError(f"lidar returned {cloud.size} rays, expected {self.num_lidar_rays}")
-        detected = getattr(result, "detected_objects", None)
         nearby = sensor.get_surrounding_vehicles_info(
             vehicle, detected, self.distance_m, self.num_nearby_vehicles, False
         )

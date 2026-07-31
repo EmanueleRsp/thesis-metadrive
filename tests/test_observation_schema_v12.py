@@ -41,9 +41,9 @@ def test_v12_schema_has_normative_dimensions_and_order() -> None:
         "controls_mask",
         "interactions",
         "interactions_mask",
-        "compliance_history",
-        "compliance_history_mask",
-        "yellow_onset_memory",
+        "context_history",
+        "context_history_mask",
+        "signal_onset_state",
     )
 
 
@@ -65,11 +65,11 @@ def test_v12_schema_torch_unflatten_preserves_autograd_dtype_and_device() -> Non
     flat.requires_grad_()
 
     structured = schema.unflatten_torch(flat)
-    loss = structured.dynamic.sum() + structured.compliance_history.sum()
+    loss = structured.dynamic.sum() + structured.context_history.sum()
     loss.backward()
 
-    assert structured.compliance_history.dtype is torch.float32
-    assert structured.compliance_history.device == flat.device
+    assert structured.context_history.dtype is torch.float32
+    assert structured.context_history.device == flat.device
     assert flat.grad is not None
     assert torch.isfinite(flat.grad).all()
 

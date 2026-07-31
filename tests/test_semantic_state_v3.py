@@ -26,9 +26,9 @@ def _valid_batch() -> SemanticObservationBatchV12:
         controls_mask=np.zeros(8, dtype=np.float32),
         interactions=np.zeros((8, 33), dtype=np.float32),
         interactions_mask=np.zeros(8, dtype=np.float32),
-        compliance_history=np.zeros((21, 23), dtype=np.float32),
-        compliance_history_mask=np.asarray([0] * 20 + [1], dtype=np.float32),
-        yellow_onset_memory=np.zeros(3, dtype=np.float32),
+        context_history=np.zeros((21, 23), dtype=np.float32),
+        context_history_mask=np.asarray([0] * 20 + [1], dtype=np.float32),
+        signal_onset_state=np.zeros(3, dtype=np.float32),
     )
 
 
@@ -58,11 +58,11 @@ def test_semantic_v3_flattens_only_schema_owned_batch() -> None:
 def test_semantic_v3_rejects_nonzero_compliance_padding() -> None:
     observation = SemanticStateObservationV3({})
     batch = _valid_batch()
-    compliance_history = batch.compliance_history.copy()
-    compliance_history[0, 0] = 0.25
-    invalid = replace(batch, compliance_history=compliance_history)
+    context_history = batch.context_history.copy()
+    context_history[0, 0] = 0.25
+    invalid = replace(batch, context_history=context_history)
     observation.set_batch_builder(lambda vehicle: invalid)
-    with pytest.raises(ValueError, match="Masked 'compliance_history' tokens"):
+    with pytest.raises(ValueError, match="Masked 'context_history' tokens"):
         observation.observe(object())
 
 
@@ -72,7 +72,7 @@ def test_semantic_v3_rejects_a_batch_with_all_variable_tokens_masked() -> None:
     batch = replace(
         batch,
         ego_history_mask=np.zeros(5, dtype=np.float32),
-        compliance_history_mask=np.zeros(21, dtype=np.float32),
+        context_history_mask=np.zeros(21, dtype=np.float32),
     )
     observation.set_batch_builder(lambda vehicle: batch)
     with pytest.raises(ValueError, match="mask all variable tokens"):

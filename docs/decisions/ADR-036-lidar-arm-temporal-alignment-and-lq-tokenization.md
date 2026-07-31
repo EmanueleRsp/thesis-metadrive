@@ -98,20 +98,26 @@ stacking is therefore both derivable and affordable.
   recorded in `OBS-LIDAR-V2.0` §5: unreconstructible `yellow_must_stop`,
   non-identity-stable neighbor slots, and ego-relative (not world-fixed)
   sector bearings under yaw rate.
-- While validating this ADR's implementation, two pre-existing defects were
+- While validating this ADR's implementation, three pre-existing defects were
   found and fixed with regression tests in the (declared frozen, reused
-  unchanged) `CausalLidarFrameBuilder` and `RayNoiseWrapper`: both used
+  unchanged) `CausalLidarFrameBuilder` and `RayNoiseWrapper`. Two used
   `isinstance(config, dict)` to validate MetaDrive vehicle/sensor
   configuration, which a real MetaDrive `Config` object (not a `dict`
-  subclass) always failed. This had never been exercised outside unit tests
-  with plain-dict mocks, so it silently blocked any real training run with
-  either the old or the new stacked LiDAR observation. The fix duck-types on
-  `.get` instead of the nominal type; it is a bug fix with no semantic effect
-  on any produced observation value. A third, deeper defect (a shape mismatch
-  in the real MetaDrive LiDAR sensor's `perceive()` return contract) was found
-  and left open as a separate follow-up, since it requires investigating
-  MetaDrive's sensor API beyond this plan's declared scope; end-to-end smoke
-  training of the LiDAR arm remains blocked until it is resolved.
+  subclass) always failed; the fix duck-types on `.get` instead of the
+  nominal type. The third was in `_lidar_blocks`: `metadrive.component.
+  sensors.lidar.Lidar.perceive` returns a plain `(cloud_points,
+  detected_objects)` tuple, not the `detect_result` namedtuple
+  `DistanceDetector.perceive` returns for the side/lane-line detectors, so
+  `getattr(result, "cloud_points", result)` silently fell back to the whole
+  tuple (crashing on the array conversion) and `detected_objects` was always
+  read as `None` (silently emptying the nearby-vehicle block); the fix
+  unpacks the tuple positionally. None of the three had ever been exercised
+  outside unit tests with hand-built mocks that happened to paper over the
+  real MetaDrive return shapes, so they silently blocked any real training
+  run with either the old or the new stacked LiDAR observation. All three are
+  bug fixes with no semantic effect on any *correctly* produced observation
+  value; end-to-end smoke training now passes for both
+  `stacked_lidar_state` and `stacked_lidar_v2`.
 
 ## Alternatives considered
 

@@ -4,7 +4,7 @@ name: PLN_${agent.planner.algorithm.name}_REW_${hydra:runtime.choices.reward}_CU
 # and optionally add CLI overrides (e.g. `run_profile=medium`).
 defaults:
   - env: scenarionet        # Canonical final environment family.
-  - obs: semantic_v2         # SemanticStateObservation v1.1.
+  - obs: semantic_v3         # OBS-V1.3 perception-bounded observation (D=3009).
   - experiment: default
   - reward: scalar_reward   # Final Rulebook scalar reward.
   - video: default          # Video/replay pipeline settings in `conf/video/*`
@@ -12,7 +12,7 @@ defaults:
   - gold_suite: default      # Reference-only Rulebook diagnostic controls.
 
   - agent/preprocessor: identity       # Observation preprocessor in `conf/agent/preprocessor/*`
-  - agent/planner/encoder: lq          # Planner feature encoder in `conf/agent/planner/encoder/*`
+  - agent/planner/encoder: lq_v3       # Planner feature encoder in `conf/agent/planner/encoder/*` (ENC-V1.3, pairs with obs=semantic_v3)
   - agent/planner/decoder: mlp_encoded # Planner head decoder profile in `conf/agent/planner/decoder/*`
   - agent/planner/algorithm: td3_sb3   # Primary final learner; make run requires an explicit choice.
   - agent/adapter: identity            # Action adapter in `conf/agent/adapter/*`

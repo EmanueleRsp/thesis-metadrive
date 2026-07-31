@@ -103,6 +103,9 @@ findings log so the two can be cross-referenced.
 | `REQ-025` | C26 | Traffic-control association is limited to the local control horizon | OBS-V1.2 §6.2 ("not global knowledge of every scene control") |
 | `REQ-026` | C27 | Continuity indicators are false when the previous sample is not step `k-1` | OBS-V1.2 §8 |
 | `REQ-027` | C28 | Conflict-zone geometry is a function of map topology and the assigned ego route only, never of a specific actor's state | OBS-V1.2 §6.3 |
+| `REQ-028` | C30 | Every slot of the static type one-hot is reachable, and road-furniture types surviving in the source taxonomy are not discarded | OBS-V1.3 §5.5 |
+| `REQ-029` | C31 | The default Hydra composition selects the authoritative observation and its matching encoder | OBS-V1.3 §2; ENC-V1.3 §2 |
+| `REQ-030` | C32 | Group names describe their content, and the context-history length carries an explicit justification | OBS-V1.3 §5.8, §5.8.1 |
 
 ### 3.3 Consistency with the Rulebook and with the contract text (Phase A)
 
@@ -265,6 +268,8 @@ No production code may be modified for a requirement whose gate is unresolved.
 | `DEC-006` | Specification clarification | Route lateral distance: signed, absolute, or clamped | A: signed, spec text updated to "signed lateral offset". B: `abs()`, spec text unchanged | **A**. Left/right of the corridor is decision-relevant for overtaking, merging and conflict resolution. The current clamped form is the only one of the three that destroys information | `REQ-012`; spec text | **APPROVED 2026-07-29 — option A**: signed |
 | `DEC-007` | Implementation detail | Geometric definition of negative boundary clearance | A: split the ego footprint by the boundary line, take the piece not containing the ego centroid, report the negated maximum distance of its vertices from the line. B: negated intersection area / chord length | **A**. On a convex footprint the maximum distance from a line is attained at a vertex, so A is exact and constant-cost. B is not a length | `REQ-003`; spec text must pin the chosen definition | **DECIDED 2026-07-29 (delegated) — option A.** Classified as an implementation detail; the exact definition is pinned in the OBS-V1.3 text and in `AC-003` |
 | `DEC-008` | Specification deviation | `_build_lane_road`, `_build_interactions`, `_lane_width` and `_approach_control` are shared with the legacy `semantic_v2` path | A: fix in place, accepting that `semantic_v2` behaviour changes. B: override the fixed versions in `PerceptionBoundedSemanticBatchBuilder`, freezing `semantic_v2` | **B**. OBS-V1.2 §12 requires that "existing legacy observation modes retain their historical contracts"; `semantic_v2` experiments must stay reproducible. Cost: four additional overrides and a test asserting `semantic_v2` output is byte-identical before and after | All Phase A requirements touching those four methods | **DECIDED 2026-07-29 (delegated) — option B.** Evidence: `conf/config.yaml:7` still selects `obs: semantic_v2` as the repository default, and `SemanticStateObservationV2` consumes the shared base builder through `set_batch_builder` (`thesis_scenario_env.py:427`-`:432`). Fixing in place would silently change the default observation. The four overrides are marked for deletion when `semantic_v2` is retired |
+| `DEC-010` | Data policy | Static taxonomy after C30 showed two unreachable slots | A: reduce to 3 slots. B: repopulate from the source sub-taxonomy, keeping 5 | **B**. `metadrive_live._actor_class` already distinguishes cone/barrier/warning before collapsing them, so the refinement costs one optional field and no dimension. OBS-V1.3 §10.1 assumes ideal classification after admission, which a fused camera/LiDAR stack supports, so the distinction is admissible; the initial argument for A wrongly assumed a LiDAR-only sensor model | `REQ-028`; OBS-V1.3 §5.5 | **DECIDED 2026-07-31 (delegated) — option B** |
+| `DEC-011` | Metric convention | `compliance_history` / `yellow_onset_memory` name Rulebook rules, not their content | A: keep the names. B: rename to content-descriptive names | **B** → `context_history` / `signal_onset_state`. In the OBS-V1.3 path neither group reads `RulebookMemory`: they are ego-owned observation memory. The names invited the opposite reading and are the easiest available objection to a thesis reviewer. Zero behavioural change | `REQ-030`; OBS-V1.3 §5.8 | **DECIDED 2026-07-31 (delegated) — option B** |
 | `DEC-009` | Specification deviation | OBS-V1.1 §8.3 criterion 3 ("non ancora risolto") for control ranking | A: permanently drop it. B: reconstruct it from ego-owned memory | **A**. It was implemented by reading `context.memory.resolved_*_group_ids` (`:1062`-`:1065`), a Rulebook latch. Reconstructing it builder-side would recreate a rule-aligned shortcut for marginal ranking benefit | `REQ-016`; spec text | **DECIDED 2026-07-29 (delegated) — option A**: criterion permanently dropped |
 
 ## 7. Proposed design
@@ -466,6 +471,9 @@ is the primary home; schema and encoder cases go to
 | `TEST-031` | Boundary | Continuity false after a gap | Steps `k-2`, `k` | Both `0.0` | `REQ-026` |
 | `TEST-032` | Causality | Zone geometry is actor-independent | Two vehicle sets, same lane | Identical geometry | `REQ-027` |
 | `TEST-033` | Compatibility | `semantic_v2` unchanged | Legacy fixture | Bit-identical | `DEC-008` |
+| `TEST-034` | Taxonomy | Each static subclass selects its slot | Parametrised over the 4 subclasses plus `None` | Expected one-hot | `REQ-028` |
+| `TEST-035` | Taxonomy | No slot is dead | 3 static actors + 2 map feature classes | All 5 slots observed | `REQ-028` |
+| `TEST-036` | Contract | `static_subclass` is rejected on non-static actors | `VEHICLE` payload with a subclass | `ValueError` | `REQ-028` |
 
 Existing tests that must keep passing unchanged: the occlusion-gap and
 fail-closed adjacent-lane cases in `tests/test_perception_bounded_semantic.py`,
@@ -730,6 +738,19 @@ Next step: user sign-off, then M8 closure.
 | `make format-check PYTHON_QUALITY_PATHS="tests/test_observation_v13_corrections.py"` | `PASS` | 2026-07-29 | New module formatted |
 | `make format-check PYTHON_QUALITY_PATHS="src/thesis_rl/envs/observations/causal_semantic.py"` | `FAIL` | 2026-07-29 | **Pre-existing.** Verified that the file at `HEAD` (`eaa520c`) already fails the same check, so this is the repository-wide formatting baseline AGENTS.md describes, not a regression. Mass-formatting it inside a semantic change is explicitly discouraged there. Follow-up, once a dedicated formatting change is approved: `make format PYTHON_QUALITY_PATHS="src/thesis_rl/envs/observations/causal_semantic.py"` |
 | `git diff --check` | `PASS` | 2026-07-29 | No whitespace defects |
+
+### 14.1 Amendment of 2026-07-31 (`REQ-028`..`REQ-030`)
+
+| Command | Result | Date | Notes |
+|---|---|---|---|
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q` | `PASS` | 2026-07-31 | 1174 passed. Growth over the 1094 of 2026-07-29 includes tests added by concurrent work in the same tree |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_observation_v13_corrections.py` | `PASS` | 2026-07-31 | 40 passed (33 + `TEST-034`..`TEST-036`) |
+| `... pytest -q tests/ -k rulebook` | `PASS` | 2026-07-31 | 368 passed, 806 deselected |
+| Hydra default composition resolves to `obs=semantic_v3`, `encoder=lq_v3` | `PASS` | 2026-07-31 | Checked by composing `config` with `agent/planner/algorithm=td3_sb3` |
+| `ruff check` on the five changed modules | `PASS` | 2026-07-31 | All checks passed |
+| `ruff format --check tests/test_observation_v13_corrections.py` | `PASS` | 2026-07-31 | Formatted |
+| `ruff format --check` on `types.py`, `live_adapter.py`, `metadrive_live.py` | `FAIL` | 2026-07-31 | **Pre-existing.** Verified by formatting the `HEAD` copies of all three files: they already fail the same check. Same repository-wide baseline recorded above for `causal_semantic.py` |
+| `git diff --check` | `PASS` | 2026-07-31 | No whitespace defects |
 
 ## 15. Final reconciliation
 

@@ -15,14 +15,25 @@ from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 
 
 class _Sensor:
-    def __init__(self, rays: int):
+    """Fakes both real MetaDrive sensor return contracts.
+
+    `DistanceDetector.perceive` (used by `side_detector`/`lane_line_detector`)
+    returns a `detect_result` namedtuple exposing `.cloud_points`. `Lidar.
+    perceive` (used by the `lidar` sensor) returns a plain
+    `(cloud_points, detected_objects)` tuple with no such attribute — see
+    `CausalLidarFrameBuilder._lidar_blocks`, which must unpack it positionally
+    rather than via `getattr(result, "cloud_points", result)`.
+    """
+
+    def __init__(self, rays: int, *, is_lidar: bool = False):
         self.rays = rays
+        self.is_lidar = is_lidar
 
     def perceive(self, *_args, num_lasers: int, **_kwargs):
-        return SimpleNamespace(
-            cloud_points=np.full(num_lasers, 0.5, dtype=np.float32),
-            detected_objects=(),
-        )
+        cloud = np.full(num_lasers, 0.5, dtype=np.float32)
+        if self.is_lidar:
+            return cloud, ()
+        return SimpleNamespace(cloud_points=cloud, detected_objects=())
 
     def get_surrounding_vehicles_info(self, *_args):
         return [0.0] * 16
@@ -48,7 +59,8 @@ class _Vehicle:
             np_random=np.random.default_rng(3),
             physics_world=SimpleNamespace(static_world=object(), dynamic_world=object()),
             get_sensor=lambda name: _Sensor(
-                {"lidar": 240, "side_detector": 12, "lane_line_detector": 12}[name]
+                {"lidar": 240, "side_detector": 12, "lane_line_detector": 12}[name],
+                is_lidar=(name == "lidar"),
             ),
         )
 

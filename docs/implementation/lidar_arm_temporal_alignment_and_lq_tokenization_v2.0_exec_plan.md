@@ -387,22 +387,26 @@ but no global static-check gate is claimed.
 
 - [x] `TEST-013`, `TEST-014` (existing `test_semantic_state_v3.py`,
       `test_stacked_lidar_observation.py` regressions, unchanged and passing);
-      full suite (1163 tests), lint, focused format-check, `make config` /
-      `make config-gpu`, `git diff --check`.
-- [~] `TEST-020` (end-to-end smoke): **blocked**. Attempting
+      full suite (1174 tests after the fixes below), lint, focused
+      format-check, `make config` / `make config-gpu`, `git diff --check`.
+- [x] `TEST-020` (end-to-end smoke): now **passes**. Attempting
       `obs=stacked_lidar_v2 agent/planner/encoder=lq_lidar` against a real
-      scenario surfaced two pre-existing defects in the declared-frozen
-      `CausalLidarFrameBuilder`/`RayNoiseWrapper` (both used
+      scenario surfaced three pre-existing defects in the declared-frozen
+      `CausalLidarFrameBuilder`/`RayNoiseWrapper` (two used
       `isinstance(config, dict)` against a real MetaDrive `Config` object,
-      which is never a `dict` instance — fixed here, in scope, as bug fixes
-      with regression tests, since they blocked the LiDAR arm's test matrix
-      entirely and reproduce identically against the unmodified legacy
-      `stacked_lidar_state`). After that fix, a third, deeper defect surfaced
-      (a shape mismatch in the real MetaDrive LiDAR sensor's `perceive()`
-      return contract) that requires investigating MetaDrive's sensor API
-      beyond this plan's declared scope; left open and tracked as a separate
-      follow-up task. `TEST-020` therefore could not be executed to
-      completion for either the legacy or the new LiDAR observation.
+      which is never a `dict` instance; the third was `_lidar_blocks`
+      assuming `sensor.perceive()` returns an object with `.cloud_points`/
+      `.detected_objects` attributes, when MetaDrive's `Lidar.perceive`
+      actually returns a plain `(cloud_points, detected_objects)` tuple —
+      confirmed against `third_party/metadrive/metadrive/component/sensors/
+      lidar.py`. All three fixed here, in scope, as bug fixes with
+      regression tests, since they blocked the LiDAR arm's test matrix
+      entirely and reproduced identically against the unmodified legacy
+      `stacked_lidar_state`). End-to-end smoke confirmed passing (2000 steps,
+      final evaluation completed with no error) for both `obs=stacked_lidar_v2
+      agent/planner/encoder=lq_lidar` and, separately, the legacy
+      `obs=stacked_lidar_state agent/planner/encoder=none`, under
+      `presets/test/smoke_train`.
 - Depends on M1–M4.
 
 ### M6 — Reconciliation
@@ -463,11 +467,20 @@ Findings established while scoping, all `VERIFIED` against the sources cited in
     regression tests added to `tests/test_causal_lidar.py` and
     `tests/test_ray_noise.py`.
 11. A further, third defect surfaced immediately after (a shape mismatch in
-    the real LiDAR sensor's `perceive()` return handling in
-    `_lidar_blocks`). This is deeper — it requires understanding MetaDrive's
-    actual sensor return contract — and was left open rather than fixed
-    under this plan's frozen-frame-builder scope; tracked as a follow-up.
-    `TEST-020` (end-to-end smoke) could not be completed as a result.
+    `_lidar_blocks`'s handling of the real LiDAR sensor's `perceive()`
+    return value: `getattr(result, "cloud_points", result)` silently fell
+    back to `result` itself because `metadrive.component.sensors.lidar.
+    Lidar.perceive` returns a plain `(cloud_points, detected_objects)`
+    tuple, not the `detect_result` namedtuple `DistanceDetector.perceive`
+    returns for `side_detector`/`lane_line_detector` — confirmed by reading
+    `third_party/metadrive/metadrive/component/sensors/lidar.py`. This also
+    meant `detected` was always `None`, so the nearby-vehicle block was
+    silently computed with no detected vehicles. Fixed by unpacking the
+    tuple positionally instead of via `getattr`; the existing test fixture
+    in `tests/test_causal_lidar.py` was updated to distinguish the two real
+    sensor return shapes rather than uniformly faking the namedtuple one.
+    `TEST-020` (end-to-end smoke) now passes for both `stacked_lidar_v2` and
+    the legacy `stacked_lidar_state`.
 12. Attempting the smoke run also surfaced that
     `src/thesis_rl/sb3_extensions/builders.py`'s SB3 bridge encoder allow-list
     did not include `lq_lidar`, even though the underlying
@@ -483,7 +496,7 @@ Findings established while scoping, all `VERIFIED` against the sources cited in
 | `DEV-001` | `OBS-V1.1` `D_lidar,stack = 1540` | New contract at 6489 under a new mode name; 1540 retained | `DEC-002`, `DEC-004` | Approved 2026-07-30 | `OBS-LIDAR-V2.0`, `TEST-014` |
 | `DEV-002` | V-Max buffer size 1e6 | 300000 | ACL-induced non-stationarity; V-Max trains without a curriculum | Approved 2026-07-30 (`DEC-006`) | `ADR-036` |
 | `DEV-003` | STECA full architecture | Sector tokens and circular PE only | Two-stage attention unsupported by replicated evidence | Approved 2026-07-30 (`DEC-005`) | `ADR-036` |
-| `DEV-004` | `causal_lidar.py`/`ray_noise.py` treated as frozen, reused unchanged | Two `isinstance(config, dict)` checks changed to duck-typed `.get` checks | Both checks rejected every real MetaDrive vehicle; discovered while validating M5, reproduces identically against the unmodified legacy `stacked_lidar_state`; a pure bug fix with no effect on any produced observation value | Implemented as an in-scope bug fix (AGENTS.md: every discovered bug requires a regression test) | `tests/test_causal_lidar.py`, `tests/test_ray_noise.py`, `ADR-036` §Consequences |
+| `DEV-004` | `causal_lidar.py`/`ray_noise.py` treated as frozen, reused unchanged | Three fixes: two `isinstance(config, dict)` checks changed to duck-typed `.get` checks, plus `_lidar_blocks` changed to unpack the real `Lidar.perceive()` tuple positionally instead of `getattr(result, "cloud_points", result)` | All three defects rejected or silently mishandled every real MetaDrive vehicle/sensor call; discovered while validating M5, reproduce identically against the unmodified legacy `stacked_lidar_state`; pure bug fixes with no effect on any *correctly* produced observation value (the third fix also corrects a silent `detected_objects=None` that made the nearby-vehicle block always empty) | Implemented as an in-scope bug fix (AGENTS.md: every discovered bug requires a regression test) | `tests/test_causal_lidar.py`, `tests/test_ray_noise.py`, `ADR-036` §Consequences |
 
 ## 13. Files
 
@@ -499,7 +512,7 @@ Findings established while scoping, all `VERIFIED` against the sources cited in
 | `src/thesis_rl/agent/planners/encoders/lq_lidar_encoder.py` | Created | `LatentQueryEncoderLidar` |
 | `src/thesis_rl/agent/planners/encoders/factory.py` | Modified | Register `lq_lidar` / `latent_query_lidar` |
 | `src/thesis_rl/sb3_extensions/builders.py` | Modified | Add `lq_lidar`/`latent_query_lidar` to the SB3 bridge allow-list (found necessary during M5) |
-| `src/thesis_rl/envs/observations/causal_lidar.py` | Modified | Bug fix: duck-type the vehicle-config mapping check instead of `isinstance(..., dict)` (`DEV-004`) |
+| `src/thesis_rl/envs/observations/causal_lidar.py` | Modified | Bug fixes: duck-type the vehicle-config mapping check instead of `isinstance(..., dict)`; unpack `Lidar.perceive()`'s real tuple return positionally instead of `getattr` (`DEV-004`) |
 | `src/thesis_rl/envs/observations/ray_noise.py` | Modified | Bug fix: duck-type the per-sensor config mapping check instead of `isinstance(..., dict)` (`DEV-004`) |
 | `conf/obs/stacked_lidar_v2.yaml` | Created | Observation selection |
 | `conf/agent/planner/encoder/lq_lidar.yaml` | Created | Encoder selection |
@@ -522,12 +535,14 @@ Findings established while scoping, all `VERIFIED` against the sources cited in
 | `uv run --no-sync python -m pytest -q tests/test_semantic_state_v3.py tests/test_stacked_lidar_observation.py tests/test_encoders_v11.py` | `PASS` (14/14) | 2026-07-30 | `TEST-013`, `TEST-014` — `semantic_v3`/legacy LiDAR unchanged |
 | `uv run --no-sync python -m pytest -q tests/test_checkpoint_manifest_sidecar.py` | `PASS` (8/8) | 2026-07-30 | `TEST-019` |
 | `uv run --no-sync python -m pytest -q tests/test_causal_lidar.py tests/test_ray_noise.py` | `PASS` (9/9) | 2026-07-30 | `DEV-004` regression tests |
-| `uv run --no-sync python -m pytest -q` (full suite) | `PASS` (1163/1163, 1 pre-existing unrelated warning) | 2026-07-30 | No regression anywhere in the repository |
+| `uv run --no-sync python -m pytest -q` (full suite, re-run after the third `DEV-004` fix) | `PASS` (1174/1174, 1 pre-existing unrelated warning) | 2026-07-30 | No regression anywhere in the repository |
+| `ruff check` / `ruff format --check` on `causal_lidar.py` and `test_causal_lidar.py` after the third fix | `PASS` | 2026-07-30 | Both files already formatted, no lint findings |
 | `ruff check src tests scripts` | `PASS` | 2026-07-30 | `make lint` scope, clean |
 | `ruff format --check` on every new/modified file in this plan | `PASS` after formatting the 4 newly created Python files (`lq_lidar/tokenizer.py`, `lq_lidar_encoder.py`, both new test files) | 2026-07-30 | `factory.py`'s pre-existing format debt (documented repository-wide baseline) is untouched by this plan's edits, confirmed via `ruff format --diff` showing only unrelated pre-existing lines |
 | `make config` / `make config-gpu` | `PASS` | 2026-07-30 | Both compose files validate with the new config keys |
 | `git diff --check` | `PASS` (no output) | 2026-07-30 | No whitespace errors |
-| `uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train obs=stacked_lidar_v2 agent/planner/encoder=lq_lidar` | `BLOCKED` | 2026-07-30 | `TEST-020`. Fails inside `CausalLidarFrameBuilder._lidar_blocks` on a real MetaDrive LiDAR sensor return-shape mismatch (`ValueError: setting an array element with a sequence...`), after the two config duck-typing bugs above were already fixed. This is a third, deeper pre-existing defect, tracked as a separate follow-up; confirmed to reproduce identically with the unmodified legacy `obs=stacked_lidar_state`, so it is not a regression introduced by this plan |
+| `uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train obs=stacked_lidar_v2 agent/planner/encoder=lq_lidar` | `PASS` | 2026-07-30 | `TEST-020`. Ran to completion (2000 steps, `Final Evaluation` printed) after all three `DEV-004` fixes; `CausalLidarFrameBuilder`/`RayNoiseWrapper` now work against the real MetaDrive vehicle/sensor API |
+| `uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train obs=stacked_lidar_state` | `PASS` | 2026-07-30 | Legacy arm, confirming the `DEV-004` fixes unblock it identically and introduce no regression to the frozen 1540-wide contract |
 
 ## 15. Final Reconciliation
 
@@ -544,11 +559,10 @@ Findings established while scoping, all `VERIFIED` against the sources cited in
 | `REQ-010` | Met | `buffer_size=300000` for both `td3_sb3`/`sac_sb3`, `24000` under `fast`; `TEST-015`, `TEST-016` |
 | `REQ-011` | Met | Existing finite/`[-1,1]` raises preserved and tested; `TEST-017` |
 
-Every requirement in this plan's authoritative table is met and tested. The
-one acceptance item not fully executed is the end-to-end smoke run
-(`TEST-020`), blocked by a pre-existing MetaDrive sensor-API defect outside
-this plan's scope (§11 finding 11), not by any requirement in §3. `M0`–`M4`
-and `M6` are complete; `M5` is complete except for that one blocked item.
+Every requirement in this plan's authoritative table is met and tested,
+including `TEST-020` (end-to-end smoke, both `stacked_lidar_v2` and the
+legacy `stacked_lidar_state`). `M0`–`M6` are all complete. No acceptance item
+remains outstanding.
 
 ### ChatGPT project source synchronization
 

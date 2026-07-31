@@ -2,7 +2,7 @@ name: semantic_v3
 type: semantic_v3
 
 history_length: 5
-compliance_history_length: 21
+context_history_length: 21
 route_tokens: 10
 dynamic_tokens: 16
 dynamic_conflict_reserved_slots: 8

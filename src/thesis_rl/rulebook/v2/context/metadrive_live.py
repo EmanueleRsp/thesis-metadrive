@@ -13,7 +13,12 @@ from typing import Any
 
 from thesis_rl.rulebook.v2.context.live_adapter import actor_snapshot_from_payload
 from thesis_rl.rulebook.v2.events import ContactOnsetBuffer
-from thesis_rl.rulebook.v2.types import ActorClass, ActorSnapshot, ContactOnsetRecord
+from thesis_rl.rulebook.v2.types import (
+    ActorClass,
+    ActorSnapshot,
+    ContactOnsetRecord,
+    StaticSubclass,
+)
 
 
 _LIVE_SIGNAL_STATE_MAP = {
@@ -83,6 +88,28 @@ def _actor_class(actor: Any) -> ActorClass:
     raise ValueError(f"Unsupported MetaDrive live actor class: {type(actor).__name__!r}")
 
 
+def _static_subclass(actor: Any, actor_class: ActorClass) -> StaticSubclass | None:
+    """Preserve the road-furniture type `_actor_class` collapses.
+
+    MetaDrive already distinguishes cones, barriers and warning triangles by
+    concrete class; OBS-V1.3 carries the distinction instead of discarding it.
+    Anything else collidable and static (traffic-light geometry, scenario
+    objects with no dedicated class) reports OTHER rather than failing, because
+    the coarse class is already correct and the refinement is optional.
+    """
+
+    if actor_class is not ActorClass.STATIC_COLLIDABLE:
+        return None
+    name = type(actor).__name__.lower()
+    if "cone" in name:
+        return StaticSubclass.TRAFFIC_CONE
+    if "barrier" in name:
+        return StaticSubclass.TRAFFIC_BARRIER
+    if "warning" in name:
+        return StaticSubclass.TRAFFIC_WARNING
+    return StaticSubclass.OTHER
+
+
 def _actor_speed_cap(actor: Any, actor_class: ActorClass) -> float | None:
     if actor_class is not ActorClass.VEHICLE:
         return None
@@ -145,6 +172,7 @@ def actor_snapshot_from_metadrive(env: Any, actor: Any) -> ActorSnapshot:
         "width_m": width,
         "live_lane_id": _live_lane_id(actor),
         "configured_speed_cap_mps": _actor_speed_cap(actor, actor_class),
+        "static_subclass": _static_subclass(actor, actor_class),
     }
     return actor_snapshot_from_payload(payload)
 

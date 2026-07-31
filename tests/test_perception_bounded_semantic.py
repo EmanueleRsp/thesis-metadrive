@@ -140,10 +140,10 @@ def test_v12_compliance_trace_is_right_aligned_and_does_not_expose_rulebook_time
 
     batch = builder.build(_Vehicle(), _context(0, ego, (), route, lanes))
 
-    assert batch.compliance_history.shape == (21, 23)
-    assert batch.compliance_history_mask.tolist() == [0.0] * 20 + [1.0]
-    assert batch.yellow_onset_memory.shape == (3,)
-    assert np.isfinite(batch.compliance_history).all()
+    assert batch.context_history.shape == (21, 23)
+    assert batch.context_history_mask.tolist() == [0.0] * 20 + [1.0]
+    assert batch.signal_onset_state.shape == (3,)
+    assert np.isfinite(batch.context_history).all()
 
 
 def test_v12_compliance_trace_preserves_actual_step_gaps(monkeypatch) -> None:
@@ -159,7 +159,7 @@ def test_v12_compliance_trace_preserves_actual_step_gaps(monkeypatch) -> None:
     builder.build(_Vehicle(), _context(0, ego, (), route, lanes))
     batch = builder.build(_Vehicle(), _context(3, ego, (), route, lanes))
 
-    assert batch.compliance_history_mask.tolist() == [0.0] * 17 + [1.0, 0.0, 0.0, 1.0]
+    assert batch.context_history_mask.tolist() == [0.0] * 17 + [1.0, 0.0, 0.0, 1.0]
 
 
 def test_v12_interaction_type_is_unknown_without_source_taxonomy(monkeypatch) -> None:

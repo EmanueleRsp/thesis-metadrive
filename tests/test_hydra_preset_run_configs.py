@@ -97,7 +97,7 @@ def test_scenarionet_acl_composes_with_six_semantic_arms() -> None:
     assert bool(cfg.curriculum.scenario_acl.use_replay) is True
     assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
-    assert str(cfg.agent.planner.encoder.name) == "latent_query_v2"
+    assert str(cfg.agent.planner.encoder.name) == "latent_query_v3"
 
 
 def test_run_profile_medium_overrides_experiment_budget() -> None:
@@ -322,9 +322,12 @@ def test_final_scalar_pipeline_defaults_compose() -> None:
     cfg = _compose()
 
     assert str(cfg.env.name) == "scenarionet"
-    assert str(cfg.obs.name) == "semantic_v2"
-    assert str(cfg.agent.planner.encoder.name) == "latent_query_v2"
-    assert str(cfg.agent.planner.encoder.architecture_version) == "1.0-final"
+    # The default composition tracks the authoritative contracts: OBS-V1.3
+    # (semantic_v3) with its matching ENC-V1.3 encoder. semantic_v2/lq remain
+    # selectable for reproducing historical runs, but are no longer the default.
+    assert str(cfg.obs.name) == "semantic_v3"
+    assert str(cfg.agent.planner.encoder.name) == "latent_query_v3"
+    assert str(cfg.agent.planner.encoder.architecture_version) == "1.2-perception-bounded"
     assert str(cfg.agent.planner.decoder.name) == "mlp_encoded"
     assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
     assert str(cfg.reward.name) == "scalar_reward"

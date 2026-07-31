@@ -5,7 +5,7 @@
 **Status:** APPROVED
 **Authoritative:** YES
 **Date:** 2026-07-29
-**Approval evidence:** explicit user approval 2026-07-29 (`DEC-001`, `DEC-002`, `DEC-003`, `DEC-004`, `DEC-005`, `DEC-006`); `DEC-007`, `DEC-008`, `DEC-009` decided under explicit delegation
+**Approval evidence:** explicit user approval 2026-07-29 (`DEC-001`, `DEC-002`, `DEC-003`, `DEC-004`, `DEC-005`, `DEC-006`); `DEC-007`, `DEC-008`, `DEC-009`, `DEC-010`, `DEC-011` decided under explicit delegation
 **Supersedes:** OBS-V1.2 for the selected semantic-observation implementation path
 **Related decisions:** ADR-004, ADR-022, ADR-026, ADR-033
 **Related documents:** ENC-V1.3, RULEBOOK-V4.7, `docs/implementation/semantic_observation_causal_correctness_v1.3_exec_plan.md`
@@ -46,9 +46,9 @@ D = 3009
 | `control_mask` | `(8,)` | 8 | unchanged |
 | `interaction` | `(8, 33)` | 264 | **-16** |
 | `interaction_mask` | `(8,)` | 8 | unchanged |
-| `compliance_history` | `(21, 23)` | 483 | **-21** |
-| `compliance_history_mask` | `(21,)` | 21 | unchanged |
-| `yellow_onset_memory` | `(3,)` | 3 | unchanged |
+| `context_history` | `(21, 23)` | 483 | **-21**, renamed (§5.8) |
+| `context_history_mask` | `(21,)` | 21 | renamed (§5.8) |
+| `signal_onset_state` | `(3,)` | 3 | renamed (§5.8) |
 
 `3064 - 55 = 3009`. The latent-query raw token count stays `143`: only
 per-group feature widths change, never the group cardinalities.
@@ -58,11 +58,11 @@ per-group feature widths change, never the group cardinalities.
 | Field | Group | Reason |
 |---|---|---|
 | Left/right adjacent lane available | `lane_road` | Permanently `0.0`. Neither `EpisodeCache` nor `RouteLaneRecord` carries lateral adjacency, so the value was never derivable. `DEC-002` |
-| Yellow-onset distance | `control` | The identical scalar already appears as `yellow_onset_memory[1]`. `DEC-001` |
-| Yellow-onset required stopping distance | `control` | `v·dt + v²/(2a)` with constant `a` is a bijection of `yellow_onset_memory[2]`: information zero, and not the *current* stopping distance since it uses the onset speed. `DEC-001` |
+| Yellow-onset distance | `control` | The identical scalar already appears as `signal_onset_state[1]`. `DEC-001` |
+| Yellow-onset required stopping distance | `control` | `v·dt + v²/(2a)` with constant `a` is a bijection of `signal_onset_state[2]`: information zero, and not the *current* stopping distance since it uses the onset speed. `DEC-001` |
 | Incompatible entry latched | `interaction` | A Rulebook violation latch. Forbidden by OBS-V1.2 §1/§12 and by this document. See ADR-033 |
 | Roundabout relation | `interaction` | Identical to bit 3 of the zone-type one-hot in the same token. `DEC-001` |
-| Control governs the ego movement | `compliance_history` | Identical by construction to "a movement-relevant control is present": the active control is selected only when it governs the ego lane. `DEC-001` |
+| Control governs the ego movement | `context_history` | Identical by construction to "a movement-relevant control is present": the active control is selected only when it governs the ego lane. `DEC-001` |
 
 ## 4. Causality
 
@@ -140,10 +140,24 @@ right half-plane onto zero.
   construction (minimum rotated rectangle, falling back to the clipped length
   for line-like geometries).
 - The type one-hot encodes the taxonomy the source can actually discriminate
-  (`DEC-003`): `0` detected obstacle, `1` road boundary, `2` other
-  non-drivable, `3` stationary vehicle, `4` unknown. The OBS-V1.2 taxonomy of
-  cone/barrier/wall/stationary-vehicle/generic was never emitted: every static
-  object was reported as `generic`.
+  (`DEC-003`, `DEC-010`): `0` traffic cone, `1` traffic barrier, `2` other
+  obstacle, `3` road boundary, `4` other non-drivable. Slots `0-2` come from
+  actors, slots `3-4` from the map feature catalogue.
+- **Every slot MUST be reachable.** The OBS-V1.2 taxonomy of
+  cone/barrier/wall/stationary-vehicle/generic was never emitted (every static
+  object was reported as `generic`), and its first replacement kept two dead
+  columns: `stationary vehicle` is unreachable by construction, because a
+  parked car carries `ActorClass.VEHICLE` and is emitted in the `dynamic`
+  group, and `unknown` was never assigned because the live class mapping fails
+  closed on unrecognised actors.
+- Slots `0-2` are populated from `ActorSnapshot.static_subclass`, a refinement
+  of `STATIC_COLLIDABLE` carried for the observation only. The Rulebook does not
+  branch on it. The distinction is admissible under §10.1: after physical
+  admission this contract assumes ideal semantic classification, which a fused
+  camera/LiDAR stack supports, and cones, barriers and warning triangles differ
+  both in appearance and in the response they require. A warning triangle is a
+  hazard marker rather than a rigid obstacle and shares slot `2` with statics
+  whose source type is not recognised.
 - A static object the assigned route cannot accept MUST degrade its own token
   and increment the route-incompatibility diagnostic, never fail the whole
   observation.
@@ -158,7 +172,7 @@ distance; direction `sin, cos`; control type one-hot (2); signal state one-hot
   because the Rulebook decides control-line crossing with the swept front
   bumper. A centre-based distance would offset every threshold the policy has
   to learn by half a vehicle length. This applies to the control token, the
-  compliance row and the yellow-onset latch.
+  context row and the signal-onset state.
 - The control type MUST be read from the control record. It MUST NOT be
   inferred from the signal-state string: an unobservable signal keeps the
   sentinel state and would otherwise be encoded as a stop control.
@@ -190,7 +204,14 @@ right-of-way (3); pre-existing occupancy active.
   actor distance; then `(zone_id, actor_id)` as tie-break. Ordering by
   identifier alone is not admissible.
 
-### 5.8 Compliance history
+### 5.8 Context history
+
+Renamed from `compliance_history` by `DEC-011`. The previous name described the
+Rulebook rule the group was originally introduced to support, not its content,
+and invited the reading that the group carries Rulebook verdicts. It does not:
+every value is an observation of the ego's own state or of the local road
+context, recorded by the observation builder. No field of this group is read
+from `RulebookMemory` (§4, ADR-033).
 
 The row has 23 values: ego speed; left/right local clearance; left and right
 boundary type one-hot (4 + 4); dashed-boundary intersection; dashed-boundary
@@ -205,6 +226,36 @@ established.
 
 The dashed-boundary lookup MUST select the nearest intersecting dashed marking
 at the ego's own level, applying the vertical guard.
+
+#### 5.8.1 Why the length is 21
+
+The control step is `physics_world_step_size × decision_repeat = 0.02 × 5 =
+0.1 s`, so 21 rows span 2.1 s: the current step plus the 2.0 s of
+`DASHED_TCAP_S` (Rulebook v2 `components/road.py`).
+
+This length is deliberately equal to the decision window of the longest
+road-discipline rule, and the reason must be stated rather than left implicit.
+A behaviour evaluated over a 2 s window is not merely harder to learn from
+0.5 s of memory — it is not identifiable from it, because two trajectories that
+differ only outside the visible window are indistinguishable to the policy while
+being scored differently. Sizing observed memory to the decision horizon is the
+standard remedy.
+
+Matching the *window* of a rule is not the same as observing its *output*. The
+group carries no timer, latch or verdict; it carries the raw quantities over the
+interval in which the agent must decide. The prohibition in §4 is on Rulebook
+state reaching the policy, and it is not weakened here.
+
+Two consequences follow and MUST be documented rather than silently relied on:
+
+- `ego_history` (5 × 10) and `dynamic` (16 × 5 × 22) cover 0.5 s of ego
+  dynamics and of other actors. `context_history` is the only source of memory
+  beyond 0.5 s for any quantity, and the only history of the road context at
+  all. It is not redundant with either.
+- The most recent row duplicates information already present at the current
+  step in `lane_road`, `controls` and `ego_history[-1]` — 23 of 3009
+  dimensions. The uniform ring buffer is kept in preference to a special case
+  for the last row.
 
 ## 6. Instrumentation
 

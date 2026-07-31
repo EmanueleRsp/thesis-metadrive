@@ -303,8 +303,8 @@ class LatentQueryEncoderV3(BaseEncoder):
         self.lane_road_projection = _TokenProjection(12, token_dim)
         self.controls_projection = _TokenProjection(15, token_dim)
         self.interactions_projection = _TokenProjection(33, token_dim)
-        self.compliance_history_projection = _TokenProjection(23, token_dim)
-        self.yellow_onset_memory_projection = _TokenProjection(3, token_dim)
+        self.context_history_projection = _TokenProjection(23, token_dim)
+        self.signal_onset_state_projection = _TokenProjection(3, token_dim)
 
         self.type_embedding = nn.Embedding(10, token_dim)
         self.history_time_embedding = nn.Embedding(21, token_dim)
@@ -377,13 +377,13 @@ class LatentQueryEncoderV3(BaseEncoder):
             self._indices(8, device=device)
         ).view(1, 8, -1)
         compliance = self._type(
-            self.compliance_history_projection(observation.compliance_history), 8
+            self.context_history_projection(observation.context_history), 8
         )
         compliance = compliance + self.history_time_embedding(
             self._indices(21, device=device)
         ).view(1, 21, -1)
         yellow = self._type(
-            self.yellow_onset_memory_projection(observation.yellow_onset_memory).unsqueeze(1), 9
+            self.signal_onset_state_projection(observation.signal_onset_state).unsqueeze(1), 9
         )
         tokens = torch.cat(
             (
@@ -412,9 +412,9 @@ class LatentQueryEncoderV3(BaseEncoder):
                 torch.ones((batch_size, 1), dtype=observation.static_mask.dtype, device=device),
                 observation.controls_mask,
                 observation.interactions_mask,
-                observation.compliance_history_mask,
+                observation.context_history_mask,
                 torch.ones(
-                    (batch_size, 1), dtype=observation.compliance_history_mask.dtype, device=device
+                    (batch_size, 1), dtype=observation.context_history_mask.dtype, device=device
                 ),
             ),
             dim=1,

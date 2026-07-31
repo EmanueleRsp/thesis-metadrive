@@ -8,6 +8,7 @@
 **Approval evidence:** explicit user approval 2026-07-29, together with OBS-V1.3
 **Supersedes:** ENC-V1.1 and ENC-V1.2 for the OBS-V1.3 observation path
 **Related decisions:** ADR-022, ADR-026, ADR-033
+**Note:** two token groups are renamed by OBS-V1.3 `DEC-011`; the widths and the token order are unaffected.
 **Related documents:** OBS-V1.3, `docs/implementation/semantic_observation_causal_correctness_v1.3_exec_plan.md`
 
 ## 1. Purpose and scope
@@ -43,10 +44,10 @@ changed widths are:
 | `lane_road_projection` | 14 | 12 |
 | `controls_projection` | 17 | 15 |
 | `interactions_projection` | 35 | 33 |
-| `compliance_history_projection` | 24 | 23 |
+| `context_history_projection` (was `compliance_history_projection`) | 24 | 23 |
 
 Every other projection is unchanged: `ego_history` 10, `ego_current` 3, `route`
-7, `dynamic` 22, `static` 13, `yellow_onset_memory` 3.
+7, `dynamic` 22, `static` 13, `signal_onset_state` (was `yellow_onset_memory`) 3.
 
 The raw token count remains `143` and the token order remains the OBS-V1.3
 group order. `LatentQueryEncoderV3Lite` and `LatentQueryEncoderV3Micro` inherit
