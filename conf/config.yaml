@@ -6,6 +6,7 @@ defaults:
   - env: scenarionet        # Canonical final environment family.
   - obs: semantic_v3         # OBS-V1.3 perception-bounded observation (D=3009).
   - experiment: default
+  - evaluation: scenarionet_panels
   - reward: scalar_reward   # Final Rulebook scalar reward.
   - video: default          # Video/replay pipeline settings in `conf/video/*`
   - run_profile: smoke      # Short integration profile by default.

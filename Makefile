@@ -1,4 +1,4 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-rebuild-existing scenarionet-recatalog scenarionet-pg-replenish scenarionet-freeze scenarionet-from-frozen scenarionet-materialize-frozen up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu run run-train run-golden-rulebook config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-rebuild-existing scenarionet-recatalog scenarionet-pg-replenish scenarionet-v1-2-seed-check scenarionet-v1-2-generate-pg-holdouts scenarionet-v1-2-verify-pg-holdouts scenarionet-v1-2-replenish-pg-holdouts scenarionet-v1-2-rebuild scenarionet-v1-2-prepare scenarionet-v1-2-bootstrap scenarionet-v1-2-build-panels scenarionet-v1-2-freeze scenarionet-v1-2-regenerate-freeze scenarionet-freeze scenarionet-from-frozen scenarionet-materialize-frozen up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu run run-train run-golden-rulebook config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
 
 PYTHON_QUALITY_PATHS ?= src tests scripts
 
@@ -31,6 +31,23 @@ RULEBOOK_V2_WORKERS ?= 16
 SCENARIONET_PG_REPLENISH_COUNT ?= 350
 SCENARIONET_PG_REPLENISH_SEED_START ?= 5920000
 SCENARIONET_PG_PROFILE_COUNTS ?=
+SCENARIONET_V12_PG_HOLDOUT_SEED_START ?= 2000000
+SCENARIONET_V12_PG_HOLDOUT_PER_PROFILE ?= auto
+SCENARIONET_V12_PG_HOLDOUT_WORKERS ?= 64
+SCENARIONET_V12_WAYMO_CATALOG_WORKERS ?= 64
+SCENARIONET_V12_PG_CATALOG_WORKERS ?= 64
+SCENARIONET_V12_RULEBOOK_WORKERS ?= 64
+SCENARIONET_V12_SPLIT_SEED ?= 0
+SCENARIONET_V12_PANEL_SEED ?= 20260731
+SCENARIONET_V12_WAYMO_TRAIN ?= 1100
+SCENARIONET_V12_PG_TRAIN ?= 1100
+SCENARIONET_V12_PG_HOLDOUT_MAX_BATCHES ?= 5
+SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE ?= 90
+SCENARIONET_V12_WAYMO_REQUIRED_ELIGIBLE ?= 1805
+SCENARIONET_V12_WAYMO_REQUIRED_A4_VRU ?= 417
+SCENARIONET_V12_WAYMO_ACQUISITION_WORKERS ?= 64
+SCENARIONET_V12_WAYMO_BATCH_SHARDS ?= 64
+SCENARIONET_V12_WAYMO_MAX_NEW_SHARDS ?= 256
 RULEBOOK_V2_EGO_CONFIG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/ego_config.json
 RULEBOOK_V2_TRIALS_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/braking_trials.json
 RULEBOOK_V2_CALIBRATION_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/calibration_b_e.json
@@ -236,6 +253,102 @@ scenarionet-pg-replenish:
 		--report-output "/workspace/data/scenarionet/pg/replenishment/pg_pilot_report_$(SCENARIONET_PG_REPLENISH_SEED_START).json" \
 		$(if $(strip $(SCENARIONET_PG_PROFILE_COUNTS)),--profile-counts-json '$(SCENARIONET_PG_PROFILE_COUNTS)',) \
 		--overwrite
+
+# ScenarioNet v1.2 holdout-first regeneration. This deliberately remains a
+# separate workflow from `scenarionet-rebuild-existing`, which reproduces v1.1.
+scenarionet-v1-2-seed-check:
+	docker compose run --rm dataset-pipeline uv run --no-sync python -c "from thesis_rl.scenarios.pipeline import assert_seed_range_disjoint; start=$(SCENARIONET_V12_PG_HOLDOUT_SEED_START); count=$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE) * 5; assert_seed_range_disjoint((start, start + count - 1), used_ranges=[(920_000, 921_749)]); print('seed range OK')"
+
+scenarionet-v1-2-generate-pg-holdouts: scenarionet-v1-2-seed-check
+	docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.generate_pg_dataset \
+		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
+		--repo-root /workspace/thesis-metadrive \
+		--seed-start "$(SCENARIONET_V12_PG_HOLDOUT_SEED_START)" \
+		--profile-counts-json '{"P0_simple":$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE),"P1_vehicle_interaction":$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE),"P2_merge_or_roundabout":$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE),"P3_intersection":$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE),"P5_complex_mixed":$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE)}' \
+		--report-output "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/pg/pg_holdout_$(SCENARIONET_V12_PG_HOLDOUT_SEED_START)_report.json" \
+		--workers "$(SCENARIONET_V12_PG_HOLDOUT_WORKERS)" \
+		--overwrite
+
+scenarionet-v1-2-verify-pg-holdouts: scenarionet-v1-2-seed-check
+	docker compose run --rm dataset-pipeline uv run --no-sync python -c "from collections import Counter; from thesis_rl.scenarios.pg.loader import load_exported_pg_entries; from thesis_rl.scenarios.pg.profiles import PG_PROFILES; start=$(SCENARIONET_V12_PG_HOLDOUT_SEED_START); count=$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE); entries=load_exported_pg_entries('/workspace/data/scenarionet/pg/database', data_root='/workspace/data/scenarionet', seed_start=start, count_per_profile=count, workers=1); profiles=Counter(e.record.pg_profile for e in entries); expected={p.name: count for p in PG_PROFILES}; assert len(entries) == count * len(PG_PROFILES), (len(entries), count * len(PG_PROFILES)); assert dict(profiles) == expected, (dict(profiles), expected); print('PG initial holdout batch OK:', dict(sorted(profiles.items())))"
+
+# Starting from the already-generated first batch, replenish equal-sized,
+# profile-equiprobable batches until split construction succeeds or the bound is hit.
+scenarionet-v1-2-replenish-pg-holdouts:
+	@set -e; batch_size=$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE); for batch in $$(seq 2 $(SCENARIONET_V12_PG_HOLDOUT_MAX_BATCHES)); do \
+		seed_start=$$(( $(SCENARIONET_V12_PG_HOLDOUT_SEED_START) + (batch - 1) * batch_size )); total_count=$$(($$batch * batch_size)); \
+		echo "[v1.2] PG holdout batch $$batch/$(SCENARIONET_V12_PG_HOLDOUT_MAX_BATCHES): seed_start=$$seed_start, per_profile_total=$$total_count"; \
+		docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.generate_pg_dataset --data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" --repo-root /workspace/thesis-metadrive --seed-start "$$seed_start" --profile-counts-json '{"P0_simple":$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE),"P1_vehicle_interaction":$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE),"P2_merge_or_roundabout":$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE),"P3_intersection":$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE),"P5_complex_mixed":$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE)}' --report-output "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/pg/pg_holdout_$${seed_start}_report.json" --workers "$(SCENARIONET_V12_PG_HOLDOUT_WORKERS)" --overwrite; \
+		if $${MAKE:-make} scenarionet-v1-2-rebuild; then exit 0; fi; \
+	done; echo "[v1.2] PG empirical holdout capacity remains infeasible after $(SCENARIONET_V12_PG_HOLDOUT_MAX_BATCHES) equiprobable batches" >&2; exit 1
+
+scenarionet-v1-2-prepare: scenarionet-v1-2-generate-pg-holdouts
+	@set -e; if $${MAKE:-make} scenarionet-v1-2-rebuild; then exit 0; fi; $${MAKE:-make} scenarionet-v1-2-replenish-pg-holdouts
+
+# Materialize missing Waymo source capacity, then build and freeze a new v1.2
+# dataset. This is intentionally distinct from `scenarionet-materialize-frozen`,
+# which reproduces an existing frozen UID selection exactly.
+scenarionet-v1-2-bootstrap:
+	WAYMO_REQUIRED_ELIGIBLE="$(SCENARIONET_V12_WAYMO_REQUIRED_ELIGIBLE)" \
+	WAYMO_REQUIRED_ARM_A4_VRU="$(SCENARIONET_V12_WAYMO_REQUIRED_A4_VRU)" \
+	WAYMO_BATCH_SHARDS="$(SCENARIONET_V12_WAYMO_BATCH_SHARDS)" \
+	WAYMO_MAX_NEW_SHARDS="$(SCENARIONET_V12_WAYMO_MAX_NEW_SHARDS)" \
+	WAYMO_NUM_WORKERS="$(SCENARIONET_V12_WAYMO_ACQUISITION_WORKERS)" \
+	$${MAKE:-make} waymo-expand
+	$${MAKE:-make} scenarionet-v1-2-regenerate-freeze
+
+scenarionet-v1-2-rebuild:
+	docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.build_catalog \
+		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
+		--waymo-workers "$(SCENARIONET_V12_WAYMO_CATALOG_WORKERS)" \
+		--pg-workers "$(SCENARIONET_V12_PG_CATALOG_WORKERS)" \
+		--output "$(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" \
+		--overwrite
+	docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.filter_rulebook_v2_catalog \
+		--catalog "$(RULEBOOK_V2_RAW_CATALOG_CONTAINER)" \
+		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
+		--output-catalog "$(RULEBOOK_V2_FILTERED_CATALOG_CONTAINER)" \
+		--eligibility-output "$(RULEBOOK_V2_ELIGIBILITY_CONTAINER)" \
+		--ego-config "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" \
+		--calibration "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" \
+		--workers "$(SCENARIONET_V12_RULEBOOK_WORKERS)" \
+		--overwrite
+	docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.build_splits_v1_2 \
+		--catalog "$(RULEBOOK_V2_FILTERED_CATALOG_CONTAINER)" \
+		--output "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_split.parquet" \
+		--split-manifest "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/splits/split_manifest.yaml" \
+		--pg-replenishment-report "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/pg/replenishment_report.json" \
+		--split-seed "$(SCENARIONET_V12_SPLIT_SEED)" \
+		--waymo-test-empirical 400 --pg-test-empirical 300 \
+		--waymo-validation 150 --pg-validation 150 \
+		--waymo-train "$(SCENARIONET_V12_WAYMO_TRAIN)" \
+		--pg-train "$(SCENARIONET_V12_PG_TRAIN)" \
+		--stratified-total 300 \
+		--train-arm-minimums-config /workspace/thesis-metadrive/conf/scenarios/pipeline_v1_2.yaml \
+		--pg-holdout-seed-start "$(SCENARIONET_V12_PG_HOLDOUT_SEED_START)" \
+		--pg-holdout-count-per-profile "$(SCENARIONET_V12_PG_HOLDOUT_PER_PROFILE)" \
+		--pg-holdout-batch-size-per-profile "$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE)" \
+		--overwrite
+	docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.compute_arm_thresholds \
+		--catalog "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_split.parquet" \
+		--output-catalog "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog.parquet" \
+		--thresholds "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/splits/arm_thresholds.json" \
+		--overwrite
+	docker compose run --rm dataset-pipeline uv run --no-sync python -m thesis_rl.cli.scenarios.build_runtime_databases \
+		--catalog "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog.parquet" \
+		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
+		--overwrite
+
+scenarionet-v1-2-build-panels:
+	@for spec in test_waymo_empirical:400 test_pg:300 test_arm_stratified:300 validation_waymo_empirical:150 validation_pg:150; do \
+		name=$${spec%%:*}; size=$${spec#*:}; \
+		docker compose run --rm dataset-pipeline uv run --no-sync python /workspace/thesis-metadrive/scripts/build_named_panel_manifest.py --panel-name "$$name" --size "$$size" --seed "$(SCENARIONET_V12_PANEL_SEED)" --catalog-path "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog.parquet" --data-root "$(dir $(RULEBOOK_V2_CONTAINER_DATA_ROOT))"; \
+	done
+
+scenarionet-v1-2-freeze:
+	$${MAKE:-make} scenarionet-freeze OVERWRITE=1
+
+scenarionet-v1-2-regenerate-freeze: scenarionet-v1-2-prepare scenarionet-v1-2-build-panels scenarionet-v1-2-freeze
 
 scenarionet-recatalog:
 	SCENARIONET_SKIP_PG=true SCENARIONET_SKIP_WAYMO=true bash scripts/prepare_scenarionet_dataset.sh

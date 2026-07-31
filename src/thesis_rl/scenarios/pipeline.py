@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections import Counter, deque
 from dataclasses import replace
 from itertools import permutations
@@ -17,6 +18,7 @@ from thesis_rl.scenarios.records import SIGNAL_RELIABILITIES
 from thesis_rl.scenarios.runtime_database import assign_runtime_indices
 from thesis_rl.scenarios.splits import (
     assert_no_group_overlap,
+    assert_no_pool_overlap,
     assert_pg_seed_disjoint,
     assert_waymo_training_20s,
     assign_grouped_splits,
@@ -46,13 +48,24 @@ def eligible_entries(
 
 
 def group_id_for_entry(entry: ScenarioCatalogEntry) -> str:
-    """Return the strongest available no-leakage grouping key."""
+    """Return the strongest available no-leakage grouping key.
+
+    Waymo preference order (`SCENARIONET-INTEGRATION` v1.2 §3.2): a genuine
+    shared log/segment identifier first; failing that, the map-identity
+    fingerprint (`record.map_id`, populated from `map_features` at
+    conversion time, see `waymo.py::waymo_map_fingerprint`), which catches
+    co-located 20 s windows converted from different TFRecord shards; only
+    then the per-scenario fallback.
+    """
 
     record = entry.record
     if record.source == "waymo":
         source_log_id = str(record.source_log_id or "").strip()
         if source_log_id and not source_log_id.startswith("training_20s.tfrecord-"):
             return source_log_id
+        map_id = str(record.map_id or "").strip()
+        if map_id:
+            return map_id
         return f"scenario:{record.scenario_uid}"
     if record.pg_seed is None:
         raise ValueError(f"PG record has no seed: {record.scenario_uid}")
@@ -710,6 +723,635 @@ def _transport_source_arm_quota(
     }
 
 
+def _stable_permutation_key(seed: object, name: str) -> str:
+    """Deterministic pseudo-random sort key, independent of population size.
+
+    Unlike `numpy.random.Generator.shuffle` over a Python list -- whose
+    resulting permutation depends on the *length* of the list being shuffled,
+    so appending new groups silently reorders the existing ones -- this key
+    depends only on `(seed, name)`. Appending a new group therefore only adds
+    a new key; it never changes the relative order of existing groups. This
+    is required by `SCENARIONET-INTEGRATION` v1.2 §6.5/`REQ-005`: a frozen
+    empirical holdout must be provably unaffected by scenarios acquired
+    afterward (`TEST-007`).
+    """
+
+    payload = f"{seed}:{name}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def reserve_empirical_holdouts(
+    entries: Sequence[ScenarioCatalogEntry],
+    *,
+    test_counts: Mapping[str, int],
+    validation_counts: Mapping[str, int],
+    seed: int,
+    allowed_signal_reliabilities: Mapping[str, Sequence[str]] | None = None,
+) -> tuple[tuple[ScenarioCatalogEntry, ...], tuple[ScenarioCatalogEntry, ...]]:
+    """Reserve label-blind empirical test/validation holdouts (SS3.5).
+
+    `SCENARIONET-INTEGRATION` v1.2 §3.5/§6.5: test is reserved before
+    validation, from a deterministic pseudo-random permutation of whole
+    groups, independently per source. Neither reservation ever reads
+    `primary_arm`, `tags`, `low_traffic`, or `dense_traffic` -- the walk order
+    depends only on the seeded group permutation and group size, so
+    relabelling the catalog's arm assignments cannot change which groups are
+    reserved (`REQ-001`, `TEST-001`).
+
+    Returns `(reserved, residual)`. `reserved` entries carry `split` set to
+    `"test"`/`"validation"` and `holdout_pool="empirical"`; `residual` entries
+    are unchanged and remain available for the stratified test pool and the
+    training pool. Raises if either source cannot reach its exact counts
+    without splitting a group.
+    """
+
+    if set(test_counts) != set(SOURCES) or set(validation_counts) != set(SOURCES):
+        raise ValueError(f"counts must define exactly {SOURCES}")
+    normalized_signal_policy = _normalize_signal_policy(allowed_signal_reliabilities)
+    entries = eligible_entries(entries)
+    entries = tuple(
+        entry
+        for entry in entries
+        if entry.features.signal_reliability in normalized_signal_policy[entry.record.source]
+    )
+    all_group_ids = group_ids_for_entries(entries)
+
+    reserved: list[ScenarioCatalogEntry] = []
+    residual: list[ScenarioCatalogEntry] = []
+    for source_index, source in enumerate(SOURCES):
+        needed = {
+            "test": int(test_counts[source]),
+            "validation": int(validation_counts[source]),
+        }
+        if any(value < 0 for value in needed.values()):
+            raise ValueError("empirical holdout counts must be non-negative")
+
+        source_entries = [entry for entry in entries if entry.record.source == source]
+        grouped: dict[str, list[ScenarioCatalogEntry]] = {}
+        for entry in source_entries:
+            grouped.setdefault(all_group_ids[entry.record.scenario_uid], []).append(entry)
+        # A population-size-independent key (see `_stable_permutation_key`):
+        # ordering by this key, rather than shuffling a Python list with
+        # `numpy`'s `Generator.shuffle`, keeps every existing group's
+        # position fixed when new groups are appended later.
+        group_ids = sorted(
+            grouped, key=lambda name: _stable_permutation_key((int(seed), source_index), name)
+        )
+
+        remaining = dict(needed)
+        pool_order: tuple[str, ...] = ("test", "validation")
+        assignments: dict[str, str] = {}
+        for group_id in group_ids:
+            size = len(grouped[group_id])
+            for pool in pool_order:
+                if remaining[pool] <= 0:
+                    continue
+                if size <= remaining[pool]:
+                    assignments[group_id] = pool
+                    remaining[pool] -= size
+                    break
+        if any(value != 0 for value in remaining.values()):
+            raise ValueError(
+                f"cannot reserve exact empirical holdout counts for {source}: "
+                f"requested test={needed['test']}, validation={needed['validation']}, "
+                f"unmet={remaining} out of {len(source_entries)} eligible records "
+                f"in {len(grouped)} groups"
+            )
+
+        for group_id, group_entries in grouped.items():
+            pool = assignments.get(group_id)
+            if pool is None:
+                residual.extend(group_entries)
+                continue
+            for entry in group_entries:
+                reserved.append(
+                    ScenarioCatalogEntry(
+                        record=replace(
+                            entry.record,
+                            split=pool,  # type: ignore[arg-type]
+                            holdout_pool="empirical",
+                            runtime_index=None,
+                        ),
+                        features=entry.features,
+                    )
+                )
+
+    reserved_records = [entry.record for entry in reserved]
+    assert_waymo_training_20s(reserved_records)
+    assert_pg_seed_disjoint(reserved_records)
+    assert_no_pool_overlap(reserved_records, group_id_by_uid=all_group_ids)
+    return tuple(reserved), tuple(residual)
+
+
+def apply_frozen_empirical_holdouts(
+    entries: Sequence[ScenarioCatalogEntry],
+    *,
+    frozen_test_uids: Sequence[str],
+    frozen_validation_uids: Sequence[str],
+) -> tuple[tuple[ScenarioCatalogEntry, ...], tuple[ScenarioCatalogEntry, ...]]:
+    """Reuse an already-frozen empirical holdout instead of recomputing it.
+
+    `reserve_empirical_holdouts` is exact-count reservation from a
+    deterministic permutation: appending new eligible scenarios to the pool
+    it walks can shift *which* groups fill an exact count (a new group that
+    sorts earlier can displace one that previously fit), so re-running it
+    against a larger pool is not guaranteed to reproduce a prior selection
+    unit-for-unit. `SCENARIONET-INTEGRATION` v1.2 §6.5's "immutable once
+    frozen" (`REQ-005`) is therefore an operational guarantee, not a pure
+    mathematical property of the allocator: once a holdout is frozen (its UID
+    list persisted to the split manifest), every later pipeline run must call
+    *this* function -- a pure membership partition against the recorded UIDs,
+    with no randomness and no recomputation -- instead of calling
+    `reserve_empirical_holdouts` again. Any scenario not in either frozen UID
+    list falls to the residual, available only to the stratified pool and
+    training (`TEST-007`).
+    """
+
+    test_uids = frozenset(frozen_test_uids)
+    validation_uids = frozenset(frozen_validation_uids)
+    overlap = test_uids & validation_uids
+    if overlap:
+        raise ValueError(f"frozen test/validation UID sets overlap: {sorted(overlap)[:5]}")
+
+    reserved: list[ScenarioCatalogEntry] = []
+    residual: list[ScenarioCatalogEntry] = []
+    seen_test: set[str] = set()
+    seen_validation: set[str] = set()
+    for entry in entries:
+        uid = entry.record.scenario_uid
+        if uid in test_uids:
+            seen_test.add(uid)
+            reserved.append(
+                ScenarioCatalogEntry(
+                    record=replace(
+                        entry.record, split="test", holdout_pool="empirical", runtime_index=None
+                    ),
+                    features=entry.features,
+                )
+            )
+        elif uid in validation_uids:
+            seen_validation.add(uid)
+            reserved.append(
+                ScenarioCatalogEntry(
+                    record=replace(
+                        entry.record,
+                        split="validation",
+                        holdout_pool="empirical",
+                        runtime_index=None,
+                    ),
+                    features=entry.features,
+                )
+            )
+        else:
+            residual.append(entry)
+
+    missing_test = test_uids - seen_test
+    missing_validation = validation_uids - seen_validation
+    if missing_test or missing_validation:
+        raise ValueError(
+            "frozen empirical holdout UIDs missing from the current catalog: "
+            f"test={sorted(missing_test)[:5]}, validation={sorted(missing_validation)[:5]}"
+        )
+    return tuple(reserved), tuple(residual)
+
+
+def reserve_stratified_pool(
+    entries: Sequence[ScenarioCatalogEntry],
+    *,
+    total: int,
+    seed: int,
+    protected_train_arm_minimums: Mapping[str, Mapping[str, int]] | None = None,
+    allowed_signal_reliabilities: Mapping[str, Sequence[str]] | None = None,
+) -> tuple[tuple[ScenarioCatalogEntry, ...], tuple[ScenarioCatalogEntry, ...]]:
+    """Select an arm-stratified, source-balanced test pool from the residual.
+
+    Reuses the v1.1 `balanced_arm_source` policy (§6.6, unchanged) restricted
+    to a single pool instead of three simultaneous splits: near-uniform
+    per-arm target (max count difference 1) with a deterministically shuffled
+    remainder, best-effort 50/50 Waymo/PG within each arm compensated by
+    availability and exact group/eligibility constraints
+    (`SCENARIONET-INTEGRATION` v1.2 §3.1/§3.5).
+
+    ``protected_train_arm_minimums`` reserves scarce source/arm capacity for
+    the subsequent train selection. It does not change the total per-arm test
+    target, but can make the stratified source mix less balanced for the
+    protected arm.
+
+    A group whose members span more than one arm can never be fully consumed
+    by a single per-(source, arm) cell and is therefore never selected here
+    -- it remains in the residual, available to the training pool. This is a
+    conservative, group-integrity-preserving simplification: it may leave a
+    mixed-arm group out of the stratified pool even when it could otherwise
+    contribute, but it never violates group indivisibility or an arm target.
+
+    Returns `(selected, residual)`; `selected` entries carry `split="test"`
+    and `holdout_pool="stratified"`. Raises loudly on infeasible per-arm
+    capacity rather than silently relaxing a quota.
+    """
+
+    normalized_signal_policy = _normalize_signal_policy(allowed_signal_reliabilities)
+    entries = eligible_entries(entries)
+    entries = tuple(
+        entry
+        for entry in entries
+        if entry.features.signal_reliability in normalized_signal_policy[entry.record.source]
+    )
+    if total < 0:
+        raise ValueError("stratified pool total must be non-negative")
+
+    base, remainder = divmod(int(total), len(ARMS))
+    ordered_arms = list(ARMS)
+    np.random.default_rng([int(seed), 0]).shuffle(ordered_arms)
+    arm_targets = {arm: base + (1 if arm in ordered_arms[:remainder] else 0) for arm in ARMS}
+
+    available_source_arm = _available_source_arm_counts(entries)
+    protected_source_arm = {source: {arm: 0 for arm in ARMS} for source in SOURCES}
+    if protected_train_arm_minimums is not None:
+        unknown_sources = set(protected_train_arm_minimums) - set(SOURCES)
+        if unknown_sources:
+            raise ValueError(f"unknown protected-train sources: {sorted(unknown_sources)}")
+        for source, arm_minimums in protected_train_arm_minimums.items():
+            unknown_arms = set(arm_minimums) - set(ARMS)
+            if unknown_arms:
+                raise ValueError(f"unknown protected-train arms: {sorted(unknown_arms)}")
+            for arm, value in arm_minimums.items():
+                minimum = int(value)
+                if minimum < 0:
+                    raise ValueError("protected train arm minimums must be non-negative")
+                if minimum > available_source_arm[source][arm]:
+                    raise ValueError(
+                        "protected train arm minimum exceeds residual capacity: "
+                        f"{source}/{arm} requested={minimum}, "
+                        f"available={available_source_arm[source][arm]}"
+                    )
+                protected_source_arm[source][arm] = minimum
+    selectable_source_arm = {
+        source: {
+            arm: available_source_arm[source][arm] - protected_source_arm[source][arm]
+            for arm in ARMS
+        }
+        for source in SOURCES
+    }
+    arm_capacity_deficits = {
+        arm: {
+            "requested": arm_targets[arm],
+            "available": sum(selectable_source_arm[source][arm] for source in SOURCES),
+            "available_by_source": {
+                source: selectable_source_arm[source][arm] for source in SOURCES
+            },
+        }
+        for arm in ARMS
+        if sum(selectable_source_arm[source][arm] for source in SOURCES) < arm_targets[arm]
+    }
+    if arm_capacity_deficits:
+        details = "; ".join(
+            f"{arm}: requested={payload['requested']}, available={payload['available']} "
+            f"(waymo={payload['available_by_source']['waymo']}, "
+            f"pg={payload['available_by_source']['pg']}), "
+            f"deficit={payload['requested'] - payload['available']}"
+            for arm, payload in sorted(arm_capacity_deficits.items())
+        )
+        raise ValueError(f"stratified pool arm coverage is infeasible: {details}")
+
+    source_arm_targets = {source: {arm: 0 for arm in ARMS} for source in SOURCES}
+    for arm in ARMS:
+        ideal_pg = arm_targets[arm] // 2
+        ideal_waymo = arm_targets[arm] - ideal_pg
+        pg_available = selectable_source_arm["pg"][arm]
+        waymo_available = selectable_source_arm["waymo"][arm]
+        pg_total = min(ideal_pg, pg_available)
+        waymo_total = min(ideal_waymo, waymo_available)
+        pg_shortfall = ideal_pg - pg_total
+        waymo_shortfall = ideal_waymo - waymo_total
+        waymo_total += min(pg_shortfall, max(0, waymo_available - waymo_total))
+        pg_total += min(waymo_shortfall, max(0, pg_available - pg_total))
+        source_arm_targets["pg"][arm] = pg_total
+        source_arm_targets["waymo"][arm] = waymo_total
+
+    all_group_ids = group_ids_for_entries(entries)
+    grouped: dict[str, list[ScenarioCatalogEntry]] = {}
+    for entry in entries:
+        grouped.setdefault(all_group_ids[entry.record.scenario_uid], []).append(entry)
+    group_source_arm = {
+        group_id: _group_source_arm_counts(group_entries)
+        for group_id, group_entries in grouped.items()
+    }
+
+    selected_groups: set[str] = set()
+    for source_index, source in enumerate(SOURCES):
+        for arm_index, arm in enumerate(ARMS):
+            target = source_arm_targets[source][arm]
+            if target <= 0:
+                continue
+            homogeneous_candidates = [
+                group_id
+                for group_id, counts in group_source_arm.items()
+                if group_id not in selected_groups
+                and counts[source][arm] == len(grouped[group_id])
+                and sum(
+                    counts[other][a]
+                    for other in SOURCES
+                    for a in ARMS
+                    if (other, a) != (source, arm)
+                )
+                == 0
+            ]
+            homogeneous_candidates.sort(
+                key=lambda name: _stable_permutation_key((int(seed), source_index, arm_index), name)
+            )
+            filled = 0
+            for group_id in homogeneous_candidates:
+                if filled >= target:
+                    break
+                size = len(grouped[group_id])
+                if filled + size > target:
+                    continue
+                selected_groups.add(group_id)
+                filled += size
+            if filled != target:
+                raise ValueError(
+                    f"cannot reach exact stratified target for {source}/{arm}: "
+                    f"requested {target}, filled {filled} "
+                    f"(some capacity may be trapped in mixed-arm groups)"
+                )
+
+    selected: list[ScenarioCatalogEntry] = []
+    residual: list[ScenarioCatalogEntry] = []
+    for group_id, group_entries in grouped.items():
+        if group_id in selected_groups:
+            for entry in group_entries:
+                selected.append(
+                    ScenarioCatalogEntry(
+                        record=replace(
+                            entry.record,
+                            split="test",
+                            holdout_pool="stratified",
+                            runtime_index=None,
+                        ),
+                        features=entry.features,
+                    )
+                )
+        else:
+            residual.extend(group_entries)
+
+    selected_records = [entry.record for entry in selected]
+    assert_waymo_training_20s(selected_records)
+    assert_pg_seed_disjoint(selected_records)
+    assert_no_pool_overlap(selected_records, group_id_by_uid=all_group_ids)
+    return tuple(selected), tuple(residual)
+
+
+def assign_training_pool_from_residual(
+    entries: Sequence[ScenarioCatalogEntry],
+    *,
+    arm_minimums: Mapping[str, Mapping[str, int]] | None = None,
+    source_counts: Mapping[str, int] | None = None,
+    seed: int = 0,
+) -> tuple[ScenarioCatalogEntry, ...]:
+    """Build the training pool from the residual and verify its arm minimums.
+
+    Without ``source_counts``, every residual eligible entry enters training.
+    With source counts, select an exact, near-uniform-by-arm train pool using
+    the v1.1 ``balanced_arm_source`` allocator.  The allocator keeps the
+    requested per-source train totals exact while compensating structural
+    empty source/arm cells (notably ``A4_vru`` for PG) in the other cells.
+    """
+
+    normalized_minimums = {source: {arm: 0 for arm in ARMS} for source in SOURCES}
+    if arm_minimums is not None:
+        unknown_sources = set(arm_minimums) - set(SOURCES)
+        if unknown_sources:
+            raise ValueError(f"unknown arm-minimum sources: {sorted(unknown_sources)}")
+        for source, payload in arm_minimums.items():
+            unknown_arms = set(payload) - set(ARMS)
+            if unknown_arms:
+                raise ValueError(f"unknown arms in minimums: {sorted(unknown_arms)}")
+            for arm, value in payload.items():
+                minimum = int(value)
+                if minimum < 0:
+                    raise ValueError("arm minimums must be non-negative")
+                normalized_minimums[source][arm] = minimum
+
+    entries = eligible_entries(entries)
+    if source_counts is None:
+        result = tuple(
+            ScenarioCatalogEntry(
+                record=replace(
+                    entry.record,
+                    split="train",
+                    holdout_pool=None,
+                    runtime_index=None,
+                ),
+                features=entry.features,
+            )
+            for entry in entries
+        )
+    else:
+        if set(source_counts) != set(SOURCES):
+            raise ValueError(f"source_counts must define exactly {SOURCES}")
+        if any(int(value) < 0 for value in source_counts.values()):
+            raise ValueError("training source counts must be non-negative")
+        targets = {
+            source: {
+                "train": int(source_counts[source]),
+                "validation": 0,
+                "test": 0,
+            }
+            for source in SOURCES
+        }
+        result = assign_arm_balanced_splits_to_targets(
+            entries,
+            targets=targets,
+            seed=int(seed),
+        )
+        actual_source_counts = {
+            source: sum(entry.record.source == source for entry in result) for source in SOURCES
+        }
+        expected_source_counts = {source: int(source_counts[source]) for source in SOURCES}
+        if actual_source_counts != expected_source_counts:
+            raise ValueError(
+                "training pool could not satisfy exact source targets: "
+                f"expected={expected_source_counts}, actual={actual_source_counts}"
+            )
+        arm_counts = {arm: sum(entry.record.primary_arm == arm for entry in result) for arm in ARMS}
+        if arm_counts and max(arm_counts.values()) - min(arm_counts.values()) > 1:
+            raise ValueError(f"training pool is not near-uniform across arms: actual={arm_counts}")
+        result = tuple(
+            ScenarioCatalogEntry(
+                record=replace(entry.record, holdout_pool=None, runtime_index=None),
+                features=entry.features,
+            )
+            for entry in result
+        )
+    actual = _available_source_arm_counts(result)
+    deficits = {
+        (source, arm): normalized_minimums[source][arm] - actual[source][arm]
+        for source in SOURCES
+        for arm in ARMS
+        if actual[source][arm] < normalized_minimums[source][arm]
+    }
+    if deficits:
+        details = "; ".join(
+            f"{source}/{arm}: minimum={normalized_minimums[source][arm]}, "
+            f"actual={actual[source][arm]}, "
+            f"deficit={normalized_minimums[source][arm] - actual[source][arm]}"
+            for source, arm in sorted(deficits)
+        )
+        raise ValueError(f"training pool does not meet configured per-arm minimums: {details}")
+    return result
+
+
+def assert_pg_holdout_profile_mixture(
+    entries: Sequence[ScenarioCatalogEntry],
+    *,
+    expected_fractions: Mapping[str, float],
+    tolerance: float = 0.05,
+) -> dict[str, float]:
+    """Verify the empirical PG holdout matches its declared frozen mixture.
+
+    `SCENARIONET-INTEGRATION` v1.2 §3.3 (`DEC-003`): the PG holdout
+    generation-profile mixture is declared and frozen before generation
+    (equiprobable across the five profiles by default), independent of any
+    observed arm deficit. This checks the *generated* empirical PG holdout
+    (`source="pg"`, `holdout_pool="empirical"`) against that declared
+    mixture within a tolerance, and returns the observed fractions for
+    reporting (`TEST-009`). Raises if any profile's observed share deviates
+    from its declared share by more than `tolerance`.
+    """
+
+    if abs(sum(expected_fractions.values()) - 1.0) > 1e-6:
+        raise ValueError("expected_fractions must sum to 1.0")
+    pg_holdout = [
+        entry
+        for entry in entries
+        if entry.record.source == "pg" and entry.record.holdout_pool == "empirical"
+    ]
+    if not pg_holdout:
+        raise ValueError("no empirical PG holdout records found")
+    counts = Counter(entry.record.pg_profile for entry in pg_holdout)
+    total = len(pg_holdout)
+    observed = {profile: counts.get(profile, 0) / total for profile in expected_fractions}
+    deviations = {
+        profile: abs(observed[profile] - expected_fractions[profile])
+        for profile in expected_fractions
+        if abs(observed[profile] - expected_fractions[profile]) > tolerance
+    }
+    if deviations:
+        details = "; ".join(
+            f"{profile}: expected={expected_fractions[profile]:.3f}, "
+            f"observed={observed[profile]:.3f}"
+            for profile in sorted(deviations)
+        )
+        raise ValueError(
+            f"PG holdout profile mixture deviates from the declared mixture: {details}"
+        )
+    return observed
+
+
+def assert_seed_range_disjoint(
+    candidate: tuple[int, int], *, used_ranges: Sequence[tuple[int, int]]
+) -> None:
+    """Verify a candidate inclusive seed range does not overlap any used range.
+
+    `SCENARIONET-INTEGRATION` v1.2 §3.3: PG holdout seeds occupy a range
+    disjoint from every other range used by the project (training, prior
+    frozen datasets, development). `assert_pg_seed_disjoint`
+    (`splits.py`) only checks disjointness *within* one assembled catalog;
+    this checks a candidate range against ranges recorded from other,
+    separately-generated builds, which cannot be inferred from a single
+    catalog alone.
+    """
+
+    low, high = candidate
+    if low > high:
+        raise ValueError(f"invalid seed range: {candidate}")
+    for other_low, other_high in used_ranges:
+        if low <= other_high and other_low <= high:
+            raise ValueError(
+                f"candidate seed range {candidate} overlaps used range ({other_low}, {other_high})"
+            )
+
+
+def assign_holdout_first_splits(
+    entries: Sequence[ScenarioCatalogEntry],
+    *,
+    test_empirical_counts: Mapping[str, int],
+    validation_counts: Mapping[str, int],
+    stratified_total: int,
+    train_arm_minimums: Mapping[str, Mapping[str, int]] | None = None,
+    train_source_counts: Mapping[str, int] | None = None,
+    seed: int,
+    allowed_signal_reliabilities: Mapping[str, Sequence[str]] | None = None,
+    empirical_candidate_entries: Sequence[ScenarioCatalogEntry] | None = None,
+) -> tuple[ScenarioCatalogEntry, ...]:
+    """Orchestrate the full v1.2 holdout-first allocation (§3.5).
+
+    Freeze order: `test_empirical` -> `validation` (both label-blind) ->
+    `test_stratified` (arm-balanced, from the residual) -> `train` (the
+    configured exact source totals, or every remaining eligible record when
+    no totals are configured, checked against `train_arm_minimums`). No
+    later stage can move a record into an earlier one, because each stage
+    only ever consumes the residual left by the previous one.
+
+    When `empirical_candidate_entries` is supplied, it is the only population
+    eligible for the empirical reservations. This supports the declared PG
+    holdout seed range: pre-existing PG data remains in the full catalog for
+    stratified/train use but cannot contaminate the frozen empirical mixture.
+    """
+
+    candidate_entries = tuple(empirical_candidate_entries or entries)
+    all_entries_by_uid = {entry.record.scenario_uid: entry for entry in entries}
+    unknown_candidate_uids = {entry.record.scenario_uid for entry in candidate_entries} - set(
+        all_entries_by_uid
+    )
+    if unknown_candidate_uids:
+        raise ValueError(
+            "empirical candidate entries are not present in the full catalog: "
+            f"{sorted(unknown_candidate_uids)[:5]}"
+        )
+    empirical_reserved, _ = reserve_empirical_holdouts(
+        candidate_entries,
+        test_counts=test_empirical_counts,
+        validation_counts=validation_counts,
+        seed=seed,
+        allowed_signal_reliabilities=allowed_signal_reliabilities,
+    )
+    empirical_test_uids = [
+        entry.record.scenario_uid for entry in empirical_reserved if entry.record.split == "test"
+    ]
+    empirical_validation_uids = [
+        entry.record.scenario_uid
+        for entry in empirical_reserved
+        if entry.record.split == "validation"
+    ]
+    empirical, after_empirical = apply_frozen_empirical_holdouts(
+        entries,
+        frozen_test_uids=empirical_test_uids,
+        frozen_validation_uids=empirical_validation_uids,
+    )
+    stratified, after_stratified = reserve_stratified_pool(
+        after_empirical,
+        total=stratified_total,
+        seed=seed,
+        protected_train_arm_minimums=train_arm_minimums,
+        allowed_signal_reliabilities=allowed_signal_reliabilities,
+    )
+    train = assign_training_pool_from_residual(
+        after_stratified,
+        arm_minimums=train_arm_minimums,
+        source_counts=train_source_counts,
+        seed=seed,
+    )
+
+    combined = empirical + stratified + train
+    combined_records = [entry.record for entry in combined]
+    all_group_ids = group_ids_for_entries(eligible_entries(entries))
+    assert_waymo_training_20s(combined_records)
+    assert_pg_seed_disjoint(combined_records)
+    assert_no_pool_overlap(combined_records, group_id_by_uid=all_group_ids)
+    return combined
+
+
 def assert_runtime_split_contract(
     entries: Sequence[ScenarioCatalogEntry],
     *,
@@ -1191,4 +1833,11 @@ __all__ = [
     "eligible_entries",
     "group_id_for_entry",
     "group_ids_for_entries",
+    "reserve_empirical_holdouts",
+    "apply_frozen_empirical_holdouts",
+    "reserve_stratified_pool",
+    "assign_training_pool_from_residual",
+    "assign_holdout_first_splits",
+    "assert_pg_holdout_profile_mixture",
+    "assert_seed_range_disjoint",
 ]

@@ -104,6 +104,26 @@ def test_validate_split_manifest_requires_v1_1_targets_and_balancing_policy() ->
         validate_split_manifest(payload)
 
 
+def test_validate_split_manifest_accepts_holdout_first_policy() -> None:
+    # SCENARIONET-INTEGRATION v1.2 SS3.4: the new policy name is accepted;
+    # counts/targets remain the same three-way shape since record.split
+    # stays train/validation/test, with holdout_pool as an invisible-to-this-
+    # validator sub-tag distinguishing empirical from stratified test.
+    payload = _split_manifest()
+    payload["split_policy"] = "holdout_first_empirical_then_stratified_then_balanced_train"
+    assert (
+        validate_split_manifest(payload)["split_policy"]
+        == "holdout_first_empirical_then_stratified_then_balanced_train"
+    )
+
+
+def test_validate_split_manifest_rejects_unknown_policy() -> None:
+    payload = _split_manifest()
+    payload["split_policy"] = "not_a_real_policy"
+    with pytest.raises(ManifestValidationError, match="split_policy is unsupported"):
+        validate_split_manifest(payload)
+
+
 def test_load_yaml_manifest_dispatches_validation(tmp_path: Path) -> None:
     path = tmp_path / "manifest.yaml"
     import yaml  # type: ignore[import-untyped]

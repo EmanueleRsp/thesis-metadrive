@@ -7,6 +7,7 @@ import pytest
 from thesis_rl.scenarios.records import ScenarioRecord
 from thesis_rl.scenarios.splits import (
     assert_no_group_overlap,
+    assert_no_pool_overlap,
     assert_pg_seed_disjoint,
     assert_waymo_training_20s,
     assign_grouped_splits,
@@ -54,7 +55,10 @@ def test_grouped_split_is_deterministic_and_disjoint() -> None:
 
 def test_grouped_split_fails_when_exact_counts_are_impossible() -> None:
     records = tuple(_pg_record(index) for index in range(4))
-    groups = {record.scenario_uid: "large" if index < 3 else "small" for index, record in enumerate(records)}
+    groups = {
+        record.scenario_uid: "large" if index < 3 else "small"
+        for index, record in enumerate(records)
+    }
 
     with pytest.raises(ValueError, match="cannot satisfy exact counts"):
         assign_grouped_splits(
@@ -84,3 +88,40 @@ def test_waymo_origin_must_be_training_20s() -> None:
     )
     with pytest.raises(ValueError, match="outside training_20s"):
         assert_waymo_training_20s([waymo])
+
+
+def test_pool_overlap_distinguishes_empirical_from_stratified_test() -> None:
+    # TEST-004/TEST-013 (SCENARIONET-INTEGRATION v1.2 REQ-013): the pool
+    # check treats split="test" records as two disjoint pools according to
+    # holdout_pool, in addition to the three canonical splits.
+    empirical = replace(_pg_record(0, split="test", seed=100), holdout_pool="empirical")
+    stratified = replace(_pg_record(1, split="test", seed=101), holdout_pool="stratified")
+    validation = _pg_record(2, split="validation", seed=102)
+    train = _pg_record(3, split="train", seed=103)
+    records = (empirical, stratified, validation, train)
+    group_ids = {record.scenario_uid: f"pg-seed:{record.pg_seed}" for record in records}
+
+    assert_no_pool_overlap(records, group_ids)
+
+
+def test_pool_overlap_rejects_shared_group_between_empirical_and_stratified() -> None:
+    shared_seed = 200
+    empirical = replace(_pg_record(0, split="test", seed=shared_seed), holdout_pool="empirical")
+    stratified = replace(_pg_record(1, split="test", seed=shared_seed), holdout_pool="stratified")
+    records = (empirical, stratified)
+    group_ids = {record.scenario_uid: f"pg-seed:{record.pg_seed}" for record in records}
+
+    with pytest.raises(ValueError, match="test_empirical and test_stratified"):
+        assert_no_pool_overlap(records, group_ids)
+
+
+def test_pool_overlap_degrades_to_three_way_check_without_holdout_pool() -> None:
+    # A v1.1-produced test record with holdout_pool=None behaves exactly
+    # like the existing three-way assert_no_group_overlap check.
+    test_record = _pg_record(0, split="test", seed=300)
+    validation_record = _pg_record(1, split="validation", seed=300)
+    records = (test_record, validation_record)
+    group_ids = {record.scenario_uid: f"pg-seed:{record.pg_seed}" for record in records}
+
+    with pytest.raises(ValueError, match="train|validation|test"):
+        assert_no_pool_overlap(records, group_ids)

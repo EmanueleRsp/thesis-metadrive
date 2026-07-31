@@ -59,6 +59,8 @@ from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_reco
 from thesis_rl.runtime.io.metadata import update_run_metadata
 from thesis_rl.runtime.io.run_logging import log_event
 from thesis_rl.runtime.async_evaluation import AsyncEvaluationManager, EvaluationJob
+from thesis_rl.runtime.evaluation_plan import resolve_scenarionet_evaluation_panels
+from thesis_rl.runtime.final_panels import run_scenarionet_final_panels
 from thesis_rl.sb3_extensions.replay import resolve_transition_replay_config
 from thesis_rl.runtime.wiring.builders import (
     adapter_space_kwargs,
@@ -596,6 +598,7 @@ def _run_scenario_acl_vectorized_training(
     if n_envs <= 1 or not bool(getattr(env, "acl_mode", False)):
         raise ValueError("Scenario ACL vector driver requires an ACL-mode vector environment.")
     scenario_cfg = curriculum_cfg.scenario_acl
+    validation_panels = resolve_scenarionet_evaluation_panels(cfg, final=False)
     arms = list(build_default_scenario_arms())
     catalog = read_scenario_catalog(str(semantic_env_overrides["catalog_path"]))
     train_records = tuple(
@@ -995,7 +998,14 @@ def _run_scenario_acl_vectorized_training(
                 **base_csv_fields,
                 "eval_id": job.eval_id,
                 "eval_type": "intermediate",
-                "scenario_set": f"validation_{_WAYMO_STRATIFIED_SET}",
+                "scenario_set": job.panel_name or f"validation_{_WAYMO_STRATIFIED_SET}",
+                "evaluation_batch_id": job.batch_id,
+                "panel_name": job.panel_name,
+                "evaluation_scope": job.evaluation_scope,
+                "panel_sha256": job.metadata.get("panel_sha256"),
+                "parent_panel_sha256": job.metadata.get("parent_panel_sha256"),
+                "frozen_selection_hash": job.metadata.get("frozen_selection_hash"),
+                "checkpoint_identity": job.checkpoint_stem,
                 "chunk_id": int(job.metadata.get("chunk_id", 0)),
                 "stage": job.stage,
                 "stage_index": job.stage_index,
@@ -1057,45 +1067,42 @@ def _run_scenario_acl_vectorized_training(
         """Queue validation while keeping the subprocess train env alive."""
 
         nonlocal current_eval_id
-        eval_episode_count = int(cfg.experiment.eval_episodes)
-        if eval_episode_count <= 0:
-            return
-        eval_env_overrides = apply_eval_scenario_seed_split(
-            base_run_seed=run_seed,
-            eval_env_overrides=None,
-            cfg=cfg,
-            n_eval_episodes=eval_episode_count,
-            split="validation",
-        )
-        eval_env_overrides.update(semantic_env_overrides)
-        current_eval_id += 1
+        batch_id = f"validation_{current_global_step:012d}"
+        batch_jobs: list[dict[str, Any]] = []
+        for panel_index, panel in enumerate(validation_panels, start=1):
+            current_eval_id += 1
+            eval_env_overrides = dict(semantic_env_overrides)
+            eval_env_overrides.update(panel.env_overrides())
+            batch_jobs.append(
+                {
+                    "eval_id": current_eval_id,
+                    "episode_count": panel.episode_count,
+                    "base_seed": None,
+                    "env_seed": run_seed + 500_000 + current_chunk_id + panel_index,
+                    "env_overrides": eval_env_overrides,
+                    "workers": evaluation_num_workers(cfg, final=False),
+                    "panel_name": panel.name,
+                    "evaluation_scope": panel.scope,
+                    "metadata": {"chunk_id": current_chunk_id, **panel.metadata()},
+                }
+            )
         log_event(
             paths.events_log_path,
-            "evaluation_started",
-            eval_id=current_eval_id,
+            "evaluation_batch_started",
+            batch_id=batch_id,
             stage="scenario_acl_vectorized",
             global_step=current_global_step,
-            episodes=eval_episode_count,
-            split="validation",
+            panels=[panel.name for panel in validation_panels],
             asynchronous=True,
         )
-        async_evaluation_manager.enqueue(
+        async_evaluation_manager.enqueue_batch(
             agent=agent,
             cfg=cfg,
-            eval_id=current_eval_id,
+            batch_id=batch_id,
             global_step=current_global_step,
             stage="scenario_acl_vectorized",
             stage_index=0,
-            episode_count=eval_episode_count,
-            base_seed=None,
-            env_seed=run_seed + 500_000 + current_chunk_id,
-            env_overrides=eval_env_overrides,
-            workers=evaluation_num_workers(cfg, final=False),
-            scenario_arm_schedule=tuple(
-                _select_waymo_eval_arm(index) for index in range(eval_episode_count)
-            ),
-            scenario_source_schedule=("waymo",) * eval_episode_count,
-            metadata={"chunk_id": current_chunk_id},
+            jobs=tuple(batch_jobs),
         )
 
     def log_slow_vector_step(global_step: int, payload: dict[str, Any]) -> None:
@@ -1282,6 +1289,48 @@ def _run_scenario_acl_vectorized_training(
         )
     if bool(cfg.checkpoint.get("save_rng_state", True)):
         _save_acl_rng_state(paths.checkpoints_dir / "latest_rng_state.pkl")
+
+    def build_final_panel_agent(final_env: Any) -> Agent:
+        evaluator = Agent(
+            preprocessor=preprocessor,
+            planner=load_planner(
+                cfg,
+                checkpoint_path=f"{paths.final_checkpoint_stem}.zip",
+                env=final_env,
+                validate_rollout_geometry=False,
+            ),
+            adapter=adapter,
+            ema_alpha=float(getattr(agent, "ema_alpha", 0.1)),
+        )
+        evaluator.load_adapter(checkpoint_path=f"{paths.final_checkpoint_stem}.zip", strict=True)
+        return evaluator
+
+    final_eval_id, final_panel_metrics = run_scenarionet_final_panels(
+        cfg=cfg,
+        recorder=recorder,
+        base_csv_fields=base_csv_fields,
+        run_dir=paths.run_dir,
+        checkpoint_stem=paths.final_checkpoint_stem,
+        global_step=current_global_step,
+        stage="scenario_acl",
+        stage_index=0,
+        build_agent=build_final_panel_agent,
+        seed_env=seed_env_spaces,
+        event=lambda name, **payload: log_event(paths.events_log_path, name, **payload),
+        eval_id_start=current_eval_id,
+    )
+    update_run_metadata(
+        paths.artifacts_dir,
+        {
+            "status": "completed",
+            "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_seconds": round(time.time() - start_time, 2),
+            "global_step": current_global_step,
+            "eval_id": final_eval_id,
+            "final_panels": sorted(final_panel_metrics),
+        },
+    )
+    return
 
     final_eval_overrides = apply_eval_scenario_seed_split(
         base_run_seed=run_seed,
@@ -1503,6 +1552,7 @@ def run_scenario_acl_training(
         raise ValueError("scenario_acl requires env=scenarionet.")
     arms: list[ScenarioArm] = list(build_default_scenario_arms())
     semantic_env_overrides = _semantic_catalog_overrides(cfg)
+    validation_panels = resolve_scenarionet_evaluation_panels(cfg, final=False)
     expected_arms = int(scenario_cfg.mab.num_arms)
     if len(arms) != expected_arms:
         raise ValueError(
@@ -1637,7 +1687,14 @@ def run_scenario_acl_training(
                 **base_csv_fields,
                 "eval_id": job.eval_id,
                 "eval_type": "intermediate",
-                "scenario_set": f"validation_{_WAYMO_STRATIFIED_SET}",
+                "scenario_set": job.panel_name or f"validation_{_WAYMO_STRATIFIED_SET}",
+                "evaluation_batch_id": job.batch_id,
+                "panel_name": job.panel_name,
+                "evaluation_scope": job.evaluation_scope,
+                "panel_sha256": job.metadata.get("panel_sha256"),
+                "parent_panel_sha256": job.metadata.get("parent_panel_sha256"),
+                "frozen_selection_hash": job.metadata.get("frozen_selection_hash"),
+                "checkpoint_identity": job.checkpoint_stem,
                 "chunk_id": int(job.metadata.get("chunk_id", 0)),
                 "stage": job.stage,
                 "stage_index": job.stage_index,
@@ -2085,46 +2142,42 @@ def run_scenario_acl_training(
             env.close()
 
             eval_metrics: dict[str, Any] = {}
-            eval_env_overrides = apply_eval_scenario_seed_split(
-                base_run_seed=run_seed,
-                eval_env_overrides=None,
-                cfg=cfg,
-                n_eval_episodes=int(cfg.experiment.eval_episodes),
-                split="validation",
-            )
-            eval_env_overrides.update(semantic_env_overrides)
-            eval_base_seed = None
-            eval_episode_count = int(cfg.experiment.eval_episodes)
-            if eval_episode_count <= 0:
-                continue
-            current_eval_id += 1
+            batch_id = f"validation_{current_global_step:012d}"
+            batch_jobs: list[dict[str, Any]] = []
+            for panel_index, panel in enumerate(validation_panels, start=1):
+                current_eval_id += 1
+                eval_env_overrides = dict(semantic_env_overrides)
+                eval_env_overrides.update(panel.env_overrides())
+                batch_jobs.append(
+                    {
+                        "eval_id": current_eval_id,
+                        "episode_count": panel.episode_count,
+                        "base_seed": None,
+                        "env_seed": run_seed + 500_000 + current_chunk_id + panel_index,
+                        "env_overrides": eval_env_overrides,
+                        "workers": evaluation_num_workers(cfg, final=False),
+                        "panel_name": panel.name,
+                        "evaluation_scope": panel.scope,
+                        "metadata": {"chunk_id": current_chunk_id, **panel.metadata()},
+                    }
+                )
             log_event(
                 paths.events_log_path,
-                "evaluation_started",
-                eval_id=current_eval_id,
+                "evaluation_batch_started",
+                batch_id=batch_id,
                 stage="scenario_acl_episode_sampling",
                 global_step=current_global_step,
-                episodes=eval_episode_count,
-                split="validation",
+                panels=[panel.name for panel in validation_panels],
                 asynchronous=True,
             )
-            async_evaluation_manager.enqueue(
+            async_evaluation_manager.enqueue_batch(
                 agent=agent,
                 cfg=cfg,
-                eval_id=current_eval_id,
+                batch_id=batch_id,
                 global_step=current_global_step,
                 stage="scenario_acl_episode_sampling",
                 stage_index=0,
-                episode_count=eval_episode_count,
-                base_seed=eval_base_seed,
-                env_seed=run_seed + 500_000 + current_chunk_id,
-                env_overrides=eval_env_overrides,
-                workers=evaluation_num_workers(cfg, final=False),
-                scenario_arm_schedule=tuple(
-                    _select_waymo_eval_arm(index) for index in range(eval_episode_count)
-                ),
-                scenario_source_schedule=("waymo",) * eval_episode_count,
-                metadata={"chunk_id": current_chunk_id},
+                jobs=tuple(batch_jobs),
             )
 
             try:
@@ -2347,6 +2400,50 @@ def run_scenario_acl_training(
             )
             if bool(cfg.checkpoint.get("save_rng_state", True)):
                 _save_acl_rng_state(latest_rng_state_path)
+
+        def build_final_panel_agent(final_env: Any) -> Agent:
+            evaluator = Agent(
+                preprocessor=preprocessor,
+                planner=load_planner(
+                    cfg,
+                    checkpoint_path=f"{paths.final_checkpoint_stem}.zip",
+                    env=final_env,
+                    validate_rollout_geometry=False,
+                ),
+                adapter=adapter,
+                ema_alpha=ema_alpha_cfg,
+            )
+            evaluator.load_adapter(checkpoint_path=f"{paths.final_checkpoint_stem}.zip", strict=True)
+            return evaluator
+
+        final_eval_id, final_panel_metrics = run_scenarionet_final_panels(
+            cfg=cfg,
+            recorder=recorder,
+            base_csv_fields=base_csv_fields,
+            run_dir=paths.run_dir,
+            checkpoint_stem=paths.final_checkpoint_stem,
+            global_step=current_global_step,
+            stage="scenario_acl",
+            stage_index=0,
+            build_agent=build_final_panel_agent,
+            seed_env=seed_env_spaces,
+            event=lambda name, **payload: log_event(paths.events_log_path, name, **payload),
+            eval_id_start=current_eval_id,
+        )
+        duration_seconds = round(time.time() - start_time, 2)
+        update_run_metadata(
+            paths.artifacts_dir,
+            {
+                "status": "completed",
+                "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_seconds": duration_seconds,
+                "global_step": int(current_global_step),
+                "chunk_id": int(current_chunk_id),
+                "eval_id": int(final_eval_id),
+                "final_panels": sorted(final_panel_metrics),
+            },
+        )
+        return
 
         final_eval_env_overrides = apply_eval_scenario_seed_split(
             base_run_seed=run_seed,

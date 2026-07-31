@@ -1,0 +1,18 @@
+# Frozen ScenarioNet endpoint policy. Runtime resolves identity and UID order
+# from the frozen index; cardinalities here document the approved contract.
+scenarionet:
+  frozen_index_path: ${paths.scenarionet_data_root}/frozen/scenario_selection_index.json
+  queue_batch_capacity: 1
+  full_profiles: [default, medium, tune, long, thesis]
+  profiles:
+    smoke:
+      scope: smoke
+      sampling_seed: 20260731
+    fast:
+      scope: fast
+      sampling_seed: 20260732
+    default: {scope: full}
+    medium: {scope: full}
+    tune: {scope: full}
+    long: {scope: full}
+    thesis: {scope: full}

@@ -965,7 +965,7 @@ class Agent:
                 seeded = False
                 try:
                     if hasattr(env, "env_method"):
-                        bounds = env.env_method("get_worker_seed_bounds")
+                        bounds = call_env_method(env, "get_worker_seed_bounds")
                         start_indices = [int(item[0]) for item in bounds]
                         scenario_counts = [int(item[1]) for item in bounds]
                     else:
@@ -2305,7 +2305,7 @@ class Agent:
                             "reason_code": result.payload.get("reason_code"),
                         }
                         if scenario_uid is not None and hasattr(env, "env_method"):
-                            env.env_method("quarantine_scenario_uid", str(scenario_uid))
+                            call_env_method(env, "quarantine_scenario_uid", str(scenario_uid))
                         completed_slots.append(slot)
                         del active[slot]
                         del states[slot]

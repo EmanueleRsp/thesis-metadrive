@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -13,8 +14,10 @@ from thesis_rl.scenarios.frozen import (
     build_frozen_index,
     frozen_catalog,
     load_frozen_index,
+    restore_frozen_panels,
     verify_frozen_sources,
 )
+from thesis_rl.scenarios.panel_manifest import NAMED_PANELS, PanelManifest
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
 
 
@@ -170,10 +173,10 @@ def test_repository_index_contains_the_completed_source_selection() -> None:
 
     assert len(payload["records"]) == 3500
     assert len(payload["source_inventory"]["waymo"]["selected_shards"]) == 768
-    assert len(payload["source_inventory"]["pg"]["generations"]) == 1750
+    assert len(payload["source_inventory"]["pg"]["generations"]) == 1695
     assert payload["split_manifest"]["targets"] == {
-        "waymo": {"train": 1000, "validation": 250, "test": 500},
-        "pg": {"train": 1000, "validation": 250, "test": 500},
+        "waymo": {"train": 1100, "validation": 150, "test": 555},
+        "pg": {"train": 1100, "validation": 150, "test": 445},
     }
 
 
@@ -203,6 +206,52 @@ def test_frozen_replay_rebuilds_canonical_artifacts() -> None:
     assert 'root / "splits" / "split_manifest.yaml"' in replay
     assert "scenario_catalog_frozen.parquet" not in replay
     assert 'root / "runtime" / "frozen"' not in replay
+    assert "restore_frozen_panels" in replay
+
+
+def test_restore_frozen_panels_recreates_embedded_uid_sequences(tmp_path: Path) -> None:
+    root = tmp_path / "scenarionet"
+    panels: dict[str, dict[str, object]] = {}
+    for index, (name, specification) in enumerate(NAMED_PANELS.items()):
+        uid = f"{name}:uid-{index}"
+        digest = hashlib.sha256(uid.encode("utf-8")).hexdigest()
+        manifest = PanelManifest(
+            schema_version="v1",
+            split=specification["split"],
+            seed=7,
+            size=1,
+            arms=("A0_simple_low_traffic",),
+            per_arm_counts=(1,),
+            scenario_uids=(uid,),
+            sha256=digest,
+            draw_policy=specification["draw_policy"],
+            source=specification["source"],
+        )
+        raw = {
+            "schema_version": manifest.schema_version,
+            "split": manifest.split,
+            "seed": manifest.seed,
+            "size": manifest.size,
+            "arms": list(manifest.arms),
+            "per_arm_counts": list(manifest.per_arm_counts),
+            "scenario_uids": list(manifest.scenario_uids),
+            "sha256": manifest.sha256,
+            "tracked_subset_uids": [],
+            "draw_policy": manifest.draw_policy,
+            "source": manifest.source,
+        }
+        content = json.dumps(raw, indent=2, sort_keys=True) + "\n"
+        panels[name] = {
+            "manifest": raw,
+            "artifact": {"sha256": hashlib.sha256(content.encode("utf-8")).hexdigest()},
+        }
+
+    restored = restore_frozen_panels({"panel_manifests": panels}, root, overwrite=False)
+
+    assert len(restored) == len(NAMED_PANELS)
+    assert all(path.is_file() for path in restored)
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        restore_frozen_panels({"panel_manifests": panels}, root, overwrite=False)
 
 
 def test_explicit_pg_task_runner_preserves_profile_seed_pairs(monkeypatch) -> None:

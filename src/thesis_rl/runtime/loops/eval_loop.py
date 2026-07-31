@@ -39,6 +39,8 @@ from thesis_rl.runtime.execution.seeding import (
     seed_env_spaces,
     set_global_seed,
 )
+from thesis_rl.runtime.evaluation_plan import is_scenarionet
+from thesis_rl.runtime.final_panels import run_scenarionet_final_panels
 
 
 def _append_rule_metrics_rows(
@@ -273,6 +275,54 @@ def run_evaluation(cfg: DictConfig) -> None:
                 "implemented yet. Use the training pipeline final evaluation path."
             )
         eval_env_overrides, eval_stage_name = _resolve_eval_env_overrides(curriculum_cfg)
+        if is_scenarionet(cfg):
+            stage_name = eval_stage_name or "baseline"
+            stage_index = 0
+            if curriculum_cfg.enabled and curriculum_cfg.is_staged and eval_stage_name is not None:
+                for index, stage in enumerate(curriculum_cfg.staged.stages):
+                    if stage.name == eval_stage_name:
+                        stage_index = index
+                        break
+
+            def build_final_panel_agent(panel_env):
+                preprocessor = build_preprocessor(cfg)
+                adapter = build_adapter(cfg, adapter_space_kwargs(panel_env.action_space))
+                planner = load_planner(
+                    cfg, checkpoint_path=str(ckpt), env=panel_env, validate_rollout_geometry=False
+                )
+                evaluator = Agent(
+                    preprocessor=preprocessor,
+                    planner=planner,
+                    adapter=adapter,
+                    ema_alpha=float(cfg.agent.planner.algorithm.get("monitor_ema_alpha", 0.1)),
+                )
+                evaluator.load_adapter(checkpoint_path=ckpt, strict=True)
+                return evaluator
+
+            _, panel_metrics = run_scenarionet_final_panels(
+                cfg=cfg,
+                recorder=recorder,
+                base_csv_fields=base_csv_fields,
+                run_dir=Path(str(cfg.paths.run_dir)),
+                checkpoint_stem=ckpt.with_suffix(""),
+                global_step=0,
+                stage=stage_name,
+                stage_index=stage_index,
+                build_agent=build_final_panel_agent,
+                seed_env=seed_env_spaces,
+                event=lambda name, **payload: log_event(events_log_path, name, **payload),
+                eval_id_start=0,
+            )
+            update_run_metadata(
+                artifacts_dir,
+                {
+                    "status": "completed",
+                    "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "duration_seconds": round(time.time() - start_time, 2),
+                    "final_panels": sorted(panel_metrics),
+                },
+            )
+            return
         eval_env_overrides = apply_eval_scenario_seed_split(
             base_run_seed=run_seed,
             eval_env_overrides=eval_env_overrides,

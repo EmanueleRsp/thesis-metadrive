@@ -4,16 +4,21 @@ draw, freezing/hashing/deduplication, and fail-closed load verification."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from thesis_rl.scenarios.arms import ARMS
 from thesis_rl.scenarios.panel_manifest import (
+    NAMED_PANELS,
     PanelManifest,
     build_balanced_panel,
+    build_empirical_panel,
+    build_profile_subset_panel,
     default_panel_manifest_path,
     load_panel_manifest,
+    named_panel_manifest_path,
     save_panel_manifest,
     select_tracked_subset_uids,
 )
@@ -99,9 +104,11 @@ def test_build_balanced_panel_fails_closed_when_an_arm_is_undersupplied() -> Non
     records = _balanced_records(per_arm=20)
     # Remove all but 2 candidates for one arm.
     scarce_arm = ARMS[0]
-    filtered = [r for r in records if r.primary_arm != scarce_arm][:0] + [
-        r for r in records if r.primary_arm != scarce_arm
-    ] + [r for r in records if r.primary_arm == scarce_arm][:2]
+    filtered = (
+        [r for r in records if r.primary_arm != scarce_arm][:0]
+        + [r for r in records if r.primary_arm != scarce_arm]
+        + [r for r in records if r.primary_arm == scarce_arm][:2]
+    )
     with pytest.raises(ValueError, match="eligible candidates exist"):
         build_balanced_panel(filtered, split="validation", size=60, seed=1)
 
@@ -142,6 +149,31 @@ def test_save_and_load_panel_manifest_round_trips(tmp_path: Path) -> None:
 
     loaded = load_panel_manifest(path)
     assert loaded == manifest
+
+
+def test_profile_subset_is_deterministic_and_carries_parent_identity() -> None:
+    records = _balanced_records(per_arm=20)
+    parent = build_balanced_panel(records, split="validation", size=60, seed=99)
+    first = build_profile_subset_panel(
+        parent, records, parent_name="validation_waymo_empirical", scope="smoke", size=10, seed=20260731
+    )
+    second = build_profile_subset_panel(
+        parent, records, parent_name="validation_waymo_empirical", scope="smoke", size=10, seed=20260731
+    )
+    assert first == second
+    assert first.scope == "smoke"
+    assert first.parent_panel == "validation_waymo_empirical"
+    assert first.parent_sha256 == parent.sha256
+    assert set(first.scenario_uids).issubset(set(parent.scenario_uids))
+
+
+def test_profile_subset_rejects_learner_style_or_invalid_scope() -> None:
+    records = _balanced_records(per_arm=2)
+    parent = build_balanced_panel(records, split="validation", size=12, seed=1)
+    with pytest.raises(ValueError, match="scope"):
+        build_profile_subset_panel(
+            parent, records, parent_name="validation_waymo_empirical", scope="full", size=2, seed=7
+        )
 
 
 def test_load_panel_manifest_fails_closed_on_tampered_hash(tmp_path: Path) -> None:
@@ -203,7 +235,9 @@ def test_select_tracked_subset_uids_rejects_count_larger_than_panel() -> None:
 # the manifest as `tracked_subset_uids`. ---
 
 
-def _feature_lookup_for(records: list[ScenarioRecord], *, feature_by_uid: dict[str, dict]) -> dict[str, dict]:
+def _feature_lookup_for(
+    records: list[ScenarioRecord], *, feature_by_uid: dict[str, dict]
+) -> dict[str, dict]:
     # Every record must have a feature entry; unlisted UIDs default to an
     # empty dict (all-None feature tuple), which is still a valid, distinct
     # diversity bucket.
@@ -216,7 +250,9 @@ def test_build_balanced_panel_without_tracked_subset_count_leaves_it_empty() -> 
     assert manifest.tracked_subset_uids == ()
 
 
-def test_build_balanced_panel_tracked_subset_count_per_arm_without_feature_lookup_uses_prefix_order() -> None:
+def test_build_balanced_panel_tracked_subset_count_per_arm_without_feature_lookup_uses_prefix_order() -> (
+    None
+):
     records = _balanced_records(per_arm=20)
     manifest = build_balanced_panel(
         records, split="validation", size=60, seed=1234, tracked_subset_count_per_arm=4
@@ -268,13 +304,25 @@ def test_build_balanced_panel_tracked_subset_is_deterministic() -> None:
     records = _balanced_records(per_arm=20)
     feature_lookup = _feature_lookup_for(
         records,
-        feature_by_uid={r.scenario_uid: {"has_intersection": bool(i % 3)} for i, r in enumerate(records)},
+        feature_by_uid={
+            r.scenario_uid: {"has_intersection": bool(i % 3)} for i, r in enumerate(records)
+        },
     )
     manifest_a = build_balanced_panel(
-        records, split="test", size=90, seed=99, tracked_subset_count_per_arm=3, feature_lookup=feature_lookup
+        records,
+        split="test",
+        size=90,
+        seed=99,
+        tracked_subset_count_per_arm=3,
+        feature_lookup=feature_lookup,
     )
     manifest_b = build_balanced_panel(
-        records, split="test", size=90, seed=99, tracked_subset_count_per_arm=3, feature_lookup=feature_lookup
+        records,
+        split="test",
+        size=90,
+        seed=99,
+        tracked_subset_count_per_arm=3,
+        feature_lookup=feature_lookup,
     )
     assert manifest_a.tracked_subset_uids == manifest_b.tracked_subset_uids
 
@@ -301,7 +349,12 @@ def test_save_and_load_panel_manifest_roundtrips_tracked_subset_uids(tmp_path: P
         records, feature_by_uid={r.scenario_uid: {"has_intersection": True} for r in records}
     )
     manifest = build_balanced_panel(
-        records, split="validation", size=60, seed=5, tracked_subset_count_per_arm=4, feature_lookup=feature_lookup
+        records,
+        split="validation",
+        size=60,
+        seed=5,
+        tracked_subset_count_per_arm=4,
+        feature_lookup=feature_lookup,
     )
     path = tmp_path / "panel.json"
     save_panel_manifest(manifest, path)
@@ -319,3 +372,120 @@ def test_load_panel_manifest_without_tracked_subset_uids_key_defaults_empty(tmp_
     path.write_text(json.dumps(payload), encoding="utf-8")
     loaded = load_panel_manifest(path)
     assert loaded.tracked_subset_uids == ()
+
+
+# --- SCENARIONET-INTEGRATION v1.2 / EVAL-PROTOCOL v1.1 dual-policy panels (M5) ---
+
+
+def _skewed_records(counts: dict[str, int]) -> list[ScenarioRecord]:
+    records = []
+    counter = 0
+    for arm, count in counts.items():
+        for _ in range(count):
+            records.append(_record(counter, arm))
+            counter += 1
+    return records
+
+
+def test_empirical_panel_is_not_arm_balanced() -> None:
+    # TEST-010 (EVAL-PROTOCOL v1.1 REQ-004): drawing from a heavily skewed
+    # pool produces a skewed panel, tracking the pool's distribution rather
+    # than rebalancing it -- the opposite of build_balanced_panel.
+    records = _skewed_records(
+        {
+            "A0_simple_low_traffic": 90,
+            "A1_traffic": 5,
+            "A2_junction": 5,
+        }
+    )
+    manifest = build_empirical_panel(records, split="test", source="waymo", size=50, seed=7)
+    counts = dict(zip(manifest.arms, manifest.per_arm_counts))
+    assert counts.get("A0_simple_low_traffic", 0) > counts.get("A1_traffic", 0)
+    assert sum(manifest.per_arm_counts) == 50
+    assert manifest.draw_policy == "empirical"
+    assert manifest.source == "waymo"
+
+
+def test_empirical_panel_never_reads_arm_for_selection() -> None:
+    # Relabelling every record's arm must not change which UIDs are drawn:
+    # the empirical draw shuffles by scenario_uid only.
+    records = _skewed_records({"A0_simple_low_traffic": 40, "A1_traffic": 40})
+    relabelled = [replace(r, primary_arm="A5_critical_mixed") for r in records]
+    manifest_a = build_empirical_panel(records, split="test", source="waymo", size=30, seed=3)
+    manifest_b = build_empirical_panel(relabelled, split="test", source="waymo", size=30, seed=3)
+    assert manifest_a.scenario_uids == manifest_b.scenario_uids
+
+
+def test_empirical_panel_fails_closed_when_undersupplied() -> None:
+    records = _skewed_records({"A0_simple_low_traffic": 5})
+    with pytest.raises(ValueError, match="requires 50 scenarios"):
+        build_empirical_panel(records, split="test", source="waymo", size=50, seed=1)
+
+
+def test_balanced_panel_retains_arm_balanced_draw_policy_default() -> None:
+    # TEST-011: existing arm-balanced behavior/manifest fields are unchanged.
+    manifest = build_balanced_panel(
+        _balanced_records(per_arm=10), split="validation", size=12, seed=0
+    )
+    assert manifest.draw_policy == "arm_balanced"
+    assert manifest.source == "combined"
+
+
+def test_save_and_load_panel_manifest_roundtrips_draw_policy_and_source(tmp_path: Path) -> None:
+    # TEST-012: hash/ordering semantics preserved; new fields round-trip.
+    manifest = build_empirical_panel(
+        _skewed_records({"A0_simple_low_traffic": 20, "A1_traffic": 20}),
+        split="validation",
+        source="pg",
+        size=15,
+        seed=2,
+    )
+    path = tmp_path / "panel.json"
+    save_panel_manifest(manifest, path)
+    loaded = load_panel_manifest(path)
+    assert loaded == manifest
+    assert loaded.draw_policy == "empirical"
+    assert loaded.source == "pg"
+
+
+def test_load_panel_manifest_without_draw_policy_key_defaults_to_arm_balanced_combined(
+    tmp_path: Path,
+) -> None:
+    # A manifest persisted before v1.1 (no draw_policy/source keys) must
+    # still load, defaulting to the only behavior it could have had.
+    manifest = build_balanced_panel(_balanced_records(per_arm=5), split="test", size=6, seed=0)
+    path = tmp_path / "legacy_panel.json"
+    save_panel_manifest(manifest, path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["draw_policy"]
+    del payload["source"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_panel_manifest(path)
+    assert loaded.draw_policy == "arm_balanced"
+    assert loaded.source == "combined"
+
+
+def test_named_panel_manifest_path_rejects_unknown_name(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unknown named panel"):
+        named_panel_manifest_path("not_a_real_panel", data_root=tmp_path)
+
+
+def test_named_panel_manifest_path_matches_convention(tmp_path: Path) -> None:
+    for name in NAMED_PANELS:
+        path = named_panel_manifest_path(name, data_root=tmp_path)
+        assert path == tmp_path / "scenarionet" / "panels" / f"{name}_panel_manifest_v1.json"
+
+
+def test_panel_manifest_rejects_unsupported_draw_policy() -> None:
+    manifest = build_balanced_panel(_balanced_records(per_arm=2), split="test", size=6, seed=0)
+    tampered = replace(manifest, draw_policy="bogus")
+    with pytest.raises(ValueError, match="unsupported panel draw_policy"):
+        tampered.verify_self_consistent()
+
+
+def test_panel_manifest_rejects_unsupported_source() -> None:
+    manifest = build_balanced_panel(_balanced_records(per_arm=2), split="test", size=6, seed=0)
+    tampered = replace(manifest, source="bogus")
+    with pytest.raises(ValueError, match="unsupported panel source"):
+        tampered.verify_self_consistent()

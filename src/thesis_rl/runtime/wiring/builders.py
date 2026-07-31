@@ -13,9 +13,10 @@ from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.agent.adapters.interfaces.base import BaseAdapter
 from thesis_rl.agent.adapters.identity import IdentityAdapter
-from thesis_rl.agent.planners.core.utils import count_envs
+from thesis_rl.agent.planners.core.utils import call_env_method, count_envs
 from thesis_rl.envs.factory import make_env, scenario_evaluation_runtime_indices
 from thesis_rl.envs.wrappers import RuleRewardWrapper
+from thesis_rl.rulebook.v2.errors import RuntimeScenarioNotEvaluableError
 from thesis_rl.rulebook.v2.wrapper import RulebookV2MonitorWrapper
 from thesis_rl.agent.preprocessors.interfaces.base import BasePreprocessor
 from thesis_rl.agent.preprocessors.identity import IdentityPreprocessor
@@ -41,7 +42,7 @@ def collect_scenario_runtime_stats(env: Any) -> dict[str, Any] | None:
     """Collect and merge ScenarioNet counters from direct or vectorized envs."""
 
     if hasattr(env, "env_method"):
-        raw_stats = env.env_method("get_runtime_stats")
+        raw_stats = call_env_method(env, "get_runtime_stats")
     else:
         base_env = getattr(env, "unwrapped", env)
         getter = getattr(base_env, "get_runtime_stats", None)
@@ -175,12 +176,19 @@ class _CrashLoggingEnvWrapper(gym.Wrapper):
     def reset(self, **kwargs):
         try:
             return self.env.reset(**kwargs)
+        except RuntimeScenarioNotEvaluableError:
+            # A typed, already-diagnosed data-abort (RSA-1), not an unexpected
+            # worker crash: the subprocess loop handles it as a data-abort
+            # marker, so logging it here would mislabel expected behavior.
+            raise
         except Exception:
             self._log_and_reraise()
 
     def step(self, action):
         try:
             return self.env.step(action)
+        except RuntimeScenarioNotEvaluableError:
+            raise
         except Exception:
             self._log_and_reraise()
 

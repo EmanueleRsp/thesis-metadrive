@@ -1,0 +1,8 @@
+pipeline_version: scenarionet_pipeline_v1_2
+
+split:
+  # Preserve the scarce Waymo A0 population for training. The stratified test
+  # may use PG to fill the corresponding 50-episode arm target.
+  train_arm_minimums:
+    waymo:
+      A0_simple_low_traffic: 20

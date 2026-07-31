@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import pickle
 import subprocess
@@ -8,7 +10,7 @@ import importlib.util
 import warnings
 from collections import deque
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 from thesis_rl.scenarios.arms import assign_primary_arm, derive_scenario_tags
@@ -145,6 +147,45 @@ def convert_waymo_training_20s(
     return command
 
 
+def waymo_map_fingerprint(scenario: Mapping[str, Any]) -> str | None:
+    """Deterministic map-identity fingerprint derived from `map_features`.
+
+    `waymo_group_id` below identifies technical provenance (TFRecord shard),
+    not geographic co-location: converted `training_20s` scenarios expose no
+    genuine shared log/segment identifier, so grouping by shard is the only
+    signal available for acquisition tracking, but it cannot detect two 20 s
+    windows recorded over the same road geometry from different shards.
+    This fingerprint fills that gap (`SCENARIONET-INTEGRATION` v1.2 §3.2):
+    it hashes a deterministic, order-independent sample of road-feature
+    polyline points, quantized to the meter, so co-located scenarios collapse
+    onto the same fingerprint regardless of which shard produced them.
+    Returns `None` when the scenario carries no usable map geometry.
+    """
+    map_features = scenario.get("map_features")
+    if not isinstance(map_features, Mapping) or not map_features:
+        return None
+    points: list[tuple[float, float]] = []
+    for feature in map_features.values():
+        if not isinstance(feature, Mapping):
+            continue
+        polyline = feature.get("polyline")
+        if polyline is None:
+            continue
+        for point in polyline:
+            try:
+                x, y = float(point[0]), float(point[1])
+            except (TypeError, IndexError, ValueError):
+                continue
+            points.append((round(x), round(y)))
+    if not points:
+        return None
+    points.sort()
+    midpoint = len(points) // 2
+    sample = points[:25] + points[midpoint : midpoint + 25] + points[-25:]
+    payload = json.dumps(sample).encode("utf-8")
+    return "map:" + hashlib.sha256(payload).hexdigest()[:16]
+
+
 def waymo_group_id(scenario: dict[str, Any]) -> str:
     metadata = scenario.get("metadata", {})
     if not isinstance(metadata, dict):
@@ -225,6 +266,7 @@ def _load_waymo_entry(
         raise ValueError(f"scenario file has no id: {path}")
     features = extract_scenario_features(scenario, "waymo")
     group_id = waymo_group_id(scenario)
+    map_fingerprint = waymo_map_fingerprint(scenario)
     relative_path = path.relative_to(base).as_posix()
     record = ScenarioRecord(
         scenario_uid=f"waymo:{dataset_version}:{scenario_id}",
@@ -241,7 +283,7 @@ def _load_waymo_entry(
         length=int(scenario["length"]),
         pg_profile=None,
         pg_seed=None,
-        map_id=None,
+        map_id=map_fingerprint,
         primary_arm=assign_primary_arm(features),
         tags=derive_scenario_tags(features),
         signal_reliability=features.signal_reliability,

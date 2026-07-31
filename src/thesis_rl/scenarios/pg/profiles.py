@@ -76,16 +76,12 @@ class PGProfile:
             tokens = selected + filler
             rng.shuffle(tokens)
         else:
-            tokens = [
-                str(rng.choice(np.asarray(self.native_tokens))) for _ in range(token_count)
-            ]
+            tokens = [str(rng.choice(np.asarray(self.native_tokens))) for _ in range(token_count)]
         return GenerationSpec(
             profile=self.name,
             seed=int(seed),
             block_sequence=tuple(str(token) for token in tokens),
-            traffic_density=float(
-                rng.uniform(self.traffic_density_min, self.traffic_density_max)
-            ),
+            traffic_density=float(rng.uniform(self.traffic_density_min, self.traffic_density_max)),
             random_lane_num=True,
             random_lane_width=True,
             lane_num=None,
@@ -97,9 +93,7 @@ class PGProfile:
 
 PG_PROFILES: tuple[PGProfile, ...] = (
     PGProfile("P0_simple", ("S", "C"), 0.00, 0.05, (2, 3)),
-    PGProfile(
-        "P1_vehicle_interaction", ("S", "C"), 0.07, 0.18, (2, 3, 4), accident_prob=0.03
-    ),
+    PGProfile("P1_vehicle_interaction", ("S", "C"), 0.07, 0.18, (2, 3, 4), accident_prob=0.03),
     PGProfile(
         "P2_merge_or_roundabout",
         ("S", "C"),
@@ -131,6 +125,19 @@ PG_PROFILES: tuple[PGProfile, ...] = (
         accident_prob=0.15,
     ),
 )
+
+
+PG_HOLDOUT_EQUIPROBABLE_MIXTURE: dict[str, float] = {
+    profile.name: 1.0 / len(PG_PROFILES) for profile in PG_PROFILES
+}
+"""Frozen PG generation-profile mixture for empirical validation/test holdouts.
+
+`SCENARIONET-INTEGRATION` v1.2 §3.3 (`DEC-003`): 20% per profile,
+independent of any observed arm deficit. The *training* PG pool may
+continue deficit-driven replenishment (`pg/replenishment.py`, ADR-008/
+ADR-009); only the holdout generation uses this declared mixture. See
+`pipeline.py::assert_pg_holdout_profile_mixture`.
+"""
 
 
 def get_pg_profile(name: str) -> PGProfile:

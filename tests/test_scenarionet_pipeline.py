@@ -5,26 +5,36 @@ import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
 from thesis_rl.cli.scenarios.pipeline_config import _validate_payload
 from thesis_rl.envs.factory import _runtime_rulebook_records
 from thesis_rl.scenarios.catalog import ScenarioCatalog, ScenarioCatalogEntry
+from thesis_rl.scenarios.pg.profiles import PG_HOLDOUT_EQUIPROBABLE_MIXTURE
 from thesis_rl.scenarios.pipeline import (
     _transport_source_arm_quota,
+    apply_frozen_empirical_holdouts,
     assign_catalog_runtime_indices,
     assign_arm_balanced_splits_to_targets,
+    assign_holdout_first_splits,
     assign_source_splits,
     assign_source_splits_to_targets,
+    assign_training_pool_from_residual,
     arm_source_balance_diagnostics,
     arm_selection_diagnostics,
+    assert_pg_holdout_profile_mixture,
     assert_runtime_split_contract,
+    assert_seed_range_disjoint,
     balance_arm_distribution,
     group_id_for_entry,
+    reserve_empirical_holdouts,
+    reserve_stratified_pool,
 )
 from thesis_rl.scenarios.reports import compute_pg_replenishment_report
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
@@ -539,20 +549,51 @@ def test_pipeline_assigns_source_splits_and_runtime_indices() -> None:
 
 
 def test_waymo_training_shard_is_not_used_as_leakage_group() -> None:
+    # SCENARIONET-INTEGRATION v1.2 SS3.2: a TFRecord shard name is not a
+    # genuine log/segment identifier, so it must not become the group by
+    # itself. With no map fingerprint available (map_id=None) the fallback is
+    # per-scenario; with one available, the map fingerprint groups
+    # co-located scenarios instead (see the dedicated fingerprint test
+    # below). A genuine log/segment identifier always wins.
     entry = _entry("waymo", 0)
-    shard_record = replace(
+    shard_record_no_fingerprint = replace(
         entry.record,
         source_log_id="training_20s.tfrecord-00011-of-01000",
+        map_id=None,
     )
     true_log_record = replace(entry.record, source_log_id="waymo-log-1")
 
     assert (
-        group_id_for_entry(ScenarioCatalogEntry(shard_record, entry.features))
+        group_id_for_entry(ScenarioCatalogEntry(shard_record_no_fingerprint, entry.features))
         == "scenario:waymo:v1:0"
     )
     assert (
         group_id_for_entry(ScenarioCatalogEntry(true_log_record, entry.features)) == "waymo-log-1"
     )
+
+
+def test_waymo_shard_falls_back_to_map_fingerprint_before_per_scenario() -> None:
+    # SCENARIONET-INTEGRATION v1.2 SS3.2 / REQ-006: when only a shard name is
+    # available, the map-identity fingerprint (record.map_id, populated at
+    # conversion time from map_features) is preferred over the per-scenario
+    # fallback, so two scenarios sharing map identity but converted from
+    # different shards land in the same group.
+    entry_a = _entry("waymo", 0)
+    entry_b = _entry("waymo", 1)
+    shard_record_a = replace(
+        entry_a.record,
+        source_log_id="training_20s.tfrecord-00011-of-01000",
+        map_id="map:shared-geometry",
+    )
+    shard_record_b = replace(
+        entry_b.record,
+        source_log_id="training_20s.tfrecord-00099-of-01000",
+        map_id="map:shared-geometry",
+    )
+
+    group_a = group_id_for_entry(ScenarioCatalogEntry(shard_record_a, entry_a.features))
+    group_b = group_id_for_entry(ScenarioCatalogEntry(shard_record_b, entry_b.features))
+    assert group_a == group_b == "map:shared-geometry"
 
 
 def test_pipeline_auto_split_preserves_whole_groups() -> None:
@@ -1228,3 +1269,369 @@ def test_arm_balancing_trims_pg_before_waymo() -> None:
     assert len(a1_entries) == 1
     assert a1_entries[0].record.source == "waymo"
     assert report["diagnostics"]["A1_traffic"]["removed_by_source"]["pg"] == 2
+
+
+# --- SCENARIONET-INTEGRATION v1.2 holdout-first allocator (M3) ---
+
+from thesis_rl.scenarios.arms import ARMS as _ARMS  # noqa: E402
+
+
+def _arm_entries(source: str, arm: str, start: int, count: int) -> list[ScenarioCatalogEntry]:
+    entries = []
+    for offset in range(count):
+        base = _entry(source, start + offset)
+        entries.append(ScenarioCatalogEntry(replace(base.record, primary_arm=arm), base.features))
+    return entries
+
+
+def _full_pool(per_arm_per_source: int) -> tuple[ScenarioCatalogEntry, ...]:
+    entries: list[ScenarioCatalogEntry] = []
+    index = 0
+    for source in ("waymo", "pg"):
+        for arm in _ARMS:
+            entries.extend(_arm_entries(source, arm, index, per_arm_per_source))
+            index += per_arm_per_source
+    return tuple(entries)
+
+
+def test_empirical_holdout_ignores_arm_labels() -> None:
+    # TEST-001 (REQ-001): relabelling primary_arm across the same groups must
+    # not change which groups the label-blind empirical reservation picks.
+    pool = _full_pool(per_arm_per_source=10)
+    reserved_a, residual_a = reserve_empirical_holdouts(
+        pool,
+        test_counts={"waymo": 20, "pg": 20},
+        validation_counts={"waymo": 10, "pg": 10},
+        seed=3,
+    )
+
+    rng = np.random.default_rng(99)
+    shuffled_arms = list(_ARMS)
+    relabelled = tuple(
+        ScenarioCatalogEntry(
+            replace(
+                entry.record, primary_arm=shuffled_arms[int(rng.integers(0, len(shuffled_arms)))]
+            ),
+            entry.features,
+        )
+        for entry in pool
+    )
+    reserved_b, residual_b = reserve_empirical_holdouts(
+        relabelled,
+        test_counts={"waymo": 20, "pg": 20},
+        validation_counts={"waymo": 10, "pg": 10},
+        seed=3,
+    )
+
+    uids_a = {entry.record.scenario_uid for entry in reserved_a}
+    uids_b = {entry.record.scenario_uid for entry in reserved_b}
+    assert uids_a == uids_b
+    assert {entry.record.scenario_uid for entry in residual_a} == {
+        entry.record.scenario_uid for entry in residual_b
+    }
+
+
+def test_empirical_holdout_reserves_test_before_validation() -> None:
+    # TEST-002/TEST-003 (REQ-001/REQ-002): test and validation counts are
+    # both satisfied exactly, and the split field routes each reserved
+    # record to the correct pool with holdout_pool="empirical".
+    pool = _full_pool(per_arm_per_source=10)
+    reserved, residual = reserve_empirical_holdouts(
+        pool,
+        test_counts={"waymo": 20, "pg": 15},
+        validation_counts={"waymo": 10, "pg": 5},
+        seed=1,
+    )
+    by_split_source = Counter((entry.record.split, entry.record.source) for entry in reserved)
+    assert by_split_source[("test", "waymo")] == 20
+    assert by_split_source[("test", "pg")] == 15
+    assert by_split_source[("validation", "waymo")] == 10
+    assert by_split_source[("validation", "pg")] == 5
+    assert all(entry.record.holdout_pool == "empirical" for entry in reserved)
+    assert len(reserved) + len(residual) == len(pool)
+
+
+def test_reserve_empirical_holdouts_raises_on_infeasible_counts() -> None:
+    pool = _full_pool(per_arm_per_source=2)  # 12 per source total
+    with pytest.raises(ValueError, match="cannot reserve exact"):
+        reserve_empirical_holdouts(
+            pool,
+            test_counts={"waymo": 50, "pg": 50},
+            validation_counts={"waymo": 0, "pg": 0},
+            seed=0,
+        )
+
+
+def test_reserve_stratified_pool_is_arm_balanced_and_disjoint_from_residual() -> None:
+    # TEST-004 (REQ-003/REQ-013): the stratified pool is disjoint from the
+    # residual it was drawn from, and its arm counts are near-uniform.
+    pool = _full_pool(per_arm_per_source=20)
+    selected, residual = reserve_stratified_pool(pool, total=24, seed=5)
+    assert len(selected) == 24
+    arm_counts = Counter(entry.record.primary_arm for entry in selected)
+    assert set(arm_counts) == set(_ARMS)
+    assert max(arm_counts.values()) - min(arm_counts.values()) <= 1
+    assert all(entry.record.holdout_pool == "stratified" for entry in selected)
+    selected_uids = {entry.record.scenario_uid for entry in selected}
+    residual_uids = {entry.record.scenario_uid for entry in residual}
+    assert selected_uids.isdisjoint(residual_uids)
+    assert selected_uids | residual_uids == {entry.record.scenario_uid for entry in pool}
+
+
+def test_reserve_stratified_pool_raises_on_infeasible_arm_capacity() -> None:
+    pool = _full_pool(per_arm_per_source=1)  # only 2 per arm available
+    with pytest.raises(ValueError, match="infeasible"):
+        reserve_stratified_pool(pool, total=6000, seed=0)
+
+
+def test_stratified_pool_preserves_scarce_waymo_a0_for_train() -> None:
+    """A train reserve changes only the source mix of the affected test arm."""
+    entries = []
+    index = 0
+    for arm in _ARMS:
+        waymo_count = 25 if arm == "A0_simple_low_traffic" else 40
+        entries.extend(_arm_entries("waymo", arm, index, waymo_count))
+        index += waymo_count
+        entries.extend(_arm_entries("pg", arm, index, 80))
+        index += 80
+
+    selected, residual = reserve_stratified_pool(
+        tuple(entries),
+        total=60,
+        seed=5,
+        protected_train_arm_minimums={"waymo": {"A0_simple_low_traffic": 20}},
+    )
+
+    assert Counter(entry.record.primary_arm for entry in selected) == {arm: 10 for arm in _ARMS}
+    assert (
+        sum(
+            entry.record.source == "waymo" and entry.record.primary_arm == "A0_simple_low_traffic"
+            for entry in selected
+        )
+        == 5
+    )
+    assert (
+        sum(
+            entry.record.source == "waymo" and entry.record.primary_arm == "A0_simple_low_traffic"
+            for entry in residual
+        )
+        == 20
+    )
+
+
+def test_training_pool_accepts_unequal_arm_counts_and_checks_minimums() -> None:
+    # TEST-005 (REQ-004): per-arm minimums are satisfied without requiring
+    # equal arm counts -- an intentionally skewed residual is accepted.
+    entries = list(_arm_entries("waymo", "A0_simple_low_traffic", 0, 5))
+    entries += list(_arm_entries("waymo", "A4_vru", 100, 50))
+    entries += list(_arm_entries("pg", "A0_simple_low_traffic", 200, 3))
+    train = assign_training_pool_from_residual(
+        tuple(entries),
+        arm_minimums={
+            "waymo": {"A0_simple_low_traffic": 5, "A4_vru": 10},
+            "pg": {"A0_simple_low_traffic": 3},
+        },
+    )
+    assert len(train) == len(entries)
+    assert all(entry.record.split == "train" for entry in train)
+    assert all(entry.record.holdout_pool is None for entry in train)
+
+
+def test_training_pool_raises_loudly_on_unmet_minimum() -> None:
+    # TEST-006 (REQ-004): capacity failure is loud and reports the deficit.
+    entries = list(_arm_entries("waymo", "A0_simple_low_traffic", 0, 2))
+    with pytest.raises(ValueError, match="does not meet configured per-arm minimums"):
+        assign_training_pool_from_residual(
+            tuple(entries),
+            arm_minimums={"waymo": {"A0_simple_low_traffic": 10}},
+        )
+
+
+def test_training_pool_balances_arms_while_compensating_waymo_only_a4() -> None:
+    """Exact source totals are retained despite the structural PG A4 gap."""
+    entries = []
+    index = 0
+    for arm in _ARMS:
+        entries.extend(_arm_entries("waymo", arm, index, 16))
+        index += 16
+        if arm != "A4_vru":
+            entries.extend(_arm_entries("pg", arm, index, 16))
+            index += 16
+
+    train = assign_training_pool_from_residual(
+        tuple(entries),
+        source_counts={"waymo": 24, "pg": 24},
+        seed=17,
+    )
+
+    assert Counter(entry.record.source for entry in train) == {"waymo": 24, "pg": 24}
+    arm_counts = Counter(entry.record.primary_arm for entry in train)
+    assert arm_counts == {arm: 8 for arm in _ARMS}
+    assert (
+        sum(
+            entry.record.source == "waymo" and entry.record.primary_arm == "A4_vru"
+            for entry in train
+        )
+        == 8
+    )
+    assert all(
+        entry.record.primary_arm != "A4_vru" or entry.record.source == "waymo" for entry in train
+    )
+
+
+def test_post_freeze_acquisition_enters_training_pool_only() -> None:
+    # TEST-007 (REQ-005): once an empirical holdout is frozen, replaying it
+    # via `apply_frozen_empirical_holdouts` against an enlarged catalog
+    # leaves the holdout UID sets untouched; only the residual (available to
+    # the stratified pool and training) grows. `reserve_empirical_holdouts`
+    # itself is a one-time allocator: re-running it from scratch against a
+    # larger pool is deterministic (TEST-014) but is not guaranteed to
+    # reproduce a prior selection unit-for-unit, which is exactly why the
+    # frozen UID list, not a recomputation, is the source of truth after
+    # freezing (see `apply_frozen_empirical_holdouts`'s docstring).
+    pool = _full_pool(per_arm_per_source=10)
+    reserved_before, residual_before = reserve_empirical_holdouts(
+        pool,
+        test_counts={"waymo": 15, "pg": 15},
+        validation_counts={"waymo": 5, "pg": 5},
+        seed=2,
+    )
+    frozen_test_uids = [e.record.scenario_uid for e in reserved_before if e.record.split == "test"]
+    frozen_validation_uids = [
+        e.record.scenario_uid for e in reserved_before if e.record.split == "validation"
+    ]
+
+    extra = tuple(_arm_entries("waymo", "A2_junction", 10_000, 5))
+    reserved_after, residual_after = apply_frozen_empirical_holdouts(
+        pool + extra,
+        frozen_test_uids=frozen_test_uids,
+        frozen_validation_uids=frozen_validation_uids,
+    )
+
+    assert {e.record.scenario_uid for e in reserved_before} == {
+        e.record.scenario_uid for e in reserved_after
+    }
+    for entry in reserved_after:
+        original = next(
+            e for e in reserved_before if e.record.scenario_uid == entry.record.scenario_uid
+        )
+        assert entry.record.split == original.record.split
+    assert {e.record.scenario_uid for e in extra} <= {e.record.scenario_uid for e in residual_after}
+    assert {e.record.scenario_uid for e in extra}.isdisjoint(
+        {e.record.scenario_uid for e in residual_before}
+    )
+
+
+def test_assign_holdout_first_splits_end_to_end_is_pairwise_disjoint_and_deterministic() -> None:
+    # TEST-013/TEST-014 (REQ-013, determinism): full orchestration produces
+    # four pairwise group-disjoint pools and is reproducible across re-runs.
+    pool = _full_pool(per_arm_per_source=30)
+
+    def run() -> tuple[ScenarioCatalogEntry, ...]:
+        return assign_holdout_first_splits(
+            pool,
+            test_empirical_counts={"waymo": 40, "pg": 40},
+            validation_counts={"waymo": 20, "pg": 20},
+            stratified_total=24,
+            train_arm_minimums=None,
+            seed=11,
+        )
+
+    combined_a = run()
+    combined_b = run()
+
+    assert {e.record.scenario_uid for e in combined_a} == {
+        e.record.scenario_uid for e in combined_b
+    }
+    for entry_a, entry_b in zip(
+        sorted(combined_a, key=lambda e: e.record.scenario_uid),
+        sorted(combined_b, key=lambda e: e.record.scenario_uid),
+    ):
+        assert entry_a.record.split == entry_b.record.split
+        assert entry_a.record.holdout_pool == entry_b.record.holdout_pool
+
+    by_pool: dict[str, set[str]] = {}
+    for entry in combined_a:
+        key = (
+            f"test_{entry.record.holdout_pool}"
+            if entry.record.split == "test"
+            else entry.record.split
+        )
+        by_pool.setdefault(key, set()).add(entry.record.scenario_uid)
+    assert set(by_pool) == {"train", "validation", "test_empirical", "test_stratified"}
+    pool_names = list(by_pool)
+    for i, left in enumerate(pool_names):
+        for right in pool_names[i + 1 :]:
+            assert by_pool[left].isdisjoint(by_pool[right])
+
+    assert len(combined_a) == len(pool)
+
+
+def test_apply_frozen_empirical_holdouts_raises_when_uid_missing() -> None:
+    pool = _full_pool(per_arm_per_source=5)
+    with pytest.raises(ValueError, match="missing from the current catalog"):
+        apply_frozen_empirical_holdouts(
+            pool,
+            frozen_test_uids=["waymo:v1:999999"],
+            frozen_validation_uids=[],
+        )
+
+
+# --- SCENARIONET-INTEGRATION v1.2 PG holdout mixture (M4) ---
+
+
+def _pg_holdout_entry(index: int, profile: str, *, split: str = "test") -> ScenarioCatalogEntry:
+    base = _entry("pg", index)
+    return ScenarioCatalogEntry(
+        replace(base.record, pg_profile=profile, split=split, holdout_pool="empirical"),
+        base.features,
+    )
+
+
+def test_pg_holdout_mixture_matches_declared_equiprobable_mixture() -> None:
+    # TEST-009 (SCENARIONET-INTEGRATION v1.2 SS3.3/DEC-003): a PG holdout
+    # generated in equal shares across the five profiles passes the check
+    # against PG_HOLDOUT_EQUIPROBABLE_MIXTURE.
+    profiles = list(PG_HOLDOUT_EQUIPROBABLE_MIXTURE)
+    entries = [
+        _pg_holdout_entry(index, profile)
+        for index, profile in enumerate(profile for profile in profiles for _ in range(20))
+    ]
+    observed = assert_pg_holdout_profile_mixture(
+        tuple(entries), expected_fractions=PG_HOLDOUT_EQUIPROBABLE_MIXTURE
+    )
+    for profile in profiles:
+        assert observed[profile] == pytest.approx(1.0 / len(profiles), abs=1e-9)
+
+
+def test_pg_holdout_mixture_raises_when_skewed() -> None:
+    profiles = list(PG_HOLDOUT_EQUIPROBABLE_MIXTURE)
+    # All 100 scenarios from a single profile: heavily skewed vs. equiprobable.
+    entries = [_pg_holdout_entry(index, profiles[0]) for index in range(100)]
+    with pytest.raises(ValueError, match="deviates from the declared mixture"):
+        assert_pg_holdout_profile_mixture(
+            tuple(entries), expected_fractions=PG_HOLDOUT_EQUIPROBABLE_MIXTURE
+        )
+
+
+def test_pg_holdout_mixture_requires_empirical_holdout_records() -> None:
+    train_only = [
+        ScenarioCatalogEntry(
+            replace(_entry("pg", 0).record, pg_profile="P0_simple"), _entry("pg", 0).features
+        )
+    ]
+    with pytest.raises(ValueError, match="no empirical PG holdout records"):
+        assert_pg_holdout_profile_mixture(
+            tuple(train_only), expected_fractions=PG_HOLDOUT_EQUIPROBABLE_MIXTURE
+        )
+
+
+def test_seed_range_disjoint_accepts_non_overlapping_ranges() -> None:
+    assert_seed_range_disjoint(
+        (2_000_000, 2_099_999), used_ranges=[(0, 999_999), (1_000_000, 1_999_999)]
+    )
+
+
+def test_seed_range_disjoint_rejects_overlap() -> None:
+    with pytest.raises(ValueError, match="overlaps used range"):
+        assert_seed_range_disjoint((900_000, 1_100_000), used_ranges=[(1_000_000, 1_999_999)])

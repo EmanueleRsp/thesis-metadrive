@@ -10,7 +10,12 @@ from pathlib import Path
 import yaml  # type: ignore[import-untyped]
 
 from thesis_rl.scenarios.catalog import write_scenario_catalog
-from thesis_rl.scenarios.frozen import frozen_catalog, load_frozen_index, verify_frozen_sources
+from thesis_rl.scenarios.frozen import (
+    frozen_catalog,
+    load_frozen_index,
+    restore_frozen_panels,
+    verify_frozen_sources,
+)
 from thesis_rl.scenarios.runtime_database import build_runtime_database, verify_runtime_mapping
 
 
@@ -59,12 +64,14 @@ def main() -> int:
     manifest_output.write_text(
         yaml.safe_dump(payload["split_manifest"], sort_keys=True), encoding="utf-8"
     )
+    restored_panels = restore_frozen_panels(payload, root, overwrite=args.overwrite)
     print(
         json.dumps(
             {
                 "catalog": str(catalog_output.resolve()),
                 "runtime_root": str(runtime_root.resolve()),
                 "split_manifest": str(manifest_output.resolve()),
+                "panel_manifests": [str(path) for path in restored_panels],
                 "records": len(catalog.entries),
             },
             indent=2,

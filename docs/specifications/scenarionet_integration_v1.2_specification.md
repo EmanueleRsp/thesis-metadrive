@@ -2,14 +2,14 @@
 
 ## Metadata
 
-- **Feature:** empirical holdout policy, dual test panels, arm-minimum training pool, map-based Waymo grouping
+- **Feature:** empirical holdout policy, dual test panels, arm-balanced training pool, map-based Waymo grouping
 - **Specification ID:** `SCENARIONET-INTEGRATION`
 - **Version:** `1.2`
 - **Status:** `APPROVED`
 - **Date:** `2026-07-31`
 - **Supersedes:** `docs/specifications/scenarionet_integration_v1.1_specification.md`, version `1.1` (solo per i sottoinsiemi §5, §6.1, §6.2, §6.4, §6.5, §6.6, §6.8 modificati da questa versione; il resto di v1.1 resta autoritativo e invariato, incluse §1-§4, §6.3, §6.7, §7-§12)
 - **Related specifications:** `docs/specifications/evaluation_protocol_v1.1_specification.md` (emenda separatamente `EVAL-PROTOCOL`, introducendo i nuovi panel usati da questo documento)
-- **Related ADRs:** ADR-001, ADR-009, ADR-012 (materialmente superseduta per gli split di validation/test); ADR-037, ADR-038
+- **Related ADRs:** ADR-001, ADR-009, ADR-012 (materialmente superseduta per gli split di validation/test); ADR-037, ADR-038, ADR-039, ADR-040, ADR-041
 - **Related ExecPlan:** `docs/implementation/empirical_holdout_split_and_dual_test_panels_v1.2_exec_plan.md`
 - **Authoritative:** `YES`
 
@@ -91,6 +91,21 @@ documento, e sono registrate anche nell'ExecPlan collegato (`DEC-001`..
 - **`DEC-007`**: risolto per via fattuale — il pool convertito
   (`catalog/scenario_catalog.parquet`, database Waymo e PG) è confermato
   presente e riusabile; non è richiesta una nuova campagna di acquisizione.
+- **`DEC-008`**: se il filtro Rulebook lascia meno di 450 candidati PG per
+  gli holdout, la generazione itera batch da 90 scenari per ciascuno dei
+  cinque profili, fino a cinque batch totali. Il trigger usa esclusivamente
+  il conteggio PG Rulebook-eleggibile; non legge né modifica quote per arm.
+  Ogni batch usa nuovi seed disgiunti ed è registrato nel manifest.
+- **`DEC-009`**: il train ha esattamente 1.100 scenari Waymo e 1.100 PG. Sul
+  train si riusa la selezione v1.1 `balanced_arm_source`: totale near-uniform
+  per arm e preferenza 50/50 per arm, con compensazione delle celle
+  strutturalmente vuote (in particolare `A4_vru × PG`) per conservare il
+  50/50 complessivo del train.
+- **`DEC-010`**: dopo il congelamento degli holdout empirici, almeno 20
+  scenari `A0_simple_low_traffic × Waymo` restano nel train. Il pool
+  `test_stratified` conserva 50 scenari A0 ma può usare PG per compensare la
+  sua miscela source; non modifica le dimensioni né la label-blindness degli
+  holdout empirici.
 
 ## 3. Emendamenti
 
@@ -107,22 +122,22 @@ dataset:
     waymo: 400
     pg: 300
   test_stratified:
-    waymo: ~180   # vincolato dalla capacità eligible Waymo per A0/A1/A2, vedi §3.6
-    pg: ~120
+    waymo: capacity-derived  # 155 nella selezione corrente, vedi §3.6
+    pg: capacity-derived     # 145 nella selezione corrente, vedi §3.6
   validation:
     waymo: 150
     pg: 150
   train:
-    waymo: residuo dopo la riserva degli holdout
-    pg: residuo dopo la riserva degli holdout
+    waymo: 1100
+    pg: 1100
 ```
 
 | Pool | Waymo | PG | Panel derivati |
 |---|---:|---:|---|
 | `test_empirical` | 400 | 300 | `test_waymo_empirical` 300 (primario), `test_pg` 200 (secondario) |
-| `test_stratified` | ~180 | ~120 | `test_arm_stratified` 300 (50 per arm) |
+| `test_stratified` | dipende dalla capacità | dipende dalla capacità | `test_arm_stratified` 300 (50 per arm); selezione corrente: 155/145 |
 | `validation` | 150 | 150 | `validation_waymo_empirical` 100 (curva primaria), `validation_pg` 100 (diagnostica) |
-| `train` | residuo | residuo | minimi per arm, non quote esatte — vedi §3.5 |
+| `train` | 1100 | 1100 | near-uniform per arm, con compensazione source — vedi §3.5 |
 
 Il budget totale resta 3500 scenari salvo espansione futura approvata. A
 differenza di v1.1, dove 700 dei 1000 scenari di test congelati non erano
@@ -176,6 +191,13 @@ distribuzione empirica.
 
 I seed degli holdout PG occupano un intervallo disgiunto da ogni altro
 intervallo di seed usato dal progetto (train, run precedenti, sviluppo).
+
+If fewer than 450 Rulebook-eligible PG candidates remain after filtering, the
+operator generates another equal 90-per-profile batch using the next unused
+seed window and repeats filtering. This label-blind replenishment stops when
+the target is feasible or after five total batches; each batch's seed window,
+raw count, and eligible count is persisted in the split manifest. Arm labels
+must not be read by this procedure.
 ```
 
 ### 3.4 Emendamento a §6.4 — Manifest degli split
@@ -220,11 +242,12 @@ counts:
     pg: null      # residuo
 
 balancing:
-  train_arm_policy: minimum_per_arm   # sostituisce near_uniform per il train
-  train_arm_minimums: {}              # popolato dalla configurazione pipeline
+  train_arm_policy: near_uniform      # ripristinato da DEC-009
+  train_arm_minimums: {}              # controllo additivo, se configurato
   stratified_test_arm_targets: near_uniform  # invariato, solo sul pool stratificato
   max_arm_count_difference: 1         # si applica solo al pool stratificato
-  source_target_within_arm: best_effort_50_50   # si applica solo al pool stratificato
+  source_target_within_arm: best_effort_50_50_with_train_reserves
+  # si applica solo al pool stratificato; A0 × Waymo preserva 20 record per train
   preserve_exact_source_totals: true  # si applica a tutti i pool
   structural_empty_cells:
     A4_vru:
@@ -267,21 +290,19 @@ candidate pool
 → reserve test_empirical groups, labels ignored
 → reserve validation_empirical groups, labels ignored
 → FREEZE empirical holdouts
-→ reserve test_stratified groups from the residual, arm-balanced (v1.1 §6.6 policy, unchanged)
+→ reserve test_stratified groups from the residual, arm-balanced, while preserving declared scarce train cells
 → FREEZE stratified holdout
-→ build training pool from the residual, per-arm MINIMUMS + exact per-source totals
+→ build training pool from the residual, near-uniform per arm + exact per-source totals
 → selected train / validation / test pools
 ```
 
 Il §6.6 "Politica `balanced_arm_source`" di v1.1 resta autoritativo e
-invariato **come politica del pool `test_stratified`**. Per il pool di
-`train`, il vincolo 5 ("conteggio quasi uniforme A0–A5") è sostituito da:
+invariato **come politica del pool `test_stratified` e del pool `train`**,
+come registrato da `DEC-009`. Per il train, le cardinalità source sono fissate
+a 1.100 Waymo e 1.100 PG; la compensazione delle celle strutturalmente vuote
+mantiene quei totali esatti senza rilabeling.
 
-```text
-5'. minimo configurato per cella source × arm, non uguaglianza dei conteggi
-```
-
-I vincoli 1-4 e 6 di §6.6 restano invariati per il train. La classificazione
+I vincoli 1-6 di §6.6 restano invariati per il train. La classificazione
 `A0`–`A5` continua a precedere qualunque selezione (v1.1 §6.5, invariato); la
 riserva degli holdout empirici, in particolare, non legge mai
 `primary_arm`, `tags`, `low_traffic`, o `dense_traffic` — l'allocatore

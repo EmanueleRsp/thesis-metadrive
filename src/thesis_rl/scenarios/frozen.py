@@ -18,6 +18,16 @@ from thesis_rl.scenarios.catalog import (
     read_scenario_catalog,
 )
 from thesis_rl.scenarios.manifests import validate_split_manifest
+from thesis_rl.scenarios.panel_manifest import (
+    NAMED_PANELS,
+    PanelManifest,
+    PROFILE_SUBSET_SEEDS,
+    PROFILE_SUBSET_SIZES,
+    build_profile_subset_panel,
+    named_panel_manifest_path,
+    profile_panel_manifest_path,
+    save_panel_manifest,
+)
 from thesis_rl.scenarios.paths import ScenarioDataPaths
 from thesis_rl.scenarios.pipeline import SPLITS, assign_runtime_indices
 from thesis_rl.scenarios.runtime_database import sha256_file
@@ -64,6 +74,184 @@ def _artifact_payload(data_root: Path, path: Path) -> dict[str, str]:
         "relative_path": ScenarioDataPaths(data_root).make_relative(resolved),
         "sha256": sha256_file(resolved),
     }
+
+
+def _panel_from_payload(payload: Mapping[str, Any]) -> PanelManifest:
+    """Load a panel manifest embedded in a frozen selection index."""
+    return PanelManifest(
+        schema_version=str(payload["schema_version"]),
+        split=str(payload["split"]),
+        seed=int(payload["seed"]),
+        size=int(payload["size"]),
+        arms=tuple(str(value) for value in payload["arms"]),
+        per_arm_counts=tuple(int(value) for value in payload["per_arm_counts"]),
+        scenario_uids=tuple(str(value) for value in payload["scenario_uids"]),
+        sha256=str(payload["sha256"]),
+        tracked_subset_uids=tuple(str(value) for value in payload.get("tracked_subset_uids", ())),
+        draw_policy=str(payload.get("draw_policy", "arm_balanced")),
+        source=str(payload.get("source", "combined")),
+        parent_panel=(
+            None if payload.get("parent_panel") in (None, "") else str(payload["parent_panel"])
+        ),
+        parent_sha256=(
+            None if payload.get("parent_sha256") in (None, "") else str(payload["parent_sha256"])
+        ),
+        scope=str(payload.get("scope", "full")),
+    )
+
+
+def _manifest_payload(manifest: PanelManifest) -> dict[str, Any]:
+    return {
+        "schema_version": manifest.schema_version,
+        "split": manifest.split,
+        "seed": manifest.seed,
+        "size": manifest.size,
+        "arms": list(manifest.arms),
+        "per_arm_counts": list(manifest.per_arm_counts),
+        "scenario_uids": list(manifest.scenario_uids),
+        "sha256": manifest.sha256,
+        "tracked_subset_uids": list(manifest.tracked_subset_uids),
+        "draw_policy": manifest.draw_policy,
+        "source": manifest.source,
+        "parent_panel": manifest.parent_panel,
+        "parent_sha256": manifest.parent_sha256,
+        "scope": manifest.scope,
+    }
+
+
+def _freeze_named_panels(
+    catalog: ScenarioCatalog, root: Path
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Validate complete panels and materialize/hash their diagnostic children."""
+    by_uid = {entry.record.scenario_uid: entry.record for entry in catalog.entries}
+    frozen_panels: dict[str, dict[str, Any]] = {}
+    for name, specification in NAMED_PANELS.items():
+        path = named_panel_manifest_path(name, data_root=root.parent)
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"v1.2 frozen selection requires named panel {name!r}: {path}. "
+                "Run `make scenarionet-v1-2-build-panels` before freezing."
+            )
+        raw_payload = json.loads(path.read_text(encoding="utf-8"))
+        manifest = _panel_from_payload(raw_payload)
+        manifest.verify_self_consistent()
+        if (
+            manifest.split != specification["split"]
+            or manifest.source != specification["source"]
+            or manifest.draw_policy != specification["draw_policy"]
+        ):
+            raise ValueError(f"named panel {name!r} does not match its declared v1.2 policy")
+        expected_size = int(specification["full_size"])
+        if manifest.size != expected_size:
+            raise ValueError(
+                f"named panel {name!r} has size {manifest.size}, expected complete pool "
+                f"size {expected_size} under ScenarioNet v1.3"
+            )
+        invalid_uids = [
+            uid
+            for uid in manifest.scenario_uids
+            if uid not in by_uid
+            or by_uid[uid].split != specification["split"]
+            or by_uid[uid].holdout_pool != specification["holdout_pool"]
+            or (
+                specification["source"] != "combined"
+                and by_uid[uid].source != specification["source"]
+            )
+        ]
+        if invalid_uids:
+            raise ValueError(
+                f"named panel {name!r} contains UIDs outside its frozen endpoint: "
+                f"{invalid_uids[:5]}"
+            )
+        frozen_panels[name] = {
+            "artifact": _artifact_payload(root, path),
+            "manifest": raw_payload,
+        }
+    profile_panels: dict[str, dict[str, Any]] = {}
+    for scope, panel_sizes in PROFILE_SUBSET_SIZES.items():
+        scope_payload: dict[str, dict[str, Any]] = {}
+        for name, size in panel_sizes.items():
+            parent = _panel_from_payload(frozen_panels[name]["manifest"])
+            child = build_profile_subset_panel(
+                parent,
+                tuple(entry.record for entry in catalog.entries),
+                parent_name=name,
+                scope=scope,
+                size=size,
+                seed=PROFILE_SUBSET_SEEDS[scope],
+            )
+            child_path = profile_panel_manifest_path(name, scope, data_root=root.parent)
+            save_panel_manifest(child, child_path)
+            scope_payload[name] = {
+                "artifact": _artifact_payload(root, child_path),
+                "manifest": _manifest_payload(child),
+            }
+        profile_panels[scope] = scope_payload
+    return frozen_panels, profile_panels
+
+
+def restore_frozen_panels(
+    payload: Mapping[str, Any], data_root: str | Path, *, overwrite: bool
+) -> tuple[Path, ...]:
+    """Restore complete and profile-subset panel files and verify their hashes."""
+    frozen_panels = payload.get("panel_manifests")
+    if not frozen_panels:
+        return ()
+    if not isinstance(frozen_panels, Mapping):
+        raise ValueError("frozen panel_manifests must be a mapping")
+    root = Path(data_root).expanduser().resolve()
+    restored: list[Path] = []
+    for name in sorted(NAMED_PANELS):
+        item = frozen_panels.get(name)
+        if not isinstance(item, Mapping) or not isinstance(item.get("manifest"), Mapping):
+            raise ValueError(f"frozen index is missing embedded named panel {name!r}")
+        manifest = _panel_from_payload(item["manifest"])
+        manifest.verify_self_consistent()
+        target = named_panel_manifest_path(name, data_root=root.parent)
+        content = json.dumps(item["manifest"], indent=2, sort_keys=True) + "\n"
+        if target.exists() and not overwrite:
+            raise FileExistsError(f"refusing to overwrite frozen panel manifest: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        artifact = item.get("artifact")
+        if not isinstance(artifact, Mapping) or sha256_file(target) != artifact.get("sha256"):
+            raise ValueError(f"restored panel {name!r} does not match its frozen file hash")
+        restored.append(target)
+    profile_panels = payload.get("profile_panel_manifests", {})
+    if not isinstance(profile_panels, Mapping):
+        raise ValueError("frozen profile_panel_manifests must be a mapping")
+    # v1.2 indexes remain replayable for historical reproducibility. They are
+    # not accepted by the v1.3 runtime resolver, which separately requires
+    # the profile children for an official run.
+    if not profile_panels:
+        return tuple(restored)
+    for scope, expected_sizes in PROFILE_SUBSET_SIZES.items():
+        scope_items = profile_panels.get(scope)
+        if not isinstance(scope_items, Mapping):
+            raise ValueError(f"frozen index is missing profile panel scope {scope!r}")
+        for name, expected_size in expected_sizes.items():
+            item = scope_items.get(name)
+            if not isinstance(item, Mapping) or not isinstance(item.get("manifest"), Mapping):
+                raise ValueError(f"frozen index is missing {scope} panel {name!r}")
+            manifest = _panel_from_payload(item["manifest"])
+            manifest.verify_self_consistent()
+            if (
+                manifest.scope != scope
+                or manifest.parent_panel != name
+                or manifest.size != expected_size
+            ):
+                raise ValueError(f"frozen {scope} panel {name!r} violates its profile contract")
+            target = profile_panel_manifest_path(name, scope, data_root=root.parent)
+            content = json.dumps(item["manifest"], indent=2, sort_keys=True) + "\n"
+            if target.exists() and not overwrite:
+                raise FileExistsError(f"refusing to overwrite frozen panel manifest: {target}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            artifact = item.get("artifact")
+            if not isinstance(artifact, Mapping) or sha256_file(target) != artifact.get("sha256"):
+                raise ValueError(f"restored {scope} panel {name!r} does not match frozen file hash")
+            restored.append(target)
+    return tuple(restored)
 
 
 def _validate_selected_population(
@@ -200,6 +388,11 @@ def build_frozen_index(
         if candidate.is_file():
             artifacts[name] = _artifact_payload(root, candidate)
 
+    panel_manifests: dict[str, dict[str, Any]] = {}
+    profile_panel_manifests: dict[str, dict[str, Any]] = {}
+    if any(entry.record.holdout_pool is not None for entry in selected_catalog.entries):
+        panel_manifests, profile_panel_manifests = _freeze_named_panels(selected_catalog, root)
+
     payload = {
         "schema": FROZEN_INDEX_SCHEMA,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -209,6 +402,8 @@ def build_frozen_index(
             "selection_is_replayed_without_search": True,
         },
         "artifacts": artifacts,
+        "panel_manifests": panel_manifests,
+        "profile_panel_manifests": profile_panel_manifests,
         "split_manifest": split_payload,
         "records": [entry.to_flat_dict() for entry in selected_catalog.entries],
         "source_inventory": {
@@ -277,5 +472,6 @@ __all__ = [
     "build_frozen_index",
     "frozen_catalog",
     "load_frozen_index",
+    "restore_frozen_panels",
     "verify_frozen_sources",
 ]

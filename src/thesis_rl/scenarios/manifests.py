@@ -120,7 +120,18 @@ def validate_split_manifest(payload: Mapping[str, Any]) -> dict[str, Any]:
                     f"split_manifest.targets.{source}.{split} must be non-negative"
                 )
     split_policy = manifest["split_policy"]
-    if split_policy not in {"balanced_arm_source", "grouped_target", "exact"}:
+    if split_policy not in {
+        "balanced_arm_source",
+        "grouped_target",
+        "exact",
+        # SCENARIONET-INTEGRATION v1.2 SS3.5: empirical holdouts reserved
+        # before an arm-stratified test pool, before a train pool built from
+        # the residual under per-arm minimums. `record.split` remains one of
+        # the three canonical values checked below; the empirical/stratified
+        # distinction lives in `record.holdout_pool`, invisible to this
+        # count-only validator by design.
+        "holdout_first_empirical_then_stratified_then_balanced_train",
+    }:
         raise ManifestValidationError("split_manifest.split_policy is unsupported")
     balancing = _mapping(manifest["balancing"], "split_manifest.balancing")
     _require_keys(

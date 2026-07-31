@@ -149,13 +149,21 @@ def test_evaluation_error_is_fatal(tmp_path, monkeypatch):
         manager.poll()
 
 
-def test_renderables_expose_progress_and_last_complete_monitor(tmp_path, monkeypatch):
+def test_renderables_expose_panel_states_and_requested_sample_statistics(tmp_path, monkeypatch):
     def fake_worker(job, output_queue):
         output_queue.put(
             (
                 "finished",
                 job.eval_id,
-                {"per_episode": {"returns": [1.0]}, "mean_reward": 1.0, "success_rate": 0.5},
+                {
+                    "per_episode": {
+                        "returns": [1.0, 2.0],
+                        "success": [0.0, 1.0],
+                        "collision": [1.0, 0.0],
+                        "route_completion": [0.5, 1.0],
+                    },
+                    "mean_reward": 1.0,
+                },
             )
         )
 
@@ -176,10 +184,18 @@ def test_renderables_expose_progress_and_last_complete_monitor(tmp_path, monkeyp
     assert len(renderables) == 2
     assert renderables[1].title == "Evaluation Monitor"
     assert [column.header for column in renderables[1].renderable.columns] == [
-        "Metric",
-        "Value",
+        "Batch / panel",
+        "State",
+        "Progress",
+        "Success μ ± σ",
+        "Collision μ ± σ",
+        "Route completion μ ± σ",
     ]
-    assert "Evaluation Queue" not in str(renderables)
+    assert [column.header for column in renderables[1].renderable.columns][3:] == [
+        "Success μ ± σ",
+        "Collision μ ± σ",
+        "Route completion μ ± σ",
+    ]
     manager.close()
 
 
@@ -220,7 +236,39 @@ def test_renderables_keep_completed_episode_count_after_job_finishes(tmp_path, m
     task = manager._progress.tasks[0]
     assert task.completed == 2
     assert task.total == 2
-    assert task.description == "Evaluation episodes (2/2)"
+    assert task.description == "Evaluation 1 (2/2)"
+    manager.close()
+
+
+def test_batch_uses_one_snapshot_for_two_panels_and_serial_fifo(tmp_path, monkeypatch) -> None:
+    completed: list[str | None] = []
+
+    def fake_worker(job, output_queue):
+        output_queue.put(("finished", job.eval_id, {"per_episode": {"returns": [1.0]}}))
+
+    monkeypatch.setattr(async_module, "_evaluation_worker_main", fake_worker)
+    manager = AsyncEvaluationManager(
+        checkpoints_dir=tmp_path,
+        on_complete=lambda job, metrics: completed.append(job.panel_name),
+        process_factory=_FakeProcess,
+    )
+    agent = _FakeAgent(tmp_path)
+    jobs = manager.enqueue_batch(
+        agent=agent,
+        cfg=_cfg(),
+        batch_id="validation_000000000010",
+        global_step=10,
+        stage="baseline",
+        stage_index=0,
+        jobs=(
+            {"eval_id": 1, "episode_count": 2, "env_seed": 10, "panel_name": "validation_waymo_empirical"},
+            {"eval_id": 2, "episode_count": 2, "env_seed": 11, "panel_name": "validation_pg"},
+        ),
+    )
+    manager.drain()
+    assert len(agent.saved) == 1
+    assert jobs[0].checkpoint_stem == jobs[1].checkpoint_stem
+    assert completed == ["validation_waymo_empirical", "validation_pg"]
     manager.close()
 
 

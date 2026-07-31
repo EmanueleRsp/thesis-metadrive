@@ -437,6 +437,7 @@ def build_live_final_eval_recorder_factory(
             save_manifest=save_manifest,
             save_trajectory_log=save_trajectory_log,
             algorithm=algorithm,
+            output_dir_name=f"final_eval/{scenario_set}",
         )
 
     return factory

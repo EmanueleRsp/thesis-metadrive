@@ -37,6 +37,12 @@ FINAL_EVAL_REQUIRED_COLUMNS = (
     "final_eval_episodes",
 )
 
+SCENARIONET_FINAL_PANEL_SETS = {
+    "full": {"test_waymo_empirical", "test_pg", "test_arm_stratified"},
+    "smoke": {"test_waymo_empirical", "test_pg", "test_arm_stratified"},
+    "fast": {"test_waymo_empirical", "test_pg", "test_arm_stratified"},
+}
+
 CONTEXT_FIELDS = (
     "run_dir",
     "run_name",
@@ -127,7 +133,7 @@ def _iter_run_dirs(outputs_root: Path) -> Iterable[Path]:
             yield csv_dir.parent
 
 
-def _read_final_eval_first_row(csv_path: Path) -> dict[str, str]:
+def _read_final_eval_rows(csv_path: Path) -> list[dict[str, str]]:
     if not csv_path.exists():
         raise FileNotFoundError(f"Missing required file: {csv_path}")
 
@@ -143,10 +149,36 @@ def _read_final_eval_first_row(csv_path: Path) -> dict[str, str]:
                 "Regenerate runs with updated CSV schema."
             )
 
-        for row in reader:
-            return {k: str(v) for k, v in row.items()}
+        rows = [{k: str(v) for k, v in row.items()} for row in reader]
+        if rows:
+            _validate_final_panel_rows(rows, csv_path)
+            return rows
 
     raise ValueError(f"final_eval.csv has no data rows: {csv_path}")
+
+
+def _validate_final_panel_rows(rows: list[dict[str, str]], csv_path: Path) -> None:
+    """Fail closed on incompatible multi-panel ScenarioNet final results."""
+    scopes = {str(row.get("evaluation_scope", "")).strip() for row in rows}
+    scopes.discard("")
+    if not scopes:
+        # Legacy single-final-row files remain analyzable under their original
+        # protocol and cannot be combined with v1.2 panel-labelled runs.
+        return
+    if len(scopes) != 1:
+        raise ValueError(f"mixed evaluation scopes in one final_eval.csv: {csv_path}")
+    scope = next(iter(scopes))
+    expected = SCENARIONET_FINAL_PANEL_SETS.get(scope)
+    if expected is None:
+        raise ValueError(f"unsupported ScenarioNet evaluation scope {scope!r} in {csv_path}")
+    names = [str(row.get("panel_name") or row.get("scenario_set", "")).strip() for row in rows]
+    if set(names) != expected or len(names) != len(expected):
+        raise ValueError(
+            f"final_eval.csv must contain exactly {sorted(expected)} for scope {scope!r}; got {names}"
+        )
+    for identity_field in ("frozen_selection_hash", "panel_sha256"):
+        if any(str(row.get(identity_field, "")).strip() == "" for row in rows):
+            raise ValueError(f"panel-labelled final result lacks {identity_field}: {csv_path}")
 
 
 def _build_condition_id(
@@ -199,7 +231,16 @@ def _discover_runs(outputs_root: Path) -> list[RunInfo]:
             continue
 
         final_eval_path = run_dir / "csv" / "final_eval.csv"
-        first_row = _read_final_eval_first_row(final_eval_path)
+        final_rows = _read_final_eval_rows(final_eval_path)
+        first_row = next(
+            (
+                row
+                for row in final_rows
+                if str(row.get("panel_name") or row.get("scenario_set", "")).strip()
+                == "test_waymo_empirical"
+            ),
+            final_rows[0],
+        )
 
         algorithm = first_row["algorithm"].strip()
         task_contract = str(metadata.get("task_contract", "")).strip()
@@ -395,6 +436,26 @@ def _row_with_context(row: dict[str, str], run: RunInfo, *, filename: str) -> di
     return out
 
 
+def _reject_mixed_frozen_panel_identities(rows: list[dict[str, str]]) -> None:
+    """Prevent cross-condition comparison of non-identical frozen endpoints."""
+    grouped: dict[tuple[str, str, str], set[tuple[str, str]]] = {}
+    for row in rows:
+        scope = str(row.get("evaluation_scope", "")).strip()
+        panel = str(row.get("panel_name") or row.get("scenario_set", "")).strip()
+        selection = str(row.get("frozen_selection_hash", "")).strip()
+        panel_hash = str(row.get("panel_sha256", "")).strip()
+        if not scope:
+            continue
+        key = (str(row.get("experiment_group", "")), scope, panel)
+        grouped.setdefault(key, set()).add((selection, panel_hash))
+    conflicts = {key: identities for key, identities in grouped.items() if len(identities) > 1}
+    if conflicts:
+        raise ValueError(
+            "Cannot aggregate mixed frozen ScenarioNet panel identities: "
+            + "; ".join(f"{key}={sorted(identities)}" for key, identities in sorted(conflicts.items()))
+        )
+
+
 def aggregate_runs(
     outputs_root: Path,
     analysis_root: Path,
@@ -435,6 +496,8 @@ def aggregate_runs(
                 _extend_unique(fieldnames, list(CONTEXT_FIELDS))
                 for row in reader:
                     collected_rows[filename].append(_row_with_context(row, run, filename=filename))
+
+    _reject_mixed_frozen_panel_identities(collected_rows["final_eval.csv"])
 
     for filename, rows in collected_rows.items():
         if not rows:

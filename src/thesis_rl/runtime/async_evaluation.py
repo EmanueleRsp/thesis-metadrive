@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 import queue
+import statistics
 import traceback
 from collections import deque
 from dataclasses import dataclass, field
@@ -38,6 +39,9 @@ class EvaluationJob:
     cfg: dict[str, Any]
     env_overrides: dict[str, Any]
     checkpoint_stem: str
+    batch_id: str | None = None
+    panel_name: str | None = None
+    evaluation_scope: str | None = None
     scenario_arm_schedule: tuple[str, ...] | None = None
     scenario_source_schedule: tuple[str, ...] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -156,6 +160,8 @@ class AsyncEvaluationManager:
         self._pending: deque[_JobState] = deque()
         self._active: _JobState | None = None
         self._jobs: dict[int, _JobState] = {}
+        self._snapshot_refcounts: dict[str, int] = {}
+        self._batch_admission_in_progress = False
         self._last_completed: _JobState | None = None
         self._event_messages: deque[str] = deque(maxlen=32)
         self._progress = Progress(
@@ -198,6 +204,10 @@ class AsyncEvaluationManager:
         scenario_arm_schedule: tuple[str, ...] | None = None,
         scenario_source_schedule: tuple[str, ...] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        batch_id: str | None = None,
+        panel_name: str | None = None,
+        evaluation_scope: str | None = None,
+        checkpoint_stem: str | Path | None = None,
     ) -> EvaluationJob:
         """Snapshot the live learner and admit a complete FIFO job."""
 
@@ -213,9 +223,15 @@ class AsyncEvaluationManager:
             raise ValueError("Asynchronous evaluation workers must be > 0.")
         resolved_workers = min(resolved_workers, int(episode_count))
         job_index = len(self._jobs) + 1
-        stem = self._checkpoints_dir / f"eval_{job_index:06d}_step_{int(global_step):012d}"
+        stem = (
+            Path(checkpoint_stem)
+            if checkpoint_stem is not None
+            else self._checkpoints_dir / f"eval_{job_index:06d}_step_{int(global_step):012d}"
+        )
         self._checkpoints_dir.mkdir(parents=True, exist_ok=True)
-        agent.save(stem)
+        own_snapshot = checkpoint_stem is None
+        if own_snapshot:
+            agent.save(stem)
         snapshot_payload = {
             "eval_id": int(eval_id),
             "global_step": int(global_step),
@@ -226,9 +242,10 @@ class AsyncEvaluationManager:
             "env_seed": int(env_seed),
             "env_overrides": dict(env_overrides or {}),
         }
-        Path(f"{stem}.json").write_text(
-            json.dumps(snapshot_payload, sort_keys=True, indent=2) + "\n", encoding="utf-8"
-        )
+        if own_snapshot:
+            Path(f"{stem}.json").write_text(
+                json.dumps(snapshot_payload, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+            )
         resolved_cfg = OmegaConf.to_container(cfg, resolve=True)
         if not isinstance(resolved_cfg, dict):
             raise TypeError("Resolved asynchronous evaluation config must be a mapping.")
@@ -244,18 +261,98 @@ class AsyncEvaluationManager:
             cfg=resolved_cfg,
             env_overrides=dict(env_overrides or {}),
             checkpoint_stem=str(stem),
+            batch_id=batch_id or f"eval-{int(eval_id)}",
+            panel_name=panel_name,
+            evaluation_scope=evaluation_scope,
             scenario_arm_schedule=scenario_arm_schedule,
             scenario_source_schedule=scenario_source_schedule,
             metadata=dict(metadata or {}),
         )
         state = _JobState(job=job)
         self._jobs[job.eval_id] = state
+        self._snapshot_refcounts[str(stem)] = self._snapshot_refcounts.get(str(stem), 0) + 1
         self._pending.append(state)
         self._event_messages.append(
             f"[EVAL] Queued evaluation {job.eval_id} | step={job.global_step} | episodes={job.episode_count}"
         )
-        self._launch_next()
+        if not self._batch_admission_in_progress:
+            self._launch_next()
         return job
+
+    def enqueue_batch(
+        self,
+        *,
+        agent: Any,
+        cfg: DictConfig,
+        batch_id: str,
+        global_step: int,
+        stage: str,
+        stage_index: int,
+        jobs: tuple[Mapping[str, Any], ...],
+    ) -> tuple[EvaluationJob, ...]:
+        """Admit a complete panel batch from exactly one immutable snapshot.
+
+        The manager intentionally permits only one admitted batch.  It drains
+        a prior batch before saving the next snapshot, so training cannot lose
+        a required validation boundary by coalescing or unbounded queueing.
+        """
+        if not batch_id:
+            raise ValueError("evaluation batch_id must be non-empty")
+        if not jobs:
+            raise ValueError("an evaluation batch must contain at least one panel")
+        self.poll()
+        if self._active is not None or self._pending:
+            self.drain()
+        if len({str(item.get("panel_name", "")) for item in jobs}) != len(jobs):
+            raise ValueError("an evaluation batch cannot contain duplicate panel names")
+        self._checkpoints_dir.mkdir(parents=True, exist_ok=True)
+        stem = self._checkpoints_dir / f"batch_{batch_id}_step_{int(global_step):012d}"
+        agent.save(stem)
+        Path(f"{stem}.json").write_text(
+            json.dumps(
+                {
+                    "batch_id": batch_id,
+                    "global_step": int(global_step),
+                    "stage": stage,
+                    "stage_index": int(stage_index),
+                    "panels": [dict(item.get("metadata", {})) for item in jobs],
+                },
+                sort_keys=True,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        admitted: list[EvaluationJob] = []
+        self._batch_admission_in_progress = True
+        try:
+            for item in jobs:
+                admitted.append(
+                    self.enqueue(
+                        agent=agent,
+                        cfg=cfg,
+                        eval_id=int(item["eval_id"]),
+                        global_step=global_step,
+                        stage=stage,
+                        stage_index=stage_index,
+                        episode_count=int(item["episode_count"]),
+                        base_seed=item.get("base_seed"),
+                        env_seed=int(item["env_seed"]),
+                        env_overrides=item.get("env_overrides"),
+                        workers=item.get("workers"),
+                        scenario_arm_schedule=item.get("scenario_arm_schedule"),
+                        scenario_source_schedule=item.get("scenario_source_schedule"),
+                        metadata=item.get("metadata"),
+                        batch_id=batch_id,
+                        panel_name=item.get("panel_name"),
+                        evaluation_scope=item.get("evaluation_scope"),
+                        checkpoint_stem=stem,
+                    )
+                )
+        finally:
+            self._batch_admission_in_progress = False
+        self._launch_next()
+        return tuple(admitted)
 
     def poll(self) -> None:
         """Process all currently available IPC messages and launch the next job."""
@@ -310,7 +407,7 @@ class AsyncEvaluationManager:
         return messages
 
     def renderables(self) -> list[Any]:
-        """Return the evaluation progress bar and last-complete result table."""
+        """Return one panel-aware Rich progress renderer and status table."""
 
         self.poll()
         active = self._active
@@ -320,48 +417,36 @@ class AsyncEvaluationManager:
             if progress_state
             else "0/0"
         )
-        progress_description = (
-            "Evaluation episodes" if progress_state is None else f"Evaluation episodes ({current})"
-        )
+        panel = progress_state.job.panel_name if progress_state is not None else None
+        progress_description = "Evaluation idle" if panel is None else f"Evaluation {panel} ({current})"
         self._progress.update(
             self._progress_task,
             description=progress_description,
             total=max(progress_state.job.episode_count, 1) if progress_state else 1,
             completed=progress_state.completed if progress_state else 0,
         )
-        last = Table(title="Last Completed Evaluation", expand=True)
-        last.add_column("Metric", style="cyan", no_wrap=True)
-        last.add_column("Value", style="white")
-        if self._last_completed is None or self._last_completed.metrics is None:
-            values = {
-                "Global step": "-",
-                "Reward": "-",
-                "Success rate": "-",
-                "Collision rate": "-",
-                "Out-of-road rate": "-",
-                "Route completion": "-",
-                "Top rule violation": "-",
-                "Avg error value": "-",
-            }
-        else:
-            job = self._last_completed.job
-            metrics = self._last_completed.metrics
-            values = {
-                "Global step": str(job.global_step),
-                "Reward": (
-                    f"{float(metrics.get('mean_reward', 0.0)):.4g} ± "
-                    f"{float(metrics.get('std_reward', 0.0)):.4g}"
-                ),
-                "Success rate": f"{float(metrics.get('success_rate', 0.0)):.4g}",
-                "Collision rate": f"{float(metrics.get('collision_rate', 0.0)):.4g}",
-                "Out-of-road rate": f"{float(metrics.get('out_of_road_rate', 0.0)):.4g}",
-                "Route completion": f"{float(metrics.get('route_completion', 0.0)):.4g}",
-                "Top rule violation": f"{float(metrics.get('top_rule_violation_rate', 0.0)):.4g}",
-                "Avg error value": f"{float(metrics.get('avg_error_value', 0.0)):.4g}",
-            }
-        for metric, value in values.items():
-            last.add_row(metric, value)
-        return [self._progress, Panel(last, title="Evaluation Monitor")]
+        table = Table(title="Evaluation panels", expand=True)
+        table.add_column("Batch / panel", style="cyan")
+        table.add_column("State")
+        table.add_column("Progress", justify="right")
+        table.add_column("Success μ ± σ", justify="right")
+        table.add_column("Collision μ ± σ", justify="right")
+        table.add_column("Route completion μ ± σ", justify="right")
+        for state in self._jobs.values():
+            job = state.job
+            metrics = state.metrics or {}
+            per_episode = metrics.get("per_episode", {}) if isinstance(metrics, dict) else {}
+            table.add_row(
+                f"{job.batch_id or '-'} / {job.panel_name or job.eval_id}",
+                state.status,
+                f"{state.completed}/{job.episode_count}",
+                _sample_mean_sd(per_episode.get("success", ())),
+                _sample_mean_sd(per_episode.get("collision", ())),
+                _sample_mean_sd(per_episode.get("route_completion", ())),
+            )
+        if not self._jobs:
+            table.add_row("-", "idle", "0/0", "-", "-", "-")
+        return [self._progress, Panel(table, title="Evaluation Monitor")]
 
     def close(self) -> None:
         """Close IPC resources after a successful drain."""
@@ -429,7 +514,7 @@ class AsyncEvaluationManager:
                 # environment; wait for that cleanup before launching the next
                 # FIFO job so there is never more than one evaluator process.
                 state.process.join()
-            self._remove_snapshot(state.job)
+            self._release_snapshot(state.job)
             self._active = None
             self._launch_next()
 
@@ -445,8 +530,14 @@ class AsyncEvaluationManager:
         )
         self._active = None
 
-    def _remove_snapshot(self, job: EvaluationJob) -> None:
+    def _release_snapshot(self, job: EvaluationJob) -> None:
         stem = Path(job.checkpoint_stem)
+        key = str(stem)
+        remaining = self._snapshot_refcounts.get(key, 0) - 1
+        if remaining > 0:
+            self._snapshot_refcounts[key] = remaining
+            return
+        self._snapshot_refcounts.pop(key, None)
         for path in (
             stem.with_suffix(".zip"),
             stem.with_name(f"{stem.name}.adapter.pt"),
@@ -454,6 +545,15 @@ class AsyncEvaluationManager:
             stem.with_suffix(".json"),
         ):
             path.unlink(missing_ok=True)
+
+
+def _sample_mean_sd(values: Any) -> str:
+    """Render the requested sample mean ± sample standard deviation."""
+    numeric = [float(value) for value in values if value is not None]
+    if not numeric:
+        return "-"
+    deviation = statistics.stdev(numeric) if len(numeric) > 1 else 0.0
+    return f"{statistics.fmean(numeric):.3f} ± {deviation:.3f}"
 
 
 def evaluation_num_workers_from_cfg(cfg: DictConfig, *, final: bool) -> int:

@@ -27,7 +27,58 @@ def assert_no_group_overlap(
         for right in SPLIT_ORDER[index + 1 :]:
             overlap = groups_by_split[left].intersection(groups_by_split[right])
             if overlap:
-                raise ValueError(f"source groups overlap between {left} and {right}: {sorted(overlap)}")
+                raise ValueError(
+                    f"source groups overlap between {left} and {right}: {sorted(overlap)}"
+                )
+
+
+def _pool_key(record: ScenarioRecord) -> str:
+    """Return the compound pool name for the v1.2 holdout-first policy.
+
+    `split="test"` covers two disjoint-by-construction pools distinguished
+    by `record.holdout_pool` (`SCENARIONET-INTEGRATION` v1.2 §3.4/§3.5);
+    every other split maps to itself. Used only for the pairwise
+    group-overlap check (`REQ-013`); it does not replace `record.split` for
+    runtime routing.
+    """
+
+    if record.split == "test" and record.holdout_pool is not None:
+        return f"test_{record.holdout_pool}"
+    return record.split
+
+
+POOL_ORDER = ("train", "validation", "test_empirical", "test_stratified", "test")
+
+
+def assert_no_pool_overlap(
+    records: Sequence[ScenarioRecord],
+    group_id_by_uid: Mapping[str, str],
+) -> None:
+    """Pairwise group-disjointness across train/validation/test_empirical/test_stratified.
+
+    Extends `assert_no_group_overlap` (which only sees the three canonical
+    `split` values) to the four v1.2 pools, using `holdout_pool` to split the
+    `test` population into its empirical and stratified sub-pools. A `test`
+    record without `holdout_pool` set (e.g. a v1.1-produced record) is
+    treated as an undifferentiated `test` pool, so this check degrades
+    gracefully to the v1.1 three-way check when `holdout_pool` is unused.
+    """
+
+    groups_by_pool: dict[str, set[str]] = defaultdict(set)
+    for record in records:
+        try:
+            group_id = group_id_by_uid[record.scenario_uid]
+        except KeyError as exc:
+            raise ValueError(f"missing group id for {record.scenario_uid}") from exc
+        groups_by_pool[_pool_key(record)].add(str(group_id))
+    pools = [pool for pool in POOL_ORDER if pool in groups_by_pool]
+    for index, left in enumerate(pools):
+        for right in pools[index + 1 :]:
+            overlap = groups_by_pool[left].intersection(groups_by_pool[right])
+            if overlap:
+                raise ValueError(
+                    f"source groups overlap between {left} and {right}: {sorted(overlap)}"
+                )
 
 
 def assert_pg_seed_disjoint(records: Sequence[ScenarioRecord]) -> None:

@@ -64,6 +64,12 @@ from thesis_rl.runtime.io.run_logging import (
     setup_file_logger,
 )
 from thesis_rl.runtime.async_evaluation import AsyncEvaluationManager, EvaluationJob
+from thesis_rl.runtime.evaluation_plan import (
+    EvaluationPanel,
+    is_scenarionet,
+    resolve_scenarionet_evaluation_panels,
+)
+from thesis_rl.runtime.final_panels import run_scenarionet_final_panels
 from thesis_rl.runtime.execution.seeding import (
     apply_eval_scenario_seed_split,
     configure_parent_torch_threads,
@@ -809,6 +815,11 @@ def run_training(cfg: DictConfig) -> None:
                 curriculum_logger=curriculum_logger,
             )
             return
+        scenarionet_validation_panels: tuple[EvaluationPanel, ...] = (
+            resolve_scenarionet_evaluation_panels(cfg, final=False)
+            if is_scenarionet(cfg)
+            else ()
+        )
         curriculum_manager: CurriculumManager | None = None
         current_train_overrides: dict[str, Any] | None = None
         if curriculum_cfg.enabled and curriculum_cfg.is_staged and curriculum_cfg.staged.stages:
@@ -913,7 +924,14 @@ def run_training(cfg: DictConfig) -> None:
                 **base_csv_fields,
                 "eval_id": job.eval_id,
                 "eval_type": "intermediate",
-                "scenario_set": "curriculum_eval",
+                "scenario_set": job.panel_name or "curriculum_eval",
+                "evaluation_batch_id": job.batch_id,
+                "panel_name": job.panel_name,
+                "evaluation_scope": job.evaluation_scope,
+                "panel_sha256": job.metadata.get("panel_sha256"),
+                "parent_panel_sha256": job.metadata.get("parent_panel_sha256"),
+                "frozen_selection_hash": job.metadata.get("frozen_selection_hash"),
+                "checkpoint_identity": job.checkpoint_stem,
                 "stage": job.stage,
                 "stage_index": job.stage_index,
                 "global_step": job.global_step,
@@ -1027,7 +1045,7 @@ def run_training(cfg: DictConfig) -> None:
                 base_fields=base_csv_fields,
                 eval_id=job.eval_id,
                 eval_type="intermediate",
-                scenario_set="curriculum_eval",
+                scenario_set=job.panel_name or "curriculum_eval",
                 chunk_id=int(job.metadata.get("chunk_id", 0)),
                 stage=job.stage,
                 stage_index=job.stage_index,
@@ -1039,7 +1057,7 @@ def run_training(cfg: DictConfig) -> None:
                 base_fields=base_csv_fields,
                 eval_id=job.eval_id,
                 eval_type="intermediate",
-                scenario_set="curriculum_eval",
+                scenario_set=job.panel_name or "curriculum_eval",
                 chunk_id=int(job.metadata.get("chunk_id", 0)),
                 stage=job.stage,
                 stage_index=job.stage_index,
@@ -1590,6 +1608,48 @@ def run_training(cfg: DictConfig) -> None:
                 eval_env_overrides = curriculum_manager.get_env_config(evaluation=True)
             eval_episode_count = int(cfg.experiment.eval_episodes)
             if curriculum_manager is None:
+                if scenarionet_validation_panels:
+                    batch_id = f"validation_{current_global_step:012d}"
+                    batch_jobs: list[dict[str, Any]] = []
+                    for panel_index, panel in enumerate(scenarionet_validation_panels, start=1):
+                        eval_id += 1
+                        batch_jobs.append(
+                            {
+                                "eval_id": eval_id,
+                                "episode_count": panel.episode_count,
+                                "base_seed": None,
+                                "env_seed": run_seed
+                                + 100_000
+                                + (total_timesteps - remaining)
+                                + panel_index,
+                                "env_overrides": panel.env_overrides(),
+                                "workers": evaluation_num_workers(cfg, final=False),
+                                "panel_name": panel.name,
+                                "evaluation_scope": panel.scope,
+                                "metadata": {"chunk_id": chunk_id, **panel.metadata()},
+                            }
+                        )
+                    log_event(
+                        events_log_path,
+                        "evaluation_batch_started",
+                        batch_id=batch_id,
+                        stage=current_stage_name,
+                        global_step=current_global_step,
+                        panels=[panel.name for panel in scenarionet_validation_panels],
+                        asynchronous=True,
+                    )
+                    if async_evaluation_manager is None:
+                        raise RuntimeError("ScenarioNet validation requires an async evaluation manager")
+                    async_evaluation_manager.enqueue_batch(
+                        agent=agent,
+                        cfg=cfg,
+                        batch_id=batch_id,
+                        global_step=current_global_step,
+                        stage=current_stage_name,
+                        stage_index=current_stage_index,
+                        jobs=tuple(batch_jobs),
+                    )
+                    continue
                 if eval_episode_count > 0:
                     eval_env_overrides = apply_eval_scenario_seed_split(
                         base_run_seed=run_seed,
@@ -2355,7 +2415,7 @@ def run_training(cfg: DictConfig) -> None:
         final_eval_episode_count = int(
             cfg.experiment.get("final_eval_episodes", cfg.experiment.eval_episodes)
         )
-        if final_eval_episode_count <= 0:
+        if final_eval_episode_count <= 0 and not is_scenarionet(cfg):
             duration_seconds = round(time.time() - start_time, 2)
             update_run_metadata(
                 artifacts_dir,
@@ -2371,6 +2431,38 @@ def run_training(cfg: DictConfig) -> None:
                 "Run completed without final evaluation | total_timesteps=%d | duration_seconds=%.2f",
                 total_timesteps,
                 duration_seconds,
+            )
+            return
+        if is_scenarionet(cfg):
+            final_eval_id, final_panel_metrics = run_scenarionet_final_panels(
+                cfg=cfg,
+                recorder=recorder,
+                base_csv_fields=base_csv_fields,
+                run_dir=run_dir,
+                checkpoint_stem=final_checkpoint_stem,
+                global_step=total_timesteps,
+                stage=(
+                    curriculum_manager.get_current_stage().name
+                    if curriculum_manager is not None
+                    else "baseline"
+                ),
+                stage_index=(int(curriculum_manager.stage_index) if curriculum_manager is not None else 0),
+                build_agent=lambda final_env: _make_eval_agent(final_checkpoint_stem, final_env)[0],
+                seed_env=seed_env_spaces,
+                event=lambda name, **payload: log_event(events_log_path, name, **payload),
+                eval_id_start=eval_id,
+            )
+            duration_seconds = round(time.time() - start_time, 2)
+            update_run_metadata(
+                artifacts_dir,
+                {
+                    "status": "completed",
+                    "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "duration_seconds": duration_seconds,
+                    "final_panel_eval_ids": final_eval_id,
+                    "final_panels": sorted(final_panel_metrics),
+                    "scenarionet_runtime_stats": scenario_runtime_stats_total,
+                },
             )
             return
         final_eval_env_overrides = None

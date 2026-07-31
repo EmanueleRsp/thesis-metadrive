@@ -14,6 +14,8 @@ ValidationStatus = Literal["valid", "warning", "invalid"]
 
 SOURCES = frozenset({"waymo", "pg"})
 SPLITS = frozenset({"train", "validation", "test"})
+HoldoutPool = Literal["empirical", "stratified"]
+HOLDOUT_POOLS = frozenset({"empirical", "stratified"})
 TOPOLOGY_TAGS = frozenset({"simple", "merge_or_roundabout", "intersection", "mixed", "unknown"})
 SIGNAL_RELIABILITIES = frozenset({"not_applicable", "complete", "partial", "missing"})
 TOPOLOGY_CONFIDENCES = frozenset({"unknown", "medium", "high"})
@@ -65,6 +67,13 @@ class ScenarioRecord:
     rulebook_validation_errors: tuple[str, ...] = field(default_factory=tuple)
     assigned_route_lane_ids: tuple[str, ...] = field(default_factory=tuple)
     assigned_route_source: str | None = None
+    # Populated only by the SCENARIONET-INTEGRATION v1.2 holdout-first
+    # allocator (`pipeline.py::reserve_empirical_holdouts`/
+    # `reserve_stratified_pool`); `None` for every v1.1 record and for train
+    # records, by design -- it distinguishes the empirical validation/test
+    # pools from the arm-stratified challenge pool within the same `split`
+    # value, it does not gate any invariant on `split` itself.
+    holdout_pool: HoldoutPool | None = None
 
     def __post_init__(self) -> None:
         for name in ("scenario_uid", "scenario_id", "dataset_version", "primary_arm"):
@@ -98,6 +107,8 @@ class ScenarioRecord:
             raise ValueError("assigned_route_lane_ids must contain non-empty lane IDs")
         if self.assigned_route_lane_ids and not self.assigned_route_source:
             raise ValueError("assigned_route_source is required when route lane IDs are present")
+        if self.holdout_pool is not None and self.holdout_pool not in HOLDOUT_POOLS:
+            raise ValueError(f"unsupported holdout_pool: {self.holdout_pool!r}")
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)

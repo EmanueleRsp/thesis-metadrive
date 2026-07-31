@@ -2,6 +2,7 @@ from datetime import datetime
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 import hashlib
+import json
 import os
 import shutil
 import socket
@@ -20,7 +21,7 @@ ACL_SPECIFICATION_VERSION = "1.1"
 TRANSITION_REPLAY_SPECIFICATION_ID = "TRANSITION-REPLAY"
 TRANSITION_REPLAY_SPECIFICATION_VERSION = "1.0"
 EVALUATION_PROTOCOL_SPECIFICATION_ID = "EVAL-PROTOCOL"
-EVALUATION_PROTOCOL_SPECIFICATION_VERSION = "1.0"
+EVALUATION_PROTOCOL_SPECIFICATION_VERSION = "1.2"
 
 
 def get_git_commit() -> str:
@@ -115,6 +116,7 @@ def _snapshot_scenarionet_artifacts(cfg: DictConfig, artifacts_dir: Path) -> dic
         "dataset_manifest": data_root / "manifest.yaml",
         "split_manifest": data_root / "splits" / "split_manifest.yaml",
         "arm_thresholds": data_root / "catalog" / "arm_thresholds.json",
+        "frozen_selection_index": data_root / "frozen" / "scenario_selection_index.json",
     }
     catalog_path = _cfg_get(cfg, "env.catalog_path")
     if catalog_path:
@@ -128,6 +130,14 @@ def _snapshot_scenarionet_artifacts(cfg: DictConfig, artifacts_dir: Path) -> dic
     snapshot_dir = artifacts_dir / "scenarionet"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     result: dict[str, str] = {}
+    frozen_index = candidates["frozen_selection_index"]
+    if frozen_index.is_file():
+        try:
+            payload = json.loads(frozen_index.read_text(encoding="utf-8"))
+            if isinstance(payload.get("selection_hash"), str):
+                result["frozen_selection_hash"] = payload["selection_hash"]
+        except (OSError, ValueError):
+            pass
     for name, source in candidates.items():
         if not source.is_file():
             continue
