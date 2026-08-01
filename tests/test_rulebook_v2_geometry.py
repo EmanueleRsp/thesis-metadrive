@@ -429,6 +429,110 @@ def test_drivable_surface_reuses_exact_union_for_same_lane_layer() -> None:
     assert _union_selected_surfaces.cache_info().hits == 1
 
 
+def test_drivable_surface_closes_lane_seams() -> None:
+    """TEST-RBCOST-001/002: adjacent lane polygons with a hairline gap at their
+    shared edge must union into a surface with no interior holes, and a
+    footprint centered on the seam must not be off-road.
+
+    REQ-RBCOST-001.
+    """
+    from shapely.geometry import Polygon as _Polygon
+
+    left = _Polygon(((0.0, 0.0), (5.0, 0.0), (5.0, 2.0), (0.0, 2.0)))
+    # Right lane's shared edge is offset by 1e-3 m, well under the 0.10 m
+    # closing radius but enough to leave a sliver in a raw union.
+    right = _Polygon(((5.0 + 1e-3, 0.0), (10.0, 0.0), (10.0, 2.0), (5.0 + 1e-3, 2.0)))
+    left_route = RoutePolyline(((0.0, 1.0, 0.0), (5.0, 1.0, 0.0)))
+    right_route = RoutePolyline(((5.0, 1.0, 0.0), (10.0, 1.0, 0.0)))
+    lanes = (
+        DrivableLaneRecord("left", left_route, left, None),
+        DrivableLaneRecord("right", right_route, right, None),
+    )
+    ego = oriented_bounding_box(center_xy=(5.0, 1.0), heading_rad=0.0, length_m=1.0, width_m=1.0)
+    _union_selected_surfaces.cache_clear()
+    surface = drivable_surface_for_ego(
+        ego_footprint=ego, ego_position_xy=(5.0, 1.0), ego_position_z=0.0, lanes=lanes
+    )
+    assert surface.difference(ego).area >= 0.0
+    assert ego.difference(surface).area < 1e-6
+
+
+def test_drivable_surface_closing_is_area_monotone_and_covers_the_raw_union() -> None:
+    """TEST-RBCOST-003: closing can only add surface, never remove it."""
+    from shapely.geometry import Polygon as _Polygon
+
+    lane_a = _Polygon(((0.0, 0.0), (5.0, 0.0), (5.0, 2.0), (0.0, 2.0)))
+    lane_b = _Polygon(
+        ((5.0 + 2e-3, 0.0), (10.0, 0.0), (10.0, 2.0 - 3e-3), (5.0 + 2e-3, 2.0 - 3e-3))
+    )
+    route = RoutePolyline(((0.0, 1.0, 0.0), (10.0, 1.0, 0.0)))
+    lanes = (
+        DrivableLaneRecord("a", route, lane_a, None),
+        DrivableLaneRecord("b", route, lane_b, None),
+    )
+    ego = oriented_bounding_box(center_xy=(0.0, 0.0), heading_rad=0.0, length_m=0.1, width_m=0.1)
+    _union_selected_surfaces.cache_clear()
+    closed = drivable_surface_for_ego(
+        ego_footprint=ego, ego_position_xy=(0.0, 0.0), ego_position_z=0.0, lanes=lanes
+    )
+    raw = shapely.union_all([lane_a, lane_b])
+    assert closed.area >= raw.area - 1e-9
+    # Buffer round-tripping approximates curves with straight segments, so the
+    # closed boundary can diverge from the raw one by a negligible polygonal
+    # discretization error at corners; it must stay far below the seam sizes
+    # (1e-4..5e-4 m^2) this closing exists to remove.
+    assert raw.difference(closed).area < 1e-5
+
+
+def test_drivable_surface_genuine_gap_still_reports_off_road() -> None:
+    """TEST-RBCOST-005: a real gap wider than the closing radius must still
+    produce off-road area outside the surface -- the closing must not bridge
+    genuine map-edge or inter-lane gaps.
+    """
+    from shapely.geometry import Polygon as _Polygon
+
+    lane = _Polygon(((0.0, 0.0), (5.0, 0.0), (5.0, 2.0), (0.0, 2.0)))
+    route = RoutePolyline(((0.0, 1.0, 0.0), (5.0, 1.0, 0.0)))
+    lanes = (DrivableLaneRecord("lane", route, lane, None),)
+    # Footprint half outside the outermost (only) lane, well past the closing
+    # radius from the drivable edge.
+    ego = oriented_bounding_box(center_xy=(5.0, 1.0), heading_rad=0.0, length_m=2.0, width_m=2.0)
+    _union_selected_surfaces.cache_clear()
+    surface = drivable_surface_for_ego(
+        ego_footprint=ego, ego_position_xy=(5.0, 1.0), ego_position_z=0.0, lanes=lanes
+    )
+    outside_ratio = ego.difference(surface).area / ego.area
+    assert outside_ratio == pytest.approx(0.5, abs=0.05)
+
+
+def test_drivable_surface_union_is_order_independent() -> None:
+    """TEST-RBCOST-021: the same lane set in a different order yields the same
+    closed surface (determinism, no fold-order dependence).
+    """
+    from shapely.geometry import Polygon as _Polygon
+
+    a = _Polygon(((0.0, 0.0), (5.0, 0.0), (5.0, 2.0), (0.0, 2.0)))
+    b = _Polygon(((5.0 + 1e-3, 0.0), (10.0, 0.0), (10.0, 2.0), (5.0 + 1e-3, 2.0)))
+    c = _Polygon(((10.0 + 1e-3, 0.0), (15.0, 0.0), (15.0, 2.0), (10.0 + 1e-3, 2.0)))
+    route = RoutePolyline(((0.0, 1.0, 0.0), (15.0, 1.0, 0.0)))
+    forward = (
+        DrivableLaneRecord("a", route, a, None),
+        DrivableLaneRecord("b", route, b, None),
+        DrivableLaneRecord("c", route, c, None),
+    )
+    reversed_lanes = tuple(reversed(forward))
+    ego = oriented_bounding_box(center_xy=(7.5, 1.0), heading_rad=0.0, length_m=1.0, width_m=1.0)
+    _union_selected_surfaces.cache_clear()
+    forward_surface = drivable_surface_for_ego(
+        ego_footprint=ego, ego_position_xy=(7.5, 1.0), ego_position_z=0.0, lanes=forward
+    )
+    _union_selected_surfaces.cache_clear()
+    reversed_surface = drivable_surface_for_ego(
+        ego_footprint=ego, ego_position_xy=(7.5, 1.0), ego_position_z=0.0, lanes=reversed_lanes
+    )
+    assert forward_surface.symmetric_difference(reversed_surface).area < 1e-9
+
+
 def test_derived_control_line_is_orthogonal_and_signed_upstream_positive() -> None:
     route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
     lane = RouteLaneRecord(
@@ -583,9 +687,7 @@ def test_route_interval_skips_far_segments_without_changing_interval() -> None:
 
 
 def test_large_polygon_uses_exact_constrained_decomposition() -> None:
-    polygon = Point(0.0, 0.0).buffer(
-        10.0, quad_segs=CONSTRAINED_DECOMPOSITION_VERTEX_THRESHOLD
-    )
+    polygon = Point(0.0, 0.0).buffer(10.0, quad_segs=CONSTRAINED_DECOMPOSITION_VERTEX_THRESHOLD)
     components = deterministic_convex_decomposition(polygon)
     covered = shapely.union_all(components)
     assert polygon.covers(covered)
@@ -603,9 +705,12 @@ def test_vehicle_conflict_bounds_rejects_disjoint_canonical_corridors() -> None:
         Polygon(((10.0, 10.0), (11.0, 10.0), (11.0, 11.0), (10.0, 11.0))),
         lambda _x, _y: 0.0,
     )
-    assert build_vehicle_conflict_zone_candidates(
-        scenario_id="scenario", ego_corridor=ego, other_corridor=other
-    ) == ()
+    assert (
+        build_vehicle_conflict_zone_candidates(
+            scenario_id="scenario", ego_corridor=ego, other_corridor=other
+        )
+        == ()
+    )
 
 
 def test_occupancy_bounds_rejects_unreachable_zone_before_sat(monkeypatch) -> None:
@@ -791,9 +896,7 @@ def test_route_projection_continuity_bound_rejects_a_far_branch_jump() -> None:
     explicit and fails closed when nothing is plausible.
     """
 
-    route = RoutePolyline(
-        ((0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 0.4, 0.0), (0.0, 0.4, 0.0))
-    )
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 0.4, 0.0), (0.0, 0.4, 0.0)))
     near_the_fold = (9.0, 0.35)
 
     # Unbounded: continuity is only a tie-break, so the far branch can win.

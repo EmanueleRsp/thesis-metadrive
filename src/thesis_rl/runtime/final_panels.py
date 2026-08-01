@@ -25,6 +25,11 @@ def _metric_fields(metrics: Mapping[str, Any]) -> dict[str, Any]:
         "collision_rate_std", "out_of_road_rate", "success_rate", "success_rate_std",
         "route_completion", "top_rule_violation_rate", "avg_error_value", "max_error_value",
         "counterexample_rate", "violated_rules_ratio", "unique_violation_patterns",
+        # step_timing_instrumentation_v1 REQ-003: GIF render/annotation cost.
+        # Silently dropped by `final_eval.csv`'s fixed schema (no such
+        # columns there); picked up by `evals.csv`.
+        "gif_render_seconds_total",
+        "gif_render_seconds_per_episode",
     )
     return {key: metrics.get(key) for key in keys}
 

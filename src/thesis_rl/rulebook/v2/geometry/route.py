@@ -46,6 +46,13 @@ class RoutePolyline:
     """Canonical 3D route with XY arc length and deterministic projections."""
 
     points_xyz: tuple[tuple[float, float, float], ...]
+    # REQ-001 (video overlay v1, 2026-07-31): raw lane-start points from the
+    # frozen lane sequence that produced this route, one per lane in order,
+    # used only to draw discrete "planned checkpoint" markers in evaluation
+    # GIFs. Diagnostic metadata only; not read by any rulebook geometry or
+    # projection logic, so it participates in neither consolidation nor
+    # equality-relevant computation.
+    lane_start_points_xyz: tuple[tuple[float, float, float], ...] = ()
     _segment_starts_m: tuple[float, ...] = field(init=False, repr=False)
     _segment_lengths_m: tuple[float, ...] = field(init=False, repr=False)
 
@@ -73,7 +80,10 @@ class RoutePolyline:
     ) -> "RoutePolyline":
         if not lane_centerlines:
             raise ValueError("Task route must contain at least one lane centerline")
-        return cls(tuple(point for centerline in lane_centerlines for point in centerline))
+        return cls(
+            tuple(point for centerline in lane_centerlines for point in centerline),
+            lane_start_points_xyz=tuple(centerline[0] for centerline in lane_centerlines),
+        )
 
     @staticmethod
     def _consolidate_points(

@@ -81,9 +81,7 @@ def test_bundled_waymo_fixture_converts_to_canonical_static_records():
     # why. The "a stop control is produced with a correct canonical coordinate"
     # behaviour is covered by
     # `test_waymo_adapter_derives_a_canonical_stop_control_on_a_contiguous_route`.
-    assert any(
-        error.startswith("assigned_route_invalid") for error in result.validation_errors
-    )
+    assert any(error.startswith("assigned_route_invalid") for error in result.validation_errors)
     assert "traffic_controls_skipped_unbuildable_assigned_route" in result.validation_errors
     assert result.traffic_controls == ()
 
@@ -131,9 +129,7 @@ def test_waymo_adapter_derives_a_canonical_stop_control_on_a_contiguous_route():
     result = build_waymo_static_adapter_result(scenario, scenario_uid="synthetic-stop")
 
     assert not result.validation_errors
-    stops = [
-        control for control in result.traffic_controls if control.control_type.value == "stop"
-    ]
+    stops = [control for control in result.traffic_controls if control.control_type.value == "stop"]
     assert len(stops) == 1
     assert stops[0].route_s_m == pytest.approx(25.0, abs=0.05)
     # The line spans the lane across the centerline, not the sign's offset.
@@ -205,12 +201,89 @@ def test_waymo_adapter_interpolates_missing_per_side_width_samples() -> None:
 
 
 @pytest.mark.parametrize(
+    ("marking_type", "expected_class_name"),
+    [
+        ("ROAD_LINE_SOLID_DOUBLE_WHITE", "LANE_MARKING_SOLID"),
+        ("ROAD_LINE_BROKEN_SINGLE_YELLOW", "LANE_MARKING_DASHED"),
+        ("ROAD_LINE_BROKEN_DOUBLE_YELLOW", "LANE_MARKING_DASHED"),
+        ("ROAD_LINE_PASSING_DOUBLE_YELLOW", "LANE_MARKING_DASHED"),
+        ("ROAD_EDGE_MEDIAN", "ROAD_BOUNDARY"),
+    ],
+)
+def test_waymo_adapter_maps_newly_covered_marking_classes(
+    marking_type: str, expected_class_name: str
+) -> None:
+    """TEST-RBCOST-010 / REQ-RBCOST-004/005: F2 regression, DEC-RBCOST-008/009."""
+    from thesis_rl.rulebook.v2.types import MapFeatureClass
+
+    scenario = _minimal_scenario(signal_lane_reachable=False)
+    scenario["map_features"]["marking"] = {
+        "type": marking_type,
+        "polyline": [[5.0, 0.0, 0.0], [6.0, 0.0, 0.0]],
+    }
+    result = build_waymo_static_adapter_result(scenario, scenario_uid="marking-coverage")
+    matches = [
+        feature
+        for feature in result.map_features.values()
+        if feature.feature_class is MapFeatureClass[expected_class_name]
+    ]
+    assert len(matches) == 1
+
+
+def test_waymo_adapter_degenerate_new_marking_geometry_is_diagnostic_not_error() -> None:
+    """DEC-RBCOST-006 regression.
+
+    A read-only dry-run over the 1805 frozen Waymo records found 21 whose
+    only *new* validation_errors entry, after the M3 marking-coverage change,
+    was invalid_map_feature_geometry on a single-point instance of a newly
+    covered class. Excluding them would shrink the frozen catalog, which the
+    fallback option of DEC-RBCOST-006 forbids: for these classes only, a
+    degenerate geometry becomes a diagnostic, not a validation error. Other
+    classes (e.g. CROSSWALK) keep failing validation unchanged.
+    """
+    scenario = _minimal_scenario(signal_lane_reachable=False)
+    scenario["map_features"]["degenerate_marking"] = {
+        "type": "ROAD_LINE_PASSING_DOUBLE_YELLOW",
+        "polyline": [[5.0, 0.0, 0.0]],
+    }
+    scenario["map_features"]["degenerate_crosswalk"] = {
+        "type": "CROSSWALK",
+        "polygon": [[5.0, 0.0, 0.0]],
+    }
+    result = build_waymo_static_adapter_result(scenario, scenario_uid="degenerate-marking")
+    assert "degenerate_marking" not in result.map_features
+    assert "degenerate_geometry:ROAD_LINE_PASSING_DOUBLE_YELLOW" in result.unmapped_feature_types
+    assert not any(
+        error.startswith("invalid_map_feature_geometry:degenerate_marking")
+        for error in result.validation_errors
+    )
+    assert "invalid_map_feature_geometry:degenerate_crosswalk" in result.validation_errors
+
+
+def test_waymo_adapter_records_unmapped_feature_type_without_a_validation_error() -> None:
+    """TEST-RBCOST-011 / REQ-RBCOST-011."""
+    scenario = _minimal_scenario(signal_lane_reachable=False)
+    scenario["map_features"]["future"] = {
+        "type": "ROAD_LINE_FUTURE_SCHEMA",
+        "polyline": [[5.0, 0.0, 0.0], [6.0, 0.0, 0.0]],
+    }
+    result = build_waymo_static_adapter_result(scenario, scenario_uid="unmapped-type")
+    assert "future" not in result.map_features
+    assert "ROAD_LINE_FUTURE_SCHEMA" in result.unmapped_feature_types
+    assert not any("future" in error for error in result.validation_errors)
+
+
+@pytest.mark.parametrize(
     ("reachable", "signal_state", "expected"),
-    ((False, "LANE_STATE_UNKNOWN", False), (True, "LANE_STATE_UNKNOWN", True),
-     (True, "TRAFFIC_LIGHT_UNKNOWN", True)),
+    (
+        (False, "LANE_STATE_UNKNOWN", False),
+        (True, "LANE_STATE_UNKNOWN", True),
+        (True, "TRAFFIC_LIGHT_UNKNOWN", True),
+    ),
 )
 def test_waymo_adapter_validates_unknown_signal_only_when_topologically_relevant(
-    reachable: bool, signal_state: str,
+    reachable: bool,
+    signal_state: str,
     expected: bool,
 ) -> None:
     result = build_waymo_static_adapter_result(

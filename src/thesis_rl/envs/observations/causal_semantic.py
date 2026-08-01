@@ -313,6 +313,9 @@ class CausalSemanticBatchBuilder:
         prediction_horizon_s: float = 3.0,
         vertical_tolerance_m: float = 3.0,
         ego_speed_cap_mps: float | None = None,
+        signal_range_m: float = 80.0,
+        signal_fov_degrees: float = 65.0,
+        signal_camera_height_m: float = 1.2,
     ) -> None:
         if history_length != 5:
             raise ValueError("OBS-V1.1 requires history_length=5")
@@ -326,6 +329,9 @@ class CausalSemanticBatchBuilder:
         self.dynamic_radius_m = dynamic_radius_m
         self.static_radius_m = static_radius_m
         self.control_radius_m = control_radius_m
+        self.signal_range_m = signal_range_m
+        self.signal_fov_degrees = signal_fov_degrees
+        self.signal_camera_height_m = signal_camera_height_m
         self.prediction_horizon_s = prediction_horizon_s
         self.vertical_tolerance_m = vertical_tolerance_m
         self.ego_speed_cap_mps = ego_speed_cap_mps
@@ -978,7 +984,13 @@ class CausalSemanticBatchBuilder:
         if control.control_type == ApproachControl.STOP:
             return "not-signal", True
         for physical_id in control.physical_control_ids:
-            visibility = mapped_signal_visibility(vehicle, str(physical_id))
+            visibility = mapped_signal_visibility(
+                vehicle,
+                str(physical_id),
+                range_m=self.signal_range_m,
+                horizontal_fov_deg=self.signal_fov_degrees,
+                camera_height_m=self.signal_camera_height_m,
+            )
             if not visibility.visible:
                 continue
             state = str(context.snapshot.signal_states_by_physical_id.get(physical_id, "")).lower()
@@ -2181,7 +2193,17 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             if control.control_type == ApproachControl.SIGNAL
             for physical_id in control.physical_control_ids
         )
-        visible_signals = mapped_signal_visibility(vehicle, signal_ids) if signal_ids else {}
+        visible_signals = (
+            mapped_signal_visibility(
+                vehicle,
+                signal_ids,
+                range_m=self.signal_range_m,
+                horizontal_fov_deg=self.signal_fov_degrees,
+                camera_height_m=self.signal_camera_height_m,
+            )
+            if signal_ids
+            else {}
+        )
         payload = np.zeros((8, 15), dtype=np.float32)
         mask = np.zeros(8, dtype=np.float32)
         active_trace: tuple[str | None, ApproachControl | None, str, float, bool] = (

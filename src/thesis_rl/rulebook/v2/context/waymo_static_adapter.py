@@ -41,9 +41,37 @@ _FEATURE_CLASSES = {
     "ROAD_LINE_SOLID_SINGLE_WHITE": MapFeatureClass.LANE_MARKING_SOLID,
     "ROAD_LINE_SOLID_DOUBLE_YELLOW": MapFeatureClass.LANE_MARKING_SOLID,
     "ROAD_LINE_SOLID_SINGLE_YELLOW": MapFeatureClass.LANE_MARKING_SOLID,
+    "ROAD_LINE_SOLID_DOUBLE_WHITE": MapFeatureClass.LANE_MARKING_SOLID,
     "ROAD_LINE_BROKEN_SINGLE_WHITE": MapFeatureClass.LANE_MARKING_DASHED,
+    "ROAD_LINE_BROKEN_SINGLE_YELLOW": MapFeatureClass.LANE_MARKING_DASHED,
+    "ROAD_LINE_BROKEN_DOUBLE_YELLOW": MapFeatureClass.LANE_MARKING_DASHED,
+    # A double yellow that permits passing is functionally a broken line
+    # (DEC-RBCOST-009).
+    "ROAD_LINE_PASSING_DOUBLE_YELLOW": MapFeatureClass.LANE_MARKING_DASHED,
+    # A median edge is a physical road boundary (DEC-RBCOST-008).
+    "ROAD_EDGE_MEDIAN": MapFeatureClass.ROAD_BOUNDARY,
     "DRIVEWAY": MapFeatureClass.OTHER_NON_DRIVABLE,
 }
+_NON_MARKING_FEATURE_PREFIXES = ("LANE_",)
+_NON_MARKING_FEATURE_TYPES = frozenset({"STOP_SIGN"})
+# DEC-RBCOST-006 fallback (b): a read-only dry-run over the 1805 frozen Waymo
+# records found 21 (1.16%) whose only new validation_errors entry was
+# invalid_map_feature_geometry on one of these newly-covered marking classes.
+# Excluding them would shrink the frozen catalog's membership, which is
+# unacceptable (the frozen selection index is the selection authority for
+# every completed run). A degenerate marking/boundary geometry is therefore
+# recorded as a diagnostic, not a validation error, for these classes only;
+# pre-existing classes keep their original fail-closed behaviour.
+_NEW_MARKING_FEATURE_TYPES = frozenset(
+    {
+        "ROAD_LINE_SOLID_SINGLE_YELLOW",
+        "ROAD_LINE_SOLID_DOUBLE_WHITE",
+        "ROAD_LINE_BROKEN_SINGLE_YELLOW",
+        "ROAD_LINE_BROKEN_DOUBLE_YELLOW",
+        "ROAD_LINE_PASSING_DOUBLE_YELLOW",
+        "ROAD_EDGE_MEDIAN",
+    }
+)
 
 
 def _points(value: Any) -> np.ndarray:
@@ -229,17 +257,29 @@ def build_waymo_static_adapter_result(
         assigned_route = None
     map_records: list[MapFeatureRecord] = []
     feature_errors: list[str] = []
+    unmapped_feature_types: set[str] = set()
     for feature_id, feature in features.items():
         if not isinstance(feature, Mapping):
             continue
-        feature_class = _FEATURE_CLASSES.get(str(feature.get("type", "")))
+        raw_type = str(feature.get("type", ""))
+        feature_class = _FEATURE_CLASSES.get(raw_type)
         geometry_values = feature.get("polygon", feature.get("polyline"))
         if feature_class is None or geometry_values is None:
+            if (
+                feature_class is None
+                and geometry_values is not None
+                and raw_type not in _NON_MARKING_FEATURE_TYPES
+                and not raw_type.startswith(_NON_MARKING_FEATURE_PREFIXES)
+            ):
+                unmapped_feature_types.add(raw_type)
             continue
         points = _points(geometry_values)
         polygonal = feature.get("polygon") is not None
         if len(points) < (3 if polygonal else 2):
-            feature_errors.append(f"invalid_map_feature_geometry:{feature_id}")
+            if raw_type in _NEW_MARKING_FEATURE_TYPES:
+                unmapped_feature_types.add(f"degenerate_geometry:{raw_type}")
+            else:
+                feature_errors.append(f"invalid_map_feature_geometry:{feature_id}")
             continue
         geometry = (
             Polygon(tuple((float(x), float(y)) for x, y, _ in points))
@@ -382,6 +422,7 @@ def build_waymo_static_adapter_result(
         traffic_controls=tuple(controls),
         movement_priority_records=priority_records,
         roundabout_priority_records=roundabout_records,
+        unmapped_feature_types=tuple(sorted(unmapped_feature_types)),
     )
     return replace(
         result,

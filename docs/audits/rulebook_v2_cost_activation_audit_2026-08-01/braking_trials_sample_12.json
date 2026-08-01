@@ -1,0 +1,132 @@
+{
+  "schema": "rulebook-v2-braking-trials-v1",
+  "target_speeds_mps": [
+    5.0,
+    10.0,
+    15.0,
+    20.0
+  ],
+  "trials": [
+    {
+      "braking_interval_s": 0.30000000000000004,
+      "braking_samples": 5,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 10.731597046060312,
+      "reached_speed_mps": 4.9710264205943355,
+      "seed": 0,
+      "target_speed_mps": 5.0
+    },
+    {
+      "braking_interval_s": 0.30000000000000004,
+      "braking_samples": 5,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 11.01188167929707,
+      "reached_speed_mps": 5.000588417054129,
+      "seed": 1,
+      "target_speed_mps": 5.0
+    },
+    {
+      "braking_interval_s": 0.30000000000000004,
+      "braking_samples": 5,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 11.495013541229271,
+      "reached_speed_mps": 4.957557201385531,
+      "seed": 2,
+      "target_speed_mps": 5.0
+    },
+    {
+      "braking_interval_s": 0.7000000000000001,
+      "braking_samples": 9,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 12.153043512785581,
+      "reached_speed_mps": 9.988213539123535,
+      "seed": 3,
+      "target_speed_mps": 10.0
+    },
+    {
+      "braking_interval_s": 0.7000000000000001,
+      "braking_samples": 9,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 11.800923453913276,
+      "reached_speed_mps": 9.822395324709541,
+      "seed": 4,
+      "target_speed_mps": 10.0
+    },
+    {
+      "braking_interval_s": 0.6000000000000001,
+      "braking_samples": 8,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 14.021821878851961,
+      "reached_speed_mps": 10.038763999940455,
+      "seed": 5,
+      "target_speed_mps": 10.0
+    },
+    {
+      "braking_interval_s": 0.9,
+      "braking_samples": 11,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 14.529737134791032,
+      "reached_speed_mps": 15.0392179489296,
+      "seed": 6,
+      "target_speed_mps": 15.0
+    },
+    {
+      "braking_interval_s": 1.0,
+      "braking_samples": 13,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 11.416461706159525,
+      "reached_speed_mps": 14.996611595157644,
+      "seed": 7,
+      "target_speed_mps": 15.0
+    },
+    {
+      "braking_interval_s": 1.1,
+      "braking_samples": 14,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 11.109582971446116,
+      "reached_speed_mps": 14.902821540835706,
+      "seed": 8,
+      "target_speed_mps": 15.0
+    },
+    {
+      "braking_interval_s": 0.9,
+      "braking_samples": 12,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 16.923585070504057,
+      "reached_speed_mps": 20.052469253540053,
+      "seed": 9,
+      "target_speed_mps": 20.0
+    },
+    {
+      "braking_interval_s": 0.9,
+      "braking_samples": 12,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 16.806342601776272,
+      "reached_speed_mps": 20.03207397461113,
+      "seed": 10,
+      "target_speed_mps": 20.0
+    },
+    {
+      "braking_interval_s": 1.0,
+      "braking_samples": 13,
+      "collided": false,
+      "left_lane": false,
+      "mean_deceleration_mps2": 15.807315349581035,
+      "reached_speed_mps": 19.947799682618943,
+      "seed": 11,
+      "target_speed_mps": 20.0
+    }
+  ],
+  "trials_per_target": 3
+}

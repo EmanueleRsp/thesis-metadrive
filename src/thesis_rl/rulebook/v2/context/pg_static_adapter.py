@@ -40,8 +40,18 @@ _FEATURE_CLASSES = {
     "ROAD_EDGE_BOUNDARY": MapFeatureClass.ROAD_BOUNDARY,
     "ROAD_LINE_SOLID_SINGLE_WHITE": MapFeatureClass.LANE_MARKING_SOLID,
     "ROAD_LINE_SOLID_DOUBLE_YELLOW": MapFeatureClass.LANE_MARKING_SOLID,
+    # ROAD_LINE_SOLID_SINGLE_YELLOW is the continuous carriageway centreline
+    # PGMap.get_line_type emits for a continuous yellow line (REQ-RBCOST-004).
+    "ROAD_LINE_SOLID_SINGLE_YELLOW": MapFeatureClass.LANE_MARKING_SOLID,
     "ROAD_LINE_BROKEN_SINGLE_WHITE": MapFeatureClass.LANE_MARKING_DASHED,
+    "ROAD_LINE_BROKEN_SINGLE_YELLOW": MapFeatureClass.LANE_MARKING_DASHED,
 }
+# Feature type prefixes that are recognised but intentionally not lane
+# markings/boundaries (e.g. lane surfaces, stop signs, dynamic states),
+# excluded from the REQ-RBCOST-011 unmapped-type diagnostic so it reports
+# only genuine coverage gaps in the marking/boundary/crosswalk mapping.
+_NON_MARKING_FEATURE_PREFIXES = ("LANE_",)
+_NON_MARKING_FEATURE_TYPES = frozenset({"STOP_SIGN"})
 
 
 def _array_points(value: Any) -> np.ndarray:
@@ -172,12 +182,21 @@ def build_pg_static_adapter_result(
         assigned_route = None
     map_records: list[MapFeatureRecord] = []
     feature_errors: list[str] = []
+    unmapped_feature_types: set[str] = set()
     for feature_id, feature in features.items():
         if not isinstance(feature, Mapping):
             continue
-        feature_class = _FEATURE_CLASSES.get(str(feature.get("type", "")))
+        raw_type = str(feature.get("type", ""))
+        feature_class = _FEATURE_CLASSES.get(raw_type)
         raw_geometry = feature.get("polygon", feature.get("polyline"))
         if feature_class is None or raw_geometry is None:
+            if (
+                feature_class is None
+                and raw_geometry is not None
+                and raw_type not in _NON_MARKING_FEATURE_TYPES
+                and not raw_type.startswith(_NON_MARKING_FEATURE_PREFIXES)
+            ):
+                unmapped_feature_types.add(raw_type)
             continue
         points = _array_points(raw_geometry)
         polygonal = feature.get("polygon") is not None
@@ -327,6 +346,7 @@ def build_pg_static_adapter_result(
         traffic_controls=tuple(controls),
         movement_priority_records=priority_records,
         roundabout_priority_records=roundabout_records,
+        unmapped_feature_types=tuple(sorted(unmapped_feature_types)),
     )
     return replace(
         result,

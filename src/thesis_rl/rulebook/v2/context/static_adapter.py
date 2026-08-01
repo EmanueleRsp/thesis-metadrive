@@ -35,6 +35,11 @@ class StaticAdapterResult:
     movement_priority_records: tuple[MovementPriorityRecord, ...] = ()
     roundabout_priority_records: tuple[RoundaboutPriorityRecord, ...] = ()
     validation_errors: tuple[str, ...] = ()
+    # Additive diagnostic only (REQ-RBCOST-011): raw map-feature type strings
+    # that had no MapFeatureClass mapping and were therefore dropped from
+    # map_features. Never affects rulebook_eligible -- an unmapped type is a
+    # coverage gap to fix in the adapter, not a data defect in the scenario.
+    unmapped_feature_types: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "map_features", MappingProxyType(dict(self.map_features)))
@@ -195,6 +200,7 @@ def normalize_static_records(
     traffic_controls: tuple[TrafficControlRecord, ...],
     movement_priority_records: tuple[MovementPriorityRecord, ...] = (),
     roundabout_priority_records: tuple[RoundaboutPriorityRecord, ...] = (),
+    unmapped_feature_types: tuple[str, ...] = (),
 ) -> StaticAdapterResult:
     """Canonicalize adapter output and return typed validation errors, never fallbacks."""
 
@@ -297,4 +303,5 @@ def normalize_static_records(
         movement_priority_records=movement_priority_records,
         roundabout_priority_records=roundabout_priority_records,
         validation_errors=tuple(errors),
+        unmapped_feature_types=unmapped_feature_types,
     )

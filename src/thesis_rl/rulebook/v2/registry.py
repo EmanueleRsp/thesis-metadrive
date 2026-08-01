@@ -15,6 +15,7 @@ from thesis_rl.rulebook.v2.components.road import (
     evaluate_dashed_line,
     evaluate_offroad,
     evaluate_solid_line,
+    evaluate_wrong_carriageway,
     evaluate_wrongway,
 )
 from thesis_rl.rulebook.v2.components.controls import (
@@ -51,6 +52,9 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
     ComponentDefinition("clearance", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_clearance),
     ComponentDefinition("offroad", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_offroad),
     ComponentDefinition("wrong_way", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_wrongway),
+    ComponentDefinition(
+        "wrong_carriageway", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_wrong_carriageway
+    ),
     ComponentDefinition("solid_line", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_solid_line),
     ComponentDefinition(
         "dashed_line",

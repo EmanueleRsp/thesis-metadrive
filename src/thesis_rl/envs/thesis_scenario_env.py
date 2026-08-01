@@ -442,6 +442,11 @@ class ThesisScenarioEnv(ScenarioEnv):
                 control_radius_m=80.0,
                 prediction_horizon_s=3.0,
                 vertical_tolerance_m=3.0,
+                signal_range_m=float(self.config.get("semantic_v3_signal_range_m", 80.0)),
+                signal_fov_degrees=float(self.config.get("semantic_v3_signal_fov_degrees", 65.0)),
+                signal_camera_height_m=float(
+                    self.config.get("semantic_v3_signal_camera_height_m", 1.2)
+                ),
             )
             if builder_type is PerceptionBoundedSemanticBatchBuilder:
                 builder_kwargs["brake_mps2"] = self._rulebook_v2_brake_mps2

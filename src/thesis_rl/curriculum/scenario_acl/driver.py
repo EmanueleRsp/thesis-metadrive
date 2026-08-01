@@ -1036,6 +1036,8 @@ def _run_scenario_acl_vectorized_training(
                         "counterexample_rate",
                         "violated_rules_ratio",
                         "unique_violation_patterns",
+                        "gif_render_seconds_total",
+                        "gif_render_seconds_per_episode",
                     )
                 },
                 "promoted": False,
@@ -1724,6 +1726,8 @@ def run_scenario_acl_training(
                         "counterexample_rate",
                         "violated_rules_ratio",
                         "unique_violation_patterns",
+                        "gif_render_seconds_total",
+                        "gif_render_seconds_per_episode",
                     )
                 },
                 "promoted": False,
@@ -2258,6 +2262,12 @@ def run_scenario_acl_training(
                         ),
                         "unique_violation_patterns": int(
                             eval_metrics.get("unique_violation_patterns", 0)
+                        ),
+                        "gif_render_seconds_total": float(
+                            eval_metrics.get("gif_render_seconds_total", 0.0) or 0.0
+                        ),
+                        "gif_render_seconds_per_episode": float(
+                            eval_metrics.get("gif_render_seconds_per_episode", 0.0) or 0.0
                         ),
                         "promoted": False,
                         "next_stage": chunk_stage,

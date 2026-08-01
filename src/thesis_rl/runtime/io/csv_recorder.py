@@ -116,6 +116,11 @@ class CSVRecorder:
             "data_abort_valid",
             "data_abort_invalid",
             "data_abort_coverage",
+            # step_timing_instrumentation_v1 REQ-003: GIF render/annotation
+            # cost, isolated from training-loop timing (docs/implementation/
+            # step_timing_instrumentation_v1_exec_plan.md).
+            "gif_render_seconds_total",
+            "gif_render_seconds_per_episode",
         ],
         "eval_episodes.csv": [
             "algorithm",
@@ -333,6 +338,23 @@ class CSVRecorder:
             "data_abort_valid",
             "data_abort_invalid",
             "data_abort_coverage",
+        ],
+        # step_timing_instrumentation_v1 REQ-001/REQ-002: tidy per-chunk,
+        # per-component wall-clock breakdown (docs/implementation/
+        # step_timing_instrumentation_v1_exec_plan.md). One row per
+        # (chunk, component) rather than fixed columns, because the
+        # component key set is dynamic (Rulebook v2 sub-phases and
+        # per-algorithm learner detail vary with configuration).
+        "step_timing.csv": [
+            "algorithm",
+            "seed",
+            "run_id",
+            "chunk_id",
+            "global_step",
+            "component",
+            "seconds",
+            "pct_of_elapsed",
+            "avg_seconds_per_step",
         ],
     }
 

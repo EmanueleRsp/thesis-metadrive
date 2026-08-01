@@ -33,7 +33,11 @@ from thesis_rl.rulebook.v2.geometry.conflict_zones import (
 )
 from thesis_rl.rulebook.v2.geometry.continuous_sat import OccupancyInterval
 from thesis_rl.rulebook.v2.geometry.ctrv import predict_conflict_zone_occupancy_intervals
-from thesis_rl.rulebook.v2.geometry.drivable import DrivableLaneRecord, drivable_surface_for_ego
+from thesis_rl.rulebook.v2.geometry.drivable import (
+    DrivableLaneRecord,
+    carriageway_surfaces_for_ego,
+    drivable_surface_for_ego,
+)
 from thesis_rl.rulebook.v2.geometry.elevation import PolylineElevation
 from thesis_rl.rulebook.v2.geometry.footprint import swept_front_bumper
 from thesis_rl.rulebook.v2.geometry.lanes import (
@@ -140,8 +144,17 @@ def align_episode_cache_to_live_elevation(
         raise ValueError("Live elevation datum offset must be finite")
     if abs(offset) <= 1.0e-9:
         return cache
+    # step_timing_instrumentation_v1 investigation, 2026-08-01: preserve
+    # ``lane_start_points_xyz`` (video overlay v1 REQ-001, checkpoint
+    # markers) through the elevation shift. A plain-constructor rebuild here
+    # previously reset it to its `()` default, silently dropping checkpoint
+    # markers for every scenario with a nonzero elevation offset -- common
+    # for Waymo sources per this function's docstring.
     shifted_route = RoutePolyline(
-        tuple((x, y, z + offset) for x, y, z in cache.route_polyline.points_xyz)
+        tuple((x, y, z + offset) for x, y, z in cache.route_polyline.points_xyz),
+        lane_start_points_xyz=tuple(
+            (x, y, z + offset) for x, y, z in cache.route_polyline.lane_start_points_xyz
+        ),
     )
     shifted_lanes = tuple(
         replace(
@@ -1344,6 +1357,15 @@ def evaluate_transition(
         ),
     )
     drivable_seconds = time.perf_counter() - phase_started
+    carriageway_surfaces = carriageway_surfaces_for_ego(
+        ego_position_xy=post_state.ego.position_xy,
+        ego_position_z=post_state.ego.position_z,
+        route_tangent_xy=post_route_tangent_xy,
+        lanes=tuple(
+            DrivableLaneRecord(lane.lane_id, lane.centerline, lane.polygon_xy, None)
+            for lane in cache.route_lanes
+        ),
+    )
     vehicle_input = None
     vehicle_cache_delta = CacheDelta()
     vehicle_yield_seconds = 0.0
@@ -1426,6 +1448,11 @@ def evaluate_transition(
             "candidates": rss_lateral_candidates,
         },
         "offroad": {"ego_footprint": post_state.ego.footprint, "drivable_surface": drivable},
+        "wrong_carriageway": {
+            "ego_footprint": post_state.ego.footprint,
+            "aligned_surface": carriageway_surfaces.aligned,
+            "opposing_surface": carriageway_surfaces.opposing,
+        },
         "wrong_way": {
             "ego": post_state.ego,
             "route": route,

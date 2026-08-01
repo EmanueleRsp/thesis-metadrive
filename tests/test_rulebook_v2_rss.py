@@ -23,30 +23,105 @@ def test_rss_safe_distance_and_continuous_deficit() -> None:
     calibration = RSSCalibrationArtifact("ego-hash", 3.0)
     safe = safe_distance_m(ego_speed_mps=5.0, front_speed_mps=5.0, ego_brake_mps2=3.0)
     result, _, _ = evaluate_rss(
-        scenario_id="scenario", step_index=1,
+        scenario_id="scenario",
+        step_index=1,
         candidates=(RSSCandidate("front", safe, 5.0, 5.0),),
-        calibration=calibration, expected_config_hash="ego-hash",
+        calibration=calibration,
+        expected_config_hash="ego-hash",
     )
     assert result.cost == pytest.approx(0.0)
     deficient, _, _ = evaluate_rss(
-        scenario_id="scenario", step_index=1,
+        scenario_id="scenario",
+        step_index=1,
         candidates=(RSSCandidate("front", safe / 2.0, 5.0, 5.0),),
-        calibration=calibration, expected_config_hash="ego-hash",
+        calibration=calibration,
+        expected_config_hash="ego-hash",
     )
     assert deficient.cost == pytest.approx(0.5)
+
+
+def test_rss_standstill_pair_is_not_applicable() -> None:
+    """TEST-RBCOST-015 / REQ-RBCOST-010: DEV-RBCOST-002.
+
+    Two vehicles both below the standstill threshold must not be evaluated:
+    the response term prices an acceleration the stopped ego is not
+    performing, and the resulting state offers no cost-reducing action.
+    """
+    calibration = RSSCalibrationArtifact("ego-hash", 8.0)
+    result, _, _ = evaluate_rss(
+        scenario_id="scenario",
+        step_index=1,
+        candidates=(RSSCandidate("front", 2.0, 0.0, 0.0),),
+        calibration=calibration,
+        expected_config_hash="ego-hash",
+    )
+    assert result.applicable is False
+    assert result.cost == 0.0
+
+    at_threshold, _, _ = evaluate_rss(
+        scenario_id="scenario",
+        step_index=1,
+        candidates=(RSSCandidate("front", 2.0, 0.1, 0.1),),
+        calibration=calibration,
+        expected_config_hash="ego-hash",
+    )
+    assert at_threshold.applicable is False
+
+
+def test_rss_partial_standstill_is_still_evaluated() -> None:
+    """TEST-RBCOST-016: only a candidate where *both* speeds are below the
+    threshold is excluded; a closing/following pair is still evaluated.
+    """
+    calibration = RSSCalibrationArtifact("ego-hash", 8.0)
+    result, _, _ = evaluate_rss(
+        scenario_id="scenario",
+        step_index=1,
+        candidates=(RSSCandidate("front", 1.0, 0.05, 5.0),),
+        calibration=calibration,
+        expected_config_hash="ego-hash",
+    )
+    assert result.applicable is True
+    assert result.diagnostics["candidate_count"] == 1
+
+
+def test_rss_standstill_candidates_are_dropped_from_a_mixed_set() -> None:
+    """TEST-RBCOST-017 regression (F3b/F5b): a queue behind a stopped leader
+    does not accumulate a permanent R2 cost, even when other, moving
+    candidates are present in the same step.
+    """
+    calibration = RSSCalibrationArtifact("ego-hash", 8.0)
+    result, _, _ = evaluate_rss(
+        scenario_id="scenario",
+        step_index=1,
+        candidates=(
+            RSSCandidate("stopped_leader", 2.0, 0.0, 0.0),
+            RSSCandidate("far_moving", 100.0, 5.0, 5.0),
+        ),
+        calibration=calibration,
+        expected_config_hash="ego-hash",
+    )
+    assert result.diagnostics["candidate_count"] == 1
+    assert result.diagnostics["standstill_dropped"] == 1
+    assert result.raw["worst_actor_id"] == "far_moving"
 
 
 def test_rss_missing_or_mismatched_calibration_fails_fast() -> None:
     candidate = (RSSCandidate("front", 1.0, 5.0, 5.0),)
     with pytest.raises(RulebookEvaluationError, match="missing"):
         evaluate_rss(
-            scenario_id="scenario", step_index=1, candidates=candidate,
-            calibration=None, expected_config_hash="ego-hash",
+            scenario_id="scenario",
+            step_index=1,
+            candidates=candidate,
+            calibration=None,
+            expected_config_hash="ego-hash",
         )
     with pytest.raises(RulebookEvaluationError, match="hash"):
         evaluate_rss(
-            scenario_id="scenario", step_index=1, candidates=candidate,
-            calibration=RSSCalibrationArtifact("other", 3.0), expected_config_hash="ego-hash",
+            scenario_id="scenario",
+            step_index=1,
+            candidates=candidate,
+            calibration=RSSCalibrationArtifact("other", 3.0),
+            expected_config_hash="ego-hash",
         )
 
 

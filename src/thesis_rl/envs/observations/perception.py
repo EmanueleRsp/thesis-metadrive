@@ -117,7 +117,14 @@ class SignalVisibility:
 
 
 class SymbolicSignalVisibilityAdapter:
-    """Range/FOV/occlusion gate for a virtual traffic-light head anchor."""
+    """Range/FOV/occlusion gate for a virtual traffic-light head anchor.
+
+    OBS-V1.2 SS6.2 documents 80 m / 65 degrees / 1.2 m as the baseline signal
+    camera geometry; ADR-045 approves deviating from these defaults through
+    ``conf/obs/semantic_v3.yaml`` (``signal_range_m`` /
+    ``signal_fov_degrees`` / ``signal_camera_height_m``) for experiments that
+    intentionally study a different sensor placement or field of view.
+    """
 
     def __init__(
         self,
@@ -127,8 +134,10 @@ class SymbolicSignalVisibilityAdapter:
         camera_height_m: float = 1.2,
         ray_tolerance: float = 1.0e-4,
     ) -> None:
-        if range_m != 80.0 or horizontal_fov_deg != 65.0 or camera_height_m != 1.2:
-            raise ValueError("OBS-V1.2 fixes signal range/FOV/camera-height at 80/65/1.2")
+        if range_m <= 0.0 or horizontal_fov_deg <= 0.0 or horizontal_fov_deg > 360.0:
+            raise ValueError(
+                "Signal camera range must be positive and FOV must be in (0, 360] degrees"
+            )
         self.range_m = range_m
         self.horizontal_fov_rad = horizontal_fov_deg * pi / 180.0
         self.camera_height_m = camera_height_m
@@ -222,15 +231,26 @@ def first_hit_lidar_sweep(vehicle: object) -> FirstHitLidarSweep:
 
 
 def mapped_signal_visibility(
-    vehicle: object, physical_ids: str | Iterable[str]
+    vehicle: object,
+    physical_ids: str | Iterable[str],
+    *,
+    range_m: float = 80.0,
+    horizontal_fov_deg: float = 65.0,
+    camera_height_m: float = 1.2,
 ) -> SignalVisibility | dict[str, bool]:
     """Convenience entry point for the OBS-V1.2 symbolic signal gate.
 
     A single physical ID returns its :class:`SignalVisibility`; an iterable
     returns the compact ID-to-boolean mapping used by batched control assembly.
+    The keyword parameters let callers thread ``conf/obs/semantic_v3.yaml``
+    through to this gate. Defaults reproduce the OBS-V1.2 SS6.2 baseline
+    (80 m / 65 degrees / 1.2 m); ADR-045 approves overriding them via config
+    for experiments that deliberately study a different sensor geometry.
     """
 
-    adapter = SymbolicSignalVisibilityAdapter()
+    adapter = SymbolicSignalVisibilityAdapter(
+        range_m=range_m, horizontal_fov_deg=horizontal_fov_deg, camera_height_m=camera_height_m
+    )
     if isinstance(physical_ids, str):
         return SignalVisibility(physical_ids, adapter.visible_ids(vehicle, (physical_ids,))[physical_ids])
     return adapter.visible_ids(vehicle, physical_ids)

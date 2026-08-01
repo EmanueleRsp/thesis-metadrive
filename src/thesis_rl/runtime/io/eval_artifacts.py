@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -230,6 +231,16 @@ class LiveEvalEpisodeRecorder:
         # `tracked_scenario_uids=None` means "record every episode").
         self._output_dir_name = str(output_dir_name)
         self._tracked_scenario_uids = tracked_scenario_uids
+        # REQ-002 (video overlay v1, 2026-07-31): ego-actually-traveled trail.
+        # One recorder instance is created per episode (see the two
+        # ``factory`` closures below), so this list is already episode-scoped
+        # without any extra reset lifecycle.
+        self._ego_trail_world: list[tuple[float, float]] = []
+        # step_timing_instrumentation_v1 REQ-003 (docs/implementation/
+        # step_timing_instrumentation_v1_exec_plan.md): cumulative GIF
+        # frame render + diagnostic annotation + on-disk GIF encoding cost
+        # for this episode, isolated from training-loop timing.
+        self._gif_render_seconds: float = 0.0
 
     def record_step(
         self,
@@ -263,13 +274,29 @@ class LiveEvalEpisodeRecorder:
                 self._manifest_payload["scenario_uid"] = str(step_scenario_uid)
         if self._warning is not None:
             return
+        render_started = time.perf_counter()
         try:
             if self._manifest_payload.get("wrappers") is None:
                 self._manifest_payload["wrappers"] = _wrapper_stack(env)
             frame = render_topdown_frame(env, self._topdown_cfg)
             if frame is not None:
+                draw_ego_trail = bool(self._topdown_cfg.get("draw_ego_trail", True))
+                if draw_ego_trail:
+                    ego = (
+                        step_info.get("ego_state")
+                        if isinstance(step_info, dict)
+                        and isinstance(step_info.get("ego_state"), dict)
+                        else {}
+                    )
+                    position = ego.get("position")
+                    if isinstance(position, (list, tuple)) and len(position) >= 2:
+                        self._ego_trail_world.append((float(position[0]), float(position[1])))
                 try:
-                    geometry = diagnostic_geometry(env, step_info)
+                    geometry = diagnostic_geometry(
+                        env,
+                        step_info,
+                        ego_trail_world=self._ego_trail_world if draw_ego_trail else None,
+                    )
                 except Exception:
                     geometry = {}
                 self._frames.append(
@@ -284,6 +311,8 @@ class LiveEvalEpisodeRecorder:
         except Exception as exc:
             self._warning = f"live_record_render_failed:{exc}"
             self._frames.clear()
+        finally:
+            self._gif_render_seconds += time.perf_counter() - render_started
 
     def finalize_episode(self, *, episode_metrics: dict[str, Any]) -> dict[str, Any]:
         if self._tracked_scenario_uids is not None:
@@ -300,6 +329,7 @@ class LiveEvalEpisodeRecorder:
                     "trajectory_log_path": None,
                     "video_recorded_live": False,
                     "replay_warning": "periodic_tracked_subset_skip:not_in_tracked_subset",
+                    "gif_render_seconds": self._gif_render_seconds,
                 }
             stem = str(current_scenario_uid)
         else:
@@ -312,12 +342,15 @@ class LiveEvalEpisodeRecorder:
         video_rel = None
         recorded_live = False
         if self._warning is None:
+            encode_started = time.perf_counter()
             try:
                 save_gif(self._frames, video_path, fps=self._fps)
                 video_rel = str(video_path.relative_to(self._run_dir)).replace("\\", "/")
                 recorded_live = True
             except Exception as exc:
                 self._warning = f"live_record_save_failed:{exc}"
+            finally:
+                self._gif_render_seconds += time.perf_counter() - encode_started
 
         trajectory_rel = None
         if self._save_trajectory_log:
@@ -354,6 +387,7 @@ class LiveEvalEpisodeRecorder:
             "trajectory_log_path": trajectory_rel,
             "video_recorded_live": recorded_live,
             "replay_warning": self._warning,
+            "gif_render_seconds": self._gif_render_seconds,
         }
 
 

@@ -128,6 +128,11 @@ def _worker(
     last_reset_seed: Optional[int] = None
     auto_reset_seed: Optional[int] = None
     worker_step_index = 0
+    # REQ-002 (video overlay v1, 2026-07-31): ego-actually-traveled trail for
+    # the worker-rendered diagnostic overlay. A worker process owns exactly
+    # one env for its lifetime across many episodes, so this list must be
+    # cleared at every episode boundary (``reset``/``reset_slots``) below.
+    ego_trail_world: list[tuple[float, float]] = []
 
     while True:
         try:
@@ -220,6 +225,7 @@ def _worker(
                 worker_timing["reset"] = time.perf_counter() - reset_started
                 reset_info["_thesis_worker_timing_seconds"] = worker_timing
                 worker_step_index = 0
+                ego_trail_world.clear()
                 remote.send((observation, reset_info))
             elif cmd == "reset":
                 seed_arg, options_arg = data
@@ -233,10 +239,12 @@ def _worker(
                     auto_reset_seed = int(normalized_seed)
                 observation, reset_info = env.reset(seed=normalized_seed, **maybe_options)
                 worker_step_index = 0
+                ego_trail_world.clear()
                 remote.send((observation, reset_info))
             elif cmd == "render":
                 render_kwargs = {} if data is None else dict(data)
                 diagnostic_overlay = bool(render_kwargs.pop("diagnostic_geometry", False))
+                draw_ego_trail = bool(render_kwargs.pop("draw_ego_trail", True))
                 render_env = getattr(env, "unwrapped", env)
                 try:
                     frame = render_env.render(**render_kwargs)
@@ -251,10 +259,27 @@ def _worker(
                         diagnostic_geometry_from_env,
                     )
 
-                    frame = annotate_geometry_frame(
-                        frame,
-                        diagnostic_geometry_from_env(env),
+                    if draw_ego_trail:
+                        vehicle = getattr(render_env, "vehicle", None)
+                        position = (
+                            getattr(vehicle, "position", None) if vehicle is not None else None
+                        )
+                        if position is not None:
+                            try:
+                                ego_trail_world.append((float(position[0]), float(position[1])))
+                            except (TypeError, IndexError):
+                                pass
+                    _geom = diagnostic_geometry_from_env(
+                        env,
+                        ego_trail_world=tuple(ego_trail_world) if draw_ego_trail else None,
                     )
+                    if os.environ.get("THESIS_DEBUG_GEOM"):
+                        with open("/tmp/thesis_debug_geom.log", "a") as _dbg_f:
+                            _dbg_f.write(
+                                f"pid={os.getpid()} keys={list(_geom.keys())} "
+                                f"ego_trail_len={len(ego_trail_world)}\n"
+                            )
+                    frame = annotate_geometry_frame(frame, _geom)
                 remote.send(frame)
             elif cmd == "close":
                 env.close()

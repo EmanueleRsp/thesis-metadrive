@@ -1,6 +1,6 @@
 # ADR-020: Compact Evaluation Video Diagnostics
 
-- Status: `APPROVED`
+- Status: `APPROVED; amended by ADR-043`
 - Date: 2026-07-21
 - Decision owners: thesis repository maintainer
 - Approval evidence: explicit user approval in the current task on 2026-07-21
@@ -38,9 +38,17 @@ The scenario overlay contains, when current runtime geometry is available:
 - optional route remainder only when directly available at the current frame;
 - thin orange neighbor outlines;
 - thin red outline for the RSS/TTC-relevant actor when its identity resolves.
+- **(amended by ADR-043, 2026-07-31)** discrete planned-checkpoint markers
+  (amber hollow diamonds), one per lane in the frozen assigned-route lane
+  sequence;
+- **(amended by ADR-043, 2026-07-31)** the ego's actually-traveled position
+  history for the current episode (thin, low-alpha violet polyline),
+  toggleable via `video.topdown.draw_ego_trail` (default on).
 
-Road boundaries, explicit violation zones, terminal-status panels, duplicated
-native/scalarized reward fields, and ego-history lines are excluded. RSS/TTC
+Road boundaries, explicit violation zones, terminal-status panels, and
+duplicated native/scalarized reward fields are excluded. Ego-history lines
+were excluded here originally but are permitted, in a style distinct from the
+green traversed-route line, per ADR-043. RSS/TTC
 numeric diagnostics remain in the panel; geometric RSS safety bands and TTC
 cones are deferred until exact world-to-frame geometry is available without an
 approximation.

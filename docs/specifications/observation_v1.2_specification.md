@@ -6,7 +6,7 @@
 **Authoritative:** YES  
 **Date:** 2026-07-21  
 **Supersedes:** OBS-V1.1 for the selected semantic-observation implementation path  
-**Related decisions:** ADR-004, ADR-022  
+**Related decisions:** ADR-004, ADR-022, ADR-045  
 **Related documents:** ENC-V1.1, RULEBOOK-V4.7, `docs/implementation/perception_bounded_semantic_observation_v1.2_exec_plan.md`
 
 ## 1. Purpose
@@ -126,6 +126,14 @@ candidate traffic light is observable only when all conditions hold:
 3. the anchor lies in the forward 65-degree horizontal field of view; and
 4. a Bullet ray from the ego camera origin to that anchor has no eligible
    blocker before the anchor.
+
+**Amendment (ADR-045, 2026-08-01):** the 80 m range and 65-degree field of
+view above are the default, not a hard limit. `conf/obs/semantic_v3.yaml`'s
+`signal_range_m` / `signal_fov_degrees` / `signal_camera_height_m` are the
+effective source of truth; an experiment that does not override them
+reproduces this baseline unchanged. A run using a non-default value departs
+from this clause in the strict sense and MUST be identified as such via its
+recorded config, not assumed to match the baseline.
 
 The anchor MUST be derived from the light object's known pose plus the
 MetaDrive traffic-light visual height. The implementation MUST NOT require a

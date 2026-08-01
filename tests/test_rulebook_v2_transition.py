@@ -87,6 +87,7 @@ def test_transition_invokes_complete_registry_and_keeps_vehicle_yield_not_applic
         "clearance",
         "offroad",
         "wrongway",
+        "wrong_carriageway",
         "solid_line",
         "dashed_line",
         "signal",
@@ -474,11 +475,16 @@ def test_transition_clears_crosswalk_illegal_entry_latch_after_ego_fully_exits_z
             config=config,
         )
         cache = apply_cache_delta(cache, delta)
-        if ("ped", result.components["crosswalk"].raw["zone_id"]) in memory.crosswalk_illegal_entries:
+        if (
+            "ped",
+            result.components["crosswalk"].raw["zone_id"],
+        ) in memory.crosswalk_illegal_entries:
             illegal_entry_observed = True
         pre = post
 
-    assert illegal_entry_observed, "test setup must actually record an illegal crosswalk entry first"
+    assert illegal_entry_observed, (
+        "test setup must actually record an illegal crosswalk entry first"
+    )
     assert memory.crosswalk_illegal_entries == frozenset()
 
 
@@ -703,3 +709,32 @@ def test_cache_elevation_alignment_preserves_relative_route_shape() -> None:
     assert aligned.route_polyline is not None
     assert aligned.route_polyline.points_xyz[0][2] == 0.0
     assert aligned.route_polyline.points_xyz[-1][2] == 0.0
+
+
+def test_cache_elevation_alignment_preserves_lane_start_points_for_checkpoints() -> None:
+    """Regression: `align_episode_cache_to_live_elevation` used to rebuild the
+    route via ``RoutePolyline``'s plain constructor, silently resetting
+    ``lane_start_points_xyz`` (video overlay v1 REQ-001 checkpoint markers,
+    docs/implementation/evaluation_video_route_and_ego_trail_overlay_v1_exec_plan.md)
+    to its empty default whenever a nonzero elevation offset applied -- the
+    common case for Waymo scenarios per this function's docstring."""
+
+    cache = _cache()
+    route_with_checkpoints = RoutePolyline.from_lane_centerlines(
+        (((0.0, 0.0, 50.0), (20.0, 0.0, 50.0)),)
+    )
+    lane = RouteLaneRecord(
+        "lane-a",
+        cache.route_lanes[0].polygon_xy,
+        route_with_checkpoints,
+        (),
+    )
+    cache_with_checkpoints = EpisodeCache(
+        "scenario",
+        cache.task_route,
+        route_lanes=(lane,),
+        route_polyline=route_with_checkpoints,
+    )
+    aligned = align_episode_cache_to_live_elevation(cache_with_checkpoints, _snapshot(0, 0.0, 1.0))
+    assert aligned.route_polyline is not None
+    assert aligned.route_polyline.lane_start_points_xyz == ((0.0, 0.0, 0.0),)

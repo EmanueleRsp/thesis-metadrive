@@ -77,3 +77,63 @@ def test_pg_adapter_preserves_lane_successors() -> None:
     lanes = {lane.lane_id: lane for lane in result.route_lanes}
     assert lanes["lane-a"].successor_lane_ids == ("lane-b",)
     assert lanes["lane-b"].successor_lane_ids == ()
+
+
+def test_pg_adapter_maps_yellow_centreline_to_solid_marking() -> None:
+    """TEST-RBCOST-008 / REQ-RBCOST-004: F2 regression.
+
+    ROAD_LINE_SOLID_SINGLE_YELLOW is the continuous carriageway centreline
+    PGMap.get_line_type emits for PG maps; it must enter the catalog as a
+    LANE_MARKING_SOLID feature instead of being silently dropped.
+    """
+    from thesis_rl.rulebook.v2.types import MapFeatureClass
+
+    scenario = _minimal_pg_scenario()
+    scenario["map_features"]["centreline"] = {
+        "type": "ROAD_LINE_SOLID_SINGLE_YELLOW",
+        "polyline": [[5.0, 0.0, 0.0], [6.0, 0.0, 0.0]],
+    }
+    result = build_pg_static_adapter_result(scenario, scenario_uid="yellow-line")
+    solid = [
+        feature
+        for feature in result.map_features.values()
+        if feature.feature_class is MapFeatureClass.LANE_MARKING_SOLID
+    ]
+    assert len(solid) == 1
+
+
+def test_pg_adapter_maps_broken_yellow_to_dashed_marking() -> None:
+    """REQ-RBCOST-005."""
+    from thesis_rl.rulebook.v2.types import MapFeatureClass
+
+    scenario = _minimal_pg_scenario()
+    scenario["map_features"]["broken_centreline"] = {
+        "type": "ROAD_LINE_BROKEN_SINGLE_YELLOW",
+        "polyline": [[5.0, 0.0, 0.0], [6.0, 0.0, 0.0]],
+    }
+    result = build_pg_static_adapter_result(scenario, scenario_uid="broken-yellow-line")
+    dashed = [
+        feature
+        for feature in result.map_features.values()
+        if feature.feature_class is MapFeatureClass.LANE_MARKING_DASHED
+    ]
+    assert len(dashed) == 1
+
+
+def test_pg_adapter_records_unmapped_feature_type_without_a_validation_error() -> None:
+    """TEST-RBCOST-011 / REQ-RBCOST-011.
+
+    A feature of an unrecognised type must be absent from the catalog but
+    recorded as a diagnostic, never dropped silently and never turned into a
+    validation error (which would make the scenario ineligible for a schema
+    extension it did not cause).
+    """
+    scenario = _minimal_pg_scenario()
+    scenario["map_features"]["future"] = {
+        "type": "ROAD_LINE_FUTURE_SCHEMA",
+        "polyline": [[5.0, 0.0, 0.0], [6.0, 0.0, 0.0]],
+    }
+    result = build_pg_static_adapter_result(scenario, scenario_uid="unmapped-type")
+    assert "future" not in result.map_features
+    assert "ROAD_LINE_FUTURE_SCHEMA" in result.unmapped_feature_types
+    assert not any("future" in error for error in result.validation_errors)

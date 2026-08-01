@@ -21,6 +21,14 @@ OFFROAD_AREA_EPSILON_M2 = 1.0e-4
 GEOMETRY_EPSILON_M = 1.0e-2
 DASHED_T0_S = 1.0
 DASHED_TCAP_S = 2.0
+# The physics solver leaves a residual velocity on a body at rest (the same
+# noise floor RSS_STANDSTILL_SPEED_MPS in components/rss.py addresses), which
+# can carry a hairline reverse-longitudinal component and flip `status` to
+# VIOLATED every few steps while parked, even though `cost` stays negligible.
+# This deadband only gates the boolean status classification; `cost` itself
+# is unchanged (still continuous, still 0 only at exactly zero or forward
+# longitudinal speed), so the scalarizer input is unaffected.
+WRONGWAY_STATUS_SPEED_EPSILON_MPS = 0.1
 
 
 def dashed_lateral_penetration(ego_footprint, boundary_geometry) -> float:
@@ -109,6 +117,56 @@ def evaluate_offroad(
     return result, MemoryDelta(), CacheDelta()
 
 
+def evaluate_wrong_carriageway(
+    *, ego_footprint, aligned_surface, opposing_surface
+) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
+    """Evaluate the footprint area fraction occupying the opposing carriageway.
+
+    REQ-RBCOST-009. Structurally analogous to ``evaluate_offroad``: the cost is
+    the fraction of the ego footprint inside the opposing-direction lane
+    surface, excluding whatever a route-aligned lane already covers (so a left
+    turn inside its own aligned junction lane is not charged for overlapping
+    an opposing through lane's polygon). Memoryless, no time ramp: an earlier
+    draft proposed one as robustness against transient junction overlap, but
+    that overlap was hypothesised rather than measured, and off-road -- the
+    direct structural analogue -- has none either.
+    """
+    if ego_footprint.is_empty or not ego_footprint.is_valid or ego_footprint.area <= 0.0:
+        raise ValueError("Wrong-carriageway requires a valid, positive-area ego footprint")
+    if opposing_surface is None or opposing_surface.is_empty:
+        result = RuleComponentResult(
+            name="wrong_carriageway",
+            cost=0.0,
+            raw={"invaded_area_m2": 0.0},
+            applicable=False,
+            evaluable=True,
+            status=ComponentStatus.NOT_APPLICABLE,
+            diagnostics={},
+        )
+        return result, MemoryDelta(), CacheDelta()
+    exclusive_opposing = (
+        opposing_surface.difference(aligned_surface)
+        if aligned_surface is not None and not aligned_surface.is_empty
+        else opposing_surface
+    )
+    invaded_area = ego_footprint.intersection(exclusive_opposing).area
+    if not isfinite(invaded_area) or invaded_area < 0.0:
+        raise ValueError("Wrong-carriageway invaded area must be finite and non-negative")
+    if invaded_area < OFFROAD_AREA_EPSILON_M2:
+        invaded_area = 0.0
+    ratio = min(1.0, invaded_area / ego_footprint.area)
+    result = RuleComponentResult(
+        name="wrong_carriageway",
+        cost=ratio,
+        raw={"invaded_area_m2": invaded_area, "ego_area_m2": ego_footprint.area},
+        applicable=True,
+        evaluable=True,
+        status=ComponentStatus.VIOLATED if ratio > 0.0 else ComponentStatus.SATISFIED,
+        diagnostics={"area_epsilon_m2": OFFROAD_AREA_EPSILON_M2},
+    )
+    return result, MemoryDelta(), CacheDelta()
+
+
 def _angle_delta(first: float, second: float) -> float:
     return (first - second + pi) % (2.0 * pi) - pi
 
@@ -134,7 +192,11 @@ def evaluate_wrongway(
         raw={"v_parallel_mps": longitudinal_speed, "route_s_m": projection.s_m},
         applicable=True,
         evaluable=True,
-        status=ComponentStatus.VIOLATED if cost > 0.0 else ComponentStatus.SATISFIED,
+        status=(
+            ComponentStatus.VIOLATED
+            if -longitudinal_speed > WRONGWAY_STATUS_SPEED_EPSILON_MPS
+            else ComponentStatus.SATISFIED
+        ),
         diagnostics={
             "ego_heading_rad": ego_heading,
             "route_heading_rad": route_heading,

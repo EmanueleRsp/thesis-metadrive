@@ -472,12 +472,13 @@ def _tracked_subset_uids_from_resolved_env_cfg(resolved_cfg: Any) -> tuple[str, 
 
 
 def _make_tracked_subset_render_gate(*, interval: int = 100_000):
-    """REQ-014/DEC-014 (amended 2026-07-25): cadence gate for the *periodic*
-    validation tracked-subset GIF render (approved 2026-07-25: every
-    100,000 timesteps -- with the repo's default ``eval_interval=25,000``
-    that is every 4th periodic evaluation). Final-test tracked-subset (and
-    full-panel) rendering is always unconditional and never calls this
-    gate.
+    """REQ-014/DEC-014 (amended 2026-07-31): cadence gate for the *periodic*
+    validation tracked-subset GIF render. ``interval`` is derived by the
+    caller as ``video.tracked_subset_render_interval_factor * eval_interval``
+    (default factor 3), so the cadence scales automatically with the active
+    profile's ``eval_interval`` instead of a fixed timestep count. Final-test
+    tracked-subset (and full-panel) rendering is always unconditional and
+    never calls this gate.
 
     Returns a stateful ``due(global_steps_done) -> bool`` closure that fires
     exactly once per crossed multiple of ``interval``: the *first* periodic
@@ -487,8 +488,8 @@ def _make_tracked_subset_render_gate(*, interval: int = 100_000):
     again once the cadence and ``eval_interval`` fall out of exact
     alignment (e.g. a non-divisor ``eval_interval`` such as 30,000); this
     closure instead tracks the next still-undue threshold explicitly, so it
-    is robust to any ``eval_interval`` value while still firing at most
-    once per 100,000-timestep window.
+    is robust to any ``eval_interval``/factor combination while still firing
+    at most once per ``interval``-timestep window.
     """
     if interval <= 0:
         raise ValueError("interval must be positive")
@@ -597,6 +598,58 @@ def _append_subrule_metrics_rows(
                 "multi_violation_share": row.get("multi_violation_share"),
                 "applicable_episode_count": row.get("applicable_episode_count"),
                 "excluded_episode_count": row.get("excluded_episode_count"),
+            },
+        )
+
+
+def _write_step_timing_rows(
+    recorder: CSVRecorder,
+    *,
+    base_csv_fields: dict[str, Any],
+    chunk_id: int,
+    global_step: int,
+    phase_seconds: Any,
+    elapsed_seconds: float,
+    chunk_steps_actual: int,
+) -> None:
+    """step_timing_instrumentation_v1 REQ-001/REQ-002 (docs/implementation/
+    step_timing_instrumentation_v1_exec_plan.md): persist the per-component
+    wall-clock breakdown ``train_fn`` already measures (``phase_seconds``)
+    as one tidy row per component, plus a derived IPC/vec-env synchronization
+    overhead component. Silently writes nothing when timing data is
+    unavailable (REQ-005), matching this repository's convention for
+    optional diagnostic fields.
+    """
+    if not isinstance(phase_seconds, dict) or not phase_seconds:
+        return
+
+    components = dict(phase_seconds)
+    env_step_seconds = components.get("env_step")
+    worker_env_step_seconds = components.get("worker_wrapped_env_step")
+    if isinstance(env_step_seconds, (int, float)) and isinstance(
+        worker_env_step_seconds, (int, float)
+    ):
+        components["env_step_ipc_overhead"] = max(
+            0.0, float(env_step_seconds) - float(worker_env_step_seconds)
+        )
+
+    steps_for_average = max(int(chunk_steps_actual), 1)
+    for component, seconds in components.items():
+        if not isinstance(seconds, (int, float)):
+            continue
+        seconds = float(seconds)
+        recorder.append_row(
+            "step_timing.csv",
+            {
+                "algorithm": base_csv_fields.get("algorithm"),
+                "seed": base_csv_fields.get("seed"),
+                "run_id": base_csv_fields.get("run_id"),
+                "chunk_id": chunk_id,
+                "global_step": global_step,
+                "component": component,
+                "seconds": seconds,
+                "pct_of_elapsed": (seconds / elapsed_seconds * 100.0) if elapsed_seconds > 0 else 0.0,
+                "avg_seconds_per_step": seconds / steps_for_average,
             },
         )
 
@@ -1033,6 +1086,8 @@ def run_training(cfg: DictConfig) -> None:
                             "counterexample_rate",
                             "violated_rules_ratio",
                             "unique_violation_patterns",
+                            "gif_render_seconds_total",
+                            "gif_render_seconds_per_episode",
                         )
                     },
                     "promoted": False,
@@ -1121,9 +1176,18 @@ def run_training(cfg: DictConfig) -> None:
         eval_interval = int(cfg.experiment.get("eval_interval", total_timesteps))
         if eval_interval <= 0:
             eval_interval = total_timesteps
-        # REQ-014/DEC-014 (amended 2026-07-25): periodic tracked-subset GIF
-        # render cadence, independent of `eval_interval`.
-        tracked_subset_render_due = _make_tracked_subset_render_gate(interval=100_000)
+        # REQ-014/DEC-014 (amended 2026-07-31): periodic tracked-subset GIF
+        # render cadence, scaled from `eval_interval` by a configurable factor
+        # (default 3) so it tracks the active profile's evaluation cadence.
+        tracked_subset_render_interval_factor = int(
+            cfg.video.get("tracked_subset_render_interval_factor", 3)
+        )
+        if tracked_subset_render_interval_factor <= 0:
+            raise ValueError("video.tracked_subset_render_interval_factor must be positive")
+        tracked_subset_render_interval = tracked_subset_render_interval_factor * eval_interval
+        tracked_subset_render_due = _make_tracked_subset_render_gate(
+            interval=tracked_subset_render_interval
+        )
         stage_name = (
             curriculum_manager.get_current_stage().name
             if curriculum_manager is not None
@@ -1586,6 +1650,16 @@ def run_training(cfg: DictConfig) -> None:
                 },
             )
 
+            _write_step_timing_rows(
+                recorder,
+                base_csv_fields=base_csv_fields,
+                chunk_id=chunk_id,
+                global_step=current_global_step,
+                phase_seconds=chunk_summary.get("phase_seconds"),
+                elapsed_seconds=float(chunk_summary.get("elapsed_seconds", 0.0)),
+                chunk_steps_actual=actual_chunk_steps,
+            )
+
             # Record training steps in curriculum manager for potential stage progression
             if curriculum_manager is not None:
                 curriculum_manager.record_train_steps(actual_chunk_steps)
@@ -1966,11 +2040,12 @@ def run_training(cfg: DictConfig) -> None:
                 if periodic_tracked_subset_render_due:
                     eval_logger.info(
                         "Tracked-subset GIF render fired at global_step=%d "
-                        "(cadence=100000); GIFs written under "
+                        "(cadence=%d); GIFs written under "
                         "videos_dir/periodic_eval/step_%07d/eval_%04d/ for "
                         "scenario_uids matching the tracked subset "
                         "(%d uid(s)).",
                         current_global_step,
+                        tracked_subset_render_interval,
                         current_global_step,
                         eval_id,
                         len(tracked_scenario_uids),
@@ -2029,6 +2104,12 @@ def run_training(cfg: DictConfig) -> None:
                         "violated_rules_ratio": float(metrics.get("violated_rules_ratio", 0.0)),
                         "unique_violation_patterns": int(
                             metrics.get("unique_violation_patterns", 0)
+                        ),
+                        "gif_render_seconds_total": float(
+                            metrics.get("gif_render_seconds_total", 0.0) or 0.0
+                        ),
+                        "gif_render_seconds_per_episode": float(
+                            metrics.get("gif_render_seconds_per_episode", 0.0) or 0.0
                         ),
                         "promoted": False,
                         "next_stage": current_stage_name,
@@ -2226,6 +2307,12 @@ def run_training(cfg: DictConfig) -> None:
                     "counterexample_rate": float(metrics.get("counterexample_rate", 0.0)),
                     "violated_rules_ratio": float(metrics.get("violated_rules_ratio", 0.0)),
                     "unique_violation_patterns": int(metrics.get("unique_violation_patterns", 0)),
+                    "gif_render_seconds_total": float(
+                        metrics.get("gif_render_seconds_total", 0.0) or 0.0
+                    ),
+                    "gif_render_seconds_per_episode": float(
+                        metrics.get("gif_render_seconds_per_episode", 0.0) or 0.0
+                    ),
                     "success_rate_min": float(stage_gates.task.success_rate_min),
                     "collision_rate_max": float(stage_gates.safety.collision_rate_max),
                     "out_of_road_rate_max": float(stage_gates.safety.out_of_road_rate_max),
@@ -2637,6 +2724,12 @@ def run_training(cfg: DictConfig) -> None:
                 "counterexample_rate": float(metrics.get("counterexample_rate", 0.0)),
                 "violated_rules_ratio": float(metrics.get("violated_rules_ratio", 0.0)),
                 "unique_violation_patterns": int(metrics.get("unique_violation_patterns", 0)),
+                "gif_render_seconds_total": float(
+                    metrics.get("gif_render_seconds_total", 0.0) or 0.0
+                ),
+                "gif_render_seconds_per_episode": float(
+                    metrics.get("gif_render_seconds_per_episode", 0.0) or 0.0
+                ),
                 "promoted": False,
                 "next_stage": final_stage_name,
                 **_data_abort_coverage_fields(metrics),

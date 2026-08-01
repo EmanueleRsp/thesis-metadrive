@@ -21,6 +21,15 @@ _SUBRULE_ALIASES = {
     "vehicle_yield": "yield",
     "wrong_way": "wrongway",
 }
+# REQ-RBCOST-012: without this, NOT_APPLICABLE (e.g. no signal control
+# selected) and SATISFIED (a control selected and currently green) render as
+# the identical "c=0.00" text, so a GIF cannot distinguish a working
+# sparsely-applicable sub-rule from one that is never selected at all.
+_STATUS_MARKERS = {
+    "not_applicable": "n/a",
+    "satisfied": "ok",
+    "violated": "!",
+}
 
 
 def _number(value: Any, default: float | None = None) -> float | None:
@@ -117,7 +126,18 @@ def _rule_lines(step_info: Mapping[str, Any]) -> list[str]:
         if cost is None:
             continue
         label = _SUBRULE_ALIASES.get(str(name), str(name)[:9])
-        subrules.append(f"{label} c={_fmt_cost(cost)}")
+        status_key = str(payload.get("status", "")).lower()
+        marker = _STATUS_MARKERS.get(status_key, "")
+        suffix = f"[{marker}]" if marker else ""
+        if str(name) == "signal" and status_key != "not_applicable":
+            colour = _get(payload.get("raw"), "post_state", "pre_state")
+            distance = _get(payload.get("diagnostics"), "post_delta_m", "pre_delta_m")
+            if colour is not None:
+                suffix += f"({colour}"
+                if distance is not None:
+                    suffix += f",{_fmt(distance, 1)}m"
+                suffix += ")"
+        subrules.append(f"{label} c={_fmt_cost(cost)}{suffix}")
     if subrules:
         # Keep all subrules, but put them on compact continuation rows.
         for start in range(0, len(subrules), 4):
@@ -179,11 +199,23 @@ def _find_actor_ids(value: Any) -> set[str]:
     return found
 
 
-def diagnostic_geometry(env: Any, step_info: Any) -> dict[str, Any]:
+def diagnostic_geometry(
+    env: Any,
+    step_info: Any,
+    *,
+    ego_trail_world: Any = None,
+) -> dict[str, Any]:
     """Extract exact optional world-to-screen primitives from a live renderer.
 
     The helper deliberately returns an empty payload for unsupported camera
     modes or environments. It never reconstructs geometry from observations.
+
+    ``ego_trail_world`` (REQ-002, video overlay v1, 2026-07-31), when given,
+    is a sequence of already-observed ego world positions accumulated by the
+    caller across the current episode; it is only projected to screen space
+    here, never accumulated internally, so episode-boundary reset is entirely
+    the caller's responsibility (see ``eval_artifacts.py`` and
+    ``deterministic_subproc_vec_env.py``).
     """
 
     info = step_info if isinstance(step_info, Mapping) else {}
@@ -256,9 +288,32 @@ def diagnostic_geometry(env: Any, step_info: Any) -> dict[str, Any]:
         except Exception:
             pass
 
+    # REQ-001 (video overlay v1, 2026-07-31): discrete planned-checkpoint
+    # markers, one per lane in the frozen assigned-route sequence, distinct
+    # from the continuous route_past/route_future polyline above.
+    checkpoint_points = getattr(route, "lane_start_points_xyz", None)
+    if checkpoint_points:
+        try:
+            geometry["checkpoints"] = [
+                point for point in (to_screen(p) for p in checkpoint_points) if point
+            ]
+        except Exception:
+            pass
+
     target = to_screen(info.get("target_point"))
     if target is not None:
         geometry["target"] = target
+
+    # REQ-002 (video overlay v1, 2026-07-31): ego-actually-traveled trail,
+    # amending ADR-020 (see ADR-020 update dated 2026-07-31). Best-effort:
+    # missing/invalid points degrade to omission, never a crash.
+    if ego_trail_world:
+        try:
+            geometry["ego_trail"] = [
+                point for point in (to_screen(p) for p in ego_trail_world) if point
+            ]
+        except Exception:
+            pass
 
     neighbors = info.get("neighbors")
     if isinstance(neighbors, (list, tuple)):
@@ -274,8 +329,14 @@ def diagnostic_geometry(env: Any, step_info: Any) -> dict[str, Any]:
     return geometry
 
 
-def diagnostic_geometry_from_env(env: Any) -> dict[str, Any]:
-    """Build geometry input inside a MetaDrive worker before frame transfer."""
+def diagnostic_geometry_from_env(env: Any, ego_trail_world: Any = None) -> dict[str, Any]:
+    """Build geometry input inside a MetaDrive worker before frame transfer.
+
+    ``ego_trail_world`` (REQ-002, video overlay v1, 2026-07-31) is threaded
+    through unchanged to ``diagnostic_geometry``; the worker process owns the
+    accumulation and episode-boundary reset (see
+    ``deterministic_subproc_vec_env.py``'s ``_worker``).
+    """
 
     base = getattr(env, "unwrapped", env)
     vehicle = getattr(base, "vehicle", None)
@@ -314,6 +375,7 @@ def diagnostic_geometry_from_env(env: Any) -> dict[str, Any]:
             "target_point": target,
             "neighbors": neighbors,
         },
+        ego_trail_world=ego_trail_world,
     )
 
 
@@ -355,10 +417,23 @@ def _draw_geometry(draw: Any, geometry: Mapping[str, Any]) -> None:
 
     line(geometry.get("route_future"), (50, 130, 255, 125), width=2)
     line(geometry.get("route_past"), (50, 190, 80, 190), width=3)
+    # REQ-002: thin, muted violet, visually distinct from the green
+    # route_past line so the planned-route-covered segment and the
+    # actually-driven ego path remain separable at a glance.
+    line(geometry.get("ego_trail"), (150, 90, 200, 140), width=2)
     target = geometry.get("target")
     if isinstance(target, (list, tuple)) and len(target) >= 2:
         x, y = float(target[0]), float(target[1])
         draw.ellipse((x - 5, y - 5, x + 5, y + 5), outline=(30, 80, 220, 210), width=2)
+    # REQ-001: discrete planned-checkpoint markers (small hollow diamonds),
+    # distinct in shape/color from the single next-target ellipse above.
+    for point in geometry.get("checkpoints", ()):
+        x, y = float(point[0]), float(point[1])
+        draw.polygon(
+            [(x, y - 5), (x + 5, y), (x, y + 5), (x - 5, y)],
+            outline=(210, 150, 20, 200),
+            width=2,
+        )
     for point, critical in geometry.get("neighbors", ()):
         x, y = float(point[0]), float(point[1])
         color = (220, 40, 35, 225) if critical else (240, 145, 20, 210)
@@ -406,7 +481,7 @@ def annotate_diagnostic_frame(
     available_width = max(image.width - 12, 1)
     box_width = min(available_width, max(250, int(max_width) + 2 * padding))
     box_height = padding * 2 + line_height * len(lines)
-    x0 = max(6, image.width - box_width - 6)
+    x0 = 6
     y0 = max(6, image.height - box_height - 6)
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)

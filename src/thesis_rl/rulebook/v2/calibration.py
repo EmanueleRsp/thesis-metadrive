@@ -14,7 +14,13 @@ from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact
 CALIBRATION_TARGET_SPEEDS_MPS: tuple[float, ...] = (5.0, 10.0, 15.0, 20.0)
 MIN_VALID_TRIALS_PER_SPEED = 10
 TARGET_SPEED_TOLERANCE_MPS = 0.2
-MAX_REFERENCE_BRAKE_MPS2 = 4.0
+# Physical bound: dry-asphalt tyre-road deceleration limit. It is also the
+# value already assumed for surrounding vehicles (see
+# components/rss.py:FRONT_MAX_BRAKE_MPS2), so the RSS model no longer assumes
+# the ego brakes worse than identical traffic. Measured ego braking (12-trial
+# sample, 2026-08-01) is 10.73-16.92 m/s2, so this bound remains conservative
+# relative to the measurement while removing the previous factor-of-2.7 cap.
+MAX_REFERENCE_BRAKE_MPS2 = 8.0
 CALIBRATION_ARTIFACT_SCHEMA = "rulebook-v2-braking-calibration-v1"
 
 

@@ -338,6 +338,7 @@ class _ParallelEvaluationEpisode:
             "trajectory_log_path": artifact_payload.get("trajectory_log_path"),
             "video_recorded_live": bool(artifact_payload.get("video_recorded_live", False)),
             "replay_warning": artifact_payload.get("replay_warning"),
+            "gif_render_seconds": float(artifact_payload.get("gif_render_seconds", 0.0) or 0.0),
             "scenario_metadata": dict(self.metadata),
         }
 
@@ -1725,6 +1726,7 @@ class Agent:
         episode_trajectory_log_paths: list[str | None] = []
         episode_video_recorded_live: list[bool] = []
         episode_replay_warnings: list[str | None] = []
+        episode_gif_render_seconds: list[float] = []
         episode_scenario_metadata: list[dict[str, Any]] = []
         episode_subrule_summaries: list[dict[str, dict[str, Any]]] = []
         all_rule_names: set[str] = set()
@@ -2004,6 +2006,9 @@ class Agent:
                     bool(artifact_payload.get("video_recorded_live", False))
                 )
                 episode_replay_warnings.append(artifact_payload.get("replay_warning"))
+                episode_gif_render_seconds.append(
+                    float(artifact_payload.get("gif_render_seconds", 0.0) or 0.0)
+                )
                 if isinstance(step_info, dict):
                     episode_metadata.update(
                         {key: step_info[key] for key in metadata_keys if key in step_info}
@@ -2117,6 +2122,12 @@ class Agent:
             "counterexample_rate": counterexample_rate,
             "violated_rules_ratio": float(violated_rules_ratio),
             "unique_violation_patterns": unique_violation_patterns,
+            # step_timing_instrumentation_v1 REQ-003: GIF render/annotation
+            # cost, isolated from training-loop timing.
+            "gif_render_seconds_total": float(sum(episode_gif_render_seconds)),
+            "gif_render_seconds_per_episode": (
+                float(np.mean(episode_gif_render_seconds)) if episode_gif_render_seconds else 0.0
+            ),
             "per_rule": per_rule_rows,
             # EP-SUBRULE-DIAG: additive R2/R3 sub-rule dominance/cost
             # diagnostics, aggregated over every evaluation episode (not the
@@ -2207,6 +2218,7 @@ class Agent:
                 "scaling": float(cfg.get("scaling", 4)),
                 "semantic_map": bool(cfg.get("semantic_map", False)),
                 "diagnostic_geometry": True,
+                "draw_ego_trail": bool(cfg.get("draw_ego_trail", True)),
             }
 
         self.preprocessor.reset()
@@ -2461,6 +2473,9 @@ class Agent:
         episode_error_values = [float(record["error_value"]) for record in records]
         episode_patterns = [str(record["violation_pattern"]) for record in records]
         episode_violated = [str(record["violated_rules"]) for record in records]
+        episode_gif_render_seconds = [
+            float(record.get("gif_render_seconds", 0.0) or 0.0) for record in records
+        ]
 
         # EVAL-PROTOCOL v1.0 REQ-008 (spec §7.2): `RuleViolationRate_(i,s)` is
         # the mean of per-episode violation rates over the `N'_s` episodes
@@ -2526,6 +2541,12 @@ class Agent:
             )
             / float(max(len(all_rule_names), 1)),
             "unique_violation_patterns": int(len(set(episode_patterns))),
+            # step_timing_instrumentation_v1 REQ-003: GIF render/annotation
+            # cost, isolated from training-loop timing.
+            "gif_render_seconds_total": float(sum(episode_gif_render_seconds)),
+            "gif_render_seconds_per_episode": (
+                float(np.mean(episode_gif_render_seconds)) if episode_gif_render_seconds else 0.0
+            ),
             "per_rule": per_rule_rows,
             # EP-SUBRULE-DIAG: see the analogous comment in `evaluate()`.
             "per_subrule": aggregate_subrule_episodes(

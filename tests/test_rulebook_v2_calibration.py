@@ -29,8 +29,19 @@ def test_calibration_uses_lower_quantile_floor_and_cap():
     assert artifact.config_hash == "ego-hash"
     assert artifact.ego_min_brake_mps2 == pytest.approx(1.0)
 
-    capped = calibrate_ego_braking(trials=_trials(6.0), config_hash="ego-hash")
-    assert capped.ego_min_brake_mps2 == pytest.approx(4.0)
+    capped = calibrate_ego_braking(trials=_trials(10.73), config_hash="ego-hash")
+    assert capped.ego_min_brake_mps2 == pytest.approx(8.0)
+
+
+def test_calibration_brake_bound_is_the_physical_limit():
+    """TEST-RBCOST-013 / REQ-RBCOST-007: DEV-RBCOST-001.
+
+    The bound is the dry-asphalt tyre-road deceleration limit (and equal to
+    the FRONT_MAX_BRAKE_MPS2 already assumed for identical vehicles), not the
+    previous 4.0 m/s2 which discarded a measured factor of 2.7.
+    """
+    artifact = calibrate_ego_braking(trials=_trials(10.73), config_hash="ego-hash")
+    assert artifact.ego_min_brake_mps2 == pytest.approx(8.0)
 
 
 def test_calibration_rejects_unreachable_ego_and_insufficient_valid_trials():
@@ -75,6 +86,22 @@ def test_calibration_artifact_rejects_protocol_metadata_and_cap_violations(tmp_p
 
     with pytest.raises(ValueError, match="cap"):
         write_calibration_artifact(
-            RSSCalibrationArtifact(config_hash="ego-hash", ego_min_brake_mps2=4.1),
+            RSSCalibrationArtifact(config_hash="ego-hash", ego_min_brake_mps2=8.1),
             tmp_path / "over_cap.json",
         )
+
+
+def test_calibration_artifact_with_stale_cap_is_rejected(tmp_path):
+    """TEST-RBCOST-014 / REQ-RBCOST-007: DEV-RBCOST-001 regression.
+
+    A persisted artifact from before the bound change (cap_mps2=4.0) must be
+    rejected fail-closed rather than silently accepted with a stale cap, so a
+    run cannot silently keep using the discarded 4.0 m/s2 bound.
+    """
+    artifact = calibrate_ego_braking(trials=_trials(), config_hash="ego-hash")
+    path = write_calibration_artifact(artifact, tmp_path / "calibration.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["cap_mps2"] = 4.0
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="protocol metadata"):
+        load_calibration_artifact(path, expected_config_hash="ego-hash")

@@ -8,8 +8,10 @@ from thesis_rl.rulebook.v2.components.road import (
     evaluate_dashed_line,
     evaluate_offroad,
     evaluate_solid_line,
+    evaluate_wrong_carriageway,
     evaluate_wrongway,
 )
+from thesis_rl.rulebook.v2.geometry.drivable import DrivableLaneRecord, carriageway_surfaces_for_ego
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.types import ActorClass, ActorSnapshot
 
@@ -45,6 +47,118 @@ def test_wrongway_uses_signed_route_velocity_and_not_heading_at_rest():
     assert result.cost == pytest.approx(0.5)
     result, _, _ = evaluate_wrongway(ego=_ego(velocity=(0.0, 0.0), heading=pi), route=route)
     assert result.cost == 0.0
+
+
+def test_wrongway_status_has_a_deadband_against_standstill_physics_noise():
+    """Regression: a stationary ego with residual solver velocity noise must
+    not flicker between SATISFIED and VIOLATED. Observed on
+    ``videos/final_eval/.../episode_0001`` (PGMap-24921253): a parked ego's
+    ``status`` alternated every few steps while ``cost`` stayed ~0, because
+    the pre-fix status check (``cost > 0.0``) had no tolerance."""
+    from thesis_rl.rulebook.v2.types import ComponentStatus
+
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    noisy_reverse = _ego(velocity=(-0.01, 0.0), heading=0.0)
+    result, _, _ = evaluate_wrongway(ego=noisy_reverse, route=route)
+    assert result.status is ComponentStatus.SATISFIED
+    assert result.cost > 0.0
+
+    real_reverse = _ego(velocity=(-1.0, 0.0), heading=0.0)
+    result, _, _ = evaluate_wrongway(ego=real_reverse, route=route)
+    assert result.status is ComponentStatus.VIOLATED
+
+
+def test_wrong_carriageway_fully_in_aligned_lane_is_zero():
+    """TEST-RBCOST-018 case (i) / AC-RBCOST-009. REQ-RBCOST-009."""
+    footprint = Polygon(((9, 0.75), (11, 0.75), (11, 2.75), (9, 2.75)))
+    aligned = Polygon(((0, 0), (20, 0), (20, 3.5), (0, 3.5)))
+    opposing = Polygon(((0, -3.5), (20, -3.5), (20, 0), (0, 0)))
+    result, _, _ = evaluate_wrong_carriageway(
+        ego_footprint=footprint, aligned_surface=aligned, opposing_surface=opposing
+    )
+    assert result.cost == 0.0
+    assert result.applicable is True
+
+
+def test_wrong_carriageway_fully_in_opposing_lane_is_one():
+    """TEST-RBCOST-018 case (ii)."""
+    footprint = Polygon(((9, -2.75), (11, -2.75), (11, -0.75), (9, -0.75)))
+    aligned = Polygon(((0, 0), (20, 0), (20, 3.5), (0, 3.5)))
+    opposing = Polygon(((0, -3.5), (20, -3.5), (20, 0), (0, 0)))
+    result, _, _ = evaluate_wrong_carriageway(
+        ego_footprint=footprint, aligned_surface=aligned, opposing_surface=opposing
+    )
+    assert result.cost == pytest.approx(1.0)
+    assert result.status.name == "VIOLATED"
+
+
+def test_wrong_carriageway_straddling_is_graded():
+    """TEST-RBCOST-018 case (iii)."""
+    footprint = Polygon(((9, -1.0), (11, -1.0), (11, 1.0), (9, 1.0)))
+    aligned = Polygon(((0, 0), (20, 0), (20, 3.5), (0, 3.5)))
+    opposing = Polygon(((0, -3.5), (20, -3.5), (20, 0), (0, 0)))
+    result, _, _ = evaluate_wrong_carriageway(
+        ego_footprint=footprint, aligned_surface=aligned, opposing_surface=opposing
+    )
+    assert result.cost == pytest.approx(0.5, abs=0.02)
+
+
+def test_wrong_carriageway_empty_drivable_surface_is_not_applicable():
+    """TEST-RBCOST-018 case (v)."""
+    footprint = Polygon(((9, -1.0), (11, -1.0), (11, 1.0), (9, 1.0)))
+    result, _, _ = evaluate_wrong_carriageway(
+        ego_footprint=footprint, aligned_surface=None, opposing_surface=None
+    )
+    assert result.applicable is False
+    assert result.cost == 0.0
+
+
+def test_wrong_carriageway_is_memoryless():
+    """TEST-RBCOST-019: identical pose yields identical cost and an empty
+    MemoryDelta, regardless of history."""
+    footprint = Polygon(((9, -2.75), (11, -2.75), (11, -0.75), (9, -0.75)))
+    aligned = Polygon(((0, 0), (20, 0), (20, 3.5), (0, 3.5)))
+    opposing = Polygon(((0, -3.5), (20, -3.5), (20, 0), (0, 0)))
+    first, delta_first, _ = evaluate_wrong_carriageway(
+        ego_footprint=footprint, aligned_surface=aligned, opposing_surface=opposing
+    )
+    second, delta_second, _ = evaluate_wrong_carriageway(
+        ego_footprint=footprint, aligned_surface=aligned, opposing_surface=opposing
+    )
+    assert first.cost == second.cost
+    assert delta_first.writes == () and delta_second.writes == ()
+
+
+def test_wrong_carriageway_junction_left_turn_inside_aligned_lane_is_zero():
+    """TEST-RBCOST-018 case (iv): a route-aligned junction lane subtracts the
+    overlapping opposing through-lane polygon (DEC-RBCOST-004)."""
+    route = RoutePolyline(((0.0, 1.75, 0.0), (20.0, 1.75, 0.0)))
+    aligned_lane = DrivableLaneRecord(
+        "aligned", route, Polygon(((0, 0), (20, 0), (20, 3.5), (0, 3.5))), None
+    )
+    opposing_route = RoutePolyline(((20.0, -1.75, 0.0), (0.0, -1.75, 0.0)))
+    opposing_lane = DrivableLaneRecord(
+        "opposing", opposing_route, Polygon(((0, -3.5), (20, -3.5), (20, 0), (0, 0))), None
+    )
+    # A route-aligned junction lane whose polygon overlaps the opposing
+    # lane's southern extent between x in [8, 12].
+    junction_route = RoutePolyline(((9.0, -1.75, 0.0), (11.0, -1.75, 0.0)))
+    junction_lane = DrivableLaneRecord(
+        "junction", junction_route, Polygon(((8, -3.5), (12, -3.5), (12, 0), (8, 0))), None
+    )
+    surfaces = carriageway_surfaces_for_ego(
+        ego_position_xy=(10.0, -1.75),
+        ego_position_z=0.0,
+        route_tangent_xy=(1.0, 0.0),
+        lanes=(aligned_lane, opposing_lane, junction_lane),
+    )
+    footprint = Polygon(((9, -2.75), (11, -2.75), (11, -0.75), (9, -0.75)))
+    result, _, _ = evaluate_wrong_carriageway(
+        ego_footprint=footprint,
+        aligned_surface=surfaces.aligned,
+        opposing_surface=surfaces.opposing,
+    )
+    assert result.cost == pytest.approx(0.0, abs=1e-6)
 
 
 def test_wrongway_fails_without_speed_cap():

@@ -117,6 +117,18 @@ def _configure_agent_observation(
         from thesis_rl.envs.observations.semantic_state_v3 import SemanticStateObservationV3
 
         env_cfg["agent_observation"] = SemanticStateObservationV3
+        # OBS-V1.2 SS6.2 documents range=80/fov=65/height=1.2 as the signal
+        # camera baseline; ADR-045 allows overriding them via
+        # `conf/obs/semantic_v3.yaml` for experiments that deliberately study
+        # a different sensor geometry, so thread the values through instead
+        # of hard-coding the baseline past this point.
+        env_cfg["semantic_v3_signal_range_m"] = float(observation_cfg.get("signal_range_m", 80.0))
+        env_cfg["semantic_v3_signal_fov_degrees"] = float(
+            observation_cfg.get("signal_fov_degrees", 65.0)
+        )
+        env_cfg["semantic_v3_signal_camera_height_m"] = float(
+            observation_cfg.get("signal_camera_height_m", 1.2)
+        )
         vehicle_cfg = env_cfg.setdefault("vehicle_config", {})
         lidar_cfg = vehicle_cfg.setdefault("lidar", {})
         lidar_cfg.update(

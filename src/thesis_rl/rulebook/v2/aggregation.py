@@ -48,8 +48,9 @@ def aggregate_max_component(
     )
 
 
-def aggregate_rulebook_result(*, components: tuple[RuleComponentResult, ...], raw_progress_m: float,
-                              progress_margin: float) -> RulebookResult:
+def aggregate_rulebook_result(
+    *, components: tuple[RuleComponentResult, ...], raw_progress_m: float, progress_margin: float
+) -> RulebookResult:
     """Build the ordered four-margin monitor output without scalarization."""
     if not isfinite(raw_progress_m):
         raise ValueError("Raw route progress must be finite")
@@ -61,13 +62,33 @@ def aggregate_rulebook_result(*, components: tuple[RuleComponentResult, ...], ra
     if any(component.applicable and not component.evaluable for component in components):
         raise ValueError("Applicable component is NOT_EVALUABLE")
     groups = {
-        "collision_impact": tuple(c for c in components if c.name in {"collision", "collision_impact"}),
+        "collision_impact": tuple(
+            c for c in components if c.name in {"collision", "collision_impact"}
+        ),
         "dynamic_interaction_safety": tuple(
             c for c in components if c.name in {"rss", "rss_lateral", "ttc", "clearance"}
         ),
-        "road_traffic_compliance": tuple(c for c in components if c.name in {"offroad", "wrongway", "wrong_way", "solid_line", "dashed_line", "signal", "stop", "crosswalk", "vehicle_yield"}),
+        "road_traffic_compliance": tuple(
+            c
+            for c in components
+            if c.name
+            in {
+                "offroad",
+                "wrongway",
+                "wrong_way",
+                "wrong_carriageway",
+                "solid_line",
+                "dashed_line",
+                "signal",
+                "stop",
+                "crosswalk",
+                "vehicle_yield",
+            }
+        ),
     }
-    macro = tuple(aggregate_max_component(name=name, components=group) for name, group in groups.items())
+    macro = tuple(
+        aggregate_max_component(name=name, components=group) for name, group in groups.items()
+    )
     costs = (
         max(0.0, min(1.0, macro[0].cost)),
         max(0.0, min(1.0, macro[1].cost)),

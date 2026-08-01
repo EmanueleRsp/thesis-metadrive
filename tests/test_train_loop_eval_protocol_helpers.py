@@ -218,6 +218,20 @@ def test_periodic_render_gate_called_exactly_once_per_periodic_eval() -> None:
     )
 
 
+def test_tracked_subset_render_interval_derives_from_eval_interval_and_factor() -> None:
+    """REQ-014/DEC-014 (amended 2026-07-31): the periodic tracked-subset GIF
+    cadence must scale with `experiment.eval_interval`, via
+    `video.tracked_subset_render_interval_factor` (default 3), instead of a
+    fixed timestep constant -- otherwise the cadence silently drifts out of
+    proportion whenever a run profile's `eval_interval` changes."""
+    source = inspect.getsource(train_loop)
+    assert (
+        "tracked_subset_render_interval = tracked_subset_render_interval_factor * eval_interval"
+        in source
+    )
+    assert '"tracked_subset_render_interval_factor", 3' in source
+
+
 def test_final_evaluate_call_site_unaffected_by_periodic_wiring() -> None:
     """Regression: the final-test `eval_agent.evaluate(...)` call must keep
     using `final_eval_artifact_factory` (unconditional full-panel

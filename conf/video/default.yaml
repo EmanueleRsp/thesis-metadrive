@@ -8,6 +8,11 @@ fps: 20
 
 record_intermediate_evals: false
 record_final_eval: true
+# REQ-014/DEC-014: cadence factor for the periodic validation tracked-subset
+# GIF render, expressed as a multiple of `experiment.eval_interval` so it
+# scales automatically with the active run profile (e.g. eval_interval=50000
+# and factor=3 fires every 150,000 timesteps).
+tracked_subset_render_interval_factor: 3
 max_final_videos: 0  # Zero means all final-evaluation episodes.
 save_manifest: true
 # The trajectory JSONL is a relatively heavy diagnostic artifact. Profiles
@@ -29,3 +34,7 @@ topdown:
   semantic_map: false
   window: false
   screen_record: true
+  # REQ-002/DEC-001 (video overlay v1, amends ADR-020, 2026-07-31): draw the
+  # ego's actually-traveled path (not only the planned route) up to the
+  # current frame. Distinct in color from the planned-route lines.
+  draw_ego_trail: true

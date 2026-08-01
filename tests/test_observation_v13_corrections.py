@@ -173,13 +173,17 @@ def _all_visible(monkeypatch, ids: frozenset[str] | None = None) -> None:
 
 def _no_signals_visible(monkeypatch) -> None:
     monkeypatch.setattr(
-        causal_semantic, "mapped_signal_visibility", lambda vehicle, ids: {i: False for i in ids}
+        causal_semantic,
+        "mapped_signal_visibility",
+        lambda vehicle, ids, **_kwargs: {i: False for i in ids},
     )
 
 
 def _signals_visible(monkeypatch) -> None:
     monkeypatch.setattr(
-        causal_semantic, "mapped_signal_visibility", lambda vehicle, ids: {i: True for i in ids}
+        causal_semantic,
+        "mapped_signal_visibility",
+        lambda vehicle, ids, **_kwargs: {i: True for i in ids},
     )
 
 

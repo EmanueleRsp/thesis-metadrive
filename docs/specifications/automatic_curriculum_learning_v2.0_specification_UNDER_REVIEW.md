@@ -6,7 +6,7 @@
 - Specification ID: `ACL-SN-EMA-001`
 - Version: `v2.0`
 - Status: `UNDER_REVIEW`
-- Date: `2026-07-30`
+- Date: `2026-07-31` (revision 2; revision 1 dated `2026-07-30`)
 - Supersedes: `docs/specifications/automatic_curriculum_learning_v1.3_specification.md`
 - Related specifications: `docs/specifications/scenarionet_integration_v1.1_specification.md`,
   `docs/specifications/rulebook_v4.9_specification.md`,
@@ -19,6 +19,8 @@
   `docs/decisions/ADR-029-acl-reward-scale-normalization.md`,
   `docs/decisions/ADR-030-acl-recorded-rationale-record.md`,
   `docs/decisions/ADR-032-acl-generate-catalog-decoupling.md`
+- Supporting evidence: `docs/audits/acl_v2_teacher_power_analysis_2026-07-31/` (synthetic power and
+  closed-loop dynamics analysis, source `FIND-010`; window-size power sweep, source `FIND-012`)
 - Authoritative: `NO` (review candidate; `v1.3` remains authoritative until this document is approved)
 
 ## 1. Purpose And Context
@@ -50,7 +52,8 @@ preceding ones, on quantities produced by the environment and the Rulebook rathe
 asks a single question: *are the recent outcomes better than the older ones?* The comparison is the
 Vargha–Delaney common-language effect size, whose expectation is exactly `0.5` when the two windows come
 from the same distribution regardless of that distribution's variance. That property is what removes
-`LIM-002` at its root.
+`LIM-002` at its root, and it has been verified by measurement over a `250x` range of noise scale
+(`FIND-010`, `AC-201`) rather than asserted analytically.
 
 The resulting feedback is then attenuated by an explicit **learnability gate** so that an arm that is
 already solved and an arm that is entirely out of reach both converge to the neutral value, and only arms
@@ -82,7 +85,7 @@ construction (Jiang et al., 2021).
 Rulebook macro-rule costs, none uses a lexicographic priority ordering over safety dimensions to select
 *which* dimension the progress is measured on, and none operates over a frozen finite curated scenario
 catalog partitioned into six semantic arms. The specific combination — priority-ordered dimension
-selection with a calibrated neutrality band, a Goldilocks gate on episode-level violation rate, and an
+selection with a calibrated neutrality band, a Goldilocks gate on per-dimension violation statistics, and an
 arm-balanced recency buffer over a finite catalog — is an original construction of this thesis. It is not
 presented as a result taken from any of the cited papers. In particular, `v2.0`'s scenario buffer is **no
 longer a prioritized level replay buffer** in the PLR sense: its non-staleness term is the arm's current
@@ -96,6 +99,15 @@ claims it does support are stated in §15.5 and are properties of the signal, no
 the curriculum helps is an experimental question, to be answered under `EVAL-PROTOCOL` v1.0's seed and
 statistics protocol and not by any single run.
 
+**Stated in advance, on measured evidence (`FIND-013`).** On every completed run in this repository the
+policy's driving competence does not improve while the scalar reward does. A learning-progress curriculum
+of any family — this one, TSCL, Graves — measures improvement, and with no improvement to measure it
+correctly returns neutral and samples uniformly. **The expected behavior of `v2.0` on the current reward
+configuration is therefore uniform sampling**, indistinguishable from `curriculum=disabled`. That is the
+correct behavior, not a defect, and it is the reason this version cannot be validated end to end until a
+configuration exists in which the policy learns to drive. Fixing that is a reward-specification problem
+and is out of scope here.
+
 ## 2. Scope
 
 ### In Scope
@@ -105,7 +117,7 @@ statistics protocol and not by any single run.
 - per-arm, per-dimension sliding observation windows over committed Generate episodes;
 - the episodic outcome statistics derived from Rulebook v2 macro rules R1–R3 and from the task outcome;
 - the ordinal progress measure, its exact conditional permutation neutrality band, and the
-  multiplicity-corrected, priority-ordered dimension selection;
+  priority-ordered dimension selection;
 - the learnability gate and the resulting bounded arm feedback;
 - the EMA arm score update, temperature-scaled softmax, and exploration floor (unchanged mechanics);
 - the balanced-coverage calibration phase and the Replay activation condition;
@@ -123,7 +135,8 @@ statistics protocol and not by any single run.
 - per-record learnability or per-record progress estimation (`RAT-206`);
 - Rulebook R4 (`route_progress`) as a separate teacher dimension (`RAT-203`);
 - changes to reward scalarization, the observation schema, transition replay, or dataset splits;
-- ablation of `H`, of `buffer_capacity`, or of the significance level (`LIM-203`, `LIM-204`);
+- ablation of `H`, `buffer_capacity`, `band_level`, or `tau` (`LIM-204`);
+- removing the visit-frequency coupling of window-based progress measures (`LIM-203`);
 - any claim about final policy performance (§1.5).
 
 ### Optional Or Deferred
@@ -144,10 +157,13 @@ statistics protocol and not by any single run.
 | `Λ` | scenario buffer, references into the catalog | `|Λ| <= buffer_capacity` |
 | `n_i` | number of buffer records belonging to arm `i` | `>= 0` |
 | `n_i*` | balanced target occupancy of arm `i` in `Λ` | `REQ-010` |
-| `H` | window half-size | `10`, frozen |
+| `H` | window half-size | `20`, frozen (§9, `RAT-202`) |
 | `d` | teacher dimension | `R1`, `R2`, `R3`, `T` |
 | `x_{d,e}` | episodic key of dimension `d` for episode `e`, **lower is better** | `REQ-002` |
-| `v_{k,e}` | episode-level violation indicator of macro rule `k` | `{0, 1}` |
+| `N^{app}_{k,e}` | number of steps of episode `e` at which macro rule `k` is applicable | `>= 0` |
+| `N^{viol}_{k,e}` | number of applicable steps of episode `e` with `c_k(t) > 0` | `<= N^{app}_{k,e}` |
+| `v_{1,e}` | episode-level collision incidence of R1 | `{0, 1}` |
+| `F_{k,e}` | violated-applicable-step fraction of macro rule `k` | `[0, 1]` |
 | `W_i^d` | FIFO of the last `2H` valid observations of dimension `d` on arm `i` | ordered oldest→newest |
 | `O_i^d`, `R_i^d` | older half and recent half of `W_i^d` | `H` entries each |
 | `G_{i,d}` | ordinal progress measure | `[0, 1]`, neutral `0.5` |
@@ -215,7 +231,7 @@ dimension.
 | arm, scenario identity, selection probability | selection provenance | — | driver, logs | control + reproducibility metadata |
 | `q_i`, `p_i` | arm scores and probabilities | `[0,1]` | teacher, monitor | diagnostic-only |
 | `G_{i,d}`, `p^{perm}_{i,d}`, `D_{i,d}`, `d*`, `A_i` | teacher internals of each update | `[0,1]` / enum | logs | diagnostic-only |
-| `C_{k,e}`, `v_{k,e}`, `N^{app}_{k,e}`, `F_{k,e}` | per-episode Rulebook statistics | `[0,1]` / counts | logs, windows | training signal (teacher) + diagnostic |
+| `C_{k,e}`, `v_{1,e}`, `N^{app}_{k,e}`, `N^{viol}_{k,e}`, `F_{k,e}` | per-episode Rulebook statistics | `[0,1]` / counts | logs, windows, gate | training signal (teacher) + diagnostic |
 | `U`, `U_scaled`, `U_norm` | prediction-error learning potential and its `v1.3` transforms | `>= 0` / `[0,1]` | logs only | **diagnostic-only** (`REQ-013`) |
 | per-arm coverage cycle id, within-cycle coverage fraction | catalog coverage | counts | logs | diagnostic-only |
 
@@ -261,19 +277,31 @@ as zero cost. Otherwise:
 
 `C_{k,e} = ( sum over applicable t of c_k(t) ) / N^{app}_{k,e}`,  `c_k(t) = max(0, -m_k(t))`.
 
-**Episode-level violation indicator, for all of R1–R3.**
+**Gate statistics.** Let `N^{viol}_{k,e}` be the number of applicable steps of episode `e` with
+`c_k(t) > 0`.
 
-`v_{k,e} = 1` if at least one step at which rule `k` is applicable has `c_k(t) > 0`, else `0`. For R1 this
-is equivalent to `1[C_{1,e} > 0]`.
+- **R1 — episode-level collision incidence.** `v_{1,e} = 1[C_{1,e} > 0]`, i.e. `1` iff the episode contains
+  at least one contact onset. This is the quantity consumed by the R1 gate.
+- **R2 and R3 — violated-applicable-step fraction.**
+  `F_{k,e} = N^{viol}_{k,e} / N^{app}_{k,e}` when `N^{app}_{k,e} > 0`, else undefined and not recorded.
+  This is the quantity consumed by the R2 and R3 gates.
+- `v_{2,e}` and `v_{3,e}` are **not defined by this version** and must not appear in any teacher quantity.
+  `F_{1,e}` may be logged as a diagnostic but is not consumed.
 
-**Diagnostic-only violation frequency.**
-
-`F_{k,e} = N^{viol}_{k,e} / N^{app}_{k,e}` when `N^{app}_{k,e} > 0`, else undefined. `F` is logged and
-never consumed by the teacher.
+- Justification for the R1/R2–R3 asymmetry, verified against this repository (`FIND-011`): R1's
+  applicability predicate fires only on a new contact onset, so a collision is a rare, discrete,
+  episode-defining event and its incidence spans `[0, 1]` meaningfully across a run. R2's subcomponents
+  (`rss`, `rss_lateral`, `ttc`, `clearance`) are applicable whenever a relevant actor exists and are
+  violated at *some* step in essentially every episode with traffic, so an episode-level indicator would
+  sit at `v_{2,e} = 1` almost surely, driving `vbar -> 1` and closing the R2 gate permanently. R3 has the
+  same problem to a lesser degree. The step fraction `F` is graded, spans `[0, 1]`, and measures *how much
+  of the episode* was spent in violation, which is the quantity whose intermediate value actually
+  identifies an arm of intermediate difficulty.
 
 **Task dimension `T`.** `T_e = (success_e, route_completion_e)`. Always observed.
 
-- Invariants: `C_{k,e}` in `[0, 1]`; `route_completion_e` in `[0, 1]`; all values finite.
+- Invariants: `C_{k,e}` in `[0, 1]`; `F_{k,e}` in `[0, 1]`; `route_completion_e` in `[0, 1]`; all values
+  finite.
 - Edge cases: an episode with zero environment steps is not a valid Generate episode and updates nothing.
 - Failure behavior: a non-finite value, a margin outside `[-1, 0]` for R1–R3, or a missing applicability
   flag is fatal.
@@ -320,38 +348,62 @@ pooled midranks to the two windows, with `E = H(2H+1)/2`.
 
 - The distribution is computed exactly, by dynamic programming over the observed tie groups, in doubled
   integer rank units so that no floating-point tolerance is required. It consumes no random numbers.
-- Holm's step-down correction is applied at family-wise level `significance_level = 0.05` over the
-  dimensions **available for that arm at that update**, which is between 2 and 4 dimensions.
-- `d*` is the **first dimension in the `REQ-001` priority order** whose Holm-corrected p-value rejects.
-- If no dimension rejects, or if fewer than two dimensions are available, `d*` is undefined.
+- A dimension **fires** iff `p^{perm}_{i,d} <= band_level`, with `band_level = 0.05` applied **per
+  dimension, uncorrected**.
+- `d*` is the **first dimension in the `REQ-001` priority order** that fires.
+- If no dimension fires, or if fewer than two dimensions are available, `d*` is undefined.
+
+**No multiplicity correction is applied.** Revision 1 of this document specified Holm's step-down
+correction at family-wise level `0.05`. It is removed, for a measured reason recorded as `FIND-010`:
+
+- Holm is **not** the factor that determines whether the curriculum functions. In the closed-loop
+  simulation the peak arm probability during an arm's learning phase was `0.24–0.27` without Holm against
+  `0.23–0.26` with it at the operating point, and at low signal **neither** configuration departed
+  materially from uniform. Any claim that multiplicity correction blocked the curriculum is false and is
+  falsifiable with the recorded script.
+- What Holm suppresses is a doubling of the false-fire rate on a stationary arm (`0.032–0.035` uncorrected
+  against `0.006–0.007` corrected). Those false fires are **symmetric in sign** under exchangeability, so
+  they cost variance and not bias: the mean feedback of the stationary noisy arm was `0.498–0.500` under
+  both configurations, with `sd(p_i) ~ 0.006`.
+- The correction is therefore removed because it buys roughly a factor two of sensitivity at a bias cost
+  measured to be negligible, not because it obstructed the teacher. Its removal also eliminates a
+  dependence of the effective per-dimension level on *how many dimensions happen to be available*, which
+  under Holm made an arm with only `T` and `R1` available systematically more responsive than an arm with
+  all four dimensions available — an artifact with no scientific justification.
 
 **Required framing, normative for all derived documentation.** This procedure is re-executed after every
 valid Generate episode on the arm, over windows that overlap by `2H - 1` observations. It is therefore a
 **calibrated neutrality band derived from the data's own permutation null**, not a hypothesis test with a
 run-level type-I error guarantee. No document produced from this specification may state or imply a
-significance claim at level `0.05` over a run. Its statistical role is that false rejections are symmetric
-in sign under exchangeability, so they inflate the variance of `A_i` without biasing its expectation away
-from `0.5`. Recorded as `RAT-204` and `LIM-202`.
+significance claim at level `0.05` over a run, nor use the word "significant" for a fired dimension. Its
+statistical role is that false fires are symmetric in sign under exchangeability, so they inflate the
+variance of `A_i` without biasing its expectation away from `0.5` — a property measured, not assumed
+(`FIND-010`). Recorded as `RAT-204` and `LIM-202`.
 
 ### REQ-006: Learnability gate
 
 For the selected dimension `d*` of arm `i`, computed over the **recent** window `R_i^{d*}` only:
 
-- if `d*` in `{R1, R2, R3}`: `vbar = (1/H) * sum over e in R_i^{d*} of v_{d*,e}` and
-  `D_{i,d*} = 4 * vbar * (1 - vbar)`;
-- if `d* = T`: `rbar = (1/H) * sum over e in R_i^T of route_completion_e` and
-  `D_{i,T} = 4 * rbar * (1 - rbar)`.
+In every case the gate has the form `D = 4 * g * (1 - g)` and differs only in the statistic `g`:
 
-- Invariants: `D` in `[0, 1]`; `D = 0` at `vbar in {0, 1}` and at `rbar in {0, 1}`; `D = 1` at `0.5`. The
-  factor `4` is analytic normalization of the maximum to `1` and is not a tuned parameter.
-- Justification for using the episode-level violation rate rather than the mean cost, verified against this
-  repository: R1's cost is a MAIS3+F injury probability and R3's cost is a graded off-road cost, so mean
-  episodic costs occupy roughly `[0, 0.1]` in practice and `4C(1-C)` would never approach `1`. This would
-  systematically attenuate the Rulebook dimensions relative to `T`, whose gate spans `[0, 1]` naturally.
-  `vbar` spans `[0, 1]` by construction, equals `0` exactly when the arm no longer violates the rule and
-  `1` exactly when it always does. Recorded as `FIND-009`.
-- The comparison `G` deliberately keeps the fine-grained cost `C`, which is sensitive to partial
-  improvement; only the gate uses the coarser `v`.
+- if `d* = R1`: `g = vbar = (1/H) * sum over e in R_i^{R1} of v_{1,e}` — the fraction of recent episodes
+  containing at least one contact onset;
+- if `d*` in `{R2, R3}`: `g = Fbar = (1/H) * sum over e in R_i^{d*} of F_{d*,e}` — the mean per-episode
+  fraction of applicable steps spent in violation;
+- if `d* = T`: `g = rbar = (1/H) * sum over e in R_i^T of route_completion_e`.
+
+- Invariants: `D` in `[0, 1]`; `D = 0` at `g in {0, 1}`; `D = 1` at `g = 0.5`. The factor `4` is analytic
+  normalization of the maximum to `1` and is not a tuned parameter.
+- Justification for not using the mean episodic cost `C`, verified against this repository: R1's cost is a
+  MAIS3+F injury probability and R3's cost is a graded off-road cost, so mean episodic costs occupy roughly
+  `[0, 0.1]` in practice and `4C(1-C)` would never approach `1`. This would systematically attenuate the
+  Rulebook dimensions relative to `T`, whose gate spans `[0, 1]` naturally. Recorded as `FIND-009`.
+- Justification for the R1/R2–R3 asymmetry: see `REQ-002` and `FIND-011`. An episode-level indicator on R2
+  would saturate at `1` in essentially every episode with traffic and close the R2 gate permanently; the
+  step fraction is graded and does not.
+- The comparison `G` deliberately keeps the fine-grained cost `C` on every Rulebook dimension, which is
+  sensitive to partial improvement; only the gate uses the coarser incidence or fraction. `G` and `D`
+  therefore consume different statistics of the same episode by design.
 - `route_completion` rather than success rate is used for the `T` gate because a success rate of `0` early
   in training would close the gate on the task dimension for every arm simultaneously, whereas
   `route_completion` is informative from the first episode.
@@ -360,7 +412,7 @@ For the selected dimension `d*` of arm `i`, computed over the **recent** window 
 
 `A_i = 0.5 + D_{i,d*} * (G_{i,d*} - 0.5)` when `d*` is defined; `A_i = 0.5` otherwise.
 
-- Invariants: `A_i` in `[0, 1]`; `A_i = 0.5` exactly when no dimension rejects, when the gate is closed, or
+- Invariants: `A_i` in `[0, 1]`; `A_i = 0.5` exactly when no dimension fires, when the gate is closed, or
   when `G = 0.5`.
 - Regression (`G < 0.5`) yields `A_i < 0.5`. The absolute value is **not** taken: doing so would convert
   symmetric fluctuation back into positive priority, which is the failure mode this version removes.
@@ -379,7 +431,7 @@ The run begins in a **calibration phase**. Let `N^{gen}_i` be the number of vali
 - `q_i` remains at `initial_score` and no arm feedback is computed;
 - windows and the scenario buffer are populated normally.
 
-Calibration therefore costs `K * 2H = 120` valid Generate episodes. Replay becomes eligible when **both**
+Calibration therefore costs `K * 2H = 240` valid Generate episodes. Replay becomes eligible when **both**
 `|Λ| >= warmup_buffer_size` and `min_i N^{gen}_i >= 2H` hold; the second condition normally implies the
 first. A record that enters quarantine during calibration does not count toward `N^{gen}_i`, and the
 selector continues drawing other admissible records of the same arm.
@@ -535,7 +587,7 @@ for each curriculum episode t:
                 Q <- Q + {s} ; remove s from Λ if present
                 no statistics, no window, no counter, no score, no buffer change
             else:
-                compute C_1e, C_2e, C_3e, v_1e, v_2e, v_3e, T_e               # REQ-002
+                compute C_1e, C_2e, C_3e, v_1e, F_2e, F_3e, T_e               # REQ-002
                 append observed keys to W_i^d                                 # REQ-003
                 N_gen[i] <- N_gen[i] + 1
                 compute U, U_scaled, U_norm and log them                      # REQ-013
@@ -545,8 +597,8 @@ for each curriculum episode t:
                     for d in Avail:
                         G[d]    <- VarghaDelaney(R_i^d, O_i^d)                # REQ-004
                         pperm[d]<- ExactPermutationTwoSided(R_i^d, O_i^d)     # REQ-005
-                    Rej  <- Holm(pperm, level=0.05)
-                    d*   <- first d in (R1,R2,R3,T) with d in Rej
+                    Fire <- { d in Avail : pperm[d] <= band_level }            # REQ-005
+                    d*   <- first d in (R1,R2,R3,T) with d in Fire
                     A_i  <- 0.5 + D(i,d*) * (G[d*] - 0.5)  if d* defined       # REQ-006/007
                             else 0.5
                     q_i  <- 0.9 q_i + 0.1 A_i                                 # REQ-009
@@ -570,8 +622,9 @@ for each curriculum episode t:
 **Exact permutation null (normative construction).** Assign midranks ascending in the dimension key over
 the `2H` pooled entries, doubled to integers so that midranks of tied groups remain exact. Let `S` be the
 doubled rank sum of the recent window and `E2 = H(2H+1)` its exact null expectation in doubled units
-(`210` at `H = 10`). Enumerate, by dynamic programming over the tie groups, the counts `f[S]` of `H`-subsets
-of the pooled multiset achieving each doubled rank sum; `sum_S f[S] = C(2H, H) = 184756`. Then
+(`820` at `H = 20`). Enumerate, by dynamic programming over the tie groups, the counts `f[S]` of `H`-subsets
+of the pooled multiset achieving each doubled rank sum; `sum_S f[S] = C(2H, H) = 137846528820` at `H = 20`.
+Then
 
 `p^{perm} = ( sum over S with |S - E2| >= |S_obs - E2| of f[S] ) / C(2H, H)`.
 
@@ -580,7 +633,18 @@ consumes no random numbers. When both windows are constant and equal — the com
 violations of a rule — `f` is concentrated on a single `S` and `p^{perm} = 1`, which correctly reports "no
 detectable change".
 
-**Numerical contract.** Every quantity is finite. `C in [0,1]`, `v in {0,1}`, `route_completion in [0,1]`,
+**Cost and representation, normative.** The recursion is over the achievable rank-sum range, of size
+`O(H^2)`, and **never** over the `C(2H, H)` assignments, which are only the normalizing constant. The
+counts must be accumulated in exact 64-bit integers; `C(40, 20) = 137846528820 < 2^63`, and the
+implementation must reject any `H` for which `C(2H, H)` would not fit, rather than silently switching to
+floating point or to arbitrary-precision arithmetic. The reference implementation recorded in
+`docs/audits/acl_v2_teacher_power_analysis_2026-07-31/` was validated at `H = 10` against exhaustive
+enumeration of all `184756` splits (six trials, agreement to `1e-12`, including tie-heavy inputs) and
+measured at `0.059 ms` per call with a cold cache and `0.019 ms` warm. Caching keyed on the tie structure
+and the observed rank sum is permitted and does not alter the result.
+
+**Numerical contract.** Every quantity is finite. `C in [0,1]`, `v_1 in {0,1}`, `F in [0,1]`,
+`route_completion in [0,1]`,
 `G in [0,1]`, `D in [0,1]`, `A in [0,1]`, `q in [0,1]`. Softmax uses a numerically stable log-sum-exp.
 Probabilities are renormalized once and validated to sum to one within `1e-9`. Any NaN or infinity in an
 input or an intermediate is fatal.
@@ -607,9 +671,8 @@ calibration rather than restarting it.
 | `warmup_buffer_size` | int | 100 | `>=0`, `<= buffer_capacity` | secondary Replay gate | YES | YES |
 | `generate_probability` | float | 0.40 | `[0,1]` | post-calibration Generate share | YES | YES |
 | `exploit_probability` | float | 0.60 | `[0,1]`, complementary | post-calibration Replay share | YES | YES |
-| `progress.window_half_size` | int | 10 | `>= 5` | `H` | YES | YES |
-| `progress.significance_level` | float | 0.05 | `(0, 0.5)` | Holm family-wise level | YES | YES |
-| `progress.multiplicity_correction` | string | `holm` | exactly `holm` | correction method | YES | YES |
+| `progress.window_half_size` | int | 20 | `>= 5`, `C(2H,H) < 2^63` | `H` | YES | YES |
+| `progress.band_level` | float | 0.05 | `(0, 0.5)` | per-dimension neutrality band, uncorrected | YES | YES |
 | `mab.num_arms` | int | 6 | exactly 6 | arms | YES | YES |
 | `mab.update_method` | string | `ema` | exactly `ema` | score update | YES | YES |
 | `mab.alpha` | float | 0.10 | `(0,1]` | EMA coefficient | YES | YES |
@@ -623,15 +686,79 @@ calibration rather than restarting it.
 | `replay_sampling.staleness_offset` | int | 1 | `>=1` | staleness offset | YES | YES |
 | `recent_window_size` | int | 100 | `>0` | rank window of the **diagnostic** LP channel (`REQ-013`) | YES | YES |
 
-**Rejected legacy fields.** `replay_sampling.beta` and `mab.feedback: rank_normalized_learning_potential`
-are removed from the contract. A configuration containing either fails validation before learner
-construction with an explicit message naming this specification; they are never silently ignored. The
-legacy cumulative fields `weight_clip_*` and `initial_weight_decay` remain rejected as in `v1.3`.
+**Rejected legacy fields.** `replay_sampling.beta`, `mab.feedback: rank_normalized_learning_potential`, and
+`progress.multiplicity_correction` are removed from the contract. A configuration containing any of them
+fails validation before learner construction with an explicit message naming this specification; they are
+never silently ignored. The legacy cumulative fields `weight_clip_*` and `initial_weight_decay` remain
+rejected as in `v1.3`.
 
-`H = 10` is chosen to reuse the existing EMA horizon `1/alpha` rather than introduce an independently
-tuned parameter. This is a **parsimony argument, not a derivation**: the EMA horizon governs score
-smoothing, not the resolution of the progress measurement. It is recorded as such in `RAT-202` and its
-consequence for statistical power is recorded in `LIM-201`.
+### 9.1 Choice of `H`
+
+`H = 20`. Revision 1 of this document specified `H = 10` on a parsimony argument (reuse of the EMA horizon
+`1/alpha`). That argument is retained as an observation but is **not** the basis for the value, because
+the EMA horizon governs score smoothing and not the resolution of the progress measurement. The basis is
+the following, recorded as `RAT-202` and sourced from `FIND-010`.
+
+Define the arm's operating signal-to-noise ratio
+
+`SNR_i = ( mean key over O_i^d - mean key over R_i^d ) / sd( key within arm i )`,
+
+i.e. the policy improvement on arm `i` across the `H`-episode gap between the two window centres, in units
+of the between-episode (equivalently between-scenario) standard deviation inside the arm. The true effect
+size is `A = Phi(SNR / sqrt(2))`.
+
+`H` enters the design **twice**: it sets the sample size of each window, so power grows as `sqrt(H)`, and
+it sets the separation between window centres, so for a locally constant improvement rate per arm-episode
+`SNR` itself grows approximately linearly in `H`. Both effects were measured directly rather than
+extrapolated (`FIND-012`, `window_size_sweep.py`, `4000` repetitions per cell, band level `0.05`).
+
+**Operating case** — an arm improving at a fixed rate per arm-episode, so a wider window spans
+proportionally more training. `SNR` is quoted at `H = 10` and scales with `H`:
+
+| `SNR` at `H=10` | `H=10` | `H=15` | `H=20` | `H=30` |
+|---:|---:|---:|---:|---:|
+| `0.00` | `0.040` | `0.048` | `0.046` | `0.050` |
+| `0.50` | `0.157` | `0.481` | `0.854` | `1.000` |
+| `0.75` | `0.306` | `0.815` | `0.993` | `1.000` |
+| `1.00` | `0.515` | `0.970` | `1.000` | `1.000` |
+| `1.25` | `0.713` | `0.997` | `1.000` | `1.000` |
+
+**Control** — the same sweep with `SNR` held fixed as `H` grows, isolating the sample-size contribution
+alone. This is not the operating situation and is reported to show how much of the gain comes from each
+mechanism: at `SNR = 0.75` the detection rate moves `0.323 -> 0.464 -> 0.613 -> 0.797` for
+`H = 10, 15, 20, 30`, i.e. sample size alone accounts for well under half of the gain in the table above.
+
+The two error directions are strongly asymmetric:
+
+- `H` too small — the band under-fires, no dimension is selected, `A_i` stays at `0.5`, and the curriculum
+  degenerates to **uniform sampling**, which is exactly the `curriculum=disabled` baseline. The failure is
+  benign and self-announcing in the logs.
+- `H` too large — the signal remains correct but becomes **stale**: calibration lengthens and the window
+  keeps reporting improvement after the arm has already plateaued, delaying handover to the next arm.
+
+`H = 20` is chosen because it reaches `>= 0.85` detection across the entire plausible signal range,
+including the pessimistic `SNR = 0.5` case at which `H = 10` achieves only `0.157`, at a calibration cost
+of `K * 2H = 240` valid Generate episodes and no meaningful computational cost (§7). `H = 30` is not
+chosen: it buys a further improvement only in the single lowest-signal row, at `50%` more calibration and
+proportionally more handover latency. If the deferred measurement of `LIM-201` returns
+`SNR at H=10 < 0.5`, `H = 30` is the indicated revision.
+
+**Stated limitation of this table.** The operating case assumes the improvement rate is locally constant
+across the window span. An arm that plateaus *inside* the window does not have its gap widened by
+increasing `H`, so the operating rows are an upper bound and the control rows a lower bound on the real
+gain. The truth lies between them, and the control rows alone already justify `H = 20` over `H = 10`. The
+false-fire rate under exchangeability stays at or below the nominal `0.05` for every `H` tested
+(`0.038`, `0.042`, `0.049`, `0.049`), so none of this gain is bought with inflated false positives.
+
+### 9.2 Identified tuning lever, deliberately not exercised
+
+`mab.temperature` (`tau = 0.50`) is the single parameter that controls how sharply a given feedback spread
+translates into selection probability. Because `A_i` lives in a narrow band around `0.5`, `tau` is the
+correct lever if a run shows the curriculum to be under-concentrated, and it changes no statistical
+property of the estimator. It is recorded here so that adjusting it later does not require reopening this
+document, and it is **left at the `v1.3` value in this revision** — no run has yet demonstrated a need,
+and `FIND-007` is if anything evidence of prior over-concentration. Any change must be recorded and must
+precede the runs it affects (§11).
 
 ## 10. Errors, Logging, And Diagnostics
 
@@ -646,11 +773,14 @@ concurrent eviction of a record before its in-flight Replay episode commits
 (`skipped_evicted_before_commit`, unchanged from `v1.3`).
 
 **Required per-committed-episode log fields:** mode, arm, scenario UID, coverage cycle id,
-`C_{k,e}`/`v_{k,e}`/`N^{app}_{k,e}`/`F_{k,e}` for R1–R3, `success`, `route_completion`, buffer action, and
-the diagnostic `U`, `U_scaled`, `U_norm`.
+`C_{k,e}`/`N^{app}_{k,e}`/`N^{viol}_{k,e}`/`F_{k,e}` for R1–R3, `v_{1,e}`, `success`, `route_completion`,
+buffer action, and the diagnostic `U`, `U_scaled`, `U_norm`. The **global step index** of the commit must
+be logged alongside the arm and episode counters, so that the `SNR` and `LIM-203` diagnostics can be
+computed offline without re-instrumenting a run.
 
 **Required per-teacher-update log fields:** available dimensions, `G_{i,d}` and `p^{perm}_{i,d}` for each,
-the Holm rejection set, `d*`, `D_{i,d*}`, `A_i`, `q_i` before and after, `p_i`, and the update count.
+the set of fired dimensions, `d*`, the gate statistic `g` and `D_{i,d*}`, `A_i`, `q_i` before and after,
+`p_i`, and the update count.
 
 **Required transition logs, once per transition rather than once per episode:** dimension availability
 changes, calibration completion, coverage-cycle closures, and Generate-eligibility changes.
@@ -662,8 +792,7 @@ teacher inputs here is a curriculum input and does not make them policy-visible.
 ## 11. Reproducibility And Compatibility
 
 The specification ID and version, the resolved YAML, dataset and catalog hashes, the seed, and full
-selector state are persisted. `H`, the significance level, and the correction method are part of the
-recorded configuration.
+selector state are persisted. `H`, `band_level`, and `tau` are part of the recorded configuration.
 
 **Breaking changes relative to `v1.3`:**
 
@@ -689,10 +818,15 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 ### AC-201: Neutral expectation under a stationary noisy arm
 
 - Given: two windows of `2H` episodic keys drawn i.i.d. from the same distribution, for a distribution
-  whose variance is varied over at least two orders of magnitude.
+  whose scale is varied over at least two orders of magnitude.
 - When: `G` is computed for each draw over many seeded repetitions.
-- Then: the sample mean of `G` is `0.5` within Monte-Carlo tolerance for every variance level, and the
-  ordering of mean `G` across variance levels shows no monotone trend.
+- Then: the sample mean of `G` is `0.5` within Monte-Carlo tolerance for every scale level, and the
+  ordering of mean `G` across scale levels shows no monotone trend. The fire rate of `REQ-005` is likewise
+  flat across scale levels.
+- Reference values, already measured on the specified construction at `H = 10` (`FIND-010`): over a `250x`
+  scale range the sample mean `G` was `0.4989`, `0.4987`, `0.5021`, `0.5008` and the fire rate `0.045`,
+  `0.043`, `0.050`, `0.043`. The implementation test must reproduce this qualitative flatness; the same
+  quantities computed from the `v1.3` prediction-error signal must show the monotone trend it replaces.
 - Related requirements: `REQ-004`. This is the direct regression for `LIM-002`.
 
 ### AC-202: Monotone response to genuine improvement
@@ -704,6 +838,19 @@ defensible if the approval precedes the runs, and the approval record in §18 is
   exchanged, `G < 0.5` symmetrically.
 - Related requirements: `REQ-004`.
 
+### AC-202b: Noisy stationary arm is not preferred, in closed loop
+
+- Given: a seeded closed-loop teacher over `K = 6` arms in which one arm is stationary and carries several
+  times the between-episode noise of the others, driven through `REQ-004`…`REQ-009` for a run-length
+  number of episodes.
+- When: the mean feedback `A` received by each arm and the total Generate count per arm are accumulated.
+- Then: the stationary noisy arm's mean `A` is `0.5` within Monte-Carlo tolerance, it does not receive more
+  Generate draws than the improving arms, and its terminal `p_i` is at the exploration floor.
+- Reference values already measured at `H = 10` (`FIND-010`): mean `A` of the noisy stationary arm was
+  `0.498–0.499` at every signal level tested, against `0.506–0.547` for the improving arms, and it received
+  the fewest Generate draws of all six arms (`1436–1491` against `1500–1600`).
+- Related requirements: `REQ-004`, `REQ-007`, `REQ-009`. This is the closed-loop regression for `FIND-006`.
+
 ### AC-203: R1 statistic is defined for collision-free episodes
 
 - Given: an episode in which no step has a new contact onset, so every R1 step is `applicable=False`.
@@ -712,6 +859,17 @@ defensible if the approval precedes the runs, and the approval record in §18 is
   R1 availability. Given instead an episode with one contact of cost `0.4` and one of cost `0.7`,
   `C_{1,e} = 0.7` and `v_{1,e} = 1`.
 - Related requirements: `REQ-002`, `FIND-008`.
+
+### AC-203b: R2/R3 gate statistic is the step fraction and does not saturate
+
+- Given: an episode of `100` steps in which R2 is applicable at `80` steps and violated at `12` of them,
+  and separately an episode in which R2 is applicable at `80` steps and violated at exactly one.
+- When: the episodic statistics are computed.
+- Then: `F_{2,e} = 0.15` and `F_{2,e} = 0.0125` respectively, `v_{2,e}` is not computed at all, and a
+  recent window composed of such episodes yields a strictly positive gate `D`. Given a window of episodes
+  each containing at least one R2 violation, `D` must **not** be `0`.
+- Related requirements: `REQ-002`, `REQ-006`, `FIND-011`. This is the regression for the saturation defect
+  that an episode-level indicator would have introduced on R2.
 
 ### AC-204: R2/R3 unobserved episodes do not become zero-cost observations
 
@@ -723,29 +881,37 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 
 ### AC-205: Exact permutation band
 
-- Given: two windows of `H = 10` identical constant values.
+- Given: two windows of `H` identical constant values.
 - When: the permutation p-value is computed.
 - Then: `p^{perm} = 1.0` exactly, `G = 0.5` exactly, and no dimension is selected. Given instead two
-  windows with no ties and complete separation, `p^{perm} = 2 / C(20,10)` exactly and `G` is `0` or `1`.
+  windows with no ties and complete separation, `p^{perm} = 2 / C(2H,H)` exactly and `G` is `0` or `1`.
   In both cases the computation consumes zero random numbers and is bit-identical across repeated calls.
-- Related requirements: `REQ-005`.
+- Additionally, at `H = 10` the implementation must agree, to `1e-12`, with exhaustive enumeration of all
+  `C(20,10) = 184756` splits on at least six inputs, of which at least two are tie-heavy. All intermediate
+  counts must be exact integers, and an `H` for which `C(2H,H)` exceeds `2^63` must be rejected at
+  configuration validation rather than computed in floating point.
+- Related requirements: `REQ-005`, §7.
 
-### AC-206: Priority-ordered selection under Holm
+### AC-206: Priority-ordered selection without multiplicity correction
 
-- Given: constructed windows in which R1 is neutral, R2 rejects, and `T` rejects with a smaller p-value
-  than R2, with all four dimensions available.
+- Given: constructed windows in which R1 is neutral, R2 fires, and `T` fires with a smaller p-value than
+  R2, with all four dimensions available.
 - When: the dimension is selected.
-- Then: `d* = R2`, not `T`, and the Holm correction is applied over exactly the available dimensions.
-  Given instead windows in which no dimension rejects, `d*` is undefined and `A_i = 0.5` exactly.
-- Related requirements: `REQ-001`, `REQ-005`.
+- Then: `d* = R2`, not `T`. The band `0.05` is applied to each dimension's raw `p^{perm}` independently,
+  and the number of available dimensions does not change the threshold applied to any of them. Given
+  instead windows in which no dimension fires, `d*` is undefined and `A_i = 0.5` exactly. A configuration
+  supplying `progress.multiplicity_correction` fails validation.
+- Related requirements: `REQ-001`, `REQ-005`, `FIND-010`.
 
-### AC-207: Gate closes at both extremes
+### AC-207: Gate closes at both extremes, on the right statistic per dimension
 
-- Given: a selected Rulebook dimension whose recent window has `vbar = 0`, then `vbar = 1`, then
-  `vbar = 0.5`, each combined with `G = 0.8`.
+- Given: a recent window on `R1` with `vbar = 0`, then `1`, then `0.5`, each combined with `G = 0.8`.
 - When: `A_i` is computed.
-- Then: `A_i = 0.5`, `0.5`, and `0.8` respectively. The same holds for `T` with `rbar` in `{0, 1, 0.5}`.
-- Related requirements: `REQ-006`, `REQ-007`.
+- Then: `A_i = 0.5`, `0.5`, and `0.8` respectively.
+- Given the same three values of `Fbar` on `R2` and on `R3`, and of `rbar` on `T`, the same three results
+  must hold. The implementation must consume `v_{1,e}` on `R1`, `F_{k,e}` on `R2` and `R3`, and
+  `route_completion` on `T`; consuming `v` on `R2` or `R3`, or `F` on `R1`, is a contract violation.
+- Related requirements: `REQ-002`, `REQ-006`, `REQ-007`, `FIND-011`.
 
 ### AC-208: Calibration completeness and Replay gating
 
@@ -829,6 +995,22 @@ defensible if the approval precedes the runs, and the approval record in §18 is
   explicit message.
 - Related requirements: `REQ-009`, `REQ-010`, §9.
 
+### AC-217: Emergence, plateau, and handover in closed loop
+
+- Given: a seeded closed-loop teacher over `K = 6` synthetic arms in which three arms improve in sequence
+  at staggered onsets, at a stated `SNR` per window gap of at least `1.25`.
+- When: the selection probabilities are snapshotted along the run.
+- Then: each improving arm's `p_i` rises above `1/K` during its improvement phase, peaks after that phase
+  begins, and returns to `1/K` within the exploration floor once it plateaus; the peaks occur in the order
+  of the onsets; and every `p_i` returns to the neutral value by the end of the run.
+- Reference values already measured at `H = 10` (`FIND-010`): peaks of `0.242`, `0.245`, `0.246` in onset
+  order, all returning to `0.167` before the end of the run.
+- **Falsification clause, normative.** At `SNR = 0.75` the same construction did **not** depart materially
+  from uniform, with or without multiplicity correction. This acceptance criterion is therefore a property
+  of the teacher **at a stated signal level** and is not a claim that any real arm attains that level. Any
+  document derived from this specification that presents `AC-217` must state the `SNR` at which it holds.
+- Related requirements: `REQ-004`…`REQ-009`, `LIM-201`.
+
 ## 13. Required Validation Categories
 
 | Category | Status |
@@ -842,7 +1024,8 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 | compatibility and migration | required (schema rejection; no migration path) |
 | absence of future and privileged information | required, including `AC-212` inertness of the removed signal |
 | upstream, downstream, and end-to-end integration | required (vectorized ACL smoke; sequential path aligned) |
-| regressions for known bugs | required (`FIND-006`…`FIND-009`) |
+| regressions for known bugs | required (`FIND-006`…`FIND-013`) |
+| measured properties of the signal | required (`AC-201`, `AC-202b`, `AC-217` reproduce `FIND-010` on the implementation, not only on the audit script) |
 | mutation as a prohibited feature | required, unchanged |
 
 ## 14. Traceability
@@ -850,12 +1033,12 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 | Requirement | Acceptance criteria | Scientific source or approved decision |
 |---|---|---|
 | `REQ-001` | `AC-206` | Rulebook v2 macro priority; project adaptation `RAT-203` |
-| `REQ-002` | `AC-203`, `AC-204` | Rulebook v2 `aggregation.py` contract; `FIND-008` |
+| `REQ-002` | `AC-203`, `AC-203b`, `AC-204` | Rulebook v2 `aggregation.py` contract; `FIND-008`, `FIND-011` |
 | `REQ-003` | `AC-211` | Matiisen et al. 2017 windowed progress; `RAT-205` |
-| `REQ-004` | `AC-201`, `AC-202` | Vargha and Delaney 2000; Graves et al. 2017; resolves `LIM-002` |
-| `REQ-005` | `AC-205`, `AC-206` | exact permutation null; Holm 1979; `RAT-204` |
-| `REQ-006` | `AC-207` | competence-based curriculum (PORTAL 2024; SITP 2023); `FIND-009` |
-| `REQ-007` | `AC-207`, `AC-209` | project construction; `RAT-207` |
+| `REQ-004` | `AC-201`, `AC-202`, `AC-202b`, `AC-217` | Vargha and Delaney 2000; Graves et al. 2017; resolves `LIM-002`; `FIND-010` |
+| `REQ-005` | `AC-205`, `AC-206` | exact permutation null; `RAT-204`; `FIND-010` (removal of Holm) |
+| `REQ-006` | `AC-207`, `AC-203b` | competence-based curriculum (PORTAL 2024; SITP 2023); `FIND-009`, `FIND-011` |
+| `REQ-007` | `AC-207`, `AC-209`, `AC-202b` | project construction; `RAT-207` |
 | `REQ-008` | `AC-208` | project construction, derived from `K` and `H` |
 | `REQ-009` | `AC-209` | ACL `v1.1` `REQ-001`/`REQ-002`; `ADR-028`; `RAT-201` |
 | `REQ-010` | `AC-210`, `AC-213` | `ADR-029` `DEC-007` channel analysis; `RAT-206` |
@@ -866,14 +1049,30 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 
 ## 15. Open Decisions And Limitations
 
-### 15.1 Decisions resolved before review
+### 15.1 Decisions
 
-| ID | Question | Resolution | Status |
+All four decisions below were **proposed by the assistant and selected by the user on 2026-07-30**, then
+**reopened by the user on 2026-07-31** on the grounds that the selection had not been a considered
+approval. They were re-examined in revision 2, two of them were changed on evidence, and none of them
+should be cited as approved before the approval recorded in §18.
+
+| ID | Question | Resolution in revision 2 | Status |
 |---|---|---|---|
-| `DEC-201` | How is R1's episodic cost defined, given that R1 is `applicable=False` without a contact onset? | Maximum over all steps, R1 always observed; "not applicable" means satisfied (`REQ-002`) | APPROVED 2026-07-30 |
-| `DEC-202` | What does the Goldilocks gate consume? | The episode-level violation rate `vbar` over the recent window; `G` keeps the fine-grained cost `C` (`REQ-006`) | APPROVED 2026-07-30 |
-| `DEC-203` | How is the neutrality band framed and corrected? | Exact conditional permutation band with Holm at `0.05`, documented as a calibrated deadband and never as a run-level significance claim (`REQ-005`) | APPROVED 2026-07-30 |
-| `DEC-204` | Is the prediction-error learning potential removed or retained? | Retained as a strictly inert diagnostic channel, so the two signals are measurable within one run (`REQ-013`) | APPROVED 2026-07-30 |
+| `DEC-201` | How is R1's episodic cost defined, given that R1 is `applicable=False` without a contact onset? | Unchanged: maximum over all steps, R1 always observed; "not applicable" means satisfied (`REQ-002`) | reopened 2026-07-31, **confirmed**, pending approval |
+| `DEC-202` | What does the Goldilocks gate consume? | **Changed**: `v_{1,e}` incidence on R1, the violated-applicable-step fraction `Fbar` on R2/R3, `route_completion` on `T`; `G` keeps the fine-grained cost `C` (`REQ-002`, `REQ-006`) | reopened 2026-07-31, **revised** on `FIND-011`, pending approval |
+| `DEC-203` | How is the neutrality band framed and corrected? | **Changed**: exact conditional permutation band at `0.05` **per dimension, uncorrected**; Holm removed on `FIND-010`; framing as a calibrated deadband retained and strengthened (`REQ-005`) | reopened 2026-07-31, **revised** on `FIND-010`, pending approval |
+| `DEC-204` | Is the prediction-error learning potential removed or retained? | Unchanged: retained as a strictly inert diagnostic channel, so the two signals are measurable within one run (`REQ-013`) | reopened 2026-07-31, **confirmed**, pending approval |
+| `DEC-205` | What is `H`? | `H = 20`, on the **measured** power sweep of `FIND-012` and the asymmetry of the two error directions (§9.1); `H = 30` is the indicated revision if the deferred `SNR` measurement returns below `0.5`; the measurement is a post-hoc validation, not a gate (`LIM-201`) | new in revision 2, pending approval |
+
+**`DEC-202`, why it changed.** Revision 1 used an episode-level violation indicator `v_{k,e}` for all of
+R1–R3. The user identified, and repository inspection confirmed, that this saturates on R2: its
+subcomponents are applicable whenever a relevant actor exists and are violated at some step in essentially
+every episode with traffic, so `vbar -> 1` and the R2 gate would close permanently. Recorded as
+`FIND-011`.
+
+**`DEC-203`, why it changed.** See `REQ-005` and `FIND-010`. The correction was removed because its bias
+cost was measured to be negligible while it halved sensitivity — **not** because it was blocking the
+curriculum, a claim the same measurement falsifies.
 
 ### 15.2 Recorded findings
 
@@ -899,19 +1098,92 @@ defensible if the approval precedes the runs, and the approval record in §18 is
   graded off-road cost, so mean episodic costs occupy roughly `[0, 0.1]`. A gate `4C(1-C)` on the mean cost
   would attenuate the Rulebook dimensions to at most `~0.4` while the task gate spans `[0, 1]`, an
   unintended scale artifact. Corrected by `DEC-202`.
+- **`FIND-010`** (2026-07-31, synthetic power and closed-loop dynamics analysis;
+  `docs/audits/acl_v2_teacher_power_analysis_2026-07-31/`, reproducible script and captured output) — Four
+  measured results on the exact construction of `REQ-002`…`REQ-009`, at `H = 10`:
+  1. **Scale invariance.** Over a `250x` range of noise scale with both windows exchangeable, mean `G` was
+     `0.4989 / 0.4987 / 0.5021 / 0.5008` and fire rate `0.045 / 0.043 / 0.050 / 0.043`, with no monotone
+     trend. This is the measured replacement for the analytical claim that `LIM-002` is removed.
+  2. **Closed-loop neutrality of a noisy stationary arm.** Mean feedback `0.498–0.499` at every signal
+     level, against `0.506–0.547` for improving arms, and the **fewest** Generate draws of the six.
+     Directly answers `FIND-006`.
+  3. **Holm is not the deciding factor.** Peak arm probability during the learning phase was `0.24–0.27`
+     uncorrected against `0.23–0.26` corrected at `SNR = 1.25`, and at `SNR = 0.75` neither configuration
+     departed materially from uniform. False fires on a stationary arm were `0.032–0.035` uncorrected
+     against `0.006–0.007` corrected, with **identical mean feedback** under both. Basis for `DEC-203`.
+  4. **Cost.** The exact permutation p-value costs `0.059 ms` cold and `0.019 ms` warm per call, `0.24 ms`
+     for a four-dimension commit, after replacing arbitrary-precision integers with `int64` arrays — a
+     `70x` improvement over the first implementation, which cost `4.2 ms`. Bears on `LIM-208`.
+  **Evidentiary weight, stated explicitly:** this is a synthetic simulation of the teacher, not of the
+  learner or the environment. It establishes properties of the signal and of the bandit loop given a
+  stated `SNR`. It establishes nothing about the `SNR` any real arm attains, which is the subject of
+  `LIM-201`, and nothing about policy performance (§1.5).
+- **`FIND-011`** (2026-07-31, user observation confirmed by code verification) — R2's subcomponents
+  (`rss`, `rss_lateral`, `ttc`, `clearance`) are applicable whenever a relevant actor exists, and at least
+  one of them is violated at some step in essentially every episode containing traffic. An episode-level
+  violation indicator would therefore sit at `v_{2,e} = 1` almost surely, driving `vbar -> 1` and closing
+  the R2 gate permanently; R3 has the same defect to a lesser degree. R1 does not, because its
+  applicability predicate fires only on a new contact onset. Corrected by the revised `DEC-202`.
+- **`FIND-012`** (2026-07-31, window-size sweep; `window_size_sweep.py` and its captured output in the same
+  audit directory) — Detection power of the neutrality band measured across `H in {10, 15, 20, 30}` and
+  `SNR in [0, 2]`, `4000` repetitions per cell. Three results:
+  1. In the operating case — improvement rate fixed per arm-episode, so the window gap scales with `H` —
+     detection at `SNR = 0.5` (quoted at `H = 10`) rises `0.157 -> 0.481 -> 0.854 -> 1.000` across the
+     four `H` values, and at `SNR = 0.75` it rises `0.306 -> 0.815 -> 0.993 -> 1.000`.
+  2. Holding `SNR` fixed, so only sample size grows, the same `SNR = 0.75` row rises
+     `0.323 -> 0.464 -> 0.613 -> 0.797`. Sample size therefore accounts for **less than half** of the gain;
+     the widened window gap accounts for the rest. This is the direct measurement of the `H^{1.5}` claim
+     that §9.1 of revision 2 had only extrapolated.
+  3. The false-fire rate under exchangeability is `0.038 / 0.042 / 0.049 / 0.049` for the four `H` values,
+     at or below the nominal `0.05`, and mean `G` is `0.4998 / 0.5023 / 0.5015 / 0.4990`. The added power
+     is not bought with inflated false positives, and the `AC-201` invariance holds at every `H`.
+  The DP mass was asserted equal to `C(2H, H)` on every call, and `C(60,30) = 1.18e17 < 2^63` confirms the
+  int64 contract of §7 holds through `H = 30`.
+  **Evidentiary weight:** synthetic, as `FIND-010`. It measures the estimator, not the arms. The operating
+  rows assume a locally constant improvement rate and are therefore an upper bound; the fixed-`SNR` rows
+  are a lower bound.
+- **`FIND-013`** (2026-07-31, measurement on completed runs; `replay_teacher_on_real_runs.py`,
+  `learning_curve_check.py` and their captured outputs in the same audit directory) — The proposed `v2.0`
+  teacher was replayed over the real committed Generate sequences of
+  `EXP_thesis_RP_thesis_CUR_scenario_acl_scenarionet_REW_scalar_reward`, seed 0 of each planner (PPO
+  475209 steps, TD3 350154, SAC 325143; none reached the 1.5M `thesis` budget). Two results:
+  1. **Measured `SNR ~ 0.00–0.05` on every arm and every reconstructible dimension**, with mean `G`
+     `0.491–0.514`, mean `A` `0.496–0.514`, and fire rates equal to the deadband's nominal false-positive
+     rate. Against §9.1 this is the **stationary row**. The proposed teacher, driven by real data, would
+     have sampled uniformly for the entire run. R2 could not be reconstructed because per-macro-rule
+     episodic costs are absent from current logs — a gap `REQ-002` closes.
+  2. **The cause is not the teacher.** Binning each run into eight parts, the scalar reward improves
+     substantially in all three algorithms (TD3 `-80.4 -> -54.8`; PPO `-233.1 -> -112.5`; SAC `+99.7`)
+     while driving competence does not: success rate stays between `0%` and `8%` throughout and does not
+     trend up in TD3 or SAC, and out-of-road rate **rises** in every case (PPO `~0.15 -> ~0.42`).
+  **Consequences for this specification.** (a) `H` cannot be confirmed against this data (`LIM-201`).
+  (b) `FIND-007` is further weakened: it compares two configurations neither of which learns to drive, so
+  its differences are dispersion around a non-learning baseline, not a curriculum effect. (c) `FIND-006`
+  **keeps its full force** — that the `v1.3` teacher preferred the noisiest arm while nothing was being
+  learned is precisely the defect, and the replay shows `v2.0` correctly returns neutral on the same data.
+  (d) This version is validated as far as this evidence permits — correctly silent when there is nothing
+  to detect (`FIND-013`), demonstrably responsive when there is (`FIND-010`, `FIND-012`) — but **cannot be
+  validated end to end** until a configuration exists in which the policy improves. That is a
+  reward-specification problem, outside this specification's scope.
 
 ### 15.3 Recorded rationales
 
 - **`RAT-201`** — No inverse-probability correction on the EMA update, carried forward from `v1.1`
   `RAT-004`: the exploration floor bounds the propensity away from zero and the correction's variance cost
   is not justified at `K = 6`.
-- **`RAT-202`** — `H = 10` reuses `1/alpha` as a parsimony choice, not as a derivation. See §9.
+- **`RAT-202`** — `H = 20` is chosen from the measured growth of detection power in `H` (`FIND-012`) and
+  the asymmetry of the two error directions — under-powered degenerates to the uniform baseline,
+  over-powered costs handover latency — not from the EMA horizon. See §9.1 and `DEC-205`. Revision 1's
+  parsimony argument (`H = 1/alpha`) is retained only as an observation.
 - **`RAT-203`** — Rulebook R4 (`route_progress`) is not an independent teacher dimension because it
   measures progress along the route and would be largely redundant with `route_completion` inside `T`,
-  adding a fourth correlated test to the multiplicity correction for no additional information.
+  adding a fourth correlated dimension to the priority order for no additional information, and a fourth
+  opportunity for a false fire.
 - **`RAT-204`** — The permutation band is a calibrated deadband, not an inference procedure. Its purpose is
   to obtain a neutrality threshold from the data's own null rather than by choosing a number while looking
-  at run performance. See `REQ-005` and `LIM-202`.
+  at run performance. Because it is a deadband and not a test, family-wise correction has no scientific
+  meaning here: there is no run-level error rate to control (`LIM-202`), so correcting for multiplicity
+  would trade measured sensitivity for a guarantee this design never claimed. See `REQ-005` and `FIND-010`.
 - **`RAT-205`** — Only Generate episodes update the windows. Replay episodes are drawn by the teacher
   itself, so including them would let the teacher's own preference feed back into its measurement of the
   arm's distribution.
@@ -925,28 +1197,88 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 
 ### 15.4 Known limitations, intentional and not hiding missing behavior
 
-- **`LIM-201` — Statistical power at `H = 10`.** With `H = 10` per window and Holm over up to four
-  dimensions, the effective level at the R1 position is `0.05 / 4` and the power to detect a moderate
-  effect (`G ≈ 0.8`) is well below `50%`. **The expected operating behavior of this design is therefore a
-  curriculum that stays close to uniform for much of a run and departs from it only on clear evidence.**
-  This is stated in advance as predicted behavior, not discovered after the fact. Given `FIND-006` and the
-  prior over-concentration this version corrects, a conservative default is the intended risk posture, but
-  it must be reported as such.
+- **`LIM-201` — The operating `SNR` of the real arms has been measured and is `~0.01`, so `H` cannot be
+  validated against current data.** This supersedes the "unmeasured" framing carried earlier in this
+  limitation. The measurement is `FIND-013`, and its cause is outside this specification's scope: on every
+  completed run the policy does not improve on any driving outcome, so there is no learning progress for
+  any window-based teacher to detect. `H = 20` therefore rests on the power argument of §9.1 alone and is
+  **provisional**: it is the correct choice *conditional on* a future run in which learning occurs, and it
+  cannot be confirmed until one exists. The rest of this limitation states what the choice would rest on
+  once such a run is available.
+  `FIND-010` and `FIND-012` establish what the teacher does *given* a signal level, and `FIND-012`
+  materially improved the picture that `FIND-010` alone suggested: at `H = 20` the band reaches `>= 0.85`
+  detection down to `SNR = 0.5` quoted at `H = 10`, a regime at which `H = 10` achieves only `0.157`. The
+  earlier reading — that an `SNR` of `0.5` would defeat any window-based ordinal teacher at these budgets
+  — was drawn from the `H = 10` sweep alone and is **superseded**; it holds for `H = 10`, not for the
+  chosen `H`. Nothing in this repository measures which regime the six real arms occupy. `H = 20` is
+  chosen from §9.1, whose asymmetry argument makes the *unfavourable* direction benign — an under-powered
+  teacher degenerates to uniform sampling, i.e. to the `curriculum=disabled` baseline. That property is
+  what makes shipping `H = 20` against `FIND-013` safe rather than reckless: on data with no signal this
+  teacher provably samples uniformly, which is the `curriculum=disabled` behaviour. The following is the
+  validation to run once a learning configuration exists:
+
+  > Group the committed per-episode records of a run by arm, ordered by global step. Within each arm,
+  > estimate the local trend of the episodic key over a span of `H` arm-episodes and the residual
+  > between-episode standard deviation; their ratio is `SNR_i`. Use a **`curriculum=disabled` run**: under
+  > uniform sampling the arms have comparable visit rates and comparable window spans, which is the regime
+  > the `v2.0` teacher occupies at initialization, whereas a `v1.3` run's visit rates are driven by the
+  > defective signal and would contaminate the estimate. Do not use a short profile: early training has
+  > the steepest learning and would **over**-estimate `SNR`, biasing `H` downward.
+
+  Under the current instrumentation only `T` is measurable this way, since `route_completion` is already
+  logged per episode and is exactly the `T` key, while `R1` and `R3` have only coarse binary proxies
+  (`collision`, `out_of_road`) that give a lower bound on power, and `R2` has none until `REQ-002` is
+  implemented. **The expected operating behavior of this design remains a curriculum that stays close to
+  uniform for much of a run and departs from it only on measured evidence**, and it must be reported as
+  such rather than presented as an active curriculum.
 - **`LIM-202` — No run-level type-I guarantee.** The band is re-evaluated after every valid Generate
-  episode on overlapping windows, so no significance claim holds over a run. False rejections are symmetric
+  episode on overlapping windows, so no significance claim holds over a run. False fires are symmetric
   in sign under exchangeability and therefore inflate the variance of `A_i` without biasing its
-  expectation. See `REQ-005`.
-- **`LIM-203` — Visit-frequency coupling.** The windows are measured in per-arm episodes, not in global
-  training steps. A frequently sampled arm measures progress over a shorter stretch of training and tends
-  to look stationary; a rarely sampled arm measures over a longer stretch and tends to look improving. The
-  coupling is anti-concentrating and therefore acts in the corrective direction here, and the exploration
-  floor bounds its effect, but it is a structural property of window-based progress measures — Matiisen
-  et al. (2017) share it — and it is not removed by this version.
-- **`LIM-204` — No ablation of `H`, `buffer_capacity`, or the significance level.** These are reasoned
-  choices, not ablated ones. No experiment in this thesis isolates their effect and none is planned.
-- **`LIM-205` — Calibration cost dominates short profiles.** Calibration requires `120` valid Generate
-  episodes, roughly `2–4%` of `run_profile=thesis` (1.5M steps) but `25–50%` of `run_profile=fast`
-  (120k steps). **Curriculum-selection claims must not be derived from `fast`-profile runs under `v2.0`.**
+  expectation — measured, not assumed: mean feedback `0.498–0.500` on a stationary arm with a false-fire
+  rate of `0.032–0.035`, `sd(p_i) ~ 0.006` (`FIND-010`). See `REQ-005` and `RAT-204`.
+- **`LIM-203` — Visit-frequency coupling, and the readiness/transfer confound.** The windows are measured
+  in per-arm episodes, not in global training steps. A frequently sampled arm measures progress over a
+  shorter stretch of training and tends to look stationary; a rarely sampled arm measures over a longer
+  stretch and tends to look improving. Two consequences must be reported separately.
+
+  1. **Anti-concentration.** The coupling is negative feedback on `p_i` and therefore acts in the
+     corrective direction relative to `FIND-007`, and it is also the mechanism that produces automatic
+     handover between arms. It must **not** be described as merely favourable: it is a confound that
+     happens to point the right way here, and it caps how sharply the curriculum can concentrate even
+     when concentration is warranted.
+  2. **Readiness and transfer are not separated from arm-local learning.** Because the network is shared,
+     an arm's key can improve while the agent is training on *other* arms. The measured `G` therefore
+     conflates "this arm is learnable now" with "the agent became ready for this arm elsewhere". This
+     version does not separate the two and does not claim to.
+
+  Required diagnostic, to make the confound measurable rather than merely acknowledged: log, per teacher
+  update, the mean global-step index of each window and their difference
+  `Δs_{i,d} = meanStep(R_i^d) - meanStep(O_i^d)`. A systematic association between `Δs` and `G` across
+  arms is the signature of the coupling; reporting `Δs` alongside `G` allows a reader to judge it. `Δs` is
+  diagnostic-only and must never enter `A_i` — dividing `G` by `Δs`, or by any visit-rate factor, would
+  reintroduce a magnitude into an ordinal statistic, destroy the scale invariance measured in `FIND-010`,
+  and create positive feedback between selection frequency and score.
+
+  The coupling is a structural property of window-based progress measures — Matiisen et al. (2017) share
+  it — and it is not removed by this version. The principled alternatives (requiring a minimum global-step
+  separation between the two windows, or defining the windows over step intervals rather than episode
+  counts) are deferred, with no design in this version.
+- **`LIM-204` — No ablation of `H`, `buffer_capacity`, `band_level`, or `tau`.** These are reasoned
+  choices, not ablated ones. No experiment in this thesis isolates their effect and none is planned. `tau`
+  in particular is identified in §9.2 as the correct lever for under-concentration and is deliberately
+  left unchanged.
+- **`LIM-205` — Calibration cost dominates short profiles, for efficacy claims only.** Calibration
+  requires `K * 2H = 240` valid Generate episodes. Expressed as a fraction of a run this is small for
+  `run_profile=thesis` (1.5M steps) and large for `run_profile=fast` (120k steps), but the exact fraction
+  **is not yet known**: it depends on mean episode length in consumed steps, which varies by arm, and the
+  `25–50%` figure carried in revision 1 was an estimate and not a measurement. The ExecPlan must report
+  calibration cost in **consumed environment steps** measured on a real run, not in episodes.
+
+  The consequence is narrower than revision 1 stated. `fast`-profile runs remain **valid** for correctness
+  tests, for the `AC-212` inertness check, for overhead measurement, and for falsification of the
+  mechanics. What they cannot support is any **efficacy** claim about the curriculum, because a run in
+  which calibration occupies a large share of the budget spends most of its time in uniform sampling by
+  construction and therefore cannot distinguish the curriculum from its own baseline.
 - **`LIM-206` — The scenario buffer is no longer prioritized level replay.** With arm-balanced admission
   and `P_progress = p_i / n_i`, the buffer is a recency-balanced revisit memory whose only per-record term
   is staleness. Only that term retains PLR parentage; the buffer must not be described as PLR in derived
@@ -955,24 +1287,52 @@ defensible if the approval precedes the runs, and the approval record in §18 is
   `LIM-004`: `commit_event` is a private closure inside the vectorized training loop. `AC-210`/`AC-211`
   cover the buffer-level and teacher-level contracts, but the branch selection inside the closure remains
   verified by code reading plus the passing suite.
-- **`LIM-208` — Per-step teacher instrumentation cost.** `REQ-002` requires per-slot accumulation of
-  macro-rule costs and applicability at every environment step of the vectorized loop. The data is already
-  present in the step info, but the accumulation is new work in the hot loop; its cost is bounded by three
-  float comparisons and three counter increments per slot per step and must be measured in the ExecPlan's
-  smoke run, not assumed negligible.
+- **`LIM-208` — Cost of the new instrumentation, in full.** Three distinct costs are introduced and all
+  three must be measured in the ExecPlan's smoke run rather than assumed.
+  1. **Per-step accumulation.** `REQ-002` requires per-slot accumulation of macro-rule costs,
+     applicability, and violated-step counts at every environment step of the vectorized loop. The data is
+     already present in the step info, but the accumulation is new work in the hot loop, bounded by
+     roughly three float comparisons and six counter increments per slot per step. It scales with
+     `num_envs x steps`, which makes it the **dominant** of the three despite being the cheapest per unit.
+  2. **Per-commit permutation.** Up to four exact p-values per valid Generate episode. Measured at
+     `0.059 ms` cold and `0.019 ms` warm per call, `0.24 ms` per four-dimension commit (`FIND-010`), and
+     `O(H^2)` in the recursion so `H = 20` does not change the order. This is negligible against episode
+     wall-clock, **provided** the `int64` construction of §7 is implemented; the arbitrary-precision
+     variant measured `70x` slower and must not be used.
+  3. **Logging volume.** §10 requires per-episode Rulebook statistics plus per-update teacher internals
+     plus the `Δs` diagnostic of `LIM-203`, which is materially more per-episode data than `v1.3` emitted.
+     Its effect on artifact size and on I/O in the vectorized loop is unmeasured.
+
+  The `AC-212` inertness requirement means the `v1.3` diagnostic chain also continues to run (`REQ-013`),
+  so `v2.0` pays for both signals for the duration of the comparison.
 
 ### 15.5 Claims this specification supports
 
 1. The teacher's feedback is no longer structurally proportional to the variance of a prediction-error
-   signal (`AC-201`).
-2. A noisy but stationary arm receives a neutral expected feedback of `0.5` (`AC-201`).
+   signal (`AC-201`), a property **measured** over a `250x` scale range rather than argued analytically
+   (`FIND-010`).
+2. A noisy but stationary arm receives a neutral expected feedback of `0.5`, both in isolation (`AC-201`)
+   and inside the closed bandit loop, where it also receives no selection advantage (`AC-202b`).
 3. An arm that is already solved on the selected dimension, and an arm entirely out of reach on it, are
    both attenuated to neutral (`AC-207`).
 4. The teacher is algorithm-independent: identical outcomes produce identical curricula under PPO, TD3, and
    SAC, and therefore across the four reward settings (`AC-215`).
 5. The neutral state of the curriculum is uniform sampling (`AC-209`).
-6. Whether this improves sample efficiency or final performance is an open experimental hypothesis, to be
+6. Given an arm signal-to-noise ratio of at least `1.25` per window gap, the teacher reproduces
+   emergence, plateau, and handover in the order of the arms' onsets (`AC-217`). **This is conditional on
+   a signal level no measurement in this repository establishes** (`LIM-201`), and must always be stated
+   with that condition.
+7. Whether this improves sample efficiency or final performance is an open experimental hypothesis, to be
    tested against `curriculum=disabled` under `EVAL-PROTOCOL` v1.0 (§1.5).
+
+**Claims this specification explicitly does not support**, listed because they are the plausible
+overstatements of the results above: that multiplicity correction was preventing the `v1.3` curriculum
+from working (`FIND-010` falsifies it); that `H = 20` is validated against real data (it is validated
+against a synthetic power sweep, `FIND-012`, and the real arms measure `SNR ~ 0.01`, `FIND-013`); that the
+arms of this thesis attain a signal level at which the teacher becomes active; that `v2.0` will produce a
+non-uniform curriculum on the current reward configuration (`FIND-013` predicts it will not); and that the
+`v1.3` curriculum harms policy performance (`FIND-007`, one seed, 40 episodes, and further weakened by
+`FIND-013`).
 
 ## 16. References
 
@@ -981,7 +1341,7 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 | Graves et al., 2017, ICML, "Automated Curriculum Learning for Neural Networks" | learning progress as the reward of a bandit teacher over a fixed set of tasks |
 | Matiisen et al., 2017, arXiv:1707.00183, "Teacher-Student Curriculum Learning" | windowed progress estimation per task; non-stationary bandit teacher; the visit-frequency coupling of `LIM-203` |
 | Vargha and Delaney, 2000, J. Educ. Behav. Stat. 25(2), 101–132 | the `A` measure `P(better) + 0.5 P(tie)` and its no-effect value `0.5` (`REQ-004`) |
-| Holm, 1979, Scand. J. Statist. 6(2), 65–70 | step-down family-wise correction (`REQ-005`) |
+| Holm, 1979, Scand. J. Statist. 6(2), 65–70 | step-down family-wise correction, specified in revision 1 and **removed** in revision 2 (`REQ-005`, `FIND-010`); retained here for provenance |
 | PORTAL, AAAI 2024, doi:10.1609/aaai.v38i14.29524 | selecting tasks matched to the agent's current competence |
 | Nesterova et al., 2023, arXiv:2301.00691 (SITP) | algorithm-independent outcome signals driving a curriculum at low overhead |
 | Jiang et al., 2021, arXiv:2010.03934 (PLR) | the staleness term of `REQ-011` only; the value-loss score is explicitly not adopted |
@@ -989,6 +1349,7 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 | `docs/decisions/ADR-029` | the measured `+0.771…+0.943` LP/`|reward|` correlations and the naming of the principled fix |
 | `docs/decisions/ADR-032`, `ADR-028`, `ADR-024`, `ADR-016` | carried-forward eligibility, coverage, data-abort, and vectorized-ordering contracts |
 | `docs/specifications/rulebook_v4.9_specification.md`, `src/thesis_rl/rulebook/v2/aggregation.py` | the macro-rule margin/cost/applicability contract of `REQ-002` |
+| `docs/audits/acl_v2_teacher_power_analysis_2026-07-31/` | `FIND-010`: measured scale invariance, closed-loop neutrality of a noisy arm, the removal of Holm, and the permutation cost. `FIND-012`: the window-size power sweep behind §9.1 and `DEC-205` |
 
 ## 17. Implementation Handoff Checklist
 
@@ -1002,8 +1363,9 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 - [x] Required validation categories are selected.
 - [x] Scientific sources, project adaptations, and original constructions are kept distinct (§1.4).
 - [x] Known limitations are intentional and do not hide missing requirements (§15.4).
-- [ ] **No material decision remains open** — `DEC-201`…`DEC-204` are resolved; user approval of this
-      document as a whole is still pending.
+- [ ] **No material decision remains open** — `DEC-201`…`DEC-205` are resolved as of revision 2 and await
+      approval as a set; the `SNR` measurement of `LIM-201` is a declared post-hoc validation and is
+      explicitly **not** a gate on approval.
 - [ ] Approval recorded, `_UNDER_REVIEW` removed from the filename, `docs/project_index.md` updated, ADR
       written, ExecPlan created.
 
@@ -1011,10 +1373,18 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 
 - Approved by: `pending`
 - Approval date: `pending`
-- Approval evidence: session of 2026-07-30 — the user presented the redesign, stated that the existing
-  specifications are not binding if a better solution exists, and approved `DEC-201`…`DEC-204` in response
-  to the review findings `FIND-006`…`FIND-009`. Approval of this document as the authoritative contract is
-  **not yet given**.
+- Approval evidence and provenance, stated precisely because revision 1 overstated it:
+  - **2026-07-30** — the user presented the redesign and stated that the existing specifications are not
+    binding if a better solution exists. `DEC-201`…`DEC-204` were **proposed by the assistant and selected
+    by the user** in response to `FIND-006`…`FIND-009`. Revision 1 recorded these as "APPROVED", which was
+    an overstatement of a selection made without full deliberation.
+  - **2026-07-31** — the user **reopened** `DEC-201`…`DEC-204`, corrected the gate statistic for R2/R3
+    (`FIND-011`), and requested a synthetic power analysis before any approval. The analysis was
+    authorized, executed, and recorded as `FIND-010`.
+  - **2026-07-31, revision 2** — `DEC-201` and `DEC-204` confirmed; `DEC-202` and `DEC-203` revised on
+    evidence; `DEC-205` added. The user directed that `tau` remain unchanged pending evidence of
+    under-concentration (§9.2).
+  - Approval of this document as the authoritative contract is **not yet given**.
 - Approval notes: approval must precede any comparison run under this version (§11, pre-registration).
 - Repository path: `docs/specifications/automatic_curriculum_learning_v2.0_specification_UNDER_REVIEW.md`
   (canonical path on approval: `docs/specifications/automatic_curriculum_learning_v2.0_specification.md`)

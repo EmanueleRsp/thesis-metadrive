@@ -480,6 +480,12 @@ def run_evaluation(cfg: DictConfig) -> None:
                 "counterexample_rate": float(metrics.get("counterexample_rate", 0.0)),
                 "violated_rules_ratio": float(metrics.get("violated_rules_ratio", 0.0)),
                 "unique_violation_patterns": int(metrics.get("unique_violation_patterns", 0)),
+                "gif_render_seconds_total": float(
+                    metrics.get("gif_render_seconds_total", 0.0) or 0.0
+                ),
+                "gif_render_seconds_per_episode": float(
+                    metrics.get("gif_render_seconds_per_episode", 0.0) or 0.0
+                ),
                 "promoted": False,
                 "next_stage": stage_name,
             },

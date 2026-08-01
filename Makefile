@@ -5,7 +5,7 @@ PYTHON_QUALITY_PATHS ?= src tests scripts
 # The final integration run is intentionally explicit about the learner. All
 # values are Hydra config names under conf/agent/planner/algorithm/.
 ALGORITHM ?=
-ENCODER ?= lq_v3
+ENCODER ?= lq_v3_lite
 RUN_PROFILE ?= smoke
 RUN_NAME ?= run
 RUN_OVERRIDES ?=
