@@ -23,6 +23,34 @@ def _materialize_gate(gate: DirectedGate, lanes: dict[str, NormalizedLane]) -> D
     return replace(gate, geometry=geometry)
 
 
+def _lanes_reaching_any_gate(
+    lanes: dict[str, RouteLaneRecord], gate_lane_ids: set[str]
+) -> frozenset[str]:
+    """Return live lanes from which a pending mission gate can be reached.
+
+    Section spans name the task's admissible surfaces, while the static map
+    topology also contains necessary connector lanes between two ordered gate
+    frontiers.  Those connectors must remain available to the recovery graph;
+    disconnected map lanes must not become association candidates merely
+    because they exist in the source map.
+    """
+
+    predecessors: dict[str, set[str]] = {}
+    for lane in lanes.values():
+        for successor in lane.successor_lane_ids:
+            if successor in lanes:
+                predecessors.setdefault(successor, set()).add(lane.lane_id)
+    reachable = set(gate_lane_ids)
+    pending = list(sorted(gate_lane_ids))
+    while pending:
+        current = pending.pop()
+        for predecessor in sorted(predecessors.get(current, ())):
+            if predecessor not in reachable:
+                reachable.add(predecessor)
+                pending.append(predecessor)
+    return frozenset(reachable)
+
+
 class MissionRuntime:
     """Own a tracker and its static live-map realization for one episode."""
 
@@ -36,19 +64,21 @@ class MissionRuntime:
         all_by_id = {lane.lane_id: lane for lane in all_lanes}
         if len(all_by_id) != len(all_lanes):
             raise ValueError("mission runtime requires unique live lane IDs")
-        legal_lane_ids = {
+        referenced_lane_ids = {
             span.lane_id for section in mission.sections for span in section.allowed_spans
         }
-        legal_lane_ids.update(
+        referenced_lane_ids.update(
             span.lane_id
             for gate in (*[section.exit_gate for section in mission.sections], mission.final_goal)
             for span in gate.compatible_spans
         )
-        missing = sorted(legal_lane_ids.difference(all_by_id))
+        missing = sorted(referenced_lane_ids.difference(all_by_id))
         if missing:
             raise ValueError(f"mission references unavailable live lanes: {missing[:5]}")
-        lanes = tuple(lane for lane in all_lanes if lane.lane_id in legal_lane_ids)
-        by_id = {lane.lane_id: lane for lane in lanes}
+        gates_to_materialize = (
+            *[section.exit_gate for section in mission.sections],
+            mission.final_goal,
+        )
         normalized = {
             lane.lane_id: NormalizedLane(
                 lane.lane_id,
@@ -56,30 +86,31 @@ class MissionRuntime:
                 lane.successor_lane_ids,
                 centerline=lane.centerline,
             )
-            for lane in lanes
+            for lane in all_lanes
         }
-        gates = tuple(
-            _materialize_gate(gate, normalized)
-            for gate in (*[section.exit_gate for section in mission.sections], mission.final_goal)
-        )
+        gates = tuple(_materialize_gate(gate, normalized) for gate in gates_to_materialize)
         graph = LaneGraph(
-            lengths_m={lane.lane_id: lane.centerline.length_m for lane in lanes},
+            lengths_m={lane.lane_id: lane.centerline.length_m for lane in all_lanes},
             successors={
                 lane.lane_id: tuple(
-                    successor for successor in lane.successor_lane_ids if successor in by_id
+                    successor for successor in lane.successor_lane_ids if successor in all_by_id
                 )
-                for lane in lanes
+                for lane in all_lanes
             },
         )
-        association = _associate(initial_snapshot, lanes)
-        if association is None:
-            raise ValueError("reset ego state cannot be associated with the frozen mission graph")
-        self._route_lanes = lanes
+        traversable_lane_ids = _lanes_reaching_any_gate(
+            all_by_id, {gate.lane_id for gate in gates_to_materialize}
+        )
+        association_lanes = tuple(
+            lane for lane in all_lanes if lane.lane_id in traversable_lane_ids
+        )
+        association = _associate(initial_snapshot, association_lanes)
+        self._route_lanes = association_lanes
         self._tracker = MissionTracker(
             mission,
             graph,
-            association.lane_id,
-            association.route_projection_s_m,
+            "" if association is None else association.lane_id,
+            0.0 if association is None else association.route_projection_s_m,
             materialized_gates=gates,
         )
 

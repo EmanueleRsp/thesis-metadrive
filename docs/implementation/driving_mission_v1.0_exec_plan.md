@@ -509,24 +509,28 @@ explicit informed authorization because source files are pickle artifacts.
 
 ### M4 — Environment success, completion, and boundaries
 
-- Status: `IN_PROGRESS 2026-08-02`.
+- Status: `COMPLETED 2026-08-02`.
 - Dependencies: M3 and DEC-MSN-001/006.
 - Expected files: `thesis_scenario_env.py`, scene context, config, env tests.
 - Tasks: install/update tracker at causal boundary; replace native authority;
   preserve native diagnostics temporarily; implement success/unreachable;
   retain time-limit truncation and physical terminations.
 - Tests: `TEST-MSN-017` through `021`, `030`, `031`.
-- Completion evidence: in progress. The user approved promotion of the M7a
-  candidate; a new mission-aware frozen index and catalog were created without
-  overwriting historical artifacts. Environment success, completion, native
-  diagnostics, and `mission_unreachable` now consume the causal tracker, with
-  focused M4 tests passing. The required end-to-end smoke found a reset-time
-  static-graph defect and then duplicate static-adapter construction; both have
-  regression fixes, but the smoke must be rerun to completion before M4 closes.
+- Completion evidence: the user-approved M7a candidate was promoted into a new
+  canonical mission-aware frozen index and catalog without overwriting historical
+  artifacts. Environment success, completion, native diagnostics, and
+  `mission_unreachable` consume the causal tracker. The runtime retains static
+  map connector lanes between ordered gate frontiers and initializes a terminal
+  `mission_unreachable` snapshot when reset association has no legal pending-gate
+  path. Focused M4 regression tests pass (45 tests); focused Ruff and
+  `git diff --check` pass. `make smoke-gpu` completed successfully at
+  `/scratch/e.respino/thesis-metadrive/outputs/EXP_smoke_RP_smoke_CUR_disabled_REW_monitor_only/td3_sb3/seed_42/20260802_211432`,
+  including both validation evaluations and the final Waymo empirical, PG, and
+  arm-stratified panels.
 
 ### M5 — R4 and Rulebook migration
 
-- Status: `NOT_STARTED`.
+- Status: `IN_PROGRESS 2026-08-02`.
 - Dependencies: M3-M4.
 - Expected files: progress, transition, types/memory/registry, route-dependent
   geometry/controls, golden traces, Rulebook tests.
@@ -737,6 +741,28 @@ explicit informed authorization because source files are pickle artifacts.
 - `make smoke` first found unknown static successor IDs, then showed excessive
   reset cost from broad graph construction and duplicate adapter work. Both
   have regression fixes; the smoke must still complete before M4 can close.
+
+### 2026-08-02 — M4 completed and M5 started
+
+- The approved candidate was promoted to the canonical mission-aware frozen
+  index and catalog. Historical frozen selection/catalog artifacts and all
+  source pickles remain unchanged.
+- A smoke reset exposed 397 records whose frozen section spans omit a necessary
+  intermediate topological connector between ordered gate frontiers. The
+  runtime now retains the complete static successor graph for legal connector
+  travel, while lane association remains limited to lanes that can reach an
+  ordered gate. A regression test covers the omitted-connector case.
+- A further smoke failure exposed reset states without an associable legal path.
+  In accordance with approved `DEC-MSN-001`, these initialize the immutable
+  terminal `mission_unreachable` snapshot and terminate through the ordinary
+  environment boundary; they do not crash a vector worker or fall back to
+  native navigation.
+- Focused mission/environment tests passed (45 tests), targeted Ruff format and
+  lint checks passed, and `git diff --check` passed. The required GPU smoke
+  (`make smoke-gpu`) completed successfully at
+  `/scratch/e.respino/thesis-metadrive/outputs/EXP_smoke_RP_smoke_CUR_disabled_REW_monitor_only/td3_sb3/seed_42/20260802_211432`;
+  its two validation evaluations and final Waymo empirical, PG, and
+  arm-stratified panels all completed without entries in `logs/errors.log`.
 
 ## 12. Deviations
 

@@ -32,7 +32,10 @@ class MissionTracker:
         self._pending, self._step, self._completion = 0, 0, 0.0
         initial = self._remaining(lane_id, s_m)
         if initial is None:
-            raise ValueError("reset ego state cannot reach the pending mission gate")
+            self._initial_distance = 0.0
+            self._snapshot = self._make_snapshot(0.0, False, False, True)
+            self._snapshots = {0: self._snapshot}
+            return
         self._initial_distance = initial
         self._snapshot = self._make_snapshot(initial, True, False, False)
         self._snapshots = {0: self._snapshot}
@@ -62,11 +65,13 @@ class MissionTracker:
     def _make_snapshot(
         self, remaining: float, reachable: bool, success: bool, unreachable: bool
     ) -> MissionSnapshot:
-        self._completion = (
-            1.0
-            if success
-            else max(self._completion, max(0.0, min(1.0, 1.0 - remaining / self._initial_distance)))
-        )
+        if success:
+            self._completion = 1.0
+        elif reachable and self._initial_distance > 0.0:
+            self._completion = max(
+                self._completion,
+                max(0.0, min(1.0, 1.0 - remaining / self._initial_distance)),
+            )
         return MissionSnapshot(
             self._mission.mission_hash,
             self._step,
