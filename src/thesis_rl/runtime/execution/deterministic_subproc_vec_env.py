@@ -269,17 +269,13 @@ def _worker(
                                 ego_trail_world.append((float(position[0]), float(position[1])))
                             except (TypeError, IndexError):
                                 pass
-                    _geom = diagnostic_geometry_from_env(
-                        env,
-                        ego_trail_world=tuple(ego_trail_world) if draw_ego_trail else None,
+                    frame = annotate_geometry_frame(
+                        frame,
+                        diagnostic_geometry_from_env(
+                            env,
+                            ego_trail_world=tuple(ego_trail_world) if draw_ego_trail else None,
+                        ),
                     )
-                    if os.environ.get("THESIS_DEBUG_GEOM"):
-                        with open("/tmp/thesis_debug_geom.log", "a") as _dbg_f:
-                            _dbg_f.write(
-                                f"pid={os.getpid()} keys={list(_geom.keys())} "
-                                f"ego_trail_len={len(ego_trail_world)}\n"
-                            )
-                    frame = annotate_geometry_frame(frame, _geom)
                 remote.send(frame)
             elif cmd == "close":
                 env.close()
@@ -377,6 +373,7 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         super().__init__(self.num_envs, observation_space, action_space)
         self.render_mode = getattr(getattr(env_fns[0], "__self__", None), "render_mode", None)
         self.reset_infos: list[dict[str, Any]] = [{} for _ in range(self.num_envs)]
+        self._slot_proxies: dict[int, "VectorEnvSlotProxy"] = {}
 
     def seed(self, seed: int | None = None) -> list[Optional[int]]:
         if seed is None:
@@ -485,9 +482,26 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
         return self._receive_many(selected, command="render")
 
     def get_slot_proxy(self, slot: int) -> "VectorEnvSlotProxy":
-        """Return a single-worker proxy suitable for callbacks and recorders."""
+        """Return a single-worker proxy suitable for callbacks and recorders.
 
-        return VectorEnvSlotProxy(self, int(slot))
+        Callers across the parallel-evaluation loop (``_evaluate_parallel``'s
+        pre-episode callback, its ``set_rendered_frame`` cache write, and the
+        artifact recorder's ``record_step`` env argument) must observe the
+        same proxy instance for a given slot: ``VectorEnvSlotProxy`` stores
+        ``_rendered_frame`` on the instance itself, so a fresh instance per
+        call silently drops the worker-annotated diagnostic-overlay frame
+        cached via ``set_rendered_frame``, forcing a second, un-annotated
+        render on every step. A slot maps to the same physical subprocess
+        worker for the vector env's lifetime, so caching by slot index is
+        safe across episodes.
+        """
+
+        slot = int(slot)
+        proxy = self._slot_proxies.get(slot)
+        if proxy is None:
+            proxy = VectorEnvSlotProxy(self, slot)
+            self._slot_proxies[slot] = proxy
+        return proxy
 
     def close(self) -> None:
         if self.closed:

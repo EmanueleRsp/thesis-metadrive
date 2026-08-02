@@ -298,6 +298,7 @@ def build_waymo_static_adapter_result(
             )
         )
     controls: list[TrafficControlRecord] = []
+    dropped_control_line_off_route_count = 0
     signal_errors: list[str] = []
     for feature_id, feature in features.items():
         if not isinstance(feature, Mapping) or feature.get("type") != "STOP_SIGN":
@@ -328,6 +329,7 @@ def build_waymo_static_adapter_result(
             except ControlLineOffRouteError:
                 # Governs another approach of the same junction, not the ego's
                 # task route: correctly absent, not a data defect.
+                dropped_control_line_off_route_count += 1
                 continue
             except ValueError:
                 # OPEN-EF-04: a §2.9.6 geometry ambiguity ("multiple unresolved
@@ -393,6 +395,7 @@ def build_waymo_static_adapter_result(
                     route=assigned_route,
                 )
             except ControlLineOffRouteError:
+                dropped_control_line_off_route_count += 1
                 continue
             except ValueError:
                 # OPEN-EF-04, as above.
@@ -423,6 +426,7 @@ def build_waymo_static_adapter_result(
         movement_priority_records=priority_records,
         roundabout_priority_records=roundabout_records,
         unmapped_feature_types=tuple(sorted(unmapped_feature_types)),
+        dropped_control_line_off_route_count=dropped_control_line_off_route_count,
     )
     return replace(
         result,

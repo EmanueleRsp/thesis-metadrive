@@ -380,6 +380,10 @@ class EpisodeCache:
     roundabout_priority_records: tuple[RoundaboutPriorityRecord, ...] = ()
     route_lanes: tuple["RouteLaneRecord", ...] = ()
     route_polyline: "RoutePolyline | None" = None
+    # Additive diagnostic only (F4b): count of stop/signal control candidates
+    # dropped by ControlLineOffRouteError during static adapter construction,
+    # threaded from StaticAdapterResult.dropped_control_line_off_route_count.
+    control_line_off_route_drop_count: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "conflict_zones", freeze_mapping(self.conflict_zones))

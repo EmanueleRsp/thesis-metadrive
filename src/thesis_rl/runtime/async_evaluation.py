@@ -485,6 +485,11 @@ class AsyncEvaluationManager:
             return
         if kind == "progress":
             state.completed = int(message[2])
+            panel_label = state.job.panel_name or f"evaluation {eval_id}"
+            self._event_messages.append(
+                f"[EVAL] {panel_label} episode {state.completed}/{state.job.episode_count} "
+                f"evaluated | step={state.job.global_step}"
+            )
             return
         if kind == "finished":
             metrics = message[2]

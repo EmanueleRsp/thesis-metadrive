@@ -149,6 +149,46 @@ def test_evaluation_error_is_fatal(tmp_path, monkeypatch):
         manager.poll()
 
 
+def test_progress_message_appends_a_per_episode_event(tmp_path, monkeypatch):
+    """Each evaluated episode must surface as its own event message, not only
+    job-start/job-finish, so the training terminal monitor can refresh on
+    every evaluated episode of a validation/final panel instead of waiting
+    for the next training-step log tick."""
+
+    def fake_worker(job, output_queue):
+        output_queue.put(("started", job.eval_id, job.episode_count))
+        for completed in range(1, job.episode_count + 1):
+            output_queue.put(("progress", job.eval_id, completed, job.episode_count))
+        output_queue.put(
+            ("finished", job.eval_id, {"per_episode": {"returns": [1.0]}, "mean_reward": 1.0})
+        )
+
+    monkeypatch.setattr(async_module, "_evaluation_worker_main", fake_worker)
+    manager = AsyncEvaluationManager(checkpoints_dir=tmp_path, process_factory=_FakeProcess)
+    manager.enqueue(
+        agent=_FakeAgent(tmp_path),
+        cfg=_cfg(),
+        eval_id=1,
+        global_step=10,
+        stage="baseline",
+        stage_index=0,
+        episode_count=3,
+        base_seed=100,
+        env_seed=200,
+        panel_name="validation_waymo_empirical",
+    )
+    manager.drain()
+
+    messages = manager.drain_event_messages()
+    per_episode_messages = [msg for msg in messages if "episode" in msg and "evaluated" in msg]
+    assert [msg.split(" | ")[0] for msg in per_episode_messages] == [
+        "[EVAL] validation_waymo_empirical episode 1/3 evaluated",
+        "[EVAL] validation_waymo_empirical episode 2/3 evaluated",
+        "[EVAL] validation_waymo_empirical episode 3/3 evaluated",
+    ]
+    manager.close()
+
+
 def test_renderables_expose_panel_states_and_requested_sample_statistics(tmp_path, monkeypatch):
     def fake_worker(job, output_queue):
         output_queue.put(

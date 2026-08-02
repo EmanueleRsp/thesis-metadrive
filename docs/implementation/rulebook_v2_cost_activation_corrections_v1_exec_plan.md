@@ -697,6 +697,77 @@ violation that does occur.
   leader keeps moving), so it is explicitly left unfixed pending measurement
   of its real-data frequency/duration rather than corrected speculatively —
   see Deferred required work.
+- Implemented the remaining diagnostic half of F4b/P7 step 1 (M0's control-
+  drop counters), on explicit user request. Discovery: `subrule_diagnostics.py`
+  (`SubruleEpisodeAccumulator`, a separate pre-existing module for a different
+  ExecPlan, `subrule_dominance_diagnostics_exec_plan.md`) already answers the
+  "applicable step count per sub-rule per episode" half of P7 step 1 for
+  `signal`/`stop`/`crosswalk`/`vehicle_yield` -- the M0 file table's earlier
+  note that this counter was "not started" in this ExecPlan was therefore
+  inaccurate; it exists, just built for a different question. Only the two
+  silent control-drop counts were genuinely missing: added
+  `StaticAdapterResult.dropped_control_line_off_route_count` (adapter-level,
+  the `ControlLineOffRouteError` catch sites) and a new
+  `transition.control_line_diagnostics(cache)` (reproduces `_selected_control`'s
+  `approach_lane_id in route` filter statically, since it does not change over
+  an episode). Exposed once per episode via
+  `info_dict["rulebook_control_line_diagnostics"]`
+  (`RulebookV2MonitorWrapper.step`) and threaded into the GIF manifest via
+  `Agent`'s existing `metadata_keys` mechanism. Not wired into `evals.csv`/
+  `CSVRecorder` or any aggregate report table -- that remains open, see
+  Deferred required work.
+- Ran the new diagnostics as a read-only dry-run over all 828
+  `has_route_traffic_light=true` records in the frozen catalog (all Waymo; 0
+  PG records carry this flag), building `StaticAdapterResult` +
+  `EpisodeCache` per record without simulating an episode. Result: 52 records
+  (6.3%) retain zero `SIGNAL` controls after adapter construction, and a
+  further 421 (50.8%) retain a constructed `SIGNAL` control that the
+  `approach_lane_id` runtime filter then excludes entirely -- **473/828
+  (57.1%) of "signalised" scenarios never have a signal control selected by
+  the Rulebook at runtime.** This empirically confirms and quantifies the
+  audit's F4b hypothesis ("the catalog flag is a looser geometric-proximity
+  test than the Rulebook's own selection criterion") and directly explains
+  the user's original "the signal seems not to work" report as substantially
+  a selection-coverage gap, not (only) F4a's one-step-cost design. This is
+  the P7 step 2 re-measurement, done from the live adapter path rather than
+  the catalog-filter audit output originally proposed, which was not
+  available; it makes the case for the P7 step 3 persistence latch
+  materially weaker until this gap is addressed first, since a persistence
+  latch cannot fire on a control that is never selected.
+
+### 2026-08-02 — Root-cause investigation and fix: traffic-control route-successor extension
+
+- Root-caused the 421/828 (50.8%) `zero_after_filter` signal drops measured
+  above, on user request ("credo che il prossimo step sia indagare e
+  scoprirne la causa"). Sampled 12 cases via a dedicated read-only script:
+  100% of dropped `SIGNAL` controls' lanes were the topologically
+  unambiguous single successor of the route's terminal lane, never an
+  unrelated lane. Re-checked the full 421 records: 255 (60.6%) fully match
+  (all dropped controls are that pattern), 264 (62.7%) at least partially,
+  166 (39.4%) genuinely unrelated. Root cause: `assigned_route_lane_ids` for
+  `training_20s` Waymo records reflects the recorded human driver's actual
+  20-second path, which legitimately ends one lane short of a junction the
+  driver had not yet crossed within that window; the RL policy driving the
+  ego during training is not bound to that recorded path and can reach and
+  cross that lane within the same episode, so the light governing it is
+  physically relevant but unselectable.
+- User approved documenting the decision then implementing the fix
+  ("procedi ad annotarlo e poi procedi all'implementazione"). Recorded as
+  `ADR-051` and `rulebook_v4.11_specification.md`, amending v4.7 §2.9.5's
+  operational predicate for "movimento ego pertinente" to also accept the
+  route's unambiguous single successor lane -- the same disambiguation
+  `derive_lane_movement_key` already applies for the ego's own
+  `exit_lane_id`, not a new heuristic.
+- Implemented `route_reachable_control_lane_ids(cache)` in `transition.py`,
+  used by all four `_selected_control` call sites (signal/stop x pre/post)
+  and by `control_line_diagnostics`. Added 3 regression tests: the
+  previously-unselectable signal now selects and costs correctly; an
+  ambiguous two-successor case correctly stays `NOT_APPLICABLE` (no
+  guessing); a direct unit test of the helper's set-membership rule.
+- Re-ran the 828-record dry-run after implementation: `zero_after_filter`
+  dropped from 421 to 157 (264 recovered, exactly matching the pre-fix
+  "at least one fixable drop" count); working-signal rate rose from
+  355/828 (42.9%) to 619/828 (74.8%).
 
 ## 12. Deviations
 
@@ -742,6 +813,16 @@ violation that does occur.
 | `src/thesis_rl/rulebook/v2/components/road.py` | Modified (post-approval follow-up) | `WRONGWAY_STATUS_SPEED_EPSILON_MPS` deadband on `evaluate_wrongway` status only, `ADR-050`; `cost` unchanged |
 | `tests/test_rulebook_v2_road.py` | Modified (post-approval follow-up) | `test_wrongway_status_has_a_deadband_against_standstill_physics_noise` |
 | `docs/decisions/ADR-050-wrongway-status-deadband.md` | Created | Post-approval follow-up, out of the original `DEC-RBCOST-*` set |
+| `src/thesis_rl/rulebook/v2/context/static_adapter.py` | Modified (post-approval follow-up) | `StaticAdapterResult.dropped_control_line_off_route_count` (F4b diagnostic), threaded through `normalize_static_records` |
+| `src/thesis_rl/rulebook/v2/context/pg_static_adapter.py` | Modified (post-approval follow-up) | Increments `dropped_control_line_off_route_count` at both `ControlLineOffRouteError` sites (stop + signal) |
+| `src/thesis_rl/rulebook/v2/context/waymo_static_adapter.py` | Modified (post-approval follow-up) | Same, plus a regression test for the counter |
+| `src/thesis_rl/rulebook/v2/types.py` | Modified (post-approval follow-up) | `EpisodeCache.control_line_off_route_drop_count`, threaded from `build_episode_cache` |
+| `src/thesis_rl/rulebook/v2/wrapper.py` | Modified (post-approval follow-up) | Exposes `info_dict["rulebook_control_line_diagnostics"]` per step, computed once per episode at `reset()` via `control_line_diagnostics(cache)` |
+| `src/thesis_rl/agent/agent.py` | Modified (post-approval follow-up) | Added `rulebook_control_line_diagnostics` to the eval-episode `metadata_keys` tuple so it reaches `episode_metadata` / the GIF manifest, same mechanism as `scenario_uid` |
+| `tests/test_rulebook_v2_waymo_adapter.py` | Modified (post-approval follow-up) | `test_waymo_adapter_counts_off_route_control_line_drops` |
+| `tests/test_rulebook_v2_transition.py` | Modified (post-approval follow-up) | `test_control_line_diagnostics_counts_approach_filter_and_off_route_drops`; `test_transition_selects_a_signal_on_the_unambiguous_route_successor_lane`; `test_transition_does_not_select_a_signal_on_an_ambiguous_route_successor_lane`; `test_route_reachable_control_lane_ids_extends_by_unambiguous_successor_only` |
+| `docs/decisions/ADR-051-traffic-control-route-successor-extension.md` | Created | `ADR-051`, route-successor extension |
+| `docs/specifications/rulebook_v4.11_specification.md` | Created | `APPROVED` directly, amends v4.7 §2.9.5 operational predicate |
 
 Not in this diff: `subrule_diagnostics.py` (M0 control-drop/applicability
 counters deferred, not started).
@@ -774,7 +855,7 @@ counters deferred, not started).
 | `REQ-RBCOST-009` | `VERIFIED` | Five geometry cases plus memorylessness test pass |
 | `REQ-RBCOST-010` | `VERIFIED` | Standstill scoping implemented and tested, incl. a mixed-candidate case |
 | `REQ-RBCOST-011` | `VERIFIED` | Both adapters record unmapped types via `unmapped_feature_types` without affecting `validation_errors` |
-| `REQ-RBCOST-012` | `PARTIAL` | GIF overlay status distinction implemented and tested; per-episode control-drop/applicability counters not implemented |
+| `REQ-RBCOST-012` | `PARTIAL` | GIF overlay status distinction implemented and tested; the two control-drop counters (`ControlLineOffRouteError`, `approach_lane_id` filter) are now implemented and tested (post-approval follow-up), and directly enabled the `ADR-051` root-cause investigation that fixed the traffic-control route-membership predicate itself (working-signal rate 42.9% -> 74.8% on the frozen Waymo catalog); applicable-step counts per control sub-rule already existed pre-session in `subrule_diagnostics.py` (a different ExecPlan) and were not re-verified here; the two counters are not yet wired into any aggregate report table (`evals.csv`, per-arm summaries) |
 
 ### Known limitations
 
@@ -787,8 +868,13 @@ counters deferred, not started).
   post-approval follow-up log entry: real-map re-measurement on 5 PG maps);
 - `b_meas` is now the normative 40-trial measurement (regenerated in this
   session), superseding the 12-trial audit sample;
-- M0's per-episode control-drop and applicability counters are not
-  implemented; only the GIF-overlay status distinction is;
+- M0's per-episode control-drop counters (`ControlLineOffRouteError`,
+  `approach_lane_id` filter) are now implemented (post-approval follow-up),
+  exposed via `info_dict["rulebook_control_line_diagnostics"]` and the GIF
+  manifest, but not yet aggregated into any report table across episodes/arms;
+  applicable-step counts per control sub-rule were found to already exist
+  (`subrule_diagnostics.py`, pre-session, a different ExecPlan) and were not
+  independently re-verified in this session;
 - no live evaluation GIF was captured to visually confirm `wrong_carriageway`
   or the overlay changes in a running episode during initial implementation;
   this was later done ad hoc via frame extraction while diagnosing the
@@ -802,7 +888,11 @@ counters deferred, not started).
   `dashed_lateral_penetration` distribution at `solid_line` activation before
   deciding a penetration deadband; decide the red-light persistence latch
   from M0 counters once those counters exist.
-- M0's remaining control-drop/applicability counters.
+- Aggregate the new per-episode control-drop counters across episodes/arms
+  (e.g. into `evals.csv` or a dedicated report), and re-measure the F4b
+  catalog exclusion rate (P7 step 2) from the catalog-filter audit output
+  rather than the frozen index, to decide whether the F4a persistence latch
+  (P7 step 3) is warranted.
 - The RSS standstill-exit transient (see post-approval follow-up log entry):
   measure how often and for how many consecutive steps a pair re-enters full
   RSS evaluation with `gap_m` still below `safe_distance_m` immediately after

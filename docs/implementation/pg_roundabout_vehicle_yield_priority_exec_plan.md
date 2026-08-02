@@ -317,6 +317,15 @@ already-approved consumption mechanism).
 **Deviations**: none (Section 12).
 
 **Known limitations**:
+- `vehicle_yield` is intentionally not a universal right-of-way engine.  It
+  evaluates only an already occupied conflict zone, `STOP`-versus-`NONE`, a
+  validated PG roundabout entry-versus-circulating relation, or an explicit
+  pairwise `MovementPriorityRecord`.  It is `NOT_APPLICABLE` for yield signs,
+  two-stop intersections, generic merges, uncontrolled or otherwise ambiguous
+  intersections, actors without an unambiguous `MovementKey`, and every
+  pairwise priority relation absent from source metadata.  TTC and collision
+  monitoring still cover physical safety in those cases, but R3 does not
+  assign a legal-priority cost.
 - Waymo-sourced scenarios remain without roundabout priority data (out of
   scope by design — see Section 2).
 - `movement_priorities` (pairwise priority at uncontrolled intersections)

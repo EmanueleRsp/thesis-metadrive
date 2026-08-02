@@ -170,6 +170,32 @@ def test_deterministic_subproc_vec_env_supports_selective_manual_resets() -> Non
         vec_env.close()
 
 
+def test_get_slot_proxy_returns_same_instance_across_calls() -> None:
+    """Regression: ``get_slot_proxy`` used to build a fresh ``VectorEnvSlotProxy``
+    on every call. ``_rendered_frame`` is stored on the proxy instance itself, so
+    the throwaway proxy that ``_evaluate_parallel`` calls ``set_rendered_frame``
+    on (agent.py) was never the same instance later handed to the artifact
+    recorder's ``record_step`` (agent.py), silently dropping the worker-baked
+    diagnostic overlay and forcing a second, un-annotated render on every step
+    (see docs/implementation/evaluation_video_route_and_ego_trail_overlay_v1_exec_plan.md).
+    """
+
+    vec_env = DeterministicSubprocVecEnv(
+        [_make_env(start_index=10, num_scenarios=1)],
+        start_method="spawn",
+    )
+    try:
+        proxy_a = vec_env.get_slot_proxy(0)
+        proxy_b = vec_env.get_slot_proxy(0)
+        assert proxy_a is proxy_b
+
+        sentinel = object()
+        proxy_a.set_rendered_frame(sentinel)
+        assert vec_env.get_slot_proxy(0).consume_rendered_frame() is sentinel
+    finally:
+        vec_env.close()
+
+
 def test_worker_python_exception_reports_remote_traceback() -> None:
     vec_env = DeterministicSubprocVecEnv([_make_failing_step_env], start_method="spawn")
     try:

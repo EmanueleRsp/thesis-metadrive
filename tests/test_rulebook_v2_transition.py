@@ -11,6 +11,7 @@ from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact
 from thesis_rl.rulebook.v2.transition import (
     RulebookTransitionConfig,
     align_episode_cache_to_live_elevation,
+    control_line_diagnostics,
     evaluate_transition,
     initial_memory_for_snapshot,
 )
@@ -64,6 +65,59 @@ def _cache() -> EpisodeCache:
         route_lanes=(lane,),
         route_polyline=route,
     )
+
+
+def test_control_line_diagnostics_counts_approach_filter_and_off_route_drops() -> None:
+    """F4b regression: `_selected_control`'s `approach_lane_id in route` filter
+    silently excludes controls whose approach is not on the assigned route,
+    with no prior diagnostic. `control_line_diagnostics` reproduces that
+    filter statically, once per episode, to make the drop count observable."""
+
+    on_route = TrafficControlRecord(
+        "signal-on",
+        ApproachControl.SIGNAL,
+        ("lane-a",),
+        MovementKey("lane-a", "node", "lane-a"),
+        LineString(((10.0, -2.0), (10.0, 2.0))),
+        10.0,
+        0.0,
+        ("signal-on",),
+    )
+    off_route = TrafficControlRecord(
+        "signal-off",
+        ApproachControl.SIGNAL,
+        ("lane-x",),
+        MovementKey("lane-x", "node", "lane-x"),
+        LineString(((10.0, 18.0), (10.0, 22.0))),
+        10.0,
+        0.0,
+        ("signal-off",),
+    )
+    stop_off_route = TrafficControlRecord(
+        "stop-off",
+        ApproachControl.STOP,
+        ("lane-y",),
+        MovementKey("lane-y", "node", "lane-y"),
+        LineString(((10.0, 38.0), (10.0, 42.0))),
+        10.0,
+        0.0,
+        ("stop-off",),
+    )
+    cache = replace(
+        _cache(),
+        traffic_control_catalog=(on_route, off_route, stop_off_route),
+        control_line_off_route_drop_count=3,
+    )
+
+    diagnostics = control_line_diagnostics(cache)
+
+    assert diagnostics == {
+        "control_line_off_route_drop_count": 3,
+        "signal_controls_total": 2,
+        "signal_controls_approach_filter_dropped": 1,
+        "stop_controls_total": 1,
+        "stop_controls_approach_filter_dropped": 1,
+    }
 
 
 def test_transition_invokes_complete_registry_and_keeps_vehicle_yield_not_applicable() -> None:
@@ -236,6 +290,121 @@ def test_transition_penalizes_a_red_signal_crossed_during_step() -> None:
 
     assert result.components["signal"].cost == 1.0
     assert "signal:p" in next_memory.resolved_signal_group_ids
+
+
+def test_transition_selects_a_signal_on_the_unambiguous_route_successor_lane() -> None:
+    """ADR-051 regression: `assigned_route_lane_ids` can legitimately end one
+    lane short of a junction (e.g. a 20s Waymo recording where the human
+    driver had not yet crossed it), but the RL-driven ego can still reach and
+    cross that lane within the episode. A signal on the route's unambiguous
+    single successor lane must remain selectable."""
+
+    lane_a = RouteLaneRecord(
+        "lane-a",
+        Polygon(((-1.0, -2.0), (11.0, -2.0), (11.0, 2.0), (-1.0, 2.0))),
+        RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0))),
+        ("lane-b",),
+    )
+    lane_b = RouteLaneRecord(
+        "lane-b",
+        Polygon(((9.0, -2.0), (21.0, -2.0), (21.0, 2.0), (9.0, 2.0))),
+        RoutePolyline(((10.0, 0.0, 0.0), (20.0, 0.0, 0.0))),
+        (),
+    )
+    cache = replace(_cache(), route_lanes=(lane_a, lane_b))
+    control = TrafficControlRecord(
+        "signal:on-successor",
+        ApproachControl.SIGNAL,
+        ("lane-b",),
+        MovementKey("lane-b", "node", "lane-b"),
+        LineString(((10.0, -2.0), (10.0, 2.0))),
+        10.0,
+        0.0,
+        ("p",),
+    )
+    cache = replace(cache, traffic_control_catalog=(control,))
+    pre = replace(_snapshot(0, 0.0, 8.0), signal_states_by_physical_id={"p": "RED"})
+    post = replace(_snapshot(1, 0.1, 10.0), signal_states_by_physical_id={"p": "RED"})
+    memory = initial_memory_for_snapshot(pre, cache)
+
+    result, next_memory, _ = evaluate_transition(
+        pre_state=pre,
+        post_state=post,
+        memory=memory,
+        cache=cache,
+        config=RulebookTransitionConfig(
+            rss_calibration=RSSCalibrationArtifact("calibration", 4.0),
+            expected_config_hash="calibration",
+        ),
+    )
+
+    assert result.components["signal"].cost == 1.0
+    assert "signal:on-successor" in next_memory.resolved_signal_group_ids
+
+
+def test_transition_does_not_select_a_signal_on_an_ambiguous_route_successor_lane() -> None:
+    """Two successors: the route's continuation is ambiguous, so neither
+    branch's signal is guessed as reachable (mirrors `derive_lane_movement_key`'s
+    own refusal to guess an exit lane when more than one successor exists)."""
+
+    lane_a = RouteLaneRecord(
+        "lane-a",
+        Polygon(((-1.0, -2.0), (11.0, -2.0), (11.0, 2.0), (-1.0, 2.0))),
+        RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0))),
+        ("lane-b", "lane-c"),
+    )
+    lane_b = RouteLaneRecord(
+        "lane-b",
+        Polygon(((9.0, -2.0), (21.0, -2.0), (21.0, 2.0), (9.0, 2.0))),
+        RoutePolyline(((10.0, 0.0, 0.0), (20.0, 0.0, 0.0))),
+        (),
+    )
+    cache = replace(_cache(), route_lanes=(lane_a, lane_b))
+    control = TrafficControlRecord(
+        "signal:on-ambiguous-successor",
+        ApproachControl.SIGNAL,
+        ("lane-b",),
+        MovementKey("lane-b", "node", "lane-b"),
+        LineString(((10.0, -2.0), (10.0, 2.0))),
+        10.0,
+        0.0,
+        ("p",),
+    )
+    cache = replace(cache, traffic_control_catalog=(control,))
+    pre = replace(_snapshot(0, 0.0, 8.0), signal_states_by_physical_id={"p": "RED"})
+    post = replace(_snapshot(1, 0.1, 10.0), signal_states_by_physical_id={"p": "RED"})
+    memory = initial_memory_for_snapshot(pre, cache)
+
+    result, _, _ = evaluate_transition(
+        pre_state=pre,
+        post_state=post,
+        memory=memory,
+        cache=cache,
+        config=RulebookTransitionConfig(
+            rss_calibration=RSSCalibrationArtifact("calibration", 4.0),
+            expected_config_hash="calibration",
+        ),
+    )
+
+    assert result.components["signal"].status.value == "not_applicable"
+
+
+def test_route_reachable_control_lane_ids_extends_by_unambiguous_successor_only() -> None:
+    lane_a = RouteLaneRecord(
+        "lane-a",
+        Polygon(((-1.0, -2.0), (11.0, -2.0), (11.0, 2.0), (-1.0, 2.0))),
+        RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0))),
+        ("lane-b",),
+    )
+    cache = replace(_cache(), route_lanes=(lane_a,))
+
+    assert transition_module.route_reachable_control_lane_ids(cache) == frozenset(
+        {"lane-a", "lane-b"}
+    )
+
+    ambiguous_lane_a = replace(lane_a, successor_lane_ids=("lane-b", "lane-c"))
+    cache = replace(cache, route_lanes=(ambiguous_lane_a,))
+    assert transition_module.route_reachable_control_lane_ids(cache) == frozenset({"lane-a"})
 
 
 def test_transition_rejects_non_positive_simulation_step() -> None:

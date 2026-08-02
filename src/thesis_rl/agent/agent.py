@@ -775,13 +775,16 @@ class Agent:
                             else (ema_alpha * raw_critic + (1 - ema_alpha) * ema_critic_loss)
                         )
 
-                    should_render = (
-                        log_interval <= 0 or step % log_interval == 0 or step == chunk_timesteps
-                    )
                     extra_events = (
                         monitor_event_poll_callback() if monitor_event_poll_callback else []
                     )
                     event_logs.extendleft(reversed(extra_events))
+                    should_render = (
+                        log_interval <= 0
+                        or step % log_interval == 0
+                        or step == chunk_timesteps
+                        or bool(extra_events)
+                    )
                     if should_render:
                         monitor = _build_monitor_table(
                             current_step=global_steps_done + step,
@@ -1548,16 +1551,17 @@ class Agent:
                         )
 
                     progress.update(progress_task, completed=min(collected_steps, chunk_timesteps))
+                    extra_events = (
+                        monitor_event_poll_callback() if monitor_event_poll_callback else []
+                    )
+                    event_logs.extendleft(reversed(extra_events))
                     should_render = (
                         log_interval <= 0
                         or collected_steps % log_interval < n_envs
                         or collected_steps >= chunk_timesteps
+                        or bool(extra_events)
                     )
                     if should_render:
-                        extra_events = (
-                            monitor_event_poll_callback() if monitor_event_poll_callback else []
-                        )
-                        event_logs.extendleft(reversed(extra_events))
                         extra_renderables = (
                             live_extra_renderables_callback()
                             if live_extra_renderables_callback
@@ -1778,6 +1782,7 @@ class Agent:
                     "sampling_mode",
                     "requested_arm",
                     "source_cell_fallback",
+                    "rulebook_control_line_diagnostics",
                 )
                 episode_metadata = {
                     key: reset_info.get(key)

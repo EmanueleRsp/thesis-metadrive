@@ -61,15 +61,22 @@ def call_env_method(env: Any, method_name: str, *args: Any, **kwargs: Any) -> An
     attribute (such as ``env_method``) falls through to the wrapped env
     instead of being defined on the wrapper itself. ``get_wrapper_attr``
     resolves the same attribute by walking the wrapper chain explicitly, with
-    no warning; the plain attribute access remains the fallback for objects
-    (such as a raw SB3 ``VecEnv``) that never go through a gym wrapper.
+    no warning, but itself raises ``AttributeError`` as soon as the chain
+    reaches an env that isn't a ``gym.Wrapper`` (e.g. the innermost SB3
+    ``VecEnv``, which defines ``env_method`` directly but has no
+    ``get_wrapper_attr``). The fallback therefore goes through
+    ``env.unwrapped`` rather than plain attribute access on ``env``:
+    ``unwrapped`` is a real property that walks the chain without going
+    through ``__getattr__``, so it reaches ``env_method`` without logging the
+    deprecation warning at every wrapper level along the way.
     """
     if hasattr(env, "get_wrapper_attr"):
         try:
             return env.get_wrapper_attr("env_method")(method_name, *args, **kwargs)
         except AttributeError:
             pass
-    return env.env_method(method_name, *args, **kwargs)
+    base = getattr(env, "unwrapped", env)
+    return base.env_method(method_name, *args, **kwargs)
 
 
 def to_batch_obs(obs: np.ndarray) -> np.ndarray:

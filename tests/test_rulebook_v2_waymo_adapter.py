@@ -140,6 +140,51 @@ def test_waymo_adapter_derives_a_canonical_stop_control_on_a_contiguous_route():
     assert max_y == pytest.approx(1.75, abs=0.05)
 
 
+def test_waymo_adapter_counts_off_route_control_line_drops():
+    """F4b regression: a stop sign on a lane that does not cross the assigned
+    route is silently absent from ``traffic_controls`` by design (it governs
+    another approach); the drop must now be diagnostically counted instead of
+    disappearing without a trace."""
+
+    def lane(lane_id, x0, x1, y, successors):
+        return {
+            "type": "LANE_SURFACE_STREET",
+            "polyline": [[float(x), y, 0.0] for x in range(x0, x1 + 1, 2)],
+            "width": [[1.75, 1.75] for _ in range(x0, x1 + 1, 2)],
+            "exit_lanes": list(successors),
+        }
+
+    scenario = {
+        "map_features": {
+            "lane-a": lane("lane-a", 0, 20, 0.0, ("lane-b",)),
+            "lane-b": lane("lane-b", 20, 40, 0.0, ()),
+            # Parallel lane 20 m away in y, not on the assigned route: its
+            # control line cannot cross the route polyline.
+            "lane-off-route": lane("lane-off-route", 20, 40, 20.0, ()),
+            "stop-on-route": {
+                "type": "STOP_SIGN",
+                "position": [25.0, 4.0, 0.0],
+                "lane": ["lane-b"],
+            },
+            "stop-off-route": {
+                "type": "STOP_SIGN",
+                "position": [25.0, 24.0, 0.0],
+                "lane": ["lane-off-route"],
+            },
+        },
+        "metadata": {
+            "assigned_route_lane_ids": ["lane-a", "lane-b"],
+            "assigned_route_source": "test",
+        },
+    }
+    result = build_waymo_static_adapter_result(scenario, scenario_uid="off-route-drop")
+
+    assert not result.validation_errors
+    stops = [control for control in result.traffic_controls if control.control_type.value == "stop"]
+    assert len(stops) == 1
+    assert result.dropped_control_line_off_route_count == 1
+
+
 def test_waymo_adapter_fails_fast_without_lane_geometry():
     with pytest.raises(ValueError, match="no lane geometry"):
         build_waymo_static_adapter_result({"map_features": {}, "metadata": {}}, scenario_uid="s")

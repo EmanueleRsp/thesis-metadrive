@@ -20,6 +20,7 @@ from thesis_rl.contracts.causal_scene_context import CausalSceneContext
 from thesis_rl.reward.scalarization import RulebookScalarizer, ScalarizationResult
 from thesis_rl.rulebook.v2.memory import apply_cache_delta
 from thesis_rl.rulebook.v2.errors import RuntimeScenarioNotEvaluableError
+from thesis_rl.rulebook.v2.transition import control_line_diagnostics
 from thesis_rl.rulebook.v2.types import (
     MACRO_RULE_ORDER,
     EpisodeCache,
@@ -87,6 +88,7 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         self._cache = initial_cache
         self._pre_snapshot: EnvSnapshot | None = None
         self._causal_scene_context: CausalSceneContext | None = None
+        self._control_line_diagnostics: dict[str, int] | None = None
 
     @property
     def memory(self) -> RulebookMemory:
@@ -148,6 +150,9 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
             self._initial_cache = adapter.initial_cache
         self._memory = self._initial_memory
         self._cache = self._initial_cache
+        self._control_line_diagnostics = (
+            control_line_diagnostics(self._cache) if self._cache is not None else None
+        )
         self._pre_snapshot = self._snapshotter(self.env)
         self._publish_causal_context(self._pre_snapshot)
         return observation, info
@@ -220,6 +225,8 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         info_dict["rule_components"] = {
             name: component.to_dict() for name, component in result.components.items()
         }
+        if self._control_line_diagnostics is not None:
+            info_dict["rulebook_control_line_diagnostics"] = dict(self._control_line_diagnostics)
         info_dict["rulebook"] = result.to_dict()
         if scalarization_result is not None:
             reward = scalarization_result.reward

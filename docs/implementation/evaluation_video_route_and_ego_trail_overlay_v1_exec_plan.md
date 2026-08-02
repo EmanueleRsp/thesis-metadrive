@@ -311,6 +311,56 @@ Commands: `docker compose run --rm -T dev uv run --no-sync python -m pytest -q t
   (that bug only explains missing checkpoints, not missing route/trail too).
   Recorded here as a known limitation pending a dedicated follow-up
   investigation.
+- 2026-08-01 (later same day): User re-confirmed on a fresh, independent
+  `make smoke` run (after unrelated Rulebook v2 work landed) that overlay was
+  **still** completely absent — not the isolated single-episode anomaly
+  logged above, but systematic: zero overlay pixels (route, checkpoints,
+  ego-trail, target, neighbors) across every sampled frame of every episode
+  checked. Root-caused via a fast, non-training standalone repro
+  (`build_eval_env(..., workers=1)` — geometry computed and rendered
+  correctly, confirmed by direct pixel/visual inspection of a saved PNG)
+  versus the real parallel path
+  (`build_eval_env(..., workers=2)` via `DeterministicSubprocVecEnv`, matching
+  production's `experiment.test_workers` for final panels): **`get_slot_proxy`
+  (`src/thesis_rl/runtime/execution/deterministic_subproc_vec_env.py`)
+  constructed a brand-new `VectorEnvSlotProxy` instance on every call.**
+  `_rendered_frame` is stored on the proxy instance itself, so the
+  worker-annotated, overlay-baked frame cached via
+  `env.get_slot_proxy(slot).set_rendered_frame(frames[slot])`
+  (`agent.py::_evaluate_parallel`) was written to a throwaway instance and
+  immediately lost; the artifact recorder's `record_step` is later handed a
+  **different** fresh proxy (`env=env.get_slot_proxy(slot)`, also in
+  `_evaluate_parallel`) whose `consume_rendered_frame()` always returns
+  `None`, so `render_topdown_frame` fell through to a **second**,
+  un-annotated `render_slots` call missing `diagnostic_geometry=True`
+  entirely. This is unconditional for the parallel path (any
+  `experiment.test_workers > 1`, the production default is `8`) and predates
+  this feature; it explains the total absence deterministically and
+  supersedes the "one anomalous episode" framing logged above (that earlier
+  spot-check of "one real produced GIF frame ... showing a route/trail line"
+  is now understood to have exercised the unaffected sequential/single-worker
+  path, not a representative final-panel run). Fixed by caching proxies per
+  slot on `DeterministicSubprocVecEnv` (`self._slot_proxies`), so
+  `get_slot_proxy` returns the same instance for a given slot across the
+  vector env's lifetime — safe since a slot maps to the same physical
+  subprocess worker for that lifetime. Verified via the standalone repro
+  (cached frame now `is` the worker-rendered frame, byte-identical, and a
+  saved PNG visually confirms route/checkpoint overlay in the parent-received
+  frame) and a new regression test,
+  `tests/test_deterministic_subproc_vec_env.py::test_get_slot_proxy_returns_same_instance_across_calls`.
+  Also fixed in the same pass, per explicit user request: the diagnostic
+  info panel now anchors to the bottom-left of the frame
+  (`x0 = 6` in `annotate_diagnostic_frame`,
+  `src/thesis_rl/runtime/io/video_diagnostics.py`) instead of bottom-right.
+  **Known limitation, still open**: the isolated `episode_0007` case from the
+  prior entry above was investigated under the (now superseded)
+  "one-off anomaly" framing and never independently re-examined against this
+  root cause; given the newly found bug is unconditional for the parallel
+  path, it is very likely `episode_0007` was simply an ordinary instance of
+  this same bug rather than a distinct issue, but this has not been
+  re-verified against a fresh run with the fix applied. Recommended
+  follow-up: rerun the `test_waymo_empirical` panel post-fix and confirm
+  `episode_0007` now shows overlay like its peers before closing this item.
 
 ## 12. Deviations
 
@@ -333,6 +383,8 @@ Commands: `docker compose run --rm -T dev uv run --no-sync python -m pytest -q t
 | `docs/decisions/ADR-020-evaluation-video-diagnostics.md` | Modified | Amended in place to list the two new overlay elements |
 | `docs/decisions/ADR-043-evaluation-video-ego-trail-and-checkpoint-overlay.md` | New | Records the `DEC-001` approval and ADR-020 amendment |
 | `docs/project_index.md` | Modified | ExecPlan Registry row, ADR-020/ADR-043 note |
+| `src/thesis_rl/runtime/execution/deterministic_subproc_vec_env.py` | Modified (2026-08-01) | `get_slot_proxy` caches one `VectorEnvSlotProxy` per slot instead of constructing a fresh, stateless instance per call (root-cause fix, see §11) |
+| `tests/test_deterministic_subproc_vec_env.py` | Modified (2026-08-01) | Regression test for `get_slot_proxy` instance identity and cached-frame roundtrip |
 
 ## 14. Validation Results
 
@@ -344,7 +396,10 @@ Commands: `docker compose run --rm -T dev uv run --no-sync python -m pytest -q t
 | `docker compose run --rm -T dev uv run --no-sync ruff format --check <touched files>` | `PASS` (pre-existing baseline noted) | 2026-07-31 | Only `agent.py` flagged, confirmed pre-existing via `git stash`; new test files formatted directly |
 | `make config` | `PASS` | 2026-07-31 | `docker compose config --quiet` clean |
 | `docker compose run --rm -T dev uv run --no-sync python -m pytest -q tests/test_rulebook_v2_transition.py` | `PASS` | 2026-08-01 | 15 passed (regression test for the elevation-alignment checkpoint bug fix, see §11) |
-| `make smoke` with `env.vectorized.enabled=true env.vectorized.num_envs=2` (real GIF pixel inspection) | `PASS` with one open item | 2026-08-01 | Confirmed route/checkpoints/ego-trail render correctly in the overwhelming majority of a real run's frames; one specific episode showed no overlay at all, not yet root-caused (see §11) |
+| `make smoke` with `env.vectorized.enabled=true env.vectorized.num_envs=2` (real GIF pixel inspection) | Superseded, see next row | 2026-08-01 | Original spot-check claimed overlay mostly worked; later shown to have exercised the unaffected sequential path, not representative of production final-panel runs (see §11) |
+| Standalone in-process repro (`build_eval_env(workers=1)` and `workers=2`), pixel/visual inspection of saved PNGs | `FAIL` pre-fix, `PASS` post-fix | 2026-08-01 | `workers=1` always rendered overlay correctly; `workers=2` (matches production `experiment.test_workers=8`) reproduced total overlay loss pre-fix (`cached_frame is frame0: False`) and confirmed the fix (`cached_frame is frame0: True`, byte-identical, PNG visually shows route/checkpoint lines) |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_deterministic_subproc_vec_env.py tests/test_video_diagnostics.py tests/test_parallel_evaluation.py tests/test_parallel_evaluation_data_abort.py` | `PASS` | 2026-08-01 | 29 passed, includes the new `test_get_slot_proxy_returns_same_instance_across_calls` regression test |
+| `docker compose run --rm dev uv run --no-sync ruff check/format --check` on `deterministic_subproc_vec_env.py`, `video_diagnostics.py`, `test_deterministic_subproc_vec_env.py` | `PASS` | 2026-08-01 | All checks passed; 3 files already formatted |
 
 ## 15. Final Reconciliation
 
@@ -370,18 +425,16 @@ Known limitations:
   acceptable given the model's per-episode bound on frame count, but a future
   cap could be added if very long episodes make the polyline visually
   cluttered.
-- **Open, not yet root-caused (found 2026-08-01)**: one specific final-panel
-  episode in a real smoke run showed zero overlay geometry (route,
-  checkpoints, and ego trail all absent) across every sampled frame, while a
-  separate high-volume debug run (13,341 worker-side geometry-extraction
-  calls) showed zero instances of this complete-failure pattern. A confirmed
-  and fixed checkpoint-only regression (elevation-alignment losing
-  `lane_start_points_xyz`) does not explain this case, since it would only
-  affect checkpoints, not route/trail. Suspected to be an intermittent,
-  per-episode/per-worker condition (e.g. adapter installation timing across
-  worker reuse) rather than a config issue, but not reproduced deterministically
-  enough to isolate within this session. Needs a dedicated follow-up
-  investigation before being considered resolved.
+- **Resolved (2026-08-01, later same day)**: the "one anomalous episode"
+  framing above is superseded. Root-caused as an unconditional bug in
+  `DeterministicSubprocVecEnv.get_slot_proxy` (fresh, stateless
+  `VectorEnvSlotProxy` per call, discarding the worker-annotated frame cached
+  via `set_rendered_frame`) affecting every parallel-evaluation episode, not
+  an isolated one. Fixed by caching one proxy instance per slot; see the
+  2026-08-01 progress-log entry in §11 for the full root-cause and fix
+  writeup. Follow-up still open: re-run `test_waymo_empirical` post-fix and
+  confirm the originally-reported `episode_0007` now renders overlay like its
+  peers.
 
 No deferred required work. Optional follow-up not requested: a dedicated
 `topdown.draw_checkpoints` toggle (checkpoints currently always render when

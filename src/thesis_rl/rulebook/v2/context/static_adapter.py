@@ -40,6 +40,11 @@ class StaticAdapterResult:
     # map_features. Never affects rulebook_eligible -- an unmapped type is a
     # coverage gap to fix in the adapter, not a data defect in the scenario.
     unmapped_feature_types: tuple[str, ...] = ()
+    # Additive diagnostic only (F4b): count of stop/signal control candidates
+    # dropped by ControlLineOffRouteError (the control line does not cross the
+    # canonical route -- it governs another approach of the same junction, not
+    # a data defect). Never affects rulebook_eligible or traffic_controls.
+    dropped_control_line_off_route_count: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "map_features", MappingProxyType(dict(self.map_features)))
@@ -201,6 +206,7 @@ def normalize_static_records(
     movement_priority_records: tuple[MovementPriorityRecord, ...] = (),
     roundabout_priority_records: tuple[RoundaboutPriorityRecord, ...] = (),
     unmapped_feature_types: tuple[str, ...] = (),
+    dropped_control_line_off_route_count: int = 0,
 ) -> StaticAdapterResult:
     """Canonicalize adapter output and return typed validation errors, never fallbacks."""
 
@@ -304,4 +310,5 @@ def normalize_static_records(
         roundabout_priority_records=roundabout_priority_records,
         validation_errors=tuple(errors),
         unmapped_feature_types=unmapped_feature_types,
+        dropped_control_line_off_route_count=dropped_control_line_off_route_count,
     )

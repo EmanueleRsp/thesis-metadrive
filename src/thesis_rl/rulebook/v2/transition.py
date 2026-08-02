@@ -107,6 +107,9 @@ def build_episode_cache(static_result) -> EpisodeCache:
         roundabout_priority_records=getattr(static_result, "roundabout_priority_records", ()),
         route_lanes=static_result.route_lanes,
         route_polyline=route,
+        control_line_off_route_drop_count=getattr(
+            static_result, "dropped_control_line_off_route_count", 0
+        ),
     )
 
 
@@ -500,6 +503,34 @@ def _control_distances(
     return pre_delta, post_delta, crossing
 
 
+def route_reachable_control_lane_ids(cache: EpisodeCache) -> frozenset[str]:
+    """Route lanes plus the route's unambiguous single successor (`ADR-051`).
+
+    `assigned_route_lane_ids` for a fixed-window recording (e.g. Waymo's
+    `training_20s`) is built from the human driver's actually-recorded path,
+    which can legitimately end one lane short of a junction the driver had
+    not yet crossed within the window. The RL policy driving the ego during
+    training is not bound to that recorded path and can reach and cross that
+    lane within the same episode, so a control governing it is physically
+    relevant to the ego. Mirrors the same single-successor disambiguation
+    `derive_lane_movement_key` already applies to the ego's own
+    `exit_lane_id`: an unambiguous next lane counts as reachable, an
+    ambiguous branch (more than one successor) is not guessed.
+    """
+
+    route_lane_ids = cache.task_route.lane_ids
+    allowed = set(route_lane_ids)
+    if route_lane_ids:
+        terminal_lane = next(
+            (lane for lane in cache.route_lanes if lane.lane_id == route_lane_ids[-1]), None
+        )
+        if terminal_lane is not None:
+            successors = tuple(getattr(terminal_lane, "successor_lane_ids", ()) or ())
+            if len(successors) == 1:
+                allowed.add(successors[0])
+    return frozenset(allowed)
+
+
 def _selected_control(controls, control_type, front_s: float, resolved, route_lane_ids=()):
     """Select the first unresolved control ahead that governs the ego (§2.9.5).
 
@@ -524,6 +555,40 @@ def _selected_control(controls, control_type, front_s: float, resolved, route_la
         and (not allowed or control.movement_key.approach_lane_id in allowed)
     )
     return min(candidates, key=lambda item: (item.route_s_m, item.control_group_id), default=None)
+
+
+def control_line_diagnostics(cache: EpisodeCache) -> dict[str, int]:
+    """Count controls silently unavailable to `_selected_control` (F4b).
+
+    Static per scenario (depends only on `cache.traffic_control_catalog` and
+    `cache.task_route.lane_ids`, neither of which changes over an episode),
+    so this is cheap to compute once and does not need per-step memory.
+    Reproduces `_selected_control`'s `approach_lane_id in allowed` filter
+    (including the `ADR-051` route-successor extension) without recomputing
+    selection, to answer the audit's open question: of the controls that
+    survived adapter construction, how many are then excluded from ever being
+    selectable because their approach lane is not reachable from the assigned
+    route.
+    """
+
+    allowed = route_reachable_control_lane_ids(cache)
+    signal_total = stop_total = 0
+    signal_route_scoped = stop_route_scoped = 0
+    for control in cache.traffic_control_catalog:
+        on_route = not allowed or control.movement_key.approach_lane_id in allowed
+        if control.control_type is ApproachControl.SIGNAL:
+            signal_total += 1
+            signal_route_scoped += int(on_route)
+        elif control.control_type is ApproachControl.STOP:
+            stop_total += 1
+            stop_route_scoped += int(on_route)
+    return {
+        "control_line_off_route_drop_count": cache.control_line_off_route_drop_count,
+        "signal_controls_total": signal_total,
+        "signal_controls_approach_filter_dropped": signal_total - signal_route_scoped,
+        "stop_controls_total": stop_total,
+        "stop_controls_approach_filter_dropped": stop_total - stop_route_scoped,
+    }
 
 
 def _empty_interval() -> OccupancyInterval:
@@ -1209,19 +1274,20 @@ def evaluate_transition(
         pre_state, cache.route_lanes
     )
 
+    reachable_control_lane_ids = route_reachable_control_lane_ids(cache)
     signal_pre = _selected_control(
         cache.traffic_control_catalog,
         ApproachControl.SIGNAL,
         pre_front_s,
         memory.resolved_signal_group_ids,
-        route_lane_ids=cache.task_route.lane_ids,
+        route_lane_ids=reachable_control_lane_ids,
     )
     signal_post = _selected_control(
         cache.traffic_control_catalog,
         ApproachControl.SIGNAL,
         post_front_s,
         memory.resolved_signal_group_ids,
-        route_lane_ids=cache.task_route.lane_ids,
+        route_lane_ids=reachable_control_lane_ids,
     )
     signal = signal_pre or signal_post
     stop_pre = _selected_control(
@@ -1229,14 +1295,14 @@ def evaluate_transition(
         ApproachControl.STOP,
         pre_front_s,
         memory.resolved_stop_group_ids,
-        route_lane_ids=cache.task_route.lane_ids,
+        route_lane_ids=reachable_control_lane_ids,
     )
     stop_post = _selected_control(
         cache.traffic_control_catalog,
         ApproachControl.STOP,
         post_front_s,
         memory.resolved_stop_group_ids,
-        route_lane_ids=cache.task_route.lane_ids,
+        route_lane_ids=reachable_control_lane_ids,
     )
     stop = stop_pre or stop_post
     if signal is not None and stop is not None and stop.movement_key == signal.movement_key:
