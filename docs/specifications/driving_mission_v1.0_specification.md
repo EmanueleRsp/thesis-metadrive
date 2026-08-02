@@ -4,8 +4,8 @@
 
 - Feature: unified driving mission, ordered gates, route completion, and R4
 - Specification ID: `DRIVING-MISSION-V1.0`
-- Version: `1.0-under-review`
-- Status: `UNDER_REVIEW`
+- Version: `1.0`
+- Status: `APPROVED`
 - Date: `2026-08-02`
 - Supersedes: `NONE` until approved; if approved, it amends the route,
   progress, success, and route-observation subsets listed in Section 1.2
@@ -20,10 +20,10 @@
   - `docs/decisions/ADR-004-assigned-route-metadata-for-pg-and-waymo.md`
   - `docs/decisions/ADR-043-evaluation-video-ego-trail-and-checkpoint-overlay.md`
   - `docs/decisions/ADR-051-traffic-control-route-successor-extension.md`
-  - `docs/decisions/ADR-052-unified-driving-mission-contract.md` (proposed)
+  - `docs/decisions/ADR-052-unified-driving-mission-contract.md` (approved)
 - Related ExecPlan:
   `docs/implementation/driving_mission_v1.0_exec_plan.md`
-- Authoritative: `NO`
+- Authoritative: `YES`
 
 ## 1. Purpose And Context
 
@@ -559,7 +559,7 @@ an exclusion/replacement policy.
 
 | Requirement | Acceptance criteria | Scientific source or proposed decision |
 |---|---|---|
-| `REQ-MSN-001` | `AC-MSN-001`, `AC-MSN-010` | ADR-004; proposed ADR-052 |
+| `REQ-MSN-001` | `AC-MSN-001`, `AC-MSN-010` | ADR-004; ADR-052 |
 | `REQ-MSN-002` | `AC-MSN-002`, `AC-MSN-003` | Lanelet2 routing-graph concept; project adaptation |
 | `REQ-MSN-003` | `AC-MSN-002`, `AC-MSN-004` | Existing canonical swept crossing; project decision |
 | `REQ-MSN-004` | `AC-MSN-002`, `AC-MSN-006` | `DEC-MSN-002`, `DEC-MSN-006` |
@@ -568,7 +568,7 @@ an exclusion/replacement policy.
 | `REQ-MSN-007` | `AC-MSN-004`, `AC-MSN-005` | nuPlan/CARLA progress practice; `DEC-MSN-003` |
 | `REQ-MSN-008` | `AC-MSN-006` | Gymnasium boundary contract; `DEC-MSN-001` |
 | `REQ-MSN-009` | `AC-MSN-007`, `AC-MSN-009` | OBS-V1.3, OBS-LIDAR-V2.0; `DEC-MSN-004` |
-| `REQ-MSN-010` | `AC-MSN-003`, `AC-MSN-007` | Rulebook v4.7-v4.11; proposed ADR-052 |
+| `REQ-MSN-010` | `AC-MSN-003`, `AC-MSN-007` | Rulebook v4.7-v4.11; ADR-052 |
 | `REQ-MSN-011` | `AC-MSN-008` | ADR-004, ADR-022, ADR-033 |
 | `REQ-MSN-012` | `AC-MSN-001`, `AC-MSN-010` | ScenarioNet v1.1-v1.3; `DEC-MSN-008` |
 | `REQ-MSN-013` | `AC-MSN-006`, `AC-MSN-007` | EVAL-PROTOCOL; project decision |
@@ -579,15 +579,15 @@ an exclusion/replacement policy.
 
 | ID | Question | Alternatives | Recommendation | Impact | Status |
 |---|---|---|---|---|---|
-| `DEC-MSN-001` | What happens when the next ordered gate becomes graph-unreachable? | Terminate task failure / continue with zero progress / truncate | Terminate with `mission_unreachable`; it is agent/task state, not an external time limit | Termination, metrics, replay boundaries | `OPEN` |
-| `DEC-MSN-002` | How is the current dataset's final goal derived? | Terminal valid SDC projection / whole final-lane end / source-specific native goal | Terminal valid SDC projection for both current sources; preserves ADR-004's identical semantics and does not invent travel beyond the recorded task | Dataset annotation and success | `OPEN` |
-| `DEC-MSN-003` | Which R4 normalization is frozen? | Global 80 km/h / empirical percentile / scenario cap | Global `22.2222222222 m/s`; current physical global cap, stable across scenarios | Reward scale and comparability | `OPEN` |
-| `DEC-MSN-004` | Are unchanged tensor shapes allowed with new semantics? | New schema IDs with same shapes / widen tensors / overwrite existing schema | New schema IDs with same shapes where sufficient; reject old checkpoints/replays | Observation and experiment compatibility | `OPEN` |
-| `DEC-MSN-005` | How are alternate lanes handled? | Exact preferred lane only / unordered destination routing / fixed gates plus legal recovery | Keep ordered gates; allow deterministic shortest legal recovery to the pending gate | Task realism and R4 | `OPEN` |
-| `DEC-MSN-006` | What constitutes final success? | Point radius / directed crossing / crossing plus stop | Directed compatible crossing after prior gates; no stop condition | Success semantics | `OPEN` |
-| `DEC-MSN-007` | Where are intermediate gates placed? | Lane starts / lane ends / only mandatory movement boundaries | At directed exits of route sections, consolidating non-decision continuation lanes and retaining mandatory movement boundaries | Mission density and annotation | `OPEN` |
-| `DEC-MSN-008` | How are invalid missions migrated? | Silent replacement / exclude and rebalance / block and report | Preserve UIDs/splits and block materialization until a reason-coded audit is reviewed and an explicit exclusion policy is approved | Dataset identity and statistical validity | `OPEN` |
-| `DEC-MSN-009` | Is R4 presented as potential-based shaping? | Claim PBRS / use exact discounted shaping / treat as bounded primary progress objective | Do not claim PBRS; retain the direct distance-reduction R4 as a Rulebook objective | Thesis justification | `OPEN` |
+| `DEC-MSN-001` | What happens when the next ordered gate becomes graph-unreachable? | Terminate task failure / continue with zero progress / truncate | Terminate with `mission_unreachable`; it is agent/task state, not an external time limit | Termination, metrics, replay boundaries | `APPROVED 2026-08-02` |
+| `DEC-MSN-002` | How is the current dataset's final goal derived? | Terminal valid SDC projection / whole final-lane end / source-specific native goal | Terminal valid SDC projection for both current sources; preserves ADR-004's identical semantics and does not invent travel beyond the recorded task | Dataset annotation and success | `APPROVED 2026-08-02` |
+| `DEC-MSN-003` | Which R4 normalization is frozen? | Global 80 km/h / empirical percentile / scenario cap | Global `22.2222222222 m/s`; current physical global cap, stable across scenarios | Reward scale and comparability | `APPROVED 2026-08-02` |
+| `DEC-MSN-004` | Are unchanged tensor shapes allowed with new semantics? | New schema IDs with same shapes / widen tensors / overwrite existing schema | New schema IDs with same shapes where sufficient; reject old checkpoints/replays | Observation and experiment compatibility | `APPROVED 2026-08-02` |
+| `DEC-MSN-005` | How are alternate lanes handled? | Exact preferred lane only / unordered destination routing / fixed gates plus legal recovery | Keep ordered gates; allow deterministic shortest legal recovery to the pending gate | Task realism and R4 | `APPROVED 2026-08-02` |
+| `DEC-MSN-006` | What constitutes final success? | Point radius / directed crossing / crossing plus stop | Directed compatible crossing after prior gates; no stop condition | Success semantics | `APPROVED 2026-08-02` |
+| `DEC-MSN-007` | Where are intermediate gates placed? | Lane starts / lane ends / only mandatory movement boundaries | At directed exits of route sections, consolidating non-decision continuation lanes and retaining mandatory movement boundaries | Mission density and annotation | `APPROVED 2026-08-02` |
+| `DEC-MSN-008` | How are invalid missions migrated? | Silent replacement / exclude and rebalance / block and report | Preserve UIDs/splits and block materialization until a reason-coded audit is reviewed and an explicit exclusion policy is approved | Dataset identity and statistical validity | `APPROVED 2026-08-02` |
+| `DEC-MSN-009` | Is R4 presented as potential-based shaping? | Claim PBRS / use exact discounted shaping / treat as bounded primary progress objective | Do not claim PBRS; retain the direct distance-reduction R4 as a Rulebook objective | Thesis justification | `APPROVED 2026-08-02` |
 
 Known limitations if the recommendations are approved:
 
@@ -640,15 +640,15 @@ Known limitations if the recommendations are approved:
 - [x] Every core requirement maps to objective acceptance criteria.
 - [x] Required validation categories are selected.
 - [x] Scientific sources, project adaptations, and proposed decisions are distinct.
-- [ ] No material decision remains open.
+- [x] No material decision remains open.
 - [x] Known limitations are explicit and do not hide missing requirements.
 
 ## 18. Approval Record
 
-- Approved by: `NONE`
-- Approval date: `NONE`
-- Approval evidence: `NONE`; this document is a review candidate
-- Approval notes: all `DEC-MSN-*` choices require explicit user approval
+- Approved by: thesis repository maintainer
+- Approval date: `2026-08-02`
+- Approval evidence: explicit user approval in the Codex task dated `2026-08-02`, covering `DEC-MSN-001` through `DEC-MSN-009`
+- Approval notes: M1 remains required; any invalid selected mission blocks materialization pending a separate explicit exclusion or replacement policy.
 - Repository path after approval:
   `docs/specifications/driving_mission_v1.0_specification.md`
 - Project index updated: `YES`, as a non-authoritative candidate only

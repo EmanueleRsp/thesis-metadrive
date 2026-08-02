@@ -1,15 +1,15 @@
 # ADR-052: Unified Driving Mission Contract
 
-- Status: `Proposed`
+- Status: `Approved`
 - Date: `2026-08-02`
 - Decision owner: thesis repository maintainer
-- Approval date: `NONE`
+- Approval date: `2026-08-02`
 - Supersedes: ADR-004 only for the representation of the frozen route; preserves
   its offline-annotation and no-future-runtime constraints. If approved and
   verified, subsumes ADR-051's one-hop route-successor workaround and amends
   ADR-043's diagnostic checkpoint source.
 - Affected specifications:
-  - `docs/specifications/driving_mission_v1.0_specification_UNDER_REVIEW.md`
+  - `docs/specifications/driving_mission_v1.0_specification.md`
   - ScenarioNet Integration v1.1-v1.3 route/success subsets
   - Rulebook v4.7-v4.11 route-dependent subsets
   - OBS-V1.3 route-dependent fields
@@ -33,7 +33,7 @@ lane geometry and successors. The unverified issue is complete topology and
 goal coverage across source pickle files; it is an approval-gated preflight,
 not a reason to retain divergent runtime semantics.
 
-## Proposed Decision
+## Decision
 
 If approved, adopt one versioned `DrivingMissionRecord` and one
 environment-owned `MissionTracker` as the sole task-navigation authority.
@@ -68,10 +68,10 @@ directed compatible gates. The final goal has no stop condition. A graph-
 unreachable pending gate is proposed as a task-failure termination named
 `mission_unreachable`; the time limit remains truncation.
 
-This ADR remains proposed until every open `DEC-MSN-*` item in the candidate
-specification is explicitly approved. Approval also authorizes new dataset,
-observation, checkpoint, and replay identities; it does not authorize silent
-exclusion of a scenario that fails the full-catalog preflight.
+The user explicitly approved `DEC-MSN-001` through `DEC-MSN-009` on
+`2026-08-02`. This decision authorizes new dataset, observation, checkpoint,
+and replay identities; it does not authorize silent exclusion of a scenario
+that fails the full-catalog preflight.
 
 ## Alternatives Considered
 
@@ -122,7 +122,6 @@ ExecPlan before production implementation.
 
 ## Approval Record
 
-- Approved by: `NONE`
-- Approval evidence: `NONE`; proposed for review in a future session
-- Notes: approval must explicitly resolve `DEC-MSN-001` through
-  `DEC-MSN-009` and does not imply approval of source-record exclusions
+- Approved by: thesis repository maintainer
+- Approval evidence: explicit user approval in the Codex task dated `2026-08-02`, covering `DEC-MSN-001` through `DEC-MSN-009`
+- Notes: approval does not imply approval of source-record exclusions.

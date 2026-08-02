@@ -5,10 +5,10 @@
 - Feature: unified driving mission, ordered gates, route completion, and R4
 - Plan ID: `EXEC-DRIVING-MISSION-V1.0`
 - Target specification:
-  `docs/specifications/driving_mission_v1.0_specification_UNDER_REVIEW.md`
-- Specification ID/version: `DRIVING-MISSION-V1.0`, `1.0-under-review`
-- Specification approval status: `UNDER_REVIEW`, `Authoritative: NO`
-- Plan status: `AWAITING_DECISIONS`
+  `docs/specifications/driving_mission_v1.0_specification.md`
+- Specification ID/version: `DRIVING-MISSION-V1.0`, `1.0`
+- Specification approval status: `APPROVED`, `Authoritative: YES`
+- Plan status: `IN_PROGRESS`
 - Created: `2026-08-02`
 - Last updated: `2026-08-02`
 - Preparation branch: `scenarionet-implementation`
@@ -16,13 +16,12 @@
   containing this documentation package
 - Owner: thesis repository maintainer
 - Related ADRs: ADR-004, ADR-022, ADR-033, ADR-036, ADR-043, ADR-049,
-  ADR-051, and proposed ADR-052
+  ADR-051, and approved ADR-052
 - Preliminary audit:
   `docs/audits/driving_mission_feasibility_2026-08-02/findings.md`
 
-This plan is not implementation-authoritative while its target specification
-is `UNDER_REVIEW`. Production changes must not begin until M0 records explicit
-approval and promotes the specification and ADR.
+This plan is implementation-authoritative under the approved target
+specification. M1 must pass before M2 production changes may begin.
 
 ## 2. Objective And Scope
 
@@ -69,7 +68,7 @@ is unchanged.
 
 ## 3. Authoritative Requirements
 
-The following are target requirements, not yet authoritative.
+The following are authoritative requirements.
 
 | ID | Requirement | Candidate specification section |
 |---|---|---|
@@ -169,33 +168,33 @@ The following are target requirements, not yet authoritative.
 | Units | world/lane distance meters, time seconds, speed m/s, heading radians | Existing Rulebook contract; `VERIFIED` | Reject non-finite/wrong-domain input |
 | Coordinates | canonical world XYZ, lane-local forward `s` | Existing adapters; `VERIFIED` | Typed static/runtime error |
 | Mission time | frozen before reset; no runtime mutation of task order | ADR-004; `SPECIFIED` | Fail closed |
-| Tracker update | exactly once per committed transition | Candidate REQ-MSN-005; `AWAITING_APPROVAL` | Fatal consistency error |
+| Tracker update | exactly once per committed transition | `REQ-MSN-005`; `APPROVED` | Fatal consistency error |
 | Observation timing | post-commit snapshot only | Existing causal boundary; `VERIFIED` | Observation construction error |
 | R4 range | finite `[-1,1]` | Candidate formula | Startup/runtime validation |
-| `v_ref` | `22.2222222222 m/s`, global | `DEC-MSN-003`; `AWAITING_APPROVAL` | No scenario override |
+| `v_ref` | `22.2222222222 m/s`, global | `DEC-MSN-003`; `APPROVED` | No scenario override |
 | Gate epsilon | `0.05 m` | Existing control crossing; proposed reuse | Frozen config mismatch |
-| Completion | max-so-far `[0,1]`; success sets `1` | `DEC-MSN-006`; `AWAITING_APPROVAL` | Fatal invariant error |
+| Completion | max-so-far `[0,1]`; success sets `1` | `DEC-MSN-006`; `APPROVED` | Fatal invariant error |
 | Time limit | truncation only | Current environment; `VERIFIED` | Regression failure |
-| Unreachable | task-failure termination | `DEC-MSN-001`; `AWAITING_APPROVAL` | Dependent work blocked |
-| Semantic shape | `3009`, new schema | `DEC-MSN-004`; `AWAITING_APPROVAL` | Reject old identity |
-| LiDAR shape | `6489`, new schema | `DEC-MSN-004`; `AWAITING_APPROVAL` | Reject old identity |
+| Unreachable | task-failure termination | `DEC-MSN-001`; `APPROVED` | Task failure termination |
+| Semantic shape | `3009`, new schema | `DEC-MSN-004`; `APPROVED` | Reject old identity |
+| LiDAR shape | `6489`, new schema | `DEC-MSN-004`; `APPROVED` | Reject old identity |
 | Reset | no state across episodes/slots | Runtime contract; `VERIFIED` | Test failure/fatal |
-| Split identity | UIDs and membership unchanged during migration | `DEC-MSN-008`; `AWAITING_APPROVAL` | Block materialization |
+| Split identity | UIDs and membership unchanged during migration | `DEC-MSN-008`; `APPROVED` | Block materialization |
 
 ## 6. Decisions And Approval Gates
 
 | ID | Category | Issue | Alternatives | Recommendation | Impact | Status |
 |---|---|---|---|---|---|---|
-| `DEC-MSN-001` | specification clarification | Boundary when pending gate is unreachable | terminate / continue / truncate | terminate `mission_unreachable` | done/replay/metrics | Awaiting approval |
-| `DEC-MSN-002` | scientific behavior | Current final-goal source | terminal SDC projection / lane end / source-specific | terminal SDC projection for both sources | dataset/success | Awaiting approval |
-| `DEC-MSN-003` | scientific parameter | R4 scale | 80 km/h global / empirical / scenario cap | global `22.2222222222 m/s` | reward comparability | Awaiting approval |
-| `DEC-MSN-004` | compatibility | Observation migration | new same-shape IDs / wider / overwrite | new same-shape IDs | checkpoints/replays | Awaiting approval |
-| `DEC-MSN-005` | task semantics | Alternate lane/recovery | exact path / final-only replanning / ordered recovery | fixed gates plus legal recovery | realism/R4 | Awaiting approval |
-| `DEC-MSN-006` | success semantics | Goal condition | radius / directed crossing / crossing+stop | directed crossing, no stop | termination | Awaiting approval |
-| `DEC-MSN-007` | annotation semantics | Intermediate gate placement | starts / every lane end / mandatory boundaries | section exits at mandatory movement boundaries | route density | Awaiting approval |
-| `DEC-MSN-008` | data policy | Invalid mission after audit | replace / exclude/rebalance / block | block and request explicit policy | split validity | Awaiting approval |
-| `DEC-MSN-009` | scientific claim | Relationship to PBRS | claim / exact PBRS / direct objective | direct bounded R4, no PBRS claim | thesis justification | Awaiting approval |
-| `DEC-MSN-010` | blocking technical issue | Authorization to deserialize exact frozen pickle sources for preflight | authorize trusted exact paths / provide safe converted form | explicit informed authorization for pinned project artifacts | M1 audit | Awaiting user authorization |
+| `DEC-MSN-001` | specification clarification | Boundary when pending gate is unreachable | terminate / continue / truncate | terminate `mission_unreachable` | done/replay/metrics | Approved 2026-08-02 (ADR-052) |
+| `DEC-MSN-002` | scientific behavior | Current final-goal source | terminal SDC projection / lane end / source-specific | terminal SDC projection for both sources | dataset/success | Approved 2026-08-02 (ADR-052) |
+| `DEC-MSN-003` | scientific parameter | R4 scale | 80 km/h global / empirical / scenario cap | global `22.2222222222 m/s` | reward comparability | Approved 2026-08-02 (ADR-052) |
+| `DEC-MSN-004` | compatibility | Observation migration | new same-shape IDs / wider / overwrite | new same-shape IDs | checkpoints/replays | Approved 2026-08-02 (ADR-052) |
+| `DEC-MSN-005` | task semantics | Alternate lane/recovery | exact path / final-only replanning / ordered recovery | fixed gates plus legal recovery | realism/R4 | Approved 2026-08-02 (ADR-052) |
+| `DEC-MSN-006` | success semantics | Goal condition | radius / directed crossing / crossing+stop | directed crossing, no stop | termination | Approved 2026-08-02 (ADR-052) |
+| `DEC-MSN-007` | annotation semantics | Intermediate gate placement | starts / every lane end / mandatory boundaries | section exits at mandatory movement boundaries | route density | Approved 2026-08-02 (ADR-052) |
+| `DEC-MSN-008` | data policy | Invalid mission after audit | replace / exclude/rebalance / block | block and request explicit policy | split validity | Approved 2026-08-02 (ADR-052) |
+| `DEC-MSN-009` | scientific claim | Relationship to PBRS | claim / exact PBRS / direct objective | direct bounded R4, no PBRS claim | thesis justification | Approved 2026-08-02 (ADR-052) |
+| `DEC-MSN-010` | blocking technical issue | Authorization to deserialize exact frozen pickle sources for preflight | authorize trusted exact paths / provide safe converted form | explicit informed authorization for pinned project artifacts | M1 audit | Approved 2026-08-02; exact frozen-index paths only, read-only |
 
 No dependent production milestone starts while these gates are open. Private
 class names and helper decomposition after approval are implementation details.
@@ -449,21 +448,21 @@ explicit informed authorization because source files are pickle artifacts.
 
 ### M0 — Approve scientific contract and promote documents
 
-- Status: `AWAITING_DECISIONS`
+- Status: `COMPLETED 2026-08-02`
 - Dependencies: `DEC-MSN-001` through `DEC-MSN-009`.
 - Tasks:
   - review all candidate requirements, formulas, defaults, and compatibility;
   - record explicit user decisions;
-  - update proposed ADR-052 to Approved;
+  - update ADR-052 to Approved;
   - rename specification without `_UNDER_REVIEW`, set `APPROVED` and
     `Authoritative: YES`, record evidence/date;
   - update project index and links; set this plan `APPROVED`.
 - Validation: link and metadata checks; `git diff --check`.
-- Completion evidence: pending.
+- Completion evidence: explicit user approval dated 2026-08-02 recorded in the specification and ADR-052.
 
 ### M1 — Trusted full-catalog mission preflight
 
-- Status: `NOT_STARTED`.
+- Status: `COMPLETED 2026-08-02`.
 - Dependencies: M0 and `DEC-MSN-010` authorization.
 - Expected files: audit CLI, focused tests, immutable JSON/CSV/Markdown report.
 - Tasks:
@@ -473,11 +472,14 @@ explicit informed authorization because source files are pickle artifacts.
   - never overwrite source artifacts;
   - stop for user decision if any selected record fails.
 - Tests: `TEST-MSN-001` through `006`, `011`, `012`, `033`.
-- Completion evidence: pending.
+- Completion evidence: `driving_mission_full_catalog_2026-08-02-rerun1` under
+  `/scratch/e.respino/thesis-metadrive/outputs/`: 3,500/3,500 pass (1,695 PG,
+  1,805 Waymo); the first immutable report documents and preserves the
+  NumPy-array audit defect fixed by the `TEST-MSN-033` regression.
 
 ### M2 — Mission records, topology, and offline builder
 
-- Status: `NOT_STARTED`.
+- Status: `IN_PROGRESS`.
 - Dependencies: successful/approved M1 result.
 - Expected files: `src/thesis_rl/mission/{types,topology,builder,gates}.py`,
   source adapters, scenario records/catalog tests.
@@ -488,7 +490,7 @@ explicit informed authorization because source files are pickle artifacts.
 
 ### M3 — Runtime graph, distance, and tracker
 
-- Status: `NOT_STARTED`.
+- Status: `IN_PROGRESS`.
 - Dependencies: M2.
 - Expected files: `mission/distance.py`, `mission/tracker.py`, context/env tests.
 - Tasks: static graph, cached distances, association, legal recovery, gate
@@ -576,6 +578,55 @@ explicit informed authorization because source files are pickle artifacts.
 - Next step: user reviews/approves the nine scientific decisions and separately
   authorizes trusted-source deserialization; then start M0/M1 on the new branch.
 
+### 2026-08-02 — M0 complete; M1 root-resolution blocker
+
+- M0 completed: the user explicitly approved `DEC-MSN-001` through
+  `DEC-MSN-009`, authorized read-only deserialization of exact frozen-index
+  pickle paths, and approved ADR-052. The specification was promoted to
+  `APPROVED`/`Authoritative: YES` and renamed to its canonical path.
+- Before creating the audit implementation, a trusted read-only probe resolved
+  the first frozen PG record with the user-provided data root
+  `/scratch/e.respino/thesis-metadrive/data/`. Its index-relative path resolved
+  to a missing `.../data/pg/...` file; the immutable source instead exists at
+  `.../data/scenarionet/pg/...`.
+- This is a data-root contract conflict, not an invalid mission. The audit does
+  not silently append `scenarionet` or fall back to another root. M1 is blocked
+  pending explicit confirmation of the effective scenario root.
+
+### 2026-08-02 — M1 root confirmed
+
+- The user confirmed that the effective scenario root for paths relative to the
+  frozen index is `/scratch/e.respino/thesis-metadrive/data/scenarionet/`.
+  M1 is unblocked. Audit reports will be written below the separately approved
+  output root `/scratch/e.respino/thesis-metadrive/outputs/`; source data
+  remains read-only.
+
+### 2026-08-02 — M1 completed
+
+- Added the narrow read-only `audit_driving_missions` CLI and four focused
+  acceptance tests. The first 3,500-record audit incorrectly classified all
+  records because NumPy-backed SDC arrays do not implement `Sequence`; the
+  new regression test fixed the length protocol and the original report was
+  retained without overwrite.
+- The authoritative rerun at
+  `/scratch/e.respino/thesis-metadrive/outputs/driving_mission_full_catalog_2026-08-02-rerun1`
+  passed every selected record: all topology route links, terminal goal
+  projections, provisional gates, preferred allowed spans, and available
+  lateral relations were valid. No exclusion decision is required.
+
+### 2026-08-02 — M2/M3 bounded core and conformance gap
+
+- Added immutable mission records, deterministic hashing, normalized lane
+  topology, section/gate construction, a non-negative lane graph, and an
+  episode-local tracker. The focused M1--M3 suite passes (10 tests), and
+  focused Ruff/whitespace checks pass.
+- Conformance review found that the current M3 gate transition is lane-local
+  scalar crossing only. It does not yet reuse the required canonical
+  swept-front-bumper geometry or vertical compatibility primitive. M3 remains
+  `IN_PROGRESS`; it must not be wired into the environment, Rulebook, or
+  observations as a task authority. This is an implementation gap, not an
+  approved deviation.
+
 ## 12. Deviations
 
 | ID | Original contract | Actual or proposed change | Reason | Approval | Affected tests/docs |
@@ -594,10 +645,10 @@ explicit informed authorization because source files are pickle artifacts.
 | Path | Action | Purpose |
 |---|---|---|
 | `docs/audits/driving_mission_feasibility_2026-08-02/findings.md` | Added | Verified findings, data facts, risks, and blocked preflight |
-| `docs/specifications/driving_mission_v1.0_specification_UNDER_REVIEW.md` | Added | Candidate scientific/behavioral contract |
-| `docs/decisions/ADR-052-unified-driving-mission-contract.md` | Added | Proposed durable architecture/behavior decision |
+| `docs/specifications/driving_mission_v1.0_specification.md` | Renamed and updated | Approved authoritative scientific/behavioral contract |
+| `docs/decisions/ADR-052-unified-driving-mission-contract.md` | Modified | Approved durable architecture/behavior decision |
 | `docs/implementation/driving_mission_v1.0_exec_plan.md` | Added | Acceptance-first implementation plan |
-| `docs/project_index.md` | Planned modification in this task | Register candidate/ADR/plan without granting authority |
+| `docs/project_index.md` | Modified | Register approved authority, ADR status, and M1 blocker |
 
 ### Planned production files
 
@@ -630,7 +681,7 @@ aligned with the actual diff. Unrelated cleanup is prohibited.
 | Command | Result | Date | Notes and evidence |
 |---|---|---|---|
 | `jq` frozen-index metadata/statistics queries | `PASS` | 2026-08-02 | JSON-only, 3,500 records and statistics recorded in audit |
-| Source ScenarioDescription full audit | `NOT_RUN` | 2026-08-02 | Pickle deserialization requires explicit informed authorization; follow-up is M1 planned audit command |
+| Source ScenarioDescription full audit | `NOT_RUN` | 2026-08-02 | Read-only deserialization is authorized, but the supplied root resolves frozen index paths to missing files; confirmation of the effective root is required before M1. |
 | Production focused tests | `NOT_RUN` | 2026-08-02 | No production code changed; execute per M2-M7 |
 | `make rulebook-v2-check` | `NOT_RUN` | 2026-08-02 | Documentation-only preparation; mandatory after production migration |
 | `make test` | `NOT_RUN` | 2026-08-02 | Documentation-only preparation; mandatory in M8 |
@@ -643,14 +694,15 @@ aligned with the actual diff. Unrelated cleanup is prohibited.
 ### Current requirement status
 
 All `REQ-MSN-001` through `REQ-MSN-015` and `AC-MSN-001` through
-`AC-MSN-010` are `NOT_IMPLEMENTED`. Their contract and mandatory test mapping
-are drafted, but the specification is not approved and no production code has
-changed.
+`AC-MSN-010` are `NOT_IMPLEMENTED`. Their approved contract and mandatory test
+mapping are in place; no production code has changed.
 
 ### Known limitations
 
 - full source-data topology/goal/gate coverage is unknown until M1;
-- the proposed global reference speed and boundary choices are not approved;
+- the M1 scenario data root is unresolved: frozen index paths require the
+  `scenarionet` directory below the supplied root, but no implicit root rewrite
+  is permitted;
 - exact normalized source lateral-neighbor semantics require the M1/M2 audit;
 - no runtime or performance evidence exists for the proposed graph tracker;
 - old artifacts are expected to be incompatible by design.
@@ -668,6 +720,6 @@ temporary-closure replanning remain out of scope.
 
 ### Readiness
 
-The preliminary design and implementation plan are ready for user review and
-branch handoff. They are not ready for implementation or experimental use
-until the open decisions and trusted-pickle audit authorization are resolved.
+M0 is complete, but M1 and all production milestones are blocked until the
+effective scenario data root is explicitly confirmed. No production code or
+source data has been changed.
