@@ -92,6 +92,23 @@ def test_scenario_record_round_trip_preserves_assigned_route_metadata() -> None:
     assert restored.assigned_route_source == "pg_sdc_offline_task_annotation"
 
 
+def test_scenario_record_round_trip_preserves_driving_mission() -> None:
+    from thesis_rl.mission.types import DirectedGate, DrivingMissionRecord, LaneSpan, MissionSection
+
+    span = LaneSpan("lane-a", 0.0, 10.0)
+    goal = DirectedGate("goal", (span,), "lane-a", 8.0)
+    mission = DrivingMissionRecord(
+        _record().scenario_uid,
+        "mission-builder-v1",
+        (MissionSection("section", span, (span,), goal),),
+        goal,
+    )
+    restored = ScenarioRecord.from_dict(_record(driving_mission=mission.to_dict()).to_dict())
+
+    assert restored.driving_mission is not None
+    assert restored.driving_mission["mission_hash"] == mission.mission_hash
+
+
 @pytest.mark.parametrize(
     "relative_path",
     ["/absolute/scenario.pkl", "../escape.pkl", "pg/../escape.pkl", "pg\\scenario.pkl"],

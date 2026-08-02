@@ -2,8 +2,8 @@ name: scenarionet
 env_id: ThesisScenarioEnv
 
 split: train
-# Normal runs need only this root. The factory derives the canonical catalog and
-# matching runtime/<split> view; catalog_path is an override for diagnostics.
+# Normal runs need only this root. The factory derives the promoted mission-aware
+# catalog and matching runtime/<split> view; catalog_path is an override for diagnostics.
 dataset_root: ${oc.env:SCENARIONET_DATA_ROOT,${oc.env:DATA_ROOT,/workspace/data}/scenarionet}
 catalog_path: null
 # Root seed for ScenarioNet provider sampling. Keep it tied to the run seed so

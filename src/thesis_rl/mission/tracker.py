@@ -1,18 +1,34 @@
 """Episode-local, idempotent mission progress tracker."""
 
 from __future__ import annotations
+
+from shapely.geometry import Polygon
+
 from thesis_rl.mission.distance import LaneGraph
+from thesis_rl.mission.gates import directed_gate_crossed
 from thesis_rl.mission.types import DirectedGate, DrivingMissionRecord, MissionSnapshot
 
 
 class MissionTracker:
     def __init__(
-        self, mission: DrivingMissionRecord, graph: LaneGraph, lane_id: str, s_m: float
+        self,
+        mission: DrivingMissionRecord,
+        graph: LaneGraph,
+        lane_id: str,
+        s_m: float,
+        *,
+        materialized_gates: tuple[DirectedGate, ...] | None = None,
     ) -> None:
         self._mission, self._graph = mission, graph
-        self._gates: tuple[DirectedGate, ...] = tuple(
+        frozen_gates: tuple[DirectedGate, ...] = tuple(
             section.exit_gate for section in mission.sections
         ) + (mission.final_goal,)
+        self._gates = frozen_gates if materialized_gates is None else materialized_gates
+        if len(self._gates) != len(frozen_gates) or any(
+            current.gate_id != frozen.gate_id
+            for current, frozen in zip(self._gates, frozen_gates, strict=True)
+        ):
+            raise ValueError("materialized mission gates must match frozen gate identity")
         self._pending, self._step, self._completion = 0, 0, 0.0
         initial = self._remaining(lane_id, s_m)
         if initial is None:
@@ -64,16 +80,32 @@ class MissionTracker:
         )
 
     def update(
-        self, pre_lane_id: str, pre_s_m: float, post_lane_id: str, post_s_m: float
+        self,
+        pre_lane_id: str,
+        pre_s_m: float,
+        post_lane_id: str,
+        post_s_m: float,
+        *,
+        pre_footprint: Polygon,
+        post_footprint: Polygon,
+        pre_heading_rad: float,
+        post_heading_rad: float,
+        post_ego_z_m: float,
     ) -> MissionSnapshot:
         if self._snapshot.mission_success or self._snapshot.mission_unreachable:
             return self._snapshot
         gate = self._gates[self._pending]
-        if (
-            pre_lane_id == gate.lane_id
-            and post_lane_id == gate.lane_id
-            and pre_s_m < gate.s_m <= post_s_m
-        ):
+        if gate.geometry is None:
+            raise ValueError("pending mission gate has no materialized geometry")
+        directed_gate_crossing = directed_gate_crossed(
+            gate.geometry,
+            pre_footprint=pre_footprint,
+            post_footprint=post_footprint,
+            pre_heading_rad=pre_heading_rad,
+            post_heading_rad=post_heading_rad,
+            post_ego_z_m=post_ego_z_m,
+        )
+        if directed_gate_crossing and pre_lane_id == gate.lane_id and post_lane_id == gate.lane_id:
             self._pending += 1
         self._step += 1
         if self._pending == len(self._gates):

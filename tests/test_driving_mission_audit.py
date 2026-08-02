@@ -45,7 +45,12 @@ def _scenario(*, terminal_x: float = 11.0) -> dict[str, object]:
             "lane_b": {
                 "type": "LANE_SURFACE_STREET",
                 "polyline": [[10.0, 0.0, 0.0], [20.0, 0.0, 0.0]],
-                "polygon": [[10.0, -2.0, 0.0], [20.0, -2.0, 0.0], [20.0, 2.0, 0.0], [10.0, 2.0, 0.0]],
+                "polygon": [
+                    [10.0, -2.0, 0.0],
+                    [20.0, -2.0, 0.0],
+                    [20.0, 2.0, 0.0],
+                    [10.0, 2.0, 0.0],
+                ],
                 "exit_lanes": [],
                 "left_neighbor": [],
                 "right_neighbor": [],
@@ -60,7 +65,9 @@ def test_audit_builds_goal_gate_and_allowed_route_spans(tmp_path: Path) -> None:
     with source.open("wb") as handle:
         pickle.dump(_scenario(), handle)
 
-    result = audit_frozen_index({"schema": "scenarionet_frozen_selection_v1", "records": [_record()]}, tmp_path)
+    result = audit_frozen_index(
+        {"schema": "scenarionet_frozen_selection_v1", "records": [_record()]}, tmp_path
+    )
 
     assert result.passed
     item = result.records[0]
@@ -79,7 +86,9 @@ def test_audit_reason_codes_noncontiguous_route_and_never_mutates_source(tmp_pat
         pickle.dump(scenario, handle)
     before = source.read_bytes()
 
-    result = audit_frozen_index({"schema": "scenarionet_frozen_selection_v1", "records": [_record()]}, tmp_path)
+    result = audit_frozen_index(
+        {"schema": "scenarionet_frozen_selection_v1", "records": [_record()]}, tmp_path
+    )
 
     assert not result.passed
     assert result.records[0].outcome == "non_contiguous_gate_order"
@@ -97,14 +106,20 @@ def test_audit_accepts_numpy_backed_sdc_arrays(tmp_path: Path) -> None:
     with source.open("wb") as handle:
         pickle.dump(scenario, handle)
 
-    result = audit_frozen_index({"schema": "scenarionet_frozen_selection_v1", "records": [_record()]}, tmp_path)
+    result = audit_frozen_index(
+        {"schema": "scenarionet_frozen_selection_v1", "records": [_record()]}, tmp_path
+    )
 
     assert result.records[0].outcome == "pass"
 
 
 def test_write_audit_report_refuses_to_overwrite(tmp_path: Path) -> None:
     result = audit_frozen_index(
-        {"schema": "scenarionet_frozen_selection_v1", "records": [_record(relative_path="missing.pkl")]}, tmp_path
+        {
+            "schema": "scenarionet_frozen_selection_v1",
+            "records": [_record(relative_path="missing.pkl")],
+        },
+        tmp_path,
     )
     output_dir = tmp_path / "output"
 

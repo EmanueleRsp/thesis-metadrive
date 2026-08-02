@@ -479,35 +479,50 @@ explicit informed authorization because source files are pickle artifacts.
 
 ### M2 — Mission records, topology, and offline builder
 
-- Status: `IN_PROGRESS`.
+- Status: `COMPLETED 2026-08-02`.
 - Dependencies: successful/approved M1 result.
 - Expected files: `src/thesis_rl/mission/{types,topology,builder,gates}.py`,
   source adapters, scenario records/catalog tests.
 - Tasks: acceptance tests first; immutable schemas; source normalization;
   deterministic section/gate/goal construction; hashes and error codes.
 - Tests: `TEST-MSN-001` through `009`, `029`.
-- Completion evidence: pending.
+- Completion evidence: immutable mission records/hashes, source-neutral static
+  construction, terminal-SDC goal projection, oriented gate materialization,
+  and `ScenarioRecord` serialization are implemented. Focused M1--M3 plus
+  ScenarioRecord suite passes (27 tests); focused Ruff and `git diff --check`
+  pass. A read-only real-source probe passes for one PG and one Waymo record.
+  Frozen-index regeneration remains M7 and was not performed.
 
 ### M3 — Runtime graph, distance, and tracker
 
-- Status: `IN_PROGRESS`.
+- Status: `COMPLETED 2026-08-02`.
 - Dependencies: M2.
 - Expected files: `mission/distance.py`, `mission/tracker.py`, context/env tests.
 - Tasks: static graph, cached distances, association, legal recovery, gate
   state machine, snapshot, reset/idempotence/numeric checks.
 - Tests: `TEST-MSN-007` through `013`, `016`, `030`, `031`.
-- Completion evidence: pending.
+- Completion evidence: focused M1--M3 suite passes (15 tests), including
+  directed swept-bumper/vertical gate crossing, legal lateral recovery,
+  deterministic equal-cost tie-breaks, cycles, gate-distance continuity,
+  completion monotonicity, and tracker reset isolation. Focused Ruff and
+  `git diff --check` pass.
 
 ### M4 — Environment success, completion, and boundaries
 
-- Status: `NOT_STARTED`.
+- Status: `IN_PROGRESS 2026-08-02`.
 - Dependencies: M3 and DEC-MSN-001/006.
 - Expected files: `thesis_scenario_env.py`, scene context, config, env tests.
 - Tasks: install/update tracker at causal boundary; replace native authority;
   preserve native diagnostics temporarily; implement success/unreachable;
   retain time-limit truncation and physical terminations.
 - Tests: `TEST-MSN-017` through `021`, `030`, `031`.
-- Completion evidence: pending.
+- Completion evidence: in progress. The user approved promotion of the M7a
+  candidate; a new mission-aware frozen index and catalog were created without
+  overwriting historical artifacts. Environment success, completion, native
+  diagnostics, and `mission_unreachable` now consume the causal tracker, with
+  focused M4 tests passing. The required end-to-end smoke found a reset-time
+  static-graph defect and then duplicate static-adapter construction; both have
+  regression fixes, but the smoke must be rerun to completion before M4 closes.
 
 ### M5 — R4 and Rulebook migration
 
@@ -543,6 +558,25 @@ explicit informed authorization because source files are pickle artifacts.
   validate frozen replay and panel identities.
 - Tests: `TEST-MSN-001`, `003`, `004`, `033` through `036`.
 - Completion evidence: pending.
+
+### M7a — Pre-M4 candidate mission materialization
+
+- Status: `COMPLETED 2026-08-02`.
+- Approval: explicit user approval 2026-08-02; ADR-052 sequencing amendment.
+- Scope: create a new mission-aware candidate index under the approved outputs
+  root from exactly the frozen-index paths; preserve UID/split/path identity;
+  never overwrite source data or the current canonical index.
+- Boundary: any invalid mission fails the command. Candidate promotion remains
+  a separate explicit approval and full M7 work remains pending.
+- Completion evidence: seven contiguous read-only batches materialized every
+  selected source record into
+  `/scratch/e.respino/thesis-metadrive/outputs/driving_mission_v1_candidate_2026-08-02-batched.json`.
+  The complete candidate contains 3,500 records (1,695 PG, 1,805 Waymo),
+  preserves every frozen UID/split/path and order, and has mission selection
+  hash `8478b4b3eb2eeb7eea6bb61009f63ea0d9617fa42257a35745b2551f507f937a`.
+  The read-only validator deserialized all mission payloads and verified the
+  parent selection hash. No mission is invalid and no source or canonical index
+  was modified.
 
 ### M8 — Full validation and reconciliation
 
@@ -620,12 +654,89 @@ explicit informed authorization because source files are pickle artifacts.
   topology, section/gate construction, a non-negative lane graph, and an
   episode-local tracker. The focused M1--M3 suite passes (10 tests), and
   focused Ruff/whitespace checks pass.
-- Conformance review found that the current M3 gate transition is lane-local
-  scalar crossing only. It does not yet reuse the required canonical
-  swept-front-bumper geometry or vertical compatibility primitive. M3 remains
-  `IN_PROGRESS`; it must not be wired into the environment, Rulebook, or
-  observations as a task authority. This is an implementation gap, not an
-  approved deviation.
+- The initial M3 scalar gate transition was replaced by a mandatory externally
+  validated directed-crossing input, then by a tracker-owned check against the
+  materialized `DirectedGate` geometry. The new gate predicate reuses the
+  canonical Rulebook swept-front-bumper primitive, the `0.05 m` tolerance,
+  forward direction, and vertical compatibility. The remaining recovery,
+  tie-break, cycle, continuity, and reset-isolation matrix now passes. M3 is
+  complete and is not yet wired into runtime consumers.
+
+### 2026-08-02 — M3 completed
+
+- Completed the static non-negative graph and episode-local tracker. Gate
+  advancement requires materialized `DirectedGate` geometry and the canonical
+  swept-front-bumper, forward-direction, and vertical-compatibility predicate;
+  it cannot be induced by a longitudinal scalar or caller-supplied flag.
+- Focused M1--M3 validation: `15 passed`; focused Ruff and `git diff --check`
+  pass. No environment, Rulebook, observation, completion, success, or native
+  navigation behavior changed; those integrations begin at M4.
+
+### 2026-08-02 — M2 completed
+
+- Added source-neutral materialization from the existing PG/Waymo static
+  adapters. It injects only the frozen assigned route into a copied metadata
+  mapping, derives normalized successors/lateral neighbors and oriented gate
+  geometry from static lanes, and projects the terminal valid SDC pose offline.
+  Source pickle content is never changed.
+- `ScenarioRecord` now persists a validated immutable mission payload whose
+  scenario UID and hash are checked on deserialization. Focused validation:
+  `27 passed`, Ruff and `git diff --check` pass; read-only real PG/Waymo probes
+  pass. Dataset/index materialization remains M7.
+
+### 2026-08-02 — M4 causal-data blocker
+
+- Verified directly from the current frozen index: 3,500 records and zero
+  `driving_mission` payloads. M4 cannot install a tracker at reset without an
+  immutable record. Rebuilding from the source ScenarioDescription at reset
+  would use the terminal SDC pose, crossing the approved no-future-runtime
+  boundary; retaining MetaDrive native navigation as fallback is prohibited.
+- No M4 production code was changed. M7 frozen dataset materialization must be
+  explicitly brought forward or separately authorized before M4 can proceed.
+
+### 2026-08-02 — M7a approved
+
+- The user explicitly approved a controlled M7a before M4. The candidate
+  materialization may write only a new mission-aware index below the approved
+  output root, preserving all source paths, UIDs, and splits. It may not
+  overwrite source pickle or the existing frozen index; candidate promotion is
+  separately approval-gated.
+
+### 2026-08-02 — M7a completed
+
+- Materialized the user-authorized frozen paths in seven ordered 500-record
+  batches to prevent process-duration limits from compromising a full-catalog
+  run. The batch combiner accepts only contiguous ranges of the same frozen
+  parent and refuses overwrite; the final result is a new output-only candidate
+  at `driving_mission_v1_candidate_2026-08-02-batched.json`.
+- The full candidate has 3,500 records and deterministic mission selection hash
+  `8478b4b3eb2eeb7eea6bb61009f63ea0d9617fa42257a35745b2551f507f937a`.
+  Its complete read-only validation passed: UID/split/path/order and parent hash
+  are identical to the frozen index, every immutable mission deserializes, and
+  source counts remain 1,695 PG and 1,805 Waymo.
+- A validator initially attempted to deserialize every preserved legacy catalog
+  field as a `ScenarioRecord`; it correctly exposed that frozen catalog records
+  contain additional metadata such as `dense_traffic`. The regression fix
+  validates the immutable `DrivingMissionRecord` directly while still checking
+  frozen identity and source labels. This is not a scenario invalidity.
+- M4 is still blocked pending the separate explicit candidate-promotion
+  decision required by ADR-052. Native MetaDrive navigation was not enabled as
+  a fallback.
+
+### 2026-08-02 — Candidate promotion and M4 integration in progress
+
+- The user approved promotion after reviewing the split/arm/source tables. A
+  new canonical mission index and Parquet catalog were created at
+  `data/scenarionet/frozen/driving_mission_v1_selection_index.json` and
+  `data/scenarionet/catalog/scenario_catalog_driving_mission_v1.parquet`.
+  Historical index, catalog, runtime views, and source pickles remain untouched.
+- M4 installs a mandatory mission runtime at reset independently of the
+  Rulebook wrapper, materializes live gate geometry without changing the frozen
+  hash, reports mission success/completion/unreachability, and prefixes native
+  navigation metrics as diagnostics. Focused M4 tests passed.
+- `make smoke` first found unknown static successor IDs, then showed excessive
+  reset cost from broad graph construction and duplicate adapter work. Both
+  have regression fixes; the smoke must still complete before M4 can close.
 
 ## 12. Deviations
 
@@ -688,6 +799,8 @@ aligned with the actual diff. Unrelated cleanup is prohibited.
 | `make smoke` | `NOT_RUN` | 2026-08-02 | Documentation-only preparation; PG and Waymo smoke mandatory in M8 |
 | Documentation path/structure check | `PASS` | 2026-08-02 | All five changed/added paths exist; specification sections 1-18, ExecPlan sections 1-15, and unique REQ/AC/TEST registries were checked |
 | `git diff --check` plus untracked-document whitespace scan | `PASS` | 2026-08-02 | No whitespace errors found after all document edits |
+| M7a focused materialization/validator tests | `PASS` | 2026-08-02 | 15 focused tests across candidate construction, combination, validation, and ScenarioRecord serialization; Ruff format/check passed for M7a files |
+| M7a complete candidate validation | `PASS` | 2026-08-02 | Read-only validation of 3,500 records against the immutable frozen parent: 1,695 PG, 1,805 Waymo, all mission payloads deserialized; hash `8478b4b3...f937a` |
 
 ## 15. Final Reconciliation
 

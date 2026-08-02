@@ -8,6 +8,7 @@ from shapely.geometry import box
 from thesis_rl.envs.scene_context import SceneContextAdapter
 from thesis_rl.envs import thesis_scenario_env as thesis_env_module
 from thesis_rl.envs.thesis_scenario_env import scenario_time_limit_reached
+from thesis_rl.mission.types import MissionSnapshot
 from thesis_rl.runtime.wiring.builders import collect_scenario_runtime_stats
 
 
@@ -177,6 +178,9 @@ def test_thesis_success_rejects_short_reference_trajectory() -> None:
         "minimum_success_route_length_m": 10.0,
         "success_route_completion_threshold": 0.95,
     }
+    env._mission_runtime = SimpleNamespace(
+        snapshot=MissionSnapshot("mission", 0, 0, 5.0, 0.0, True, False, False)
+    )
     vehicle = SimpleNamespace(
         navigation=SimpleNamespace(
             route_completion=0.03,
@@ -373,6 +377,9 @@ def test_thesis_reward_suppresses_native_short_route_bonus(
         )
     )
     env.agent_manager = SimpleNamespace(active_agents={"default_agent": vehicle})
+    env._mission_runtime = SimpleNamespace(
+        snapshot=MissionSnapshot("mission", 0, 0, 5.0, 0.0, True, False, False)
+    )
     monkeypatch.setattr(
         thesis_env_module.ScenarioEnv,
         "reward_function",
@@ -437,6 +444,13 @@ def _make_done_test_env(
         property(lambda _self: fake_engine),
     )
     env.scene_context = SceneContextAdapter()
+    mission_snapshot = MissionSnapshot("mission", 0, 0, 5.0, 0.0, True, False, False)
+    env._mission_runtime = SimpleNamespace(
+        snapshot=mission_snapshot,
+        update=lambda _pre, _post: mission_snapshot,
+    )
+    env._mission_pre_snapshot = object()
+    env._mission_snapshotter = lambda _env: object()
     env._last_done_info = {}
     monkeypatch.setattr(
         thesis_env_module.ScenarioEnv,

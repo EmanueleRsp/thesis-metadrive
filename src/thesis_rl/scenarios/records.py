@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
+from thesis_rl.mission.types import DrivingMissionRecord
+
 
 ScenarioSource = Literal["waymo", "pg"]
 ScenarioSplit = Literal["train", "validation", "test"]
@@ -74,6 +76,7 @@ class ScenarioRecord:
     # pools from the arm-stratified challenge pool within the same `split`
     # value, it does not gate any invariant on `split` itself.
     holdout_pool: HoldoutPool | None = None
+    driving_mission: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         for name in ("scenario_uid", "scenario_id", "dataset_version", "primary_arm"):
@@ -109,6 +112,12 @@ class ScenarioRecord:
             raise ValueError("assigned_route_source is required when route lane IDs are present")
         if self.holdout_pool is not None and self.holdout_pool not in HOLDOUT_POOLS:
             raise ValueError(f"unsupported holdout_pool: {self.holdout_pool!r}")
+        if self.driving_mission is not None:
+            if not isinstance(self.driving_mission, dict):
+                raise ValueError("driving_mission must be a mapping or null")
+            mission = DrivingMissionRecord.from_dict(self.driving_mission)
+            if mission.scenario_uid != self.scenario_uid:
+                raise ValueError("driving_mission scenario UID must match ScenarioRecord")
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -125,6 +134,8 @@ class ScenarioRecord:
         data["validation_warnings"] = tuple(data.get("validation_warnings", ()))
         data["rulebook_validation_errors"] = tuple(data.get("rulebook_validation_errors") or ())
         data["assigned_route_lane_ids"] = tuple(data.get("assigned_route_lane_ids") or ())
+        mission = data.get("driving_mission")
+        data["driving_mission"] = None if mission is None else dict(mission)
         return cls(**data)
 
 

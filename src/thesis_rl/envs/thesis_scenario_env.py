@@ -111,6 +111,11 @@ class ThesisScenarioEnv(ScenarioEnv):
         self._rulebook_v2_requested = False
         self.rulebook_v2_adapter: Any | None = None
         self._rulebook_v2_brake_mps2: float | None = None
+        self._mission_runtime: Any | None = None
+        self._mission_pre_snapshot: Any | None = None
+        self._mission_snapshotter: Any | None = None
+        self._mission_static_result: Any | None = None
+        self._mission_episode_cache: Any | None = None
 
     def setup_engine(self) -> None:
         """Install the thesis-owned source-bounded reactive traffic manager."""
@@ -223,9 +228,9 @@ class ThesisScenarioEnv(ScenarioEnv):
 
     def _record_reset_phase(self, name: str, seconds: float) -> None:
         if getattr(self, "_active_reset_timing_seconds", None) is not None:
-            self._active_reset_timing_seconds[name] = (
-                self._active_reset_timing_seconds.get(name, 0.0) + float(seconds)
-            )
+            self._active_reset_timing_seconds[name] = self._active_reset_timing_seconds.get(
+                name, 0.0
+            ) + float(seconds)
 
     @contextmanager
     def _profile_existing_engine_reset(self):
@@ -470,6 +475,56 @@ class ThesisScenarioEnv(ScenarioEnv):
             builder.reset()
             builder.commit_context(context)
 
+    def _install_mission_runtime(self) -> None:
+        """Install the mandatory frozen mission before any observation or reward."""
+
+        from thesis_rl.mission.runtime import MissionRuntime
+        from thesis_rl.mission.types import DrivingMissionRecord
+        from thesis_rl.rulebook.v2.context.metadrive_live import live_ego_snapshot
+        from thesis_rl.rulebook.v2.types import EnvSnapshot
+
+        scenario = getattr(getattr(self.engine, "data_manager", None), "current_scenario", None)
+        record = self.current_scenario_record
+        if not isinstance(scenario, Mapping) or record is None:
+            raise RuntimeError(
+                "Driving mission runtime requires a loaded scenario and catalog record"
+            )
+        mission_payload = getattr(record, "driving_mission", None)
+        if not isinstance(mission_payload, dict):
+            raise ValueError("Scenario record is missing the required frozen driving_mission")
+        static_result = self._build_static_adapter_result(scenario, record)
+        decision_repeat = int(self.config.get("decision_repeat", 1))
+        physics_dt = float(self.config.get("physics_world_step_size", 0.02))
+
+        def capture(_env: Any) -> EnvSnapshot:
+            return EnvSnapshot(
+                scenario_id=str(record.scenario_uid),
+                step_index=int(self.episode_step),
+                sim_time_s=float(self.episode_step * decision_repeat * physics_dt),
+                ego=live_ego_snapshot(self),
+                actors=(),
+                contact_onset_records=(),
+                active_contact_ids=frozenset(),
+                signal_states_by_physical_id={},
+            )
+
+        initial_snapshot = capture(self)
+        from thesis_rl.rulebook.v2.transition import (
+            align_episode_cache_to_live_elevation,
+            build_episode_cache,
+        )
+
+        cache = align_episode_cache_to_live_elevation(
+            build_episode_cache(static_result), initial_snapshot
+        )
+        self._mission_static_result = static_result
+        self._mission_episode_cache = cache
+        self._mission_runtime = MissionRuntime(
+            DrivingMissionRecord.from_dict(mission_payload), cache.route_lanes, initial_snapshot
+        )
+        self._mission_pre_snapshot = initial_snapshot
+        self._mission_snapshotter = capture
+
     def _install_rulebook_v2_adapter(self) -> None:
         """Install the source-bound Rulebook adapter after ScenarioEnv reset."""
 
@@ -495,8 +550,6 @@ class ThesisScenarioEnv(ScenarioEnv):
         from thesis_rl.rulebook.v2.calibration import load_calibration_artifact
         from thesis_rl.rulebook.v2.transition import (
             RulebookTransitionConfig,
-            align_episode_cache_to_live_elevation,
-            build_episode_cache,
             initial_memory_for_snapshot,
             transition_evaluator_factory,
         )
@@ -506,8 +559,10 @@ class ThesisScenarioEnv(ScenarioEnv):
         record = self.current_scenario_record
         if not isinstance(scenario, Mapping) or record is None:
             raise RuntimeError("Rulebook v2 adapter requires a loaded scenario and catalog record")
-        static_result = self._build_static_adapter_result(scenario, record)
-        cache = build_episode_cache(static_result)
+        static_result = self._mission_static_result
+        cache = self._mission_episode_cache
+        if static_result is None or cache is None:
+            raise RuntimeError("Driving mission static cache is unavailable before Rulebook setup")
         recorder = MetaDriveContactRecorder(self, object_from_node=get_object_from_node)
         dynamic_world = self.engine.physics_world.dynamic_world
         install_collision_callback_hook(
@@ -539,7 +594,6 @@ class ThesisScenarioEnv(ScenarioEnv):
             )
         )
         initial_snapshot = snapshotter.capture(self)
-        cache = align_episode_cache_to_live_elevation(cache, initial_snapshot)
         calibration = None
         data_directory = Path(str(self.config.get("data_directory", "")))
         data_root = data_directory.parent.parent
@@ -627,6 +681,9 @@ class ThesisScenarioEnv(ScenarioEnv):
         self._inject_assigned_route_metadata_into_scenario()
         self._record_reset_phase("route_metadata", time.perf_counter() - started)
         started = time.perf_counter()
+        self._install_mission_runtime()
+        self._record_reset_phase("driving_mission", time.perf_counter() - started)
+        started = time.perf_counter()
         self._install_rulebook_v2_adapter()
         self._record_reset_phase("rulebook_adapter", time.perf_counter() - started)
         started = time.perf_counter()
@@ -678,28 +735,13 @@ class ThesisScenarioEnv(ScenarioEnv):
         return min(1.0, max(0.0, raw)), raw
 
     def _is_thesis_success(self, vehicle: Any) -> bool:
-        """Reject ScenarioEnv's short/static-trajectory success shortcut."""
+        """Use only the frozen mission tracker as task-success authority."""
 
-        navigation = getattr(vehicle, "navigation", None)
-        completion, _raw = self._normalise_route_completion(
-            getattr(navigation, "route_completion", None)
-        )
-        if completion is None:
-            return False
-
-        reference_trajectory = getattr(navigation, "reference_trajectory", None)
-        route_length = getattr(reference_trajectory, "length", None)
-        try:
-            route_length_value = float(route_length) if route_length is not None else None
-        except (TypeError, ValueError):
-            route_length_value = None
-        if route_length_value is not None and (
-            not math.isfinite(route_length_value)
-            or route_length_value < float(self.config.get("minimum_success_route_length_m", 10.0))
-        ):
-            return False
-
-        return completion >= float(self.config.get("success_route_completion_threshold", 0.95))
+        del vehicle
+        runtime = self._mission_runtime
+        if runtime is None:
+            raise RuntimeError("Driving mission runtime is unavailable before success evaluation")
+        return bool(runtime.snapshot.mission_success)
 
     def _attach_route_metrics(self, info: dict[str, Any]) -> None:
         vehicle = self.scene_context.get_ego_vehicle(self)
@@ -707,10 +749,22 @@ class ThesisScenarioEnv(ScenarioEnv):
         completion, raw_completion = self._normalise_route_completion(
             info.get("route_completion", getattr(navigation, "route_completion", None))
         )
+        runtime = self._mission_runtime
+        if runtime is None:
+            raise RuntimeError("Driving mission runtime is unavailable before route metrics")
+        snapshot = runtime.snapshot
+        info["route_completion"] = snapshot.route_completion
+        info["mission_remaining_distance_m"] = snapshot.remaining_distance_m
+        info["mission_pending_gate_index"] = snapshot.pending_gate_index
+        info["mission_hash"] = snapshot.mission_hash
+        info["mission_reachable"] = snapshot.reachable
+        info["mission_success"] = snapshot.mission_success
+        info["mission_unreachable"] = snapshot.mission_unreachable
+        info["mission_reason"] = snapshot.reason
         if completion is not None:
-            info["route_completion"] = completion
+            info["native_route_completion"] = completion
         if raw_completion is not None and raw_completion != completion:
-            info["raw_route_completion"] = raw_completion
+            info["native_raw_route_completion"] = raw_completion
         reference_trajectory = getattr(navigation, "reference_trajectory", None)
         route_length = getattr(reference_trajectory, "length", None)
         try:
@@ -718,7 +772,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         except (TypeError, ValueError):
             route_length_value = None
         if route_length_value is not None and math.isfinite(route_length_value):
-            info["reference_route_length_m"] = route_length_value
+            info["native_reference_route_length_m"] = route_length_value
 
     def reward_function(self, vehicle_id: str):
         """Remove ScenarioEnv's terminal bonus for a degenerate Waymo route."""
@@ -745,6 +799,13 @@ class ThesisScenarioEnv(ScenarioEnv):
         return scene_context.is_physically_out_of_road(self, vehicle)
 
     def done_function(self, vehicle_id: str):
+        runtime = self._mission_runtime
+        snapshotter = self._mission_snapshotter
+        if runtime is None or not callable(snapshotter) or self._mission_pre_snapshot is None:
+            raise RuntimeError("Driving mission runtime is unavailable before done evaluation")
+        post_snapshot = snapshotter(self)
+        mission_snapshot = runtime.update(self._mission_pre_snapshot, post_snapshot)
+        self._mission_pre_snapshot = post_snapshot
         done, done_info = super().done_function(vehicle_id)
         vehicle = self.agents[vehicle_id]
         line_only = self.scene_context.is_on_continuous_line(vehicle)
@@ -783,8 +844,9 @@ class ThesisScenarioEnv(ScenarioEnv):
         # MetaDrive ScenarioEnv declares every route shorter than 2 m a
         # success. The thesis additionally rejects routes shorter than 10 m,
         # which are too short to provide a meaningful RL episode.
-        done_info[TerminationState.SUCCESS] = self._is_thesis_success(vehicle)
-        done = self._recompute_terminated(done_info)
+        done_info[TerminationState.SUCCESS] = mission_snapshot.mission_success
+        done_info["mission_unreachable"] = mission_snapshot.mission_unreachable
+        done = self._recompute_terminated(done_info) or mission_snapshot.mission_unreachable
 
         # Do not use the native truthy allowed_more_steps branch: zero is a
         # meaningful value in the thesis contract.
@@ -799,8 +861,10 @@ class ThesisScenarioEnv(ScenarioEnv):
         done_info["crossed_continuous_line"] = bool(line_only)
         done_info["physical_out_of_road"] = bool(physical_out)
         done_info.update(self.scene_context.get_physical_road_diagnostics(self, vehicle))
-        done_info["termination_reason"] = self.scene_context.get_termination_reason(
-            self, vehicle, done_info
+        done_info["termination_reason"] = (
+            "mission_unreachable"
+            if mission_snapshot.mission_unreachable
+            else self.scene_context.get_termination_reason(self, vehicle, done_info)
         )
         self._last_done_info = dict(done_info)
         return done, done_info

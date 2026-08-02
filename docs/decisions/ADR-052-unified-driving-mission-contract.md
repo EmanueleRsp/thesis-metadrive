@@ -125,3 +125,36 @@ ExecPlan before production implementation.
 - Approved by: thesis repository maintainer
 - Approval evidence: explicit user approval in the Codex task dated `2026-08-02`, covering `DEC-MSN-001` through `DEC-MSN-009`
 - Notes: approval does not imply approval of source-record exclusions.
+
+## Implementation Sequencing Amendment
+
+On `2026-08-02`, the user approved a controlled M7a materialization phase
+before M4. M7a may construct and validate mission payloads from the authorized
+frozen source paths, but may write only a new candidate index under the
+approved outputs root. It must preserve every UID and split, never overwrite
+the current frozen index or source pickle, and stop on any invalid mission.
+Promoting a candidate index to a canonical frozen dataset remains a separate
+explicit approval after validation.
+
+## M7a Execution Record
+
+On `2026-08-02`, M7a completed under the approved read-only scope. The new
+output-only candidate is
+`/scratch/e.respino/thesis-metadrive/outputs/driving_mission_v1_candidate_2026-08-02-batched.json`.
+It contains all 3,500 frozen records (1,695 PG and 1,805 Waymo), preserves each
+UID, split, relative path, and order, and has mission selection hash
+`8478b4b3eb2eeb7eea6bb61009f63ea0d9617fa42257a35745b2551f507f937a`.
+The candidate was validated read-only against its frozen parent and every
+mission payload deserialized successfully. This record is evidence only: it
+does not promote the candidate or authorize M4 runtime consumption.
+
+## Candidate Promotion Record
+
+After reviewing the preserved split/arm/source distribution tables, the user
+explicitly approved promotion on `2026-08-02`. The promoted artifacts are the
+new, non-overwriting
+`data/scenarionet/frozen/driving_mission_v1_selection_index.json` and
+`data/scenarionet/catalog/scenario_catalog_driving_mission_v1.parquet` paths.
+They retain the parent selection provenance and the validated mission selection
+hash. This authorizes M4 consumption of the promoted record only; it does not
+authorize native-navigation fallback or weaken the remaining M4--M8 gates.

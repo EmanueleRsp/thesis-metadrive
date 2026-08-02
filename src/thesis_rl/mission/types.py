@@ -8,6 +8,8 @@ import math
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from thesis_rl.mission.gates import GateGeometry
+
 
 MISSION_SCHEMA_VERSION = "driving_mission_v1"
 
@@ -38,6 +40,7 @@ class DirectedGate:
     compatible_spans: tuple[LaneSpan, ...]
     lane_id: str
     s_m: float
+    geometry: GateGeometry | None = None
 
     def __post_init__(self) -> None:
         if not self.gate_id or not self.lane_id or not self.compatible_spans:
@@ -45,7 +48,10 @@ class DirectedGate:
         _finite(self.s_m, "s_m")
         if self.s_m < 0.0:
             raise ValueError("s_m must be non-negative")
-        if not any(span.lane_id == self.lane_id and span.start_s_m <= self.s_m <= span.end_s_m for span in self.compatible_spans):
+        if not any(
+            span.lane_id == self.lane_id and span.start_s_m <= self.s_m <= span.end_s_m
+            for span in self.compatible_spans
+        ):
             raise ValueError("gate must be located on a compatible lane span")
 
 
@@ -78,7 +84,9 @@ class DrivingMissionRecord:
         if self.schema_version != MISSION_SCHEMA_VERSION:
             raise ValueError(f"unsupported mission schema: {self.schema_version!r}")
         payload = self.to_dict(include_hash=False)
-        object.__setattr__(self, "mission_hash", hashlib.sha256(_canonical_json(payload)).hexdigest())
+        object.__setattr__(
+            self, "mission_hash", hashlib.sha256(_canonical_json(payload)).hexdigest()
+        )
 
     def to_dict(self, *, include_hash: bool = True) -> dict[str, Any]:
         payload = {
@@ -98,10 +106,31 @@ class DrivingMissionRecord:
             return LaneSpan(**data)
 
         def gate(data: dict[str, Any]) -> DirectedGate:
-            return DirectedGate(data["gate_id"], tuple(span(item) for item in data["compatible_spans"]), data["lane_id"], data["s_m"])
+            geometry = data.get("geometry")
+            return DirectedGate(
+                data["gate_id"],
+                tuple(span(item) for item in data["compatible_spans"]),
+                data["lane_id"],
+                data["s_m"],
+                None if geometry is None else GateGeometry(**geometry),
+            )
 
-        sections = tuple(MissionSection(item["section_id"], span(item["preferred_span"]), tuple(span(value) for value in item["allowed_spans"]), gate(item["exit_gate"])) for item in payload["sections"])
-        record = cls(payload["scenario_uid"], payload["builder_version"], sections, gate(payload["final_goal"]), payload.get("schema_version", MISSION_SCHEMA_VERSION))
+        sections = tuple(
+            MissionSection(
+                item["section_id"],
+                span(item["preferred_span"]),
+                tuple(span(value) for value in item["allowed_spans"]),
+                gate(item["exit_gate"]),
+            )
+            for item in payload["sections"]
+        )
+        record = cls(
+            payload["scenario_uid"],
+            payload["builder_version"],
+            sections,
+            gate(payload["final_goal"]),
+            payload.get("schema_version", MISSION_SCHEMA_VERSION),
+        )
         expected = payload.get("mission_hash")
         if expected is not None and expected != record.mission_hash:
             raise ValueError("mission_hash does not match immutable payload")

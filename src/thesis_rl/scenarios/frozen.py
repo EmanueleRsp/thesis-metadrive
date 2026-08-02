@@ -34,6 +34,7 @@ from thesis_rl.scenarios.runtime_database import sha256_file
 
 
 FROZEN_INDEX_SCHEMA = "scenarionet_frozen_selection_v1"
+MISSION_FROZEN_INDEX_SCHEMA = "scenarionet_frozen_selection_mission_v1"
 _BATCH_PATTERN = re.compile(r"(?:^|/)batch_(\d{5})_(\d{5})(?:/|$)")
 _SHARD_PATTERN = re.compile(r"training_20s\.tfrecord-(\d+)-of-(\d+)$")
 
@@ -437,7 +438,7 @@ def build_frozen_index(
 
 def load_frozen_index(path: str | Path) -> dict[str, Any]:
     payload = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
-    if payload.get("schema") != FROZEN_INDEX_SCHEMA:
+    if payload.get("schema") not in {FROZEN_INDEX_SCHEMA, MISSION_FROZEN_INDEX_SCHEMA}:
         raise ValueError(f"unsupported frozen selection index schema: {payload.get('schema')!r}")
     if not isinstance(payload.get("records"), list) or not payload["records"]:
         raise ValueError("frozen selection index must contain a non-empty records list")
@@ -469,6 +470,7 @@ def verify_frozen_sources(payload: Mapping[str, Any], data_root: str | Path) -> 
 
 __all__ = [
     "FROZEN_INDEX_SCHEMA",
+    "MISSION_FROZEN_INDEX_SCHEMA",
     "build_frozen_index",
     "frozen_catalog",
     "load_frozen_index",

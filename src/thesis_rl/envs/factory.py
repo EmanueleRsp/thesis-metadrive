@@ -7,6 +7,9 @@ from typing import Any, Sequence
 from omegaconf import DictConfig, OmegaConf
 
 
+MISSION_CATALOG_FILENAME = "scenario_catalog_driving_mission_v1.parquet"
+
+
 def _to_plain_dict(cfg: DictConfig | dict[str, Any]) -> dict[str, Any]:
     if isinstance(cfg, DictConfig):
         return OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
@@ -267,12 +270,10 @@ def scenario_evaluation_runtime_indices(
 
     dataset_root = _scenarionet_dataset_root(cfg_env)
     catalog_path = getattr(cfg_env, "catalog_path", None) or (
-        dataset_root / "catalog" / "scenario_catalog.parquet" if dataset_root else None
+        dataset_root / "catalog" / MISSION_CATALOG_FILENAME if dataset_root else None
     )
     if catalog_path is None:
-        raise ValueError(
-            "ScenarioNet evaluation requires env.dataset_root or env.catalog_path."
-        )
+        raise ValueError("ScenarioNet evaluation requires env.dataset_root or env.catalog_path.")
     catalog = read_scenario_catalog(str(catalog_path))
     records = _runtime_rulebook_records(catalog, split=split)
     if eligible_uids is not None:
@@ -483,7 +484,7 @@ def make_env(
         provider_worker_count = int(env_cfg.pop("provider_worker_count", 1))
         worker_id = provider_worker_id
         catalog_path = getattr(cfg_env, "catalog_path", None) or (
-            dataset_root / "catalog" / "scenario_catalog.parquet" if dataset_root else None
+            dataset_root / "catalog" / MISSION_CATALOG_FILENAME if dataset_root else None
         )
         if catalog is None:
             if catalog_path is None:
@@ -494,8 +495,7 @@ def make_env(
             catalog = read_scenario_catalog(str(catalog_path))
         if eligible_scenario_uids is not None:
             catalog_uids = {
-                record.scenario_uid
-                for record in _runtime_rulebook_records(catalog, split=split)
+                record.scenario_uid for record in _runtime_rulebook_records(catalog, split=split)
             }
             unknown_uids = sorted(set(eligible_scenario_uids).difference(catalog_uids))
             if unknown_uids:
@@ -594,9 +594,7 @@ def make_env(
                             "Golden-suite/frozen-panel scenario UID is outside the "
                             f"configured provider window: {missing_from_window[:5]}"
                         )
-                    sequence_records = tuple(
-                        record_by_uid[uid] for uid in effective_eligible_uids
-                    )
+                    sequence_records = tuple(record_by_uid[uid] for uid in effective_eligible_uids)
                 scenario_provider = FixedSequenceScenarioProvider(
                     sequence_records,
                     repeat=bool(provider_cfg.get("repeat", False)),
