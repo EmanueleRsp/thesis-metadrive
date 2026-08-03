@@ -16,6 +16,9 @@ from typing import TYPE_CHECKING, Mapping, TypeAlias, cast
 from shapely.geometry.base import BaseGeometry
 
 if TYPE_CHECKING:
+    from thesis_rl.mission.types import MissionSnapshot
+
+if TYPE_CHECKING:
     from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
     from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 
@@ -187,6 +190,7 @@ class EnvSnapshot:
     contact_onset_records: tuple[ContactOnsetRecord, ...]
     active_contact_ids: frozenset[str]
     signal_states_by_physical_id: Mapping[str, str]
+    mission_snapshot: MissionSnapshot | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -339,7 +343,6 @@ class RulebookMemory:
     vehicle_yield_illegal_entries: frozenset[tuple[str, str]] = frozenset()
     preexisting_ego_occupancy_zone_ids: frozenset[str] = frozenset()
     frozen_actor_movement_keys: tuple[tuple[str, MovementKey], ...] = ()
-    previous_route_s_m: float = 0.0
     actor_motion_histories: tuple[ActorMotionHistory, ...] = ()
     previous_sim_time_s: float | None = None
 

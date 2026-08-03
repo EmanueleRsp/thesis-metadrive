@@ -52,6 +52,60 @@ def test_runtime_materializes_live_gate_geometry_without_changing_frozen_hash() 
     assert success.route_completion == 1.0
 
 
+def test_runtime_succeeds_on_one_crossing_when_final_goal_is_section_exit() -> None:
+    lane = RouteLaneRecord(
+        "a",
+        box(0.0, -2.0, 20.0, 2.0),
+        RoutePolyline(((0.0, 0.0, 0.0), (20.0, 0.0, 0.0))),
+    )
+    span = LaneSpan("a", 0.0, 20.0)
+    final = DirectedGate("goal:final", (span,), "a", 10.0)
+    mission = DrivingMissionRecord(
+        "scenario", "mission-builder-v1", (MissionSection("section:0", span, (span,), final),), final
+    )
+
+    runtime = MissionRuntime(mission, (lane,), _snapshot(0, 2.0))
+    result = runtime.update(_snapshot(0, 8.0), _snapshot(1, 11.0))
+
+    assert result.mission_success is True
+    assert result.pending_gate_index == 1
+
+
+def test_runtime_gate_uses_declared_lateral_road_envelope_not_crossing_road() -> None:
+    main = RouteLaneRecord(
+        "main",
+        box(0.0, -2.0, 20.0, 2.0),
+        RoutePolyline(((0.0, 0.0, 0.0), (20.0, 0.0, 0.0))),
+        lateral_lane_ids=("opposing",),
+    )
+    opposing = RouteLaneRecord(
+        "opposing",
+        box(0.0, 2.0, 20.0, 6.0),
+        RoutePolyline(((20.0, 4.0, 0.0), (0.0, 4.0, 0.0))),
+        lateral_lane_ids=("main",),
+    )
+    crossing = RouteLaneRecord(
+        "crossing",
+        box(9.0, -30.0, 11.0, 30.0),
+        RoutePolyline(((10.0, -30.0, 0.0), (10.0, 30.0, 0.0))),
+    )
+    span = LaneSpan("main", 0.0, 20.0)
+    mission = DrivingMissionRecord(
+        "scenario",
+        "mission-builder-v1",
+        (MissionSection("section:0", span, (span,), DirectedGate("gate", (span,), "main", 10.0)),),
+        DirectedGate("goal:final", (span,), "main", 15.0),
+    )
+
+    runtime = MissionRuntime(mission, (main, opposing, crossing), _snapshot(0, 2.0))
+    gate = runtime._tracker._gates[0].geometry
+
+    assert gate is not None
+    assert min(point[1] for point in gate.line_xy) <= -2.5
+    assert max(point[1] for point in gate.line_xy) >= 6.5
+    assert max(abs(point[1]) for point in gate.line_xy) < 10.0
+
+
 def test_runtime_ignores_unavailable_static_successors_but_preserves_required_path() -> None:
     lane = RouteLaneRecord(
         "a",
@@ -133,7 +187,7 @@ def test_runtime_excludes_non_mission_lanes_from_association_graph() -> None:
     assert runtime.snapshot.reachable is True
 
 
-def test_runtime_initializes_a_terminal_snapshot_for_reset_unreachability() -> None:
+def test_runtime_initializes_an_active_geometric_mission_without_route_reachability() -> None:
     lane = RouteLaneRecord(
         "a",
         box(0.0, -2.0, 10.0, 2.0),
@@ -162,6 +216,6 @@ def test_runtime_initializes_a_terminal_snapshot_for_reset_unreachability() -> N
 
     runtime = MissionRuntime(mission, (lane, gate, goal), _snapshot(0, 2.0))
 
-    assert runtime.snapshot.mission_unreachable is True
-    assert runtime.snapshot.reason == "mission_unreachable"
-    assert runtime.snapshot.remaining_distance_m == 0.0
+    assert runtime.snapshot.mission_unreachable is False
+    assert runtime.snapshot.reachable is True
+    assert runtime.snapshot.remaining_distance_m > 0.0

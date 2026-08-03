@@ -137,6 +137,20 @@ class DrivingMissionRecord:
         return record
 
 
+def ordered_mission_gates(mission: DrivingMissionRecord) -> tuple[DirectedGate, ...]:
+    """Return the ordered task boundaries, retaining a final goal only once.
+
+    A no-branch mission has one section whose exit is the final goal. Frozen
+    v1 records preserve that section structure, so the goal appears in both
+    fields. It denotes one physical boundary, never two consecutive crossings.
+    """
+
+    exits = tuple(section.exit_gate for section in mission.sections)
+    if exits and exits[-1].gate_id == mission.final_goal.gate_id:
+        return exits
+    return (*exits, mission.final_goal)
+
+
 @dataclass(frozen=True, slots=True)
 class MissionSnapshot:
     mission_hash: str

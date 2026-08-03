@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from math import hypot
+
 from shapely.geometry import Polygon
 
 from thesis_rl.mission.distance import LaneGraph
 from thesis_rl.mission.gates import directed_gate_crossed
-from thesis_rl.mission.types import DirectedGate, DrivingMissionRecord, MissionSnapshot
+from thesis_rl.rulebook.v2.geometry.footprint import front_bumper_segment
+from thesis_rl.mission.types import (
+    DirectedGate,
+    DrivingMissionRecord,
+    MissionSnapshot,
+    ordered_mission_gates,
+)
 
 
 class MissionTracker:
@@ -18,11 +26,11 @@ class MissionTracker:
         s_m: float,
         *,
         materialized_gates: tuple[DirectedGate, ...] | None = None,
+        initial_footprint: Polygon | None = None,
+        initial_heading_rad: float | None = None,
     ) -> None:
         self._mission, self._graph = mission, graph
-        frozen_gates: tuple[DirectedGate, ...] = tuple(
-            section.exit_gate for section in mission.sections
-        ) + (mission.final_goal,)
+        frozen_gates = ordered_mission_gates(mission)
         self._gates = frozen_gates if materialized_gates is None else materialized_gates
         if len(self._gates) != len(frozen_gates) or any(
             current.gate_id != frozen.gate_id
@@ -30,18 +38,25 @@ class MissionTracker:
         ):
             raise ValueError("materialized mission gates must match frozen gate identity")
         self._pending, self._step, self._completion = 0, 0, 0.0
-        initial = self._remaining(lane_id, s_m)
+        initial = (
+            self._remaining_from_footprint(initial_footprint, initial_heading_rad)
+            if initial_footprint is not None and initial_heading_rad is not None
+            else self._remaining(lane_id, s_m)
+        )
         if initial is None:
-            self._initial_distance = 0.0
-            self._snapshot = self._make_snapshot(0.0, False, False, True)
-            self._snapshots = {0: self._snapshot}
-            return
+            raise ValueError("mission tracker requires an initial geometric or graph distance")
         self._initial_distance = initial
         self._snapshot = self._make_snapshot(initial, True, False, False)
         self._snapshots = {0: self._snapshot}
 
     def snapshot(self) -> MissionSnapshot:
         return self._snapshot
+
+    @property
+    def gates(self) -> tuple[DirectedGate, ...]:
+        """Return read-only materialized task boundaries."""
+
+        return self._gates
 
     def snapshot_at(self, step_index: int) -> MissionSnapshot:
         return self._snapshots[step_index]
@@ -62,6 +77,34 @@ class MissionTracker:
             distance += leg
         return distance
 
+    def _remaining_from_footprint(self, footprint: Polygon, heading_rad: float) -> float:
+        """Return remaining ordered-gate distance without lane admissibility gates."""
+
+        gate = self._gates[self._pending]
+        if gate.geometry is None:
+            raise ValueError("pending mission gate has no materialized geometry")
+        front = front_bumper_segment(footprint, heading_rad=heading_rad).centroid
+        anchor_x, anchor_y = _gate_anchor(gate)
+        tangent_x, tangent_y = gate.geometry.forward_tangent_xy
+        tangent_norm = hypot(tangent_x, tangent_y)
+        upstream_distance = max(
+            0.0,
+            -((front.x - anchor_x) * tangent_x + (front.y - anchor_y) * tangent_y)
+            / tangent_norm,
+        )
+        downstream_distance = 0.0
+        for current, following in zip(
+            self._gates[self._pending :], self._gates[self._pending + 1 :]
+        ):
+            if current.geometry is None or following.geometry is None:
+                raise ValueError("mission gate has no materialized geometry")
+            current_anchor = _gate_anchor(current)
+            following_anchor = _gate_anchor(following)
+            downstream_distance += hypot(
+                following_anchor[0] - current_anchor[0],
+                following_anchor[1] - current_anchor[1],
+            )
+        return upstream_distance + downstream_distance
     def _make_snapshot(
         self, remaining: float, reachable: bool, success: bool, unreachable: bool
     ) -> MissionSnapshot:
@@ -97,7 +140,7 @@ class MissionTracker:
         post_heading_rad: float,
         post_ego_z_m: float,
     ) -> MissionSnapshot:
-        if self._snapshot.mission_success or self._snapshot.mission_unreachable:
+        if self._snapshot.mission_success:
             return self._snapshot
         gate = self._gates[self._pending]
         if gate.geometry is None:
@@ -110,15 +153,22 @@ class MissionTracker:
             post_heading_rad=post_heading_rad,
             post_ego_z_m=post_ego_z_m,
         )
-        if directed_gate_crossing and pre_lane_id == gate.lane_id and post_lane_id == gate.lane_id:
+        if directed_gate_crossing:
             self._pending += 1
         self._step += 1
         if self._pending == len(self._gates):
             self._snapshot = self._make_snapshot(0.0, True, True, False)
         else:
-            remaining = self._remaining(post_lane_id, post_s_m)
-            self._snapshot = self._make_snapshot(
-                remaining or 0.0, remaining is not None, False, remaining is None
-            )
+            remaining = self._remaining_from_footprint(post_footprint, post_heading_rad)
+            self._snapshot = self._make_snapshot(remaining, True, False, False)
         self._snapshots[self._step] = self._snapshot
         return self._snapshot
+
+
+def _gate_anchor(gate: DirectedGate) -> tuple[float, float]:
+    """Return the midpoint of a materialized gate's road-crossing segment."""
+
+    if gate.geometry is None:
+        raise ValueError("mission gate has no materialized geometry")
+    start, end = gate.geometry.line_xy
+    return ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)

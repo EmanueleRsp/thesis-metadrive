@@ -39,7 +39,7 @@ def test_tracker_advances_directed_gate_and_is_idempotent() -> None:
     assert after == tracker.snapshot()
 
 
-def test_tracker_reports_unreachable_and_completion_never_decreases() -> None:
+def test_tracker_remains_active_after_leaving_the_route_lane() -> None:
     tracker = MissionTracker(_mission(), LaneGraph({"a": 10.0, "b": 10.0}, {"a": ("b",)}), "a", 2.0)
     footprint = oriented_bounding_box(
         center_xy=(2.0, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0
@@ -55,7 +55,7 @@ def test_tracker_reports_unreachable_and_completion_never_decreases() -> None:
         post_heading_rad=0.0,
         post_ego_z_m=0.0,
     )
-    unreachable = tracker.update(
+    recovered = tracker.update(
         "a",
         8.0,
         "lost",
@@ -66,8 +66,9 @@ def test_tracker_reports_unreachable_and_completion_never_decreases() -> None:
         post_heading_rad=0.0,
         post_ego_z_m=0.0,
     )
-    assert unreachable.mission_unreachable
-    assert unreachable.route_completion >= progressed.route_completion
+    assert recovered.mission_unreachable is False
+    assert recovered.reachable is True
+    assert recovered.route_completion >= progressed.route_completion
 
 
 def test_graph_recovery_tie_break_and_cycle_are_deterministic() -> None:
@@ -108,6 +109,27 @@ def test_tracker_reset_instances_are_isolated_and_gate_distance_is_continuous() 
         post_ego_z_m=0.0,
     )
 
-    assert advanced.remaining_distance_m == 8.0
+    assert 0.0 <= advanced.remaining_distance_m < first.snapshot_at(0).remaining_distance_m
     assert second.snapshot().pending_gate_index == 0
     assert second.snapshot().remaining_distance_m == 16.0
+
+
+def test_tracker_advances_a_wide_gate_without_lane_identity() -> None:
+    tracker = MissionTracker(_mission(), LaneGraph({"a": 10.0, "b": 10.0}, {"a": ("b",)}), "a", 2.0)
+    pre = oriented_bounding_box(center_xy=(8.0, 4.0), heading_rad=0.0, length_m=4.0, width_m=2.0)
+    post = oriented_bounding_box(center_xy=(11.0, 4.0), heading_rad=0.0, length_m=4.0, width_m=2.0)
+
+    snapshot = tracker.update(
+        "opposing-lane",
+        0.0,
+        "opposing-lane",
+        0.0,
+        pre_footprint=pre,
+        post_footprint=post,
+        pre_heading_rad=0.0,
+        post_heading_rad=0.0,
+        post_ego_z_m=0.0,
+    )
+
+    assert snapshot.pending_gate_index == 1
+    assert snapshot.mission_unreachable is False

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,12 @@ from thesis_rl.envs import thesis_scenario_env as thesis_env_module
 from thesis_rl.envs.thesis_scenario_env import scenario_time_limit_reached
 from thesis_rl.mission.types import MissionSnapshot
 from thesis_rl.runtime.wiring.builders import collect_scenario_runtime_stats
+
+
+@dataclass(frozen=True)
+class _MissionDoneSnapshot:
+    step_index: int
+    mission_snapshot: MissionSnapshot | None = None
 
 
 @pytest.mark.parametrize(
@@ -449,8 +456,8 @@ def _make_done_test_env(
         snapshot=mission_snapshot,
         update=lambda _pre, _post: mission_snapshot,
     )
-    env._mission_pre_snapshot = object()
-    env._mission_snapshotter = lambda _env: object()
+    env._mission_pre_snapshot = _MissionDoneSnapshot(0, mission_snapshot)
+    env._mission_snapshotter = lambda _env: _MissionDoneSnapshot(1, mission_snapshot)
     env._last_done_info = {}
     monkeypatch.setattr(
         thesis_env_module.ScenarioEnv,
@@ -476,6 +483,37 @@ def test_thesis_done_makes_continuous_line_only_non_terminal(
     assert info["crossed_continuous_line"] is True
     assert info["physical_out_of_road"] is False
     assert info["out_of_road"] is False
+
+
+def test_thesis_done_updates_mission_once_per_committed_episode_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _make_done_test_env(monkeypatch, base_done=False, done_info={}, episode_steps=0)
+    reset_snapshot = MissionSnapshot("mission", 0, 0, 10.0, 0.0, True, False, False)
+    committed_snapshot = MissionSnapshot("mission", 1, 0, 9.0, 0.1, True, False, False)
+    updates: list[tuple[object, object]] = []
+
+    class Runtime:
+        snapshot = reset_snapshot
+
+        def update(self, pre, post):
+            updates.append((pre, post))
+            self.snapshot = committed_snapshot
+            return committed_snapshot
+
+    env._mission_runtime = Runtime()
+    env._mission_pre_snapshot = _MissionDoneSnapshot(0, reset_snapshot)
+    env._mission_snapshotter = lambda _env: _MissionDoneSnapshot(1, reset_snapshot)
+
+    env.done_function("default_agent")
+    assert updates == []
+
+    env.episode_lengths["default_agent"] = 1
+    env.done_function("default_agent")
+    env.done_function("default_agent")
+
+    assert len(updates) == 1
+    assert env._mission_pre_snapshot.mission_snapshot == committed_snapshot
 
 
 def test_thesis_done_does_not_terminate_route_deviation_on_road(

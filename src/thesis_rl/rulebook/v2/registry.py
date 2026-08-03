@@ -117,7 +117,7 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
         normative_output=False,
     ),
     ComponentDefinition(
-        "progress", MacroRule.ROUTE_PROGRESS, evaluate_progress, frozenset({"previous_route_s_m"})
+        "progress", MacroRule.ROUTE_PROGRESS, evaluate_progress
     ),
 )
 
@@ -186,7 +186,6 @@ class RulebookV2Registry:
             "vehicle_yield_illegal_entries",
             "preexisting_ego_occupancy_zone_ids",
             "frozen_actor_movement_keys",
-            "previous_route_s_m",
             "actor_motion_histories",
             "previous_sim_time_s",
         }

@@ -41,6 +41,7 @@ class RouteLaneRecord:
     polygon_xy: BaseGeometry
     centerline: RoutePolyline
     successor_lane_ids: tuple[str, ...] = ()
+    lateral_lane_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.lane_id:
@@ -49,6 +50,8 @@ class RouteLaneRecord:
             raise ValueError("Route lane polygon must be non-empty and valid")
         if any(not isinstance(lane_id, str) or not lane_id for lane_id in self.successor_lane_ids):
             raise ValueError("Route lane successor IDs must be non-empty strings")
+        if any(not isinstance(lane_id, str) or not lane_id for lane_id in self.lateral_lane_ids):
+            raise ValueError("Route lane lateral IDs must be non-empty strings")
 
 
 def derive_lane_movement_key(

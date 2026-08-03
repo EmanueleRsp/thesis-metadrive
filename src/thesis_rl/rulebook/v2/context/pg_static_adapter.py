@@ -97,7 +97,23 @@ def _lane_record(
             1.75, cap_style="flat", join_style="mitre"
         )
     successors = tuple(str(successor) for successor in lane.get("exit_lanes", ()))
-    return RouteLaneRecord(lane_id, polygon, centerline, successors)
+    lateral = _lateral_lane_ids(lane)
+    return RouteLaneRecord(lane_id, polygon, centerline, successors, lateral)
+
+
+def _lateral_lane_ids(lane: Mapping[str, Any]) -> tuple[str, ...]:
+    """Extract explicit source-map lateral adjacency without geometric guessing."""
+
+    result: set[str] = set()
+    for key in ("left_neighbor", "right_neighbor"):
+        values = lane.get(key, ())
+        if not isinstance(values, (list, tuple)):
+            values = (values,)
+        for value in values:
+            lane_id = value.get("feature_id") if isinstance(value, Mapping) else value
+            if lane_id is not None and str(lane_id):
+                result.add(str(lane_id))
+    return tuple(sorted(result))
 
 
 def _lane_successors(features: Mapping[Any, Any]) -> dict[str, tuple[str, ...]]:

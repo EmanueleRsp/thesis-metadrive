@@ -117,7 +117,7 @@ def test_monitor_commit_is_atomic_when_cache_validation_fails_after_memory_propo
     memory = RulebookMemory()
     output = (
         _component("offroad", 0.0),
-        MemoryDelta("progress", (("previous_route_s_m", 3.0),)),
+        MemoryDelta("progress"),
         CacheDelta((zone,)),
     )
     with pytest.raises(RulebookEvaluationError):

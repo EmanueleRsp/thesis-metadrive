@@ -273,14 +273,9 @@ def diagnostic_geometry(
     if route is not None and route_points and ego_position is not None:
         try:
             projection = route.project(ego_position)
-            past_world = list(route_points[: projection.segment_index + 1])
-            past_world.append(route.point_at(projection.s_m))
             future_world = [
                 route.point_at(projection.s_m),
                 *route_points[projection.segment_index + 1 :],
-            ]
-            geometry["route_past"] = [
-                point for point in (to_screen(p) for p in past_world) if point
             ]
             geometry["route_future"] = [
                 point for point in (to_screen(p) for p in future_world) if point
@@ -288,21 +283,36 @@ def diagnostic_geometry(
         except Exception:
             pass
 
-    # REQ-001 (video overlay v1, 2026-07-31): discrete planned-checkpoint
-    # markers, one per lane in the frozen assigned-route sequence, distinct
-    # from the continuous route_past/route_future polyline above.
-    checkpoint_points = getattr(route, "lane_start_points_xyz", None)
-    if checkpoint_points:
-        try:
-            geometry["checkpoints"] = [
-                point for point in (to_screen(p) for p in checkpoint_points) if point
-            ]
-        except Exception:
-            pass
-
-    target = to_screen(info.get("target_point"))
-    if target is not None:
-        geometry["target"] = target
+    runtime = getattr(base, "_mission_runtime", None)
+    gates = getattr(runtime, "gates", ())
+    snapshot = getattr(runtime, "snapshot", None)
+    pending_index = getattr(snapshot, "pending_gate_index", None)
+    if isinstance(pending_index, int):
+        rendered_gates: list[dict[str, Any]] = []
+        for index, gate in enumerate(gates):
+            gate_geometry = getattr(gate, "geometry", None)
+            line_xy = getattr(gate_geometry, "line_xy", None)
+            if line_xy is None or len(line_xy) != 2:
+                continue
+            line = [point for point in (to_screen(point) for point in line_xy) if point]
+            if len(line) != 2:
+                continue
+            state = (
+                "passed"
+                if index < pending_index
+                else "pending"
+                if index == pending_index
+                else "future"
+            )
+            rendered_gates.append(
+                {
+                    "line": line,
+                    "state": state,
+                    "final": index == len(gates) - 1,
+                }
+            )
+        if rendered_gates:
+            geometry["mission_gates"] = rendered_gates
 
     # REQ-002 (video overlay v1, 2026-07-31): ego-actually-traveled trail,
     # amending ADR-020 (see ADR-020 update dated 2026-07-31). Best-effort:
@@ -344,16 +354,6 @@ def diagnostic_geometry_from_env(env: Any, ego_trail_world: Any = None) -> dict[
         vehicle = getattr(getattr(base, "engine", None), "current_track_agent", None)
     if vehicle is None:
         return {}
-    navigation = getattr(vehicle, "navigation", None)
-    target = None
-    final_lane = getattr(navigation, "final_lane", None) if navigation is not None else None
-    if final_lane is not None and hasattr(final_lane, "position"):
-        try:
-            target = final_lane.position(float(getattr(final_lane, "length", 0.0)), 0.0)
-        except Exception:
-            target = None
-    if target is None and navigation is not None:
-        target = getattr(navigation, "current_checkpoint", None)
     neighbors: list[dict[str, Any]] = []
     agents = getattr(base, "agents", {})
     if isinstance(agents, Mapping):
@@ -372,7 +372,6 @@ def diagnostic_geometry_from_env(env: Any, ego_trail_world: Any = None) -> dict[
         base,
         {
             "ego_state": {"position": getattr(vehicle, "position", None)},
-            "target_point": target,
             "neighbors": neighbors,
         },
         ego_trail_world=ego_trail_world,
@@ -416,24 +415,22 @@ def _draw_geometry(draw: Any, geometry: Mapping[str, Any]) -> None:
             draw.line([tuple(map(float, point)) for point in points], fill=color, width=width)
 
     line(geometry.get("route_future"), (50, 130, 255, 125), width=2)
-    line(geometry.get("route_past"), (50, 190, 80, 190), width=3)
     # REQ-002: thin, muted violet, visually distinct from the green
     # route_past line so the planned-route-covered segment and the
     # actually-driven ego path remain separable at a glance.
     line(geometry.get("ego_trail"), (150, 90, 200, 140), width=2)
-    target = geometry.get("target")
-    if isinstance(target, (list, tuple)) and len(target) >= 2:
-        x, y = float(target[0]), float(target[1])
-        draw.ellipse((x - 5, y - 5, x + 5, y + 5), outline=(30, 80, 220, 210), width=2)
-    # REQ-001: discrete planned-checkpoint markers (small hollow diamonds),
-    # distinct in shape/color from the single next-target ellipse above.
-    for point in geometry.get("checkpoints", ()):
-        x, y = float(point[0]), float(point[1])
-        draw.polygon(
-            [(x, y - 5), (x + 5, y), (x, y + 5), (x - 5, y)],
-            outline=(210, 150, 20, 200),
-            width=2,
-        )
+    gate_colours = {
+        "passed": (50, 190, 80, 235),
+        "pending": (255, 190, 25, 245),
+        "future": (120, 130, 145, 150),
+    }
+    for gate in geometry.get("mission_gates", ()):
+        if not isinstance(gate, Mapping):
+            continue
+        gate_line = gate.get("line")
+        colour = gate_colours.get(str(gate.get("state")), gate_colours["future"])
+        width = 4 if gate.get("final") else 3
+        line(gate_line, colour, width=width)
     for point, critical in geometry.get("neighbors", ()):
         x, y = float(point[0]), float(point[1])
         color = (220, 40, 35, 225) if critical else (240, 145, 20, 210)

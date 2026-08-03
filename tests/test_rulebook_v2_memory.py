@@ -41,10 +41,9 @@ def test_memory_merge_enforces_ownership_and_duplicate_writers() -> None:
     memory = RulebookMemory()
     updated = merge_memory_deltas(
         memory,
-        (MemoryDelta("progress", (("previous_route_s_m", 3.0),)),),
+        (MemoryDelta("progress"),),
     )
-    assert updated.previous_route_s_m == 3.0
-    assert memory.previous_route_s_m == 0.0
+    assert updated == memory
     with pytest.raises(ValueError, match="does not own"):
         merge_memory_deltas(
             memory, (MemoryDelta("progress", (("previous_contact_ids", frozenset()),)),)
@@ -53,8 +52,8 @@ def test_memory_merge_enforces_ownership_and_duplicate_writers() -> None:
         merge_memory_deltas(
             memory,
             (
-                MemoryDelta("progress", (("previous_route_s_m", 1.0),)),
-                MemoryDelta("progress", (("previous_route_s_m", 2.0),)),
+                MemoryDelta("collision", (("previous_contact_ids", frozenset()),)),
+                MemoryDelta("collision", (("previous_contact_ids", frozenset()),)),
             ),
         )
 
@@ -114,5 +113,5 @@ def test_memory_initialization_records_reset_contacts_route_and_occupancy() -> N
         zone_polygons={"zone": Polygon(((1.0, -1.0), (3.0, -1.0), (3.0, 1.0), (1.0, 1.0)))},
     )
     assert memory.previous_contact_ids == frozenset({"other"})
-    assert memory.previous_route_s_m == 2.0
+    assert memory.previous_contact_ids == frozenset({"other"})
     assert memory.preexisting_ego_occupancy_zone_ids == frozenset({"zone"})

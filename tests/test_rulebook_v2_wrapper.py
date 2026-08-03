@@ -211,7 +211,7 @@ def test_wrapper_does_not_commit_memory_or_snapshot_when_cache_commit_fails():
     def evaluate_transition(**kwargs):
         return (
             RulebookResult((0.0, 0.0, 0.0, 0.1), (0.0, 0.0, 0.0), 1.0, {}, True),
-            RulebookMemory(previous_route_s_m=9.0),
+            RulebookMemory(),
             CacheDelta((bad_zone,)),
         )
 
@@ -248,19 +248,18 @@ def test_wrapper_instances_keep_memory_and_cache_isolated_per_environment():
         _Env(),
         snapshotter=snapshot,
         transition_evaluator=evaluate_transition,
-        initial_memory=RulebookMemory(previous_route_s_m=1.0),
+        initial_memory=RulebookMemory(),
         initial_cache=EpisodeCache("s1", route_one),
     )
     second = RulebookV2MonitorWrapper(
         _Env(),
         snapshotter=snapshot,
         transition_evaluator=evaluate_transition,
-        initial_memory=RulebookMemory(previous_route_s_m=2.0),
+        initial_memory=RulebookMemory(),
         initial_cache=EpisodeCache("s2", route_two),
     )
     first.reset()
     second.reset()
-    assert first.memory.previous_route_s_m == 1.0
-    assert second.memory.previous_route_s_m == 2.0
+    assert first.memory == second.memory == RulebookMemory()
     assert first.cache.scenario_id == "s1"
     assert second.cache.scenario_id == "s2"

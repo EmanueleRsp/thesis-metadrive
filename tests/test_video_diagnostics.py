@@ -177,11 +177,11 @@ def test_geometry_extraction_uses_renderer_and_vehicle_fallbacks() -> None:
 
     geometry = diagnostic_geometry(Env(), {})
 
-    assert len(geometry["route_past"]) >= 2
+    assert "route_past" not in geometry
     assert len(geometry["route_future"]) >= 2
 
 
-def test_geometry_extraction_includes_checkpoint_markers_from_lane_starts() -> None:
+def test_geometry_extraction_uses_mission_gates_instead_of_route_checkpoints() -> None:
     from thesis_rl.runtime.io.video_diagnostics import diagnostic_geometry
     from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 
@@ -202,24 +202,23 @@ def test_geometry_extraction_includes_checkpoint_markers_from_lane_starts() -> N
         current_track_agent = Vehicle()
         target_agent_heading_up = False
 
+    class Runtime:
+        gates = ()
+
     class Context:
-        route_polyline = RoutePolyline.from_lane_centerlines(
-            (
-                ((0.0, 5.0, 0.0), (10.0, 5.0, 0.0)),
-                ((10.0, 5.0, 0.0), (20.0, 5.0, 0.0)),
-            )
-        )
+        route_polyline = RoutePolyline(((0.0, 5.0, 0.0), (20.0, 5.0, 0.0)))
 
     class Env:
         top_down_renderer = Renderer()
         causal_scene_context = Context()
+        _mission_runtime = Runtime()
 
     geometry = diagnostic_geometry(Env(), {})
 
-    assert len(geometry["checkpoints"]) == 2
+    assert "checkpoints" not in geometry
 
 
-def test_geometry_extraction_omits_checkpoints_when_route_has_none() -> None:
+def test_geometry_extraction_projects_mission_gates_with_progress_colours() -> None:
     from thesis_rl.runtime.io.video_diagnostics import diagnostic_geometry
     from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 
@@ -239,6 +238,30 @@ def test_geometry_extraction_omits_checkpoints_when_route_has_none() -> None:
         position = None
         current_track_agent = Vehicle()
         target_agent_heading_up = False
+
+    from thesis_rl.mission.gates import GateGeometry
+    from thesis_rl.mission.types import DirectedGate, LaneSpan, MissionSnapshot
+
+    span = LaneSpan("a", 0.0, 10.0)
+
+    class Runtime:
+        gates = (
+            DirectedGate(
+                "gate:0",
+                (span,),
+                "a",
+                1.0,
+                GateGeometry(((3.0, 4.0), (3.0, 6.0)), (1.0, 0.0), 0.0),
+            ),
+            DirectedGate(
+                "goal:final",
+                (span,),
+                "a",
+                2.0,
+                GateGeometry(((8.0, 4.0), (8.0, 6.0)), (1.0, 0.0), 0.0),
+            ),
+        )
+        snapshot = MissionSnapshot("mission", 2, 1, 3.0, 0.5, True, False, False)
 
     class Context:
         route_polyline = RoutePolyline(((0.0, 5.0, 0.0), (10.0, 5.0, 0.0)))
@@ -246,10 +269,14 @@ def test_geometry_extraction_omits_checkpoints_when_route_has_none() -> None:
     class Env:
         top_down_renderer = Renderer()
         causal_scene_context = Context()
+        _mission_runtime = Runtime()
 
     geometry = diagnostic_geometry(Env(), {})
 
-    assert "checkpoints" not in geometry
+    assert geometry["mission_gates"] == [
+        {"line": [(30.0, 40.0), (30.0, 60.0)], "state": "passed", "final": False},
+        {"line": [(80.0, 40.0), (80.0, 60.0)], "state": "pending", "final": True},
+    ]
 
 
 def test_geometry_extraction_projects_ego_trail_when_given() -> None:
@@ -310,7 +337,7 @@ def test_geometry_extraction_omits_ego_trail_when_not_given() -> None:
     assert "ego_trail" not in geometry
 
 
-def test_annotator_draws_checkpoints_and_ego_trail_without_crashing() -> None:
+def test_annotator_draws_mission_gates_and_ego_trail_without_crashing() -> None:
     frame = np.zeros((48, 64, 3), dtype=np.uint8)
     state = DiagnosticState(algorithm="sac_sb3")
     state.update(-0.5)
@@ -320,7 +347,10 @@ def test_annotator_draws_checkpoints_and_ego_trail_without_crashing() -> None:
         reward=-0.5,
         step_info=_step_info(),
         geometry={
-            "checkpoints": [(10, 10), (30, 15)],
+            "mission_gates": [
+                {"line": [(10, 10), (10, 30)], "state": "passed", "final": False},
+                {"line": [(30, 10), (30, 30)], "state": "pending", "final": True},
+            ],
             "ego_trail": [(5, 40), (15, 30), (25, 25)],
         },
     )

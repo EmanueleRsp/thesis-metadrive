@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 import math
 import time
+from dataclasses import replace
 from typing import Any
 
 from thesis_rl.envs.scene_context import SceneContextAdapter
@@ -114,6 +115,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         self._mission_runtime: Any | None = None
         self._mission_pre_snapshot: Any | None = None
         self._mission_snapshotter: Any | None = None
+        self._mission_last_update_episode_length: int | None = None
         self._mission_static_result: Any | None = None
         self._mission_episode_cache: Any | None = None
 
@@ -522,8 +524,16 @@ class ThesisScenarioEnv(ScenarioEnv):
         self._mission_runtime = MissionRuntime(
             DrivingMissionRecord.from_dict(mission_payload), cache.route_lanes, initial_snapshot
         )
+        initial_snapshot = replace(initial_snapshot, mission_snapshot=self._mission_runtime.snapshot)
+
+        def capture_with_mission(_env: Any) -> EnvSnapshot:
+            snapshot = capture(_env)
+            runtime = self._mission_runtime
+            return replace(snapshot, mission_snapshot=None if runtime is None else runtime.snapshot)
+
         self._mission_pre_snapshot = initial_snapshot
-        self._mission_snapshotter = capture
+        self._mission_snapshotter = capture_with_mission
+        self._mission_last_update_episode_length = None
 
     def _install_rulebook_v2_adapter(self) -> None:
         """Install the source-bound Rulebook adapter after ScenarioEnv reset."""
@@ -594,6 +604,13 @@ class ThesisScenarioEnv(ScenarioEnv):
             )
         )
         initial_snapshot = snapshotter.capture(self)
+        if self._mission_runtime is None:
+            raise RuntimeError("Rulebook v2 adapter requires the installed driving mission runtime")
+        initial_snapshot = replace(initial_snapshot, mission_snapshot=self._mission_runtime.snapshot)
+
+        def snapshot_with_mission(env: Any) -> EnvSnapshot:
+            snapshot = snapshotter.capture(env)
+            return replace(snapshot, mission_snapshot=self._mission_runtime.snapshot)
         calibration = None
         data_directory = Path(str(self.config.get("data_directory", "")))
         data_root = data_directory.parent.parent
@@ -635,7 +652,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             None if calibration is None else calibration.ego_min_brake_mps2
         )
         self.rulebook_v2_adapter = RulebookV2Adapter(
-            snapshotter=snapshotter.capture,
+            snapshotter=snapshot_with_mission,
             transition_evaluator=transition_evaluator_factory(transition_config),
             initial_memory=initial_memory_for_snapshot(initial_snapshot, cache),
             initial_cache=cache,
@@ -804,8 +821,26 @@ class ThesisScenarioEnv(ScenarioEnv):
         if runtime is None or not callable(snapshotter) or self._mission_pre_snapshot is None:
             raise RuntimeError("Driving mission runtime is unavailable before done evaluation")
         post_snapshot = snapshotter(self)
-        mission_snapshot = runtime.update(self._mission_pre_snapshot, post_snapshot)
-        self._mission_pre_snapshot = post_snapshot
+        episode_length = int(self.episode_lengths[vehicle_id])
+        if (
+            episode_length <= 0
+            or getattr(self, "_mission_last_update_episode_length", None) == episode_length
+        ):
+            # MetaDrive evaluates done during reset and may invoke it once per
+            # active agent. BaseEnv increments episode_lengths immediately
+            # before done_function only for a committed env.step(), making it
+            # the causal discriminator when episode_step is not advanced by a
+            # source-specific ScenarioEnv path.
+            mission_snapshot = runtime.snapshot
+        else:
+            mission_snapshot = runtime.update(self._mission_pre_snapshot, post_snapshot)
+            # The physical post-state is the causal pre-state for the next
+            # transition, while the mission tracker has just committed the
+            # new ordered-gate state. Keep both in one immutable snapshot.
+            self._mission_pre_snapshot = replace(
+                post_snapshot, mission_snapshot=mission_snapshot
+            )
+            self._mission_last_update_episode_length = episode_length
         done, done_info = super().done_function(vehicle_id)
         vehicle = self.agents[vehicle_id]
         line_only = self.scene_context.is_on_continuous_line(vehicle)
@@ -845,8 +880,8 @@ class ThesisScenarioEnv(ScenarioEnv):
         # success. The thesis additionally rejects routes shorter than 10 m,
         # which are too short to provide a meaningful RL episode.
         done_info[TerminationState.SUCCESS] = mission_snapshot.mission_success
-        done_info["mission_unreachable"] = mission_snapshot.mission_unreachable
-        done = self._recompute_terminated(done_info) or mission_snapshot.mission_unreachable
+        done_info["mission_unreachable"] = False
+        done = self._recompute_terminated(done_info)
 
         # Do not use the native truthy allowed_more_steps branch: zero is a
         # meaningful value in the thesis contract.
@@ -862,9 +897,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         done_info["physical_out_of_road"] = bool(physical_out)
         done_info.update(self.scene_context.get_physical_road_diagnostics(self, vehicle))
         done_info["termination_reason"] = (
-            "mission_unreachable"
-            if mission_snapshot.mission_unreachable
-            else self.scene_context.get_termination_reason(self, vehicle, done_info)
+            self.scene_context.get_termination_reason(self, vehicle, done_info)
         )
         self._last_done_info = dict(done_info)
         return done, done_info

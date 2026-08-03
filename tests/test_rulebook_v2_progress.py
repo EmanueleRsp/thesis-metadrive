@@ -62,3 +62,28 @@ def test_progress_rejects_nonconsecutive_or_cross_mission_snapshots() -> None:
             post_mission=_snapshot(step=1, remaining_distance_m=8.0, mission_hash="two"),
             delta_t_s=0.1,
         )
+
+
+def test_progress_accepts_terminal_unreachable_reset_noop() -> None:
+    terminal = MissionSnapshot(
+        mission_hash="mission",
+        step_index=0,
+        pending_gate_index=0,
+        remaining_distance_m=0.0,
+        route_completion=0.0,
+        reachable=False,
+        mission_success=False,
+        mission_unreachable=True,
+        reason="mission_unreachable",
+    )
+
+    result, delta, _ = evaluate_progress(
+        pre_mission=terminal,
+        post_mission=terminal,
+        delta_t_s=0.1,
+    )
+
+    assert result.cost == 0.0
+    assert result.raw["mission_distance_delta_m"] == 0.0
+    assert result.diagnostics["terminal_mission_unreachable_noop"] is True
+    assert delta.writes == ()

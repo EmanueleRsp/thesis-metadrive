@@ -51,10 +51,6 @@ def initialize_rulebook_memory(
 ) -> RulebookMemory:
     """Initialize reset-owned causal state without attributing reset events to policy."""
 
-    projection = route.project(
-        reset_snapshot.ego.position_xy,
-        position_z=reset_snapshot.ego.position_z,
-    )
     preexisting = frozenset(
         zone_id
         for zone_id, polygon in zone_polygons.items()
@@ -65,7 +61,6 @@ def initialize_rulebook_memory(
     return RulebookMemory(
         previous_contact_ids=reset_snapshot.active_contact_ids,
         preexisting_ego_occupancy_zone_ids=preexisting,
-        previous_route_s_m=projection.s_m,
         actor_motion_histories=tuple(
             ActorMotionHistory(
                 actor.actor_id,

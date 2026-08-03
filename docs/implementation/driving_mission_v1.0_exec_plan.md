@@ -77,7 +77,7 @@ The following are authoritative requirements.
 | `REQ-MSN-003` | Directed sequential gate crossing | §6, REQ-MSN-003 |
 | `REQ-MSN-004` | Directed final goal from offline annotation | §6, REQ-MSN-004 |
 | `REQ-MSN-005` | One environment-owned tracker and immutable snapshot | §6, REQ-MSN-005 |
-| `REQ-MSN-006` | Deterministic legal recovery and remaining distance | §6, REQ-MSN-006 |
+| `REQ-MSN-006` | Deterministic geometric remaining distance | §6, REQ-MSN-006; ADR-053 |
 | `REQ-MSN-007` | Globally normalized remaining-distance R4 | §6-§7.2 |
 | `REQ-MSN-008` | Mission-derived completion, success, and boundaries | §6, REQ-MSN-008 |
 | `REQ-MSN-009` | Cross-arm observation consistency | §6, REQ-MSN-009 |
@@ -98,10 +98,10 @@ The following are authoritative requirements.
    that annotation after ScenarioDataManager reset.
 3. PG/Waymo static adapters build `TaskRouteRecord`, all `RouteLaneRecord`
    objects, one preferred `RoutePolyline`, controls, zones, and episode cache.
-4. `initial_memory_for_snapshot` initializes `previous_route_s_m` from a
-   preferred-polyline projection.
+4. `initial_memory_for_snapshot` initializes only Rulebook-owned causal state;
+   mission progress is supplied by the reset `MissionSnapshot`.
 5. each Rulebook transition evaluates `components/progress.py::evaluate_progress`
-   with preferred-polyline pre/post projections and actor configured speed cap.
+   with pre/post mission distances and the global reference speed.
 6. semantic and LiDAR builders independently project current ego and sample
    ten preferred-route waypoints.
 7. `ThesisScenarioEnv._is_thesis_success` and `_attach_route_metrics` read
@@ -116,7 +116,7 @@ The following are authoritative requirements.
 | `VERIFIED` | `src/thesis_rl/rulebook/v2/types.py::TaskRouteRecord` | Preferred lane list only |
 | `VERIFIED` | `src/thesis_rl/rulebook/v2/geometry/lanes.py::RouteLaneRecord` | Successors only; no normalized lateral relations/spans |
 | `VERIFIED` | `src/thesis_rl/rulebook/v2/geometry/route.py::RoutePolyline` | One concatenated preferred coordinate; lane starts diagnostic |
-| `VERIFIED` | `src/thesis_rl/rulebook/v2/components/progress.py::evaluate_progress` | `delta_s / (configured_cap * delta_t)` and `previous_route_s_m` |
+| `VERIFIED` | `src/thesis_rl/rulebook/v2/components/progress.py::evaluate_progress` | Mission `D_pre - D_post` and the global R4 normalizer |
 | `VERIFIED` | `src/thesis_rl/rulebook/v2/transition.py::route_reachable_control_lane_ids` | ADR-051 one-hop static workaround |
 | `VERIFIED` | `src/thesis_rl/envs/thesis_scenario_env.py` | Native success/completion, frozen route adapter wiring |
 | `VERIFIED` | `src/thesis_rl/envs/observations/causal_semantic.py` | ten 5 m preferred-route tokens; route-coordinate field |
@@ -143,8 +143,7 @@ The following are authoritative requirements.
 ### Directly relevant debt
 
 - preferred route and native success use different coordinates;
-- `previous_route_s_m` is Rulebook-owned although mission progress is an
-  environment-level task state;
+- mission progress was previously split from the environment-owned task state;
 - static consumers each reconstruct route relevance;
 - route projection can be discontinuous on self-intersections/roundabouts;
 - ADR-051 covers one successor hop only;
@@ -185,7 +184,7 @@ The following are authoritative requirements.
 
 | ID | Category | Issue | Alternatives | Recommendation | Impact | Status |
 |---|---|---|---|---|---|---|
-| `DEC-MSN-001` | specification clarification | Boundary when pending gate is unreachable | terminate / continue / truncate | terminate `mission_unreachable` | done/replay/metrics | Approved 2026-08-02 (ADR-052) |
+| `DEC-MSN-001` | specification clarification | Boundary when pending gate is unreachable | terminate / continue / truncate | continue with ordered geometric gates | done/replay/metrics | Superseded by ADR-053, approved 2026-08-03 |
 | `DEC-MSN-002` | scientific behavior | Current final-goal source | terminal SDC projection / lane end / source-specific | terminal SDC projection for both sources | dataset/success | Approved 2026-08-02 (ADR-052) |
 | `DEC-MSN-003` | scientific parameter | R4 scale | 80 km/h global / empirical / scenario cap | global `22.2222222222 m/s` | reward comparability | Approved 2026-08-02 (ADR-052) |
 | `DEC-MSN-004` | compatibility | Observation migration | new same-shape IDs / wider / overwrite | new same-shape IDs | checkpoints/replays | Approved 2026-08-02 (ADR-052) |
@@ -266,7 +265,7 @@ and before Rulebook/observation construction. It updates the tracker once at
 the causal commit boundary. Extend `CausalSceneContext` with the immutable
 mission snapshot, not mutable tracker state.
 
-Rulebook memory drops `previous_route_s_m` after compatibility migration. The
+Rulebook memory drops route-progress state after compatibility migration. The
 progress component becomes a pure consumer of pre/post mission distances and
 `delta_t`. The registry writer contract and golden traces change accordingly.
 
@@ -539,6 +538,82 @@ explicit informed authorization because source files are pickle artifacts.
 - Tests: `TEST-MSN-013` through `016`, `025` through `028` plus complete
   Rulebook regression suite.
 - Completion evidence: pending.
+
+#### 2026-08-03 ADR-053 amendment
+
+- User approved replacement of graph-unreachable task termination with ordered
+  geometric gate-only mission boundaries. Collision, physical out-of-road, and
+  final-gate success are the only terminations; the time limit remains a
+  truncation.
+- `MissionTracker` now computes remaining distance from the front bumper to
+  the pending gate plus fixed distances between ordered gate midpoints. It no
+  longer requires lane association to advance a gate or to remain active.
+- `mission_unreachable` remains a backward-compatible snapshot field but is
+  never produced by the amended runtime. Rulebook R2/R3 costs retain ownership
+  of lateral deviation, opposing carriageway, wrong-way, and partial off-road
+  behavior.
+- Added regression coverage for a gate crossing with no lane identity and for
+  an initially disconnected static lane graph that remains an active mission.
+- Runtime gate materialization now derives each transverse segment from the
+  source-declared lateral carriageway component and a 0.5 m envelope margin,
+  rather than an unbounded normal line. A regression fixture proves that an
+  opposing carriageway is included while a perpendicular crossing road is not.
+- Corrected the no-branch mission representation: when the sole section exit
+  is the final goal, it is one ordered physical boundary, not two consecutive
+  crossings. The final forward crossing now terminates successfully.
+- Video diagnostics now replace lane-start checkpoint diamonds and native
+  target markers with materialized mission-gate lines: passed green, pending
+  amber, future grey; the final gate is drawn thicker.
+- The planned-route overlay now begins at the current ego projection. It no
+  longer draws the static assigned-route prefix that precedes the reset pose;
+  the actual traveled history remains the separate ego-trail layer.
+
+#### M5 progress update — 2026-08-02
+
+- The acceptance-first `tests/test_rulebook_v2_progress.py` contract is now
+  implemented: R4 consumes only consecutive pre/post `MissionSnapshot` values
+  with matching mission identity and computes
+  `clip((D_pre - D_post) / (22.2222222222 * delta_t), -1, 1)`.
+- `RulebookMemory`, its registry ownership table, memory initialization, and
+  transition merge no longer contain `previous_route_s_m`.
+- `EnvSnapshot` carries an optional typed mission snapshot for compatibility
+  with isolated legacy fixtures; the production ScenarioEnv/Rulebook path
+  populates it and raises if the mission runtime is unavailable. The evaluator
+  itself rejects missing context explicitly; there is no native-navigation
+  fallback.
+- The remaining M5 work is to migrate legacy Rulebook fixtures and all
+  route-dependent consumers whose semantics still use the preferred polyline,
+  then verify the complete focused Rulebook suite. The first regression run
+  exposed exactly these stale fixtures; no production fallback was added.
+- `pytest -q tests/test_rulebook_v2_progress.py` passes (3 tests). Direct
+  `ruff` is unavailable in the current shell (`ruff: command not found`); the
+  project/container quality command remains pending. A GPU smoke is explicitly
+  deferred to the user.
+- A GPU smoke using an older synchronized container failed with
+  `Progress mission snapshots must be consecutive`. Root cause was verified in
+  the host source: `done_function` committed the tracker but retained the
+  pre-commit mission snapshot in `_mission_pre_snapshot`, so the next Rulebook
+  transition observed indices `0 -> 2`. The environment now stores the
+  committed mission snapshot together with the physical post-state. This is a
+  causal synchronization fix and does not alter the R4 formula or gate order.
+- A second synchronized run reproduced the same symptom because MetaDrive can
+  invoke `done_function` during reset and more than once for one simulator
+  step. The source-specific path can retain `EnvSnapshot.step_index == 0` on
+  the first control transition, so the environment now uses BaseEnv's
+  `episode_lengths[vehicle_id]` causal boundary: it is zero at reset and is
+  incremented before `done_function` for every committed `env.step()`. Reset
+  and duplicate calls retain the current tracker snapshot. The deterministic
+  regression `test_thesis_done_updates_mission_once_per_committed_episode_length`
+  pins this behavior. Consecutivity errors include both mission indices and
+  remaining distances for any further live diagnosis.
+- The resulting live diagnostic identified the remaining terminal edge case:
+  a reset association with no legal pending-gate path intentionally creates a
+  terminal `mission_unreachable` snapshot with `step_index=0` and `D=0`.
+  The tracker correctly returns that same immutable snapshot on the following
+  terminal no-op, but strict R4 consecutivity rejected it. R4 now assigns zero
+  only to this exact same-index `mission_unreachable` pair; every non-terminal
+  or otherwise non-consecutive pair still raises. `TEST-MSN-015` is covered by
+  `test_progress_accepts_terminal_unreachable_reset_noop`.
 
 ### M6 — Observation and encoder compatibility migration
 

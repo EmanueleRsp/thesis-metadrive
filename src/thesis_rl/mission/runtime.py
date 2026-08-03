@@ -3,24 +3,109 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from math import hypot
 from typing import Iterable
 
-from thesis_rl.mission.builder import NormalizedLane
+from shapely.geometry import LineString
+from shapely.ops import unary_union
+
 from thesis_rl.mission.distance import LaneGraph
+from thesis_rl.mission.gates import GateGeometry
 from thesis_rl.mission.tracker import MissionTracker
-from thesis_rl.mission.types import DirectedGate, DrivingMissionRecord, MissionSnapshot
+from thesis_rl.mission.types import (
+    DirectedGate,
+    DrivingMissionRecord,
+    MissionSnapshot,
+    ordered_mission_gates,
+)
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord, associate_route_lane
 from thesis_rl.rulebook.v2.types import EnvSnapshot
 
 
-def _materialize_gate(gate: DirectedGate, lanes: dict[str, NormalizedLane]) -> DirectedGate:
+GATE_ROAD_ENVELOPE_MARGIN_M = 0.5
+
+
+def _materialize_gate(
+    gate: DirectedGate, lanes: dict[str, RouteLaneRecord]
+) -> DirectedGate:
     lane = lanes.get(gate.lane_id)
     if lane is None:
         raise ValueError(f"mission gate references unknown live lane: {gate.lane_id}")
-    geometry = lane.gate_geometry_at(gate.s_m)
-    if geometry is None:
-        raise ValueError(f"mission gate cannot be materialized: {gate.gate_id}")
+    point = lane.centerline.point_at(gate.s_m)
+    projection = lane.centerline.project((point[0], point[1]), position_z=point[2])
+    tangent = projection.tangent_xy
+    normal = (-tangent[1], tangent[0])
+    envelope = unary_union(
+        [candidate.polygon_xy for candidate in _lateral_road_envelope(gate.lane_id, lanes)]
+    ).buffer(GATE_ROAD_ENVELOPE_MARGIN_M)
+    min_x, min_y, max_x, max_y = envelope.bounds
+    probe_half_width = max(
+        hypot(min_x - point[0], min_y - point[1]),
+        hypot(max_x - point[0], max_y - point[1]),
+    ) + GATE_ROAD_ENVELOPE_MARGIN_M
+    probe = LineString(
+        (
+            (point[0] - normal[0] * probe_half_width, point[1] - normal[1] * probe_half_width),
+            (point[0] + normal[0] * probe_half_width, point[1] + normal[1] * probe_half_width),
+        )
+    )
+    cross_section = probe.intersection(envelope)
+    coordinates = _line_coordinates(cross_section)
+    if len(coordinates) < 2:
+        raise ValueError(f"mission gate cannot derive road envelope: {gate.gate_id}")
+    offsets = tuple(
+        (x - point[0]) * normal[0] + (y - point[1]) * normal[1] for x, y in coordinates
+    )
+    geometry = GateGeometry(
+        (
+            (point[0] + normal[0] * min(offsets), point[1] + normal[1] * min(offsets)),
+            (point[0] + normal[0] * max(offsets), point[1] + normal[1] * max(offsets)),
+        ),
+        tangent,
+        point[2],
+    )
     return replace(gate, geometry=geometry)
+
+
+def _lateral_road_envelope(
+    gate_lane_id: str, lanes: dict[str, RouteLaneRecord]
+) -> tuple[RouteLaneRecord, ...]:
+    """Return the declared lateral carriageway component of a gate lane.
+
+    This intentionally relies on source-map adjacency rather than proximity:
+    a crossing road or a nearby parallel service road is not part of a gate
+    merely because it lies close to the same transverse line.
+    """
+
+    adjacent: dict[str, set[str]] = {lane_id: set() for lane_id in lanes}
+    for lane in lanes.values():
+        for neighbor in lane.lateral_lane_ids:
+            if neighbor in lanes:
+                adjacent[lane.lane_id].add(neighbor)
+                adjacent[neighbor].add(lane.lane_id)
+    selected = {gate_lane_id}
+    pending = [gate_lane_id]
+    while pending:
+        lane_id = pending.pop()
+        for neighbor in sorted(adjacent[lane_id]):
+            if neighbor not in selected:
+                selected.add(neighbor)
+                pending.append(neighbor)
+    return tuple(lanes[lane_id] for lane_id in sorted(selected))
+
+
+def _line_coordinates(geometry) -> tuple[tuple[float, float], ...]:
+    if geometry.is_empty:
+        return ()
+    if geometry.geom_type in {"LineString", "LinearRing"}:
+        return tuple((float(x), float(y)) for x, y, *_ in geometry.coords)
+    if hasattr(geometry, "geoms"):
+        return tuple(
+            coordinate
+            for part in geometry.geoms
+            for coordinate in _line_coordinates(part)
+        )
+    return ()
 
 
 def _lanes_reaching_any_gate(
@@ -75,20 +160,8 @@ class MissionRuntime:
         missing = sorted(referenced_lane_ids.difference(all_by_id))
         if missing:
             raise ValueError(f"mission references unavailable live lanes: {missing[:5]}")
-        gates_to_materialize = (
-            *[section.exit_gate for section in mission.sections],
-            mission.final_goal,
-        )
-        normalized = {
-            lane.lane_id: NormalizedLane(
-                lane.lane_id,
-                lane.centerline.length_m,
-                lane.successor_lane_ids,
-                centerline=lane.centerline,
-            )
-            for lane in all_lanes
-        }
-        gates = tuple(_materialize_gate(gate, normalized) for gate in gates_to_materialize)
+        gates_to_materialize = ordered_mission_gates(mission)
+        gates = tuple(_materialize_gate(gate, all_by_id) for gate in gates_to_materialize)
         graph = LaneGraph(
             lengths_m={lane.lane_id: lane.centerline.length_m for lane in all_lanes},
             successors={
@@ -112,11 +185,19 @@ class MissionRuntime:
             "" if association is None else association.lane_id,
             0.0 if association is None else association.route_projection_s_m,
             materialized_gates=gates,
+            initial_footprint=initial_snapshot.ego.footprint,
+            initial_heading_rad=initial_snapshot.ego.heading_rad,
         )
 
     @property
     def snapshot(self) -> MissionSnapshot:
         return self._tracker.snapshot()
+
+    @property
+    def gates(self) -> tuple[DirectedGate, ...]:
+        """Return materialized ordered gates for read-only diagnostics."""
+
+        return self._tracker.gates
 
     def update(self, pre: EnvSnapshot, post: EnvSnapshot) -> MissionSnapshot:
         pre_association = _associate(pre, self._route_lanes)

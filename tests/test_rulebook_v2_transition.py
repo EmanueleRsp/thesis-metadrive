@@ -34,6 +34,7 @@ from thesis_rl.rulebook.v2.types import (
     MovementPriorityRecord,
     RoundaboutPriorityRecord,
 )
+from thesis_rl.mission.types import MissionSnapshot
 
 
 def _snapshot(step: int, time_s: float, x: float) -> EnvSnapshot:
@@ -48,7 +49,10 @@ def _snapshot(step: int, time_s: float, x: float) -> EnvSnapshot:
         "lane-a",
         10.0,
     )
-    return EnvSnapshot("scenario", step, time_s, ego, (), (), frozenset(), {})
+    return EnvSnapshot(
+        "scenario", step, time_s, ego, (), (), frozenset(), {},
+        MissionSnapshot("test-mission", step, 0, 100.0 - x, 0.0, True, False, False),
+    )
 
 
 def _cache() -> EpisodeCache:
@@ -154,7 +158,7 @@ def test_transition_invokes_complete_registry_and_keeps_vehicle_yield_not_applic
         "road_traffic_compliance",
     }
     assert result.components["vehicle_yield"].applicable is False
-    assert next_memory.previous_route_s_m > memory.previous_route_s_m
+    assert next_memory.previous_sim_time_s == post.sim_time_s
     assert cache_delta.new_conflict_zones == ()
 
 
@@ -415,7 +419,7 @@ def test_transition_rejects_non_positive_simulation_step() -> None:
         evaluate_transition(
             pre_state=pre,
             post_state=post,
-            memory=RulebookMemory(previous_route_s_m=1.0, previous_sim_time_s=1.0),
+            memory=RulebookMemory(previous_sim_time_s=1.0),
             cache=cache,
             config=RulebookTransitionConfig(),
         )
@@ -840,7 +844,11 @@ def test_vehicle_conflict_pair_cache_reuses_complete_canonical_candidates(
     )
     cached = apply_cache_delta(cache, delta)
     second_post = replace(
-        post, step_index=2, sim_time_s=0.2, ego=replace(post.ego, position_xy=(7.0, 0.0))
+        post,
+        step_index=2,
+        sim_time_s=0.2,
+        ego=replace(post.ego, position_xy=(7.0, 0.0)),
+        mission_snapshot=MissionSnapshot("test-mission", 2, 0, 93.0, 0.0, True, False, False),
     )
     second, _memory, _delta = evaluate_transition(
         pre_state=post,

@@ -7,6 +7,7 @@
 - Version: `1.0`
 - Status: `APPROVED`
 - Date: `2026-08-02`
+- Amended: `2026-08-03` by ADR-053
 - Supersedes: `NONE` until approved; if approved, it amends the route,
   progress, success, and route-observation subsets listed in Section 1.2
 - Related specifications:
@@ -21,6 +22,7 @@
   - `docs/decisions/ADR-043-evaluation-video-ego-trail-and-checkpoint-overlay.md`
   - `docs/decisions/ADR-051-traffic-control-route-successor-extension.md`
   - `docs/decisions/ADR-052-unified-driving-mission-contract.md` (approved)
+  - `docs/decisions/ADR-053-geometric-gate-only-mission-boundaries.md` (approved)
 - Related ExecPlan:
   `docs/implementation/driving_mission_v1.0_exec_plan.md`
 - Authoritative: `YES`
@@ -33,11 +35,10 @@ relevance, completion, and success. It replaces the current behavioral split
 between frozen assigned-route lanes, a concatenated Rulebook polyline, local
 observation waypoints, and MetaDrive native trajectory completion.
 
-The scientific objective is to reward physically meaningful progress toward an
-ordered driving task without requiring the ego to remain on one exact expert
-centerline. A legal parallel lane or legal recovery path remains valid when it
-can still reach the next mandatory movement. Illegal behavior remains governed
-by the higher-priority Rulebook costs.
+The scientific objective is to reward physically meaningful progress through
+an ordered driving task without requiring the ego to remain on one exact expert
+centerline or lane graph. Gates define task advancement; illegal or risky
+behavior remains governed by the higher-priority Rulebook costs.
 
 This is a project adaptation grounded in lane-level routing and route-completion
 practice. No cited system directly defines this repository's record layout,
@@ -120,15 +121,17 @@ Every unrelated clause remains unchanged.
 - **Allowed lane span**: `(lane_id, start_s_m, end_s_m)` on which the ego may
   travel while retaining a legal route to the next ordered gate.
 - **Route section**: an ordered task segment ending at one directed gate.
-- **Directed gate**: an oriented cross-section of one or more compatible lane
-  spans. Reaching it requires a forward swept-front-bumper crossing.
+- **Directed gate**: an oriented cross-section of the source-declared lateral
+  carriageway component at its station, with a 0.5 m road-envelope margin.
+  Mere spatial proximity never expands it to a crossing road or nearby service
+  road. Reaching it requires a forward swept-front-bumper crossing.
 - **Pending gate**: the first gate not yet crossed in order.
 - **Final goal**: the final directed gate, reached only after every prior gate.
 - **Preferred path**: the deterministic lane sequence used for local navigation
   tokens and tie-breaking when multiple legal paths are equal.
 - **Recovery path**: the deterministic shortest legal lane-graph path from the
   current associated lane/span to the pending gate.
-- **Remaining distance `D`**: meters of legal graph travel to the final goal
+- **Remaining distance `D`**: directed geometric meters to the final goal
   through every pending gate in order.
 - **Completion**: a dimensionless `[0,1]` task metric derived from remaining
   distance and made non-decreasing for reporting.
@@ -174,12 +177,11 @@ features.
 | Output | Meaning/type | Shape/unit/range | Ordering/mask | Consumer | Guarantees/edge cases |
 |---|---|---|---|---|---|
 | `MissionSnapshot` | Canonical task state | Typed immutable record | One per committed step | Environment, Rulebook, observations | Idempotent within one step |
-| `remaining_distance_m` | Legal distance through pending gates | finite meters, `>=0` while reachable | Current state | R4, metrics | Continuous across gate advancement within tolerance |
+| `remaining_distance_m` | Geometric distance through pending gates | finite meters, `>=0` | Current state | R4, metrics | Continuous across gate advancement within tolerance |
 | `route_progress_delta_m` | `D_pre - D_post` | finite signed meters | Per transition | R4, diagnostics | Reverse/recovery regression may be negative |
 | `progress_margin` | R4 | `[-1,1]` | Per transition | Rulebook scalarizer | Actor-cap invariant |
 | `route_completion` | Maximum-so-far completion | `[0,1]` | Non-decreasing | Evaluation/logging | `1` on final success |
 | `mission_success` | Ordered final gate reached | boolean | Terminal event | Environment | No point-radius shortcut |
-| `mission_unreachable` | No legal path to pending gate | boolean + reason | Terminal event if approved | Environment | Never a time-limit truncation |
 | Route tokens | Local preferred/recovery geometry | Existing tensor widths; versioned semantics | Forward ordered, masked | Semantic/LiDAR observations | No future dynamic state |
 
 ## 6. Functional Requirements
@@ -195,15 +197,16 @@ Missing, inconsistent, non-finite, or map-incompatible annotations fail closed.
 The mission shall contain one or more ordered sections. Each section shall have
 one preferred lane/span, one non-empty set of allowed lane spans, one directed
 exit gate, and an explicit successor section or final goal. Allowed spans shall
-include only traffic-rule-admissible lanes from which the next gate is reachable.
+remain immutable offline metadata for diagnostics and static Rulebook
+consumers; they do not restrict runtime task advancement.
 
 ### REQ-MSN-003: Directed Sequential Gate Crossing
 
-A gate is reached only when the ego's swept front bumper crosses it in the
-forward direction, on a vertically compatible allowed lane/span, while that
-gate is pending. Touching, spawning beyond, reverse crossing, crossing a future
-gate out of order, or entering a point-radius neighborhood shall not advance
-the mission.
+A gate is reached only when the ego's swept front bumper crosses its full
+materialized cross-section in the forward direction and on a vertically
+compatible level while that gate is pending. Touching, spawning beyond, reverse
+crossing, crossing a future gate out of order, or entering a point-radius
+neighborhood shall not advance the mission.
 
 ### REQ-MSN-004: Directed Final Goal
 
@@ -222,15 +225,14 @@ bit-identical and shall not mutate state.
 
 ### REQ-MSN-006: Legal Recovery And Remaining Distance
 
-For the pending gate, the tracker shall associate the ego to a vertically and
-directionally compatible current lane/span and compute a deterministic shortest
-traffic-rule-admissible path. Legal lane changes and parallel lanes are allowed.
-The ordered gate sequence and destination never change. Equal-cost paths use a
-stable documented tie-break favoring the preferred path, then lane ID.
+For the pending gate, the tracker shall compute directed geometric distance from
+the ego front bumper to that gate plus fixed distances between subsequent gate
+anchors. Current lane association is diagnostic-only and cannot terminate or
+block task progress. The ordered gate sequence and destination never change.
 
 ### REQ-MSN-007: R4 Route Progress
 
-R4 shall be the clipped reduction in remaining legal distance divided by one
+R4 shall be the clipped reduction in remaining geometric distance divided by one
 global frozen reference distance per step. Equal transitions shall produce the
 same R4 regardless of ego configured speed cap, source, split, or scenario.
 Gate-index advancement shall not create an artificial reward discontinuity.
@@ -239,9 +241,8 @@ Gate-index advancement shall not create an artificial reward discontinuity.
 
 Reported `route_completion` shall be non-decreasing and mission-derived.
 Success shall terminate the episode. Collision and physical out-of-road retain
-their approved termination semantics. A time limit remains truncation.
-`mission_unreachable`, if approved by `DEC-MSN-001`, is a task-failure
-termination with a distinct reason and is never relabelled as truncation.
+their approved termination semantics. A time limit remains truncation. Lane
+association and graph reachability never terminate an episode.
 
 ### REQ-MSN-009: Observation Consistency
 
@@ -303,16 +304,15 @@ shall be rejected rather than implicitly migrated.
 For state `x` with pending gate index `k`, define:
 
 ```text
-D(x, k) = d_legal(x, gate_k)
-          + sum(j=k to K-1, d_fixed(gate_j, gate_(j+1)))
+D(x, k) = d_directed_front(x, gate_k)
+          + sum(j=k to K-1, d_gate_anchor(gate_j, gate_(j+1)))
 ```
 
-where `d_legal` is the shortest legal lane-graph distance from the ego's
-associated lane/span to `gate_k`, and each downstream `d_fixed` is computed
-once from the immutable mission graph. For the final gate, the sum is empty.
-All edge weights are finite non-negative longitudinal meters. Legal lane-change
-edges carry their deterministic geometric travel distance and never a negative
-preference bonus.
+where `d_directed_front` is the non-negative directed distance from the ego
+front bumper to the pending gate, and each downstream distance is the fixed
+Euclidean distance between ordered gate anchors. For the final gate, the sum
+is empty. All values are finite non-negative meters and independent of lane
+association.
 
 The same downstream constants apply immediately before and after incrementing
 `k`. At a crossing, the residual distance to the old gate and the initial
@@ -363,7 +363,6 @@ bumper geometry. A crossing requires:
 pre_signed >= -epsilon_gate
 post_signed < -epsilon_gate
 swept_front_bumper intersects gate_geometry
-associated allowed lane/span is compatible
 heading dot gate_forward_tangent > 0
 ```
 
@@ -406,7 +405,6 @@ worker-slot-local, non-serializable into policy input, and fully reset.
 | `mission.builder_version` | string | `mission-builder-v1` | non-empty supported value | Offline derivation implementation | `YES` | `YES` |
 | `mission.progress_reference_speed_mps` | float | `22.2222222222` | finite `>0` | R4 normalization | `YES` | `YES` |
 | `mission.gate_crossing_epsilon_m` | float | `0.05` | finite `[0,0.25]` | Directed crossing tolerance | `YES` | `YES` |
-| `mission.unreachable_policy` | enum | `terminate_failure` | approved values only | Boundary on lost reachability | `YES` | `YES` |
 | `mission.native_navigation_diagnostics` | bool | `true` during migration | boolean | Differential metrics only | `NO` | `YES` for a run |
 
 Invalid or unsupported values fail during startup. No per-scenario override of
@@ -420,11 +418,10 @@ non-contiguous gate order, unreachable gate, ambiguous unsupported movement,
 vertical incompatibility, and non-finite geometry. Counts shall be reported by
 source, split, arm, and reason.
 
-Runtime static mission mismatch fails before control. A post-reset graph or
+Runtime static mission mismatch fails before control. A post-reset geometry or
 numeric inconsistency is a typed scenario-data abort with full forensic
-diagnostics, not a silent fallback. `mission_unreachable` caused by the ego's
-current task state follows the approved termination policy rather than becoming
-a data abort. Programming invariants remain fatal.
+diagnostics, not a silent fallback. Current lane association and graph
+reachability are diagnostics only. Programming invariants remain fatal.
 
 Required per-step or per-episode diagnostics are listed in REQ-MSN-013. Native
 route completion is diagnostic-only during migration and shall use an explicit
@@ -471,7 +468,7 @@ an exclusion/replacement policy.
 
 - Given: two legal parallel lanes that both reach the pending gate.
 - When: the ego changes to the non-preferred lane and advances.
-- Then: the mission remains reachable, remaining legal distance changes
+- Then: the mission remains active, remaining geometric distance changes
   consistently, R4 reflects that change, and no preference-only Rulebook cost
   activates.
 - Related requirements: `REQ-MSN-002`, `REQ-MSN-006`, `REQ-MSN-007`,
@@ -495,12 +492,13 @@ an exclusion/replacement policy.
 
 ### AC-MSN-006: Completion And Boundaries
 
-- Given: progress, reversal, final crossing, collision, unreachable mission,
-  and time-limit cases.
+- Given: progress, reversal, final crossing, collision, partial lane departure,
+  opposing-carriageway travel, physical out-of-road, and time-limit cases.
 - When: environment boundaries and metrics are produced.
 - Then: completion is non-decreasing, signed R4 may be negative, success is
-  exactly final ordered crossing, collision/unreachable/success terminate, and
-  only the time limit truncates.
+  exactly final ordered crossing, collision/physical-out-of-road/success
+  terminate, lateral deviation does not terminate, and only the time limit
+  truncates.
 - Related requirements: `REQ-MSN-008`, `REQ-MSN-013`.
 
 ### AC-MSN-007: Cross-Consumer Identity
@@ -579,7 +577,7 @@ an exclusion/replacement policy.
 
 | ID | Question | Alternatives | Recommendation | Impact | Status |
 |---|---|---|---|---|---|
-| `DEC-MSN-001` | What happens when the next ordered gate becomes graph-unreachable? | Terminate task failure / continue with zero progress / truncate | Terminate with `mission_unreachable`; it is agent/task state, not an external time limit | Termination, metrics, replay boundaries | `APPROVED 2026-08-02` |
+| `DEC-MSN-001` | What happens when the next ordered gate becomes graph-unreachable? | Terminate task failure / continue / truncate | Continue with geometric gate progress; lane/graph reachability is diagnostic-only | Termination, metrics, replay boundaries | `SUPERSEDED by ADR-053, approved 2026-08-03` |
 | `DEC-MSN-002` | How is the current dataset's final goal derived? | Terminal valid SDC projection / whole final-lane end / source-specific native goal | Terminal valid SDC projection for both current sources; preserves ADR-004's identical semantics and does not invent travel beyond the recorded task | Dataset annotation and success | `APPROVED 2026-08-02` |
 | `DEC-MSN-003` | Which R4 normalization is frozen? | Global 80 km/h / empirical percentile / scenario cap | Global `22.2222222222 m/s`; current physical global cap, stable across scenarios | Reward scale and comparability | `APPROVED 2026-08-02` |
 | `DEC-MSN-004` | Are unchanged tensor shapes allowed with new semantics? | New schema IDs with same shapes / widen tensors / overwrite existing schema | New schema IDs with same shapes where sufficient; reject old checkpoints/replays | Observation and experiment compatibility | `APPROVED 2026-08-02` |

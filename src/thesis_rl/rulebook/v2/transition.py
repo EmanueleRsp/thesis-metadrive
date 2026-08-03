@@ -118,11 +118,7 @@ def initial_memory_for_snapshot(snapshot: EnvSnapshot, cache: EpisodeCache) -> R
 
     if cache.route_polyline is None:
         raise ValueError("Episode cache has no assigned route polyline")
-    projection = cache.route_polyline.project(
-        snapshot.ego.position_xy, position_z=snapshot.ego.position_z
-    )
     return RulebookMemory(
-        previous_route_s_m=projection.s_m,
         previous_sim_time_s=snapshot.sim_time_s,
         previous_contact_ids=snapshot.active_contact_ids,
     )
@@ -1258,7 +1254,7 @@ def evaluate_transition(
     post_route_tangent_xy = route.project(
         post_state.ego.position_xy,
         position_z=post_state.ego.position_z,
-        previous_s_m=memory.previous_route_s_m,
+        previous_s_m=None,
     ).tangent_xy
     post_approach_speed_mps = max(
         0.0,
@@ -1522,7 +1518,7 @@ def evaluate_transition(
         "wrong_way": {
             "ego": post_state.ego,
             "route": route,
-            "previous_s_m": memory.previous_route_s_m,
+            "previous_s_m": None,
         },
         "solid_line": {
             "ego_footprint": post_state.ego.footprint,
@@ -1545,12 +1541,9 @@ def evaluate_transition(
         "stop": stop_input,
         "crosswalk": crosswalk_input,
         "progress": {
-            "pre_ego": pre_state.ego,
-            "post_ego": post_state.ego,
-            "route": route,
-            "previous_route_s_m": memory.previous_route_s_m,
+            "pre_mission": pre_state.mission_snapshot,
+            "post_mission": post_state.mission_snapshot,
             "delta_t_s": delta_t_s,
-            "task_corridor": _task_corridor(cache),
         },
     }
     excluded_components = frozenset()
