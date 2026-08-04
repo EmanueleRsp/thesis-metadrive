@@ -58,9 +58,9 @@ RULEBOOK_V2_FILTERED_CATALOG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/cat
 RULEBOOK_V2_ELIGIBILITY_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/catalog_eligibility.json
 RULEBOOK_V2_MISSION_ELIGIBILITY_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/driving_mission_eligibility.json
 
-# Optional override for the existing-source ScenarioNet rebuild. If empty, the
-# filtering CLI default applies. Example: make scenarionet-rebuild-existing SCENARIONET_REBUILD_WORKERS=64
-SCENARIONET_REBUILD_WORKERS ?=
+# Worker count for the existing-source ScenarioNet rebuild. Override explicitly
+# when needed, for example: make scenarionet-rebuild-existing SCENARIONET_REBUILD_WORKERS=32
+SCENARIONET_REBUILD_WORKERS ?= 64
 
 rulebook-v2-init:
 	mkdir -p "$(RULEBOOK_V2_DATA_ROOT)/rulebook_v2"
@@ -207,7 +207,7 @@ scenarionet-rebuild-existing:
 		--mission-eligibility-output "$(RULEBOOK_V2_MISSION_ELIGIBILITY_CONTAINER)" \
 		--ego-config "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" \
 		--calibration "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" \
-		$(if $(strip $(SCENARIONET_REBUILD_WORKERS)),--workers "$(SCENARIONET_REBUILD_WORKERS)",) \
+		--workers "$(SCENARIONET_REBUILD_WORKERS)" \
 		--no-incremental \
 		--overwrite
 	docker compose run --rm dataset-pipeline uv run --no-sync python \
