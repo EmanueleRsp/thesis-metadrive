@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from shapely.geometry import box
 
-from thesis_rl.mission.builder import build_driving_mission_from_source
+from thesis_rl.mission.builder import (
+    NormalizedLane,
+    _associate_temporal_route_occurrences,
+    build_driving_mission_from_source,
+)
 from thesis_rl.mission.runtime import MissionRuntime
 from thesis_rl.mission.types import DrivingMissionRecord
 from thesis_rl.rulebook.v2.geometry.footprint import oriented_bounding_box
@@ -50,3 +54,45 @@ def test_v11_runtime_uses_exact_delta_s_and_one_passive_final_gate() -> None:
     assert snapshot.completion_instant == snapshot.completion_max
     assert snapshot.mission_success is False
     assert len(runtime.gates) == 1
+
+
+def test_v11_global_orientation_reverses_source_centerline_without_local_fallback() -> None:
+    scenario = _scenario()
+    scenario["tracks"]["ego"]["state"]["position"] = [[9.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+    mission = build_driving_mission_from_source(
+        scenario,
+        scenario_uid="reverse-uid",
+        source="pg",
+        assigned_route_lane_ids=("a",),
+    )
+    assert mission.route_occurrences[0].orientation == "REVERSED"
+    assert mission.s_start_m == 0.0
+    assert mission.s_goal_m == 8.0
+    assert mission.canonical_route_points_xyz[0][:2] == (9.0, 0.0)
+    assert mission.canonical_route_points_xyz[-1][:2] == (1.0, 0.0)
+
+
+def test_v11_temporal_association_does_not_revisit_overlapping_prior_occurrence() -> None:
+    lanes = (
+        NormalizedLane(
+            "a",
+            10.0,
+            centerline=RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0))),
+            polygon_xy=box(0.0, -1.0, 10.0, 1.0),
+        ),
+        NormalizedLane(
+            "b",
+            14.0,
+            centerline=RoutePolyline(
+                ((10.0, 0.0, 0.0), (12.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+            ),
+            polygon_xy=box(-1.0, -1.0, 13.0, 1.0),
+        ),
+    )
+    samples = _associate_temporal_route_occurrences(
+        lanes,
+        (((9.0, 0.0), 0.0), ((12.0, 0.0), 0.0), ((0.0, 0.0), 0.0)),
+    )
+    assert samples[0] == (9.0,)
+    assert samples[1][0] == 2.0
+    assert samples[1][-1] == 14.0

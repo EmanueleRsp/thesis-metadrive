@@ -14,8 +14,8 @@ from thesis_rl.mission.builder import build_driving_mission_from_source
 from thesis_rl.mission.types import DrivingMissionRecord
 
 
-CANDIDATE_SCHEMA = "scenarionet_frozen_mission_candidate_v1_1"
-MISSION_FROZEN_INDEX_SCHEMA = "scenarionet_frozen_selection_mission_v1_1"
+CANDIDATE_SCHEMA = "scenarionet_frozen_mission_candidate_v1_1_1"
+MISSION_FROZEN_INDEX_SCHEMA = "scenarionet_frozen_selection_mission_v1_1_1"
 
 
 def build_candidate_index(

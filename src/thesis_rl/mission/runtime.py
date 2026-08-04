@@ -155,10 +155,9 @@ class MissionRuntime:
             if missing:
                 raise ValueError(f"mission route references unavailable lanes: {missing[:5]}")
             route = RoutePolyline(tuple(mission.canonical_route_points_xyz))
-            initial_route_station = _initial_route_station(mission, all_by_id, initial_snapshot)
             self._route_lanes = tuple(all_lanes)
             self._tracker = RouteCoordinateMissionTracker(
-                mission, route, 0.0, route_offset_m=initial_route_station
+                mission, route, 0.0
             )
             return
         referenced_lane_ids = {
@@ -246,24 +245,3 @@ def _associate(snapshot: EnvSnapshot, route_lanes: tuple[RouteLaneRecord, ...]):
         heading_rad=snapshot.ego.heading_rad,
         route_lanes=route_lanes,
     )
-
-
-def _initial_route_station(
-    mission: DrivingMissionRecord,
-    lanes: dict[str, RouteLaneRecord],
-    snapshot: EnvSnapshot,
-) -> float:
-    """Apply the v1.1 reset invariant: first lane, or second only at boundary."""
-    first = lanes[mission.route_lane_ids[0]]
-    try:
-        projection = first.centerline.project(snapshot.ego.position_xy, position_z=snapshot.ego.position_z)
-        return projection.s_m
-    except ValueError:
-        pass
-    if len(mission.route_lane_ids) < 2:
-        raise ValueError("reset pose is not vertically compatible with first occurrence")
-    second = lanes[mission.route_lane_ids[1]]
-    projection = second.centerline.project(snapshot.ego.position_xy, position_z=snapshot.ego.position_z)
-    if projection.s_m > 0.01:
-        raise ValueError("reset pose is outside first occurrence and shared boundary")
-    return first.centerline.length_m + projection.s_m

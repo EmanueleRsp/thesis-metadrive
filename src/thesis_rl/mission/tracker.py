@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from dataclasses import replace
 from math import hypot
 
 from shapely.geometry import Polygon
@@ -186,7 +185,6 @@ class RouteCoordinateMissionTracker:
         mission: DrivingMissionRecord,
         route: RoutePolyline,
         initial_s_m: float,
-        route_offset_m: float = 0.0,
     ) -> None:
         if mission.final_gate_segment is None or not mission.route_lane_ids:
             raise ValueError("route-coordinate mission requires a frozen route and final gate")
@@ -194,7 +192,6 @@ class RouteCoordinateMissionTracker:
             raise ValueError("initial route station is outside the mission")
         self._mission = mission
         self._route = route
-        self._route_offset_m = route_offset_m
         self._gate = mission.final_gate_segment
         self._s_goal = mission.s_goal_m
         self._s_m = float(initial_s_m)
@@ -225,10 +222,10 @@ class RouteCoordinateMissionTracker:
         projection = self._route.project(
             position_xy,
             position_z=position_z,
-            previous_s_m=self._s_m + self._route_offset_m,
+            previous_s_m=self._s_m,
         )
         self._current_segment = projection.segment_index
-        return replace(projection, s_m=projection.s_m - self._route_offset_m)
+        return projection
 
     def _make_snapshot(self, delta_s_m: float, success: bool) -> MissionSnapshot:
         instantaneous = min(max(self._s_m / self._s_goal, 0.0), 1.0)

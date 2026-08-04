@@ -34,7 +34,7 @@ from thesis_rl.scenarios.runtime_database import sha256_file
 
 
 FROZEN_INDEX_SCHEMA = "scenarionet_frozen_selection_v1"
-MISSION_FROZEN_INDEX_SCHEMA = "scenarionet_frozen_selection_mission_v1_1"
+MISSION_FROZEN_INDEX_SCHEMA = "scenarionet_frozen_selection_mission_v1_1_1"
 _BATCH_PATTERN = re.compile(r"(?:^|/)batch_(\d{5})_(\d{5})(?:/|$)")
 _SHARD_PATTERN = re.compile(r"training_20s\.tfrecord-(\d+)-of-(\d+)$")
 

@@ -1,23 +1,24 @@
-# ExecPlan: Driving Mission v1.1 Route Coordinate
+# ExecPlan: Driving Mission v1.1 Route Coordinate and v1.1.1 Amendment
 
 ## 1. Status and authorization
 
 - Specification: `DRIVING-MISSION-V1.1`, `APPROVED`, `Authoritative: YES`
 - ADR: `ADR-054`, `APPROVED`
 - Plan status: `APPROVED`
-- Production implementation authorization: `YES`, explicit user approval recorded 2026-08-04
-- Project index: not modified
+- Amendment: `DRIVING-MISSION-V1.1.1`, `APPROVED`, `Authoritative: YES`
+- Amendment ADR: `ADR-055`, `APPROVED`
+- Production implementation authorization for the amendment: `YES`, explicit user approval recorded 2026-08-04
+- Project index: v1.1.1 registration authorized
 - Branch: `codex/route-coordinate-mission`
 - Last updated: `2026-08-04`
 
-This plan is the authorized implementation record. It authorizes production
-code and dependent artifact work only within the approved specification; it
-does not authorize scientific changes, source-data mutation, record
-exclusion/replacement, or unapproved fallbacks.
+This plan is the authorized implementation record for v1.1 and the approved
+v1.1.1 amendment. It does not authorize scientific fallback, source-data
+mutation, record exclusion/replacement, or route-planning alternatives.
 
 ## 2. Objective and scope
 
-Prepare one immutable source-independent route mission for all 3,500 frozen scenarios. Preserve UID/source/split identity; build the canonical XY-arc-length route; implement the exact sequential cursor, shared `MissionSnapshot`, pure R4, separate completion values, fixed observations, and one passive final gate. Exclude no record under this plan.
+Prepare one immutable source-independent route mission for all 3,500 frozen scenarios. Preserve UID/source/split identity; orient distinct occurrences offline using the frozen assigned lane-ID sequence and the complete SDC trajectory only as an offline orientation witness; trim one mission-local canonical XY-arc-length route from reset to terminal goal; then apply the approved exact cursor, shared `MissionSnapshot`, pure R4, separate completion values, fixed observations, and one passive final gate. Exclude no record under this plan.
 
 Out of scope: source changes, future-SDC runtime access, native navigation authority, R1--R3 changes, new dependencies, online replanning, runtime lane/neighbor/boundary search, proximity fallback, component expansion, and implementation before approval.
 
@@ -25,13 +26,13 @@ Out of scope: source changes, future-SDC runtime access, native navigation autho
 
 | Requirement | Acceptance | Status |
 |---|---|---|
-| normalized route | immutable ordered 3D occurrences, finite and connected, no invented joins | planned |
-| reset/goal | offline correction and `s_start=0`; positive global goal station | planned |
+| normalized route | immutable ordered oriented 3D occurrences and directly serialized mission-local route, finite and connected, no invented joins | implemented |
+| reset/goal | explicit reset/goal endpoints, `s_start=0`, positive trimmed `s_goal` | implemented |
 | exact cursor | contiguous search, exact unsaturated `s`, no clamp/freeze/recovery | planned |
 | R4/completion | exact formulas and separate monotone maximum | planned |
 | shared snapshot | semantic/LiDAR/reward/Rulebook/metrics consume one snapshot | planned |
 | final gate | one offline geometric component segment covering the canonical anchor, passive runtime | audit: 3,500 unique |
-| migration | preserve all 3,500 UID/path/split/source identities | planned |
+| migration | preserve all 3,500 UID/path/split/source identities | in progress |
 
 Stable acceptance IDs: `AC-RCM-001` canonical route round-trip and finite
 geometry; `AC-RCM-002` first-occurrence reset normalization; `AC-RCM-003`
@@ -39,6 +40,12 @@ exact cursor without jump envelope; `AC-RCM-004` signed delta-s R4; `AC-RCM-005`
 instantaneous/max completion; `AC-RCM-006` shared snapshot identity;
 `AC-RCM-007` ten route samples; `AC-RCM-008` anchor gate and directed crossing;
 `AC-RCM-009` termination/truncation; `AC-RCM-010` full migration identity.
+
+Amendment acceptance IDs: `AC-RCM-011` occurrence orientation from temporal
+source-station progression; `AC-RCM-012` occurrence connectivity without route
+replacement or connectors; `AC-RCM-013` mission-local reset/goal trimming and
+positive XY length; `AC-RCM-014` absence of trajectory in serialized/runtime
+state; `AC-RCM-015` explicit reporting of mission/legal-direction conflicts.
 
 ## 4. Current repository analysis
 
@@ -53,16 +60,29 @@ The geometric builder uses the canonical `0.01 m` geometry tolerance and a verti
 
 The four formerly ambiguous records now have one anchor-covering component each and are not excluded. More than one anchor-covering component after tolerance merging is a builder error; no tie-break is allowed. The earlier 210 Waymo metadata-unresolved result is retained only as historical diagnostic evidence.
 
+The initial occurrence-orientation audit used a global polygon scan. Because
+lane polygons overlap at junctions, that method could assign late poses back
+to an earlier occurrence and invert its apparent station progression. The
+builder now uses a sequence-constrained association that advances only through
+the frozen occurrence order and never revisits a prior occurrence. A corrected
+read-only sweep over all 3,500 records built 3,500 positive mission-local
+routes: 1,695 PG and 1,805 Waymo, with 12,405 `FORWARD` and 1 `REVERSED`
+occurrence classifications and no unresolved orientation.
+
+For `waymo:training_20s:5e7bbc00b872c2ba`, all 199 valid poses are contained by
+exactly one static lane candidate (`89`), the source station sequence has 187
+negative, 0 positive, and 11 zero changes, and the occurrence is uniquely
+`REVERSED`. Its projected reset is source station `59.823228 m`, its terminal
+is `5.376686 m`, and the trimmed mission-local length is `54.368483 m`.
+
 `VERIFIED`: v1 code in `src/thesis_rl/mission/` modeled ordered sections and
-graph distance. `VERIFIED`: the v1.1 implementation now adds the normalized
-route fields, frozen `FinalGateSegment`, source builder, route-coordinate
-tracker, passive runtime path, signed-delta progress, and explicit completion
-metrics. `BLOCKED_FOR_MIGRATION`: one Waymo record (`waymo:training_20s:5e7bbc00b872c2ba`,
-frozen-index position 248) has a reset projection at approximately 59.8 m and
-its terminal projection at approximately 5.4 m on the assigned lane, yielding
-a negative normalized goal station. The approved contract provides no
-authorized correction for this source-geometry orientation conflict. The
-Parquet catalog also requires the repository's optional `pyarrow` environment.
+graph distance. `VERIFIED`: the v1.1 implementation adds the normalized route
+fields, frozen `FinalGateSegment`, source builder, route-coordinate tracker,
+passive runtime path, signed-delta progress, and explicit completion metrics.
+The approved v1.1.1 contract represents source centerline orientation per frozen
+route occurrence and trims the canonical route to reset and goal offline. The
+implementation and artifact regeneration are authorized. The Parquet catalog
+additionally requires the repository's optional `pyarrow` environment.
 
 ## 5. Decisions and approval gates
 
@@ -77,13 +97,13 @@ The final gate schema is one frozen `final_gate_segment`, not a required complet
 
 ## 6. Planned milestones after approval
 
-- [x] M0 — explicit approval of specification and ADR (2026-08-04).
-- [x] M1 — freeze normalized-record schema and correction-first migration inputs.
-- [x] M2 — build canonical route, cursor, and snapshot with deterministic tests.
-- [x] M3 — integrate R4, completion, observations, Rulebook relevance, metrics, and video consumers.
-- [x] M4 — materialize offline geometric final gate and directed crossing termination.
-- [ ] M5 — regenerate only dependent mission artifacts, preserving all identities; blocked by one source-geometry conflict.
-- [ ] M6 — run full tests, 3,500-record audit, PG/Waymo smokes, and reconciliation.
+- [x] M0 — explicit approval of v1.1 specification and ADR (2026-08-04).
+- [x] M1 — freeze v1.1 normalized-record schema and correction-first migration inputs.
+- [x] M2 — implement the previously approved v1.1 route, cursor, and snapshot baseline with deterministic tests.
+- [x] M3 — integrate the previously approved v1.1 R4, completion, observation, and consumer baseline.
+- [x] M4 — complete the previously approved v1.1 anchor-gate audit.
+- [x] M5 — approve and implement v1.1.1 occurrence orientation and mission-local trimming (2026-08-04).
+- [x] M6 — implement sequence-constrained occurrence association and run the corrected 3,500-record amended audit (2026-08-04).
 
 ## 7. Mandatory validation matrix
 
@@ -97,29 +117,29 @@ The focused implementation tests map as follows: `tests/test_driving_mission_v11
 ## 8. Validation commands
 
 Executed commands include the focused mission/route/progress suite and a
-complete read-only builder sweep. `make test`, full lint/format, configuration
-checks, catalog generation, and smoke remain to be run; catalog generation is
-currently blocked by missing `pyarrow`, and the builder sweep is blocked by the
-single Waymo record documented below.
+complete read-only sequence-constrained builder sweep. `make test`, full lint/format,
+configuration checks, catalog generation, and smoke remain to be run; catalog
+generation is currently blocked by missing `pyarrow`.
 
 ## 9. Findings and reconciliation
 
-The 13 reset and 25 terminal preliminary failures were uniquely repairable offline; `PGMap-6000153` has a positive global goal station after route concatenation. These approved migration decisions remain in scope. The geometric final-gate audit supersedes the former source-metadata completeness requirement. The current builder audit fails only the Waymo UID recorded above; no record was excluded or replaced. The stale pre-normalization generated JSON was moved to `/tmp` and is not canonical.
+The 13 reset and 25 terminal preliminary failures were uniquely repairable offline; `PGMap-6000153` has a positive global goal station after route concatenation. These approved migration decisions remain in scope. The geometric final-gate audit supersedes the former source-metadata completeness requirement. The first orientation audit falsely reported one invalid route because it globally reused overlapping lane polygons. The corrected sequence-constrained builder resolves all 3,500 records, including `waymo:training_20s:6042e6c648fca15d`, with no exclusion or replacement. The stale pre-normalization generated JSON was moved to `/tmp` and is not canonical.
 
 ## 10. Progress and findings log
 
 - 2026-08-04: user approved specification, ADR, index promotion, and implementation.
 - 2026-08-04: promoted documents and corrected the pre-existing bounded/clamp index entry.
 - 2026-08-04: implemented v1.1 route record, anchor gate, route tracker, passive runtime, signed-delta progress, and completion fields.
-- 2026-08-04: focused v1.1 mission/materialization/progress tests passed (`11 passed`); a complete read-only builder sweep found one negative normalized-goal record at frozen-index position 248.
+- 2026-08-04: focused v1.1.1 mission/materialization/progress tests passed (`12 passed`); the target false conflict was traced to global polygon reassociation, fixed with sequence-constrained occurrence association, and the corrected 3,500-record sweep passed (`3,500/3,500`).
 - 2026-08-04: Parquet catalog promotion not completed because `pyarrow` is unavailable; no dependency was added.
 
 ## 11. Deviations
 
-No deviations from the approved specification identified. The legacy v1 classes
-remain only for deserialization and compatibility tests; the v1.1 runtime path
-does not use intermediate gates, graph distance, envelope expansion, or native
-navigation as authority.
+The v1.1.1 occurrence orientation and mission-local trimming amendment is now
+approved and implemented in the mission builder/runtime path. The legacy v1
+classes remain only for deserialization and compatibility tests; the v1.1.1
+route path does not use intermediate gates, graph distance, envelope expansion,
+native navigation, or a source-station offset as authority.
 
 ## 12. Files
 
@@ -129,31 +149,30 @@ navigation as authority.
 | ADR-054 | approved decision |
 | this ExecPlan | approved implementation record |
 | audit findings | append geometric audit evidence |
-| `data/scenarionet/frozen/scenario_selection_mission_v1_1.json` | pending | regeneration blocked by one source-geometry conflict |
-| `docs/project_index.md` | modified | register v1.1 authority and v1.0 supersession |
+| `data/scenarionet/frozen/scenario_selection_mission_v1_1_1.json` | pending | atomic promotion still requires the provisioned artifact-generation environment (`pyarrow`); builder audit is complete |
+| `docs/project_index.md` | modified | register v1.1.1 authority and ADR-055 |
 
 ## 13. Validation results
 
 | Command | Result | Notes |
 |---|---|---|
-| focused mission/progress tests | PASS | 11 tests after the final `s_start=0` correction |
-| 3,500-record builder sweep | BLOCKED | 3,499 records build; one Waymo record has terminal station before reset station on its assigned geometry |
+| focused mission/progress tests | PASS | 12 tests including reversed occurrence and mission-local endpoint regression |
+| 3,500-record sequence-constrained builder audit | PASS | 3,500/3,500 routes built; 3,500/3,500 positive `s_goal`; no exclusions |
 | `git diff --check` | PASS | 2026-08-04 |
 | Parquet catalog promotion | NOT_RUN | `pyarrow` missing; install/use provisioned environment before catalog build |
-| full `make test` | NOT_RUN | final reconciliation pending |
+| full `make test` | BLOCKED | Docker API permission denied in the current environment |
 | `make lint`, format, config, smoke | NOT_RUN | final reconciliation pending |
 
 ## 14. Final reconciliation
 
-`REQ-RCM-001` through `REQ-RCM-007` are implemented in the owned mission path;
-focused acceptance coverage is present, while full repository verification and
-the 3,500-record artifact regeneration are pending. Known limitations: the
-v1.1 Parquet catalog cannot be emitted in the current host without `pyarrow`,
-and one Waymo record requires an explicitly authorized source-geometry
-correction or a data-abort classification. No scientific fallback or
-dependency decision was made. The approved specification, ADR, and index are
-authoritative; the plan remains `APPROVED` while implementation reconciliation
-is blocked by these repository/data constraints.
+`REQ-RCM-001` through `REQ-RCM-007` and amendment requirements
+`AC-RCM-011` through `AC-RCM-015` are implemented for every record in the
+corrected builder audit. The required 3,500/3,500 route-builder acceptance is
+met: all routes are connected, positive, and have unique orientation/gate
+construction, including `waymo:training_20s:6042e6c648fca15d`. The Parquet
+catalog cannot be emitted in the current host without `pyarrow`; this is an
+environmental artifact-generation limitation, not a mission-validity issue.
+No exclusion, replacement, planning, or runtime fallback was introduced.
 
 The ChatGPT project source files changed during this task are
 `docs/project_index.md`; replace that exact source in the project. The other

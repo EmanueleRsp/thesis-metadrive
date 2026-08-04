@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 from typing import Any, Mapping
 
 from shapely.geometry import LineString, Point
@@ -16,8 +17,10 @@ from thesis_rl.mission.types import (
     FinalGateSegment,
     LaneSpan,
     MissionSection,
+    RouteOccurrence,
 )
 from thesis_rl.rulebook.v2.geometry.route import GEOMETRY_EPSILON_M, RoutePolyline
+from thesis_rl.rulebook.v2.geometry.vertical import VERTICAL_COMPATIBILITY_TOLERANCE_M
 
 
 FINAL_GATE_BUILDER_EPSILON_M = 0.01
@@ -212,12 +215,7 @@ def build_driving_mission_from_source(
     reset_position = state["position"][reset_index]
     reset_xy = (float(reset_position[0]), float(reset_position[1]))
     reset_z = (float(reset_position[2]) if len(reset_position) > 2 else 0.0) - z_origin
-    assigned_route_lane_ids = _repair_reset_route(
-        tuple(str(value) for value in assigned_route_lane_ids),
-        lanes,
-        reset_xy,
-        reset_z,
-    )
+    assigned_route_lane_ids = tuple(str(value) for value in assigned_route_lane_ids)
     terminal_index = max((index for index, value in enumerate(valid) if bool(value)), default=-1)
     if terminal_index < 0:
         raise ValueError("SDC trajectory has no valid terminal pose")
@@ -233,6 +231,11 @@ def build_driving_mission_from_source(
         reset_z=reset_z,
         terminal_position=(float(position[0]), float(position[1])),
         terminal_z=(float(position[2]) if len(position) > 2 else 0.0) - z_origin,
+        trajectory=tuple(
+            ((float(item[0]), float(item[1])), (float(item[2]) if len(item) > 2 else 0.0) - z_origin)
+            for item, ok in zip(state["position"], valid)
+            if bool(ok)
+        ),
     )
 
 
@@ -256,22 +259,43 @@ def _build_source_route_mission(
     reset_z: float,
     terminal_position: tuple[float, float],
     terminal_z: float,
+    trajectory: tuple[tuple[tuple[float, float], float], ...],
 ) -> DrivingMissionRecord:
-    """Build the v1.1 normalized record and its frozen anchor-based gate."""
+    """Build the v1.1.1 normalized record and its frozen anchor-based gate."""
     route_lanes = tuple(lanes[lane_id] for lane_id in route_lane_ids)
     if any(lane.centerline is None or lane.polygon_xy is None for lane in route_lanes):
         raise ValueError("source route lanes require centerline and polygon geometry")
-    canonical = RoutePolyline.from_lane_centerlines(
-        tuple(lane.centerline.points_xyz for lane in route_lanes if lane.centerline is not None)
+    orientations = _resolve_global_orientations(
+        route_lane_ids,
+        route_lanes,
+        reset_xy,
+        reset_z,
+        terminal_position,
+        terminal_z,
+        trajectory,
     )
-    reset_projection = canonical.project(reset_xy, position_z=reset_z)
-    final_projection = route_lanes[-1].centerline.project(terminal_position, position_z=terminal_z)
-    final_prefix_m = sum(lane.length_m for lane in route_lanes[:-1])
-    raw_goal_m = final_prefix_m + final_projection.s_m
-    s_goal_m = raw_goal_m - reset_projection.s_m
-    if s_goal_m <= 0.0:
-        raise ValueError("normalized route has non-positive goal station")
-    goal_xyz = canonical.point_at(raw_goal_m)
+    oriented_routes = tuple(
+        RoutePolyline(tuple(reversed(lane.centerline.points_xyz)) if orientation == "REVERSED" else lane.centerline.points_xyz)
+        for lane, orientation in zip(route_lanes, orientations, strict=True)
+    )
+    reset_projection = oriented_routes[0].project(reset_xy, position_z=reset_z)
+    goal_projection = oriented_routes[-1].project(terminal_position, position_z=terminal_z)
+    if reset_projection.s_m > oriented_routes[0].length_m + GEOMETRY_EPSILON_M:
+        raise ValueError("reset is outside the first oriented occurrence")
+    if goal_projection.s_m < -GEOMETRY_EPSILON_M:
+        raise ValueError("goal is outside the final oriented occurrence")
+    trimmed_parts = []
+    for index, route in enumerate(oriented_routes):
+        start_s = reset_projection.s_m if index == 0 else 0.0
+        end_s = goal_projection.s_m if index == len(oriented_routes) - 1 else route.length_m
+        if end_s < start_s - GEOMETRY_EPSILON_M:
+            raise ValueError("mission-local route has reversed reset/goal order")
+        trimmed_parts.append(_trim_route_polyline(route, max(0.0, start_s), min(route.length_m, end_s)))
+    canonical = RoutePolyline.from_lane_centerlines(tuple(trimmed_parts))
+    s_goal_m = canonical.length_m
+    if s_goal_m <= GEOMETRY_EPSILON_M:
+        raise ValueError("normalized route has non-positive mission-local goal station")
+    goal_xyz = canonical.point_at(s_goal_m)
     goal = canonical.project(goal_xyz[:2], position_z=goal_xyz[2])
     tangent = goal.tangent_xy
     normal = (-tangent[1], tangent[0])
@@ -292,7 +316,10 @@ def _build_source_route_mission(
             if "vertically compatible" in str(error):
                 continue
             raise
-        if projection.tangent_xy[0] * tangent[0] + projection.tangent_xy[1] * tangent[1] <= 0.0:
+        candidate_tangent = projection.tangent_xy
+        if lane.lane_id == route_lane_ids[-1]:
+            candidate_tangent = tangent
+        if candidate_tangent[0] * tangent[0] + candidate_tangent[1] * tangent[1] <= 0.0:
             continue
         for part in _line_parts(cross.intersection(lane.polygon_xy)):
             first, last = part.coords[0], part.coords[-1]
@@ -328,7 +355,19 @@ def _build_source_route_mission(
         raise ValueError("final occurrence is inconsistent with the anchor gate")
     source_geometry_hash = hashlib.sha256(
         json.dumps(
-            {"route": route_lane_ids, "points": canonical.points_xyz},
+            {
+                "route": route_lane_ids,
+                "orientations": orientations,
+                "occurrences": [
+                    {
+                        "index": index,
+                        "lane_id": lane_id,
+                        "orientation": orientation,
+                    }
+                    for index, (lane_id, orientation) in enumerate(zip(route_lane_ids, orientations, strict=True))
+                ],
+                "points": canonical.points_xyz,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -340,28 +379,169 @@ def _build_source_route_mission(
         ),
         tangent,
         goal_xyz[2],
-        route_lane_ids[-1],
+        f"occurrence:{len(route_lane_ids) - 1}:{route_lane_ids[-1]}",
         f"offline:{source}:anchor_cross_section",
         source_geometry_hash,
-        "driving-mission-v1.1-anchor-builder",
+        "driving-mission-v1.1.1-anchor-builder",
     )
     legacy_span = LaneSpan(route_lane_ids[-1], 0.0, route_lanes[-1].length_m)
     legacy_goal = DirectedGate(
-        "goal:final", (legacy_span,), route_lane_ids[-1], final_projection.s_m, None
+        "goal:final", (legacy_span,), route_lane_ids[-1], goal_projection.s_m, None
+    )
+    occurrences = tuple(
+        RouteOccurrence(
+            index,
+            lane_id,
+            orientation,
+            oriented_routes[index].points_xyz,
+            0.0,
+            route_lanes[index].length_m,
+            f"offline:{source}:global_two_state_station_progression",
+            hashlib.sha256(json.dumps(route_lanes[index].centerline.points_xyz, separators=(",", ":")).encode()).hexdigest(),
+        )
+        for index, (lane_id, orientation) in enumerate(zip(route_lane_ids, orientations, strict=True))
     )
     return DrivingMissionRecord(
         scenario_uid,
-        "mission-builder-v1.1",
+        "mission-builder-v1.1.1",
         (MissionSection("section:route", legacy_span, (legacy_span,), legacy_goal),),
         legacy_goal,
         route_lane_ids=route_lane_ids,
         canonical_route_points_xyz=canonical.points_xyz,
-        start_occurrence_id=route_lane_ids[0],
-        final_occurrence_id=route_lane_ids[-1],
+        start_occurrence_id=f"occurrence:0:{route_lane_ids[0]}",
+        final_occurrence_id=f"occurrence:{len(route_lane_ids) - 1}:{route_lane_ids[-1]}",
         s_start_m=0.0,
         s_goal_m=s_goal_m,
         final_gate_segment=gate,
+        route_occurrences=occurrences,
     )
+
+
+def _trim_route_polyline(route: RoutePolyline, start_s: float, end_s: float) -> tuple[tuple[float, float, float], ...]:
+    """Return a route slice with exact projected endpoints."""
+    if end_s < start_s:
+        raise ValueError("route trim end precedes start")
+    points = [route.point_at(start_s)]
+    cumulative = [0.0]
+    for first, second in zip(route.points_xyz, route.points_xyz[1:]):
+        cumulative.append(cumulative[-1] + math.hypot(second[0] - first[0], second[1] - first[1]))
+    points.extend(
+        point
+        for station, point in zip(cumulative[1:-1], route.points_xyz[1:-1], strict=True)
+        if start_s < station < end_s
+    )
+    points.append(route.point_at(end_s))
+    return tuple(points)
+
+
+def _resolve_global_orientations(
+    route_lane_ids: tuple[str, ...],
+    route_lanes: tuple[NormalizedLane, ...],
+    reset_xy: tuple[float, float],
+    reset_z: float,
+    terminal_xy: tuple[float, float],
+    terminal_z: float,
+    trajectory: tuple[tuple[tuple[float, float], float], ...],
+) -> tuple[str, ...]:
+    """Resolve occurrence orientations with a bounded two-state dynamic program."""
+    station_samples = _associate_temporal_route_occurrences(route_lanes, trajectory)
+    options: list[tuple[str, ...]] = []
+    penalties: list[dict[str, int]] = []
+    for stations in station_samples:
+        net = stations[-1] - stations[0] if len(stations) >= 2 else 0.0
+        if net > GEOMETRY_EPSILON_M:
+            choices = ("FORWARD",)
+        elif net < -GEOMETRY_EPSILON_M:
+            choices = ("REVERSED",)
+        else:
+            choices = ("FORWARD", "REVERSED")
+        options.append(choices)
+        penalties.append({"FORWARD": 0, "REVERSED": 1})
+
+    def route_for(index: int, orientation: str) -> RoutePolyline:
+        points = route_lanes[index].centerline.points_xyz
+        return RoutePolyline(tuple(reversed(points)) if orientation == "REVERSED" else points)
+
+    def anchor_contains(lane: NormalizedLane, xy: tuple[float, float], z: float) -> bool:
+        if not lane.polygon_xy.buffer(GEOMETRY_EPSILON_M).covers(Point(xy)):
+            return False
+        try:
+            lane.centerline.project(xy, position_z=z)
+        except ValueError:
+            return False
+        return True
+
+    if not anchor_contains(route_lanes[0], reset_xy, reset_z):
+        raise ValueError("reset does not belong to the first frozen route occurrence")
+    if not anchor_contains(route_lanes[-1], terminal_xy, terminal_z):
+        raise ValueError("goal does not belong to the final frozen route occurrence")
+
+    paths: dict[str, list[tuple[int, tuple[str, ...]]]] = {}
+    for orientation in options[0]:
+        paths[orientation] = [(penalties[0][orientation], (orientation,))]
+    for index in range(1, len(route_lanes)):
+        next_paths: dict[str, list[tuple[int, tuple[str, ...]]]] = {}
+        for orientation in options[index]:
+            candidates = []
+            current = route_for(index, orientation)
+            for previous_orientation, previous_paths in paths.items():
+                previous = route_for(index - 1, previous_orientation)
+                end = previous.points_xyz[-1]
+                start = current.points_xyz[0]
+                if math.hypot(end[0] - start[0], end[1] - start[1]) > GEOMETRY_EPSILON_M:
+                    continue
+                if abs(end[2] - start[2]) > VERTICAL_COMPATIBILITY_TOLERANCE_M:
+                    continue
+                for score, path in previous_paths:
+                    candidates.append((score + penalties[index][orientation], (*path, orientation)))
+            next_paths[orientation] = sorted(candidates, key=lambda item: (item[0], item[1]))[:2]
+        paths = next_paths
+    candidates = sorted((item for values in paths.values() for item in values), key=lambda item: (item[0], item[1]))
+    if not candidates:
+        raise ValueError("no globally valid route occurrence orientation")
+    best_score = candidates[0][0]
+    best = [path for score, path in candidates if score == best_score]
+    if len({tuple(path) for path in best}) > 1:
+        raise ValueError("multiple globally valid route occurrence orientations")
+    return best[0]
+
+
+def _associate_temporal_route_occurrences(
+    route_lanes: tuple[NormalizedLane, ...],
+    trajectory: tuple[tuple[tuple[float, float], float], ...],
+) -> tuple[tuple[float, ...], ...]:
+    """Associate poses with the ordered route without revisiting past occurrences.
+
+    Lane polygons may overlap at junctions.  A global polygon scan therefore
+    lets a late pose contaminate an earlier occurrence and can invert its
+    apparent station progression.  The frozen occurrence order is the only
+    sequence constraint needed offline: retain the current occurrence while it
+    contains the pose, and advance only to a later occurrence when the current
+    one no longer provides a vertically compatible projection.  This preserves
+    the source trajectory as evidence without changing the frozen route.
+    """
+    samples: list[list[float]] = [[] for _ in route_lanes]
+    current_index = 0
+    for position_xy, position_z in trajectory:
+        candidates: list[tuple[int, float]] = []
+        for index in range(current_index, len(route_lanes)):
+            lane = route_lanes[index]
+            if not lane.polygon_xy.buffer(GEOMETRY_EPSILON_M).covers(Point(position_xy)):
+                continue
+            try:
+                projection = lane.centerline.project(position_xy, position_z=position_z)
+            except ValueError:
+                continue
+            candidates.append((index, projection.s_m))
+        if not candidates:
+            continue
+        selected = next(
+            (candidate for candidate in candidates if candidate[0] == current_index),
+            candidates[0],
+        )
+        current_index = selected[0]
+        samples[current_index].append(selected[1])
+    return tuple(tuple(values) for values in samples)
 
 
 def _repair_reset_route(

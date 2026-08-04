@@ -11,7 +11,7 @@ from typing import Any
 from thesis_rl.mission.gates import GateGeometry
 
 
-MISSION_SCHEMA_VERSION = "driving_mission_v1_1"
+MISSION_SCHEMA_VERSION = "driving_mission_v1_1_1"
 
 
 def _finite(value: float, name: str) -> None:
@@ -78,6 +78,36 @@ class FinalGateSegment:
 
 
 @dataclass(frozen=True, slots=True)
+class RouteOccurrence:
+    """One frozen assigned-route occurrence with offline mission orientation."""
+
+    occurrence_index: int
+    lane_id: str
+    orientation: str
+    oriented_centerline_points_xyz: tuple[tuple[float, float, float], ...]
+    source_start_s_m: float
+    source_end_s_m: float
+    orientation_provenance: str
+    source_geometry_hash: str
+
+    def __post_init__(self) -> None:
+        if self.occurrence_index < 0 or not self.lane_id:
+            raise ValueError("route occurrence index and lane ID are required")
+        if self.orientation not in {"FORWARD", "REVERSED"}:
+            raise ValueError("route occurrence orientation must be FORWARD or REVERSED")
+        if len(self.oriented_centerline_points_xyz) < 2:
+            raise ValueError("route occurrence requires at least two centerline points")
+        if not all(math.isfinite(value) for point in self.oriented_centerline_points_xyz for value in point):
+            raise ValueError("route occurrence geometry must be finite")
+        _finite(self.source_start_s_m, "source_start_s_m")
+        _finite(self.source_end_s_m, "source_end_s_m")
+        if self.source_start_s_m < 0.0 or self.source_end_s_m <= self.source_start_s_m:
+            raise ValueError("route occurrence source station bounds are invalid")
+        if not self.orientation_provenance or not self.source_geometry_hash:
+            raise ValueError("route occurrence provenance and geometry hash are required")
+
+
+@dataclass(frozen=True, slots=True)
 class MissionSection:
     section_id: str
     preferred_span: LaneSpan
@@ -106,6 +136,7 @@ class DrivingMissionRecord:
     s_start_m: float = 0.0
     s_goal_m: float = 0.0
     final_gate_segment: FinalGateSegment | None = None
+    route_occurrences: tuple[RouteOccurrence, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.scenario_uid or not self.builder_version or not self.sections:
@@ -113,10 +144,10 @@ class DrivingMissionRecord:
         if self.schema_version != MISSION_SCHEMA_VERSION:
             raise ValueError(f"unsupported mission schema: {self.schema_version!r}")
         if self.route_lane_ids:
-            if not self.canonical_route_points_xyz or not self.final_occurrence_id:
-                raise ValueError("route mission requires canonical route and final occurrence")
-            if not math.isfinite(self.s_start_m) or self.s_start_m < 0.0:
-                raise ValueError("route mission requires finite non-negative s_start_m")
+            if not self.canonical_route_points_xyz or not self.final_occurrence_id or not self.route_occurrences:
+                raise ValueError("route mission requires canonical route, occurrences, and final occurrence")
+            if self.s_start_m != 0.0:
+                raise ValueError("route mission requires s_start_m=0")
             if not math.isfinite(self.s_goal_m) or self.s_goal_m <= 0.0:
                 raise ValueError("route mission requires positive finite s_goal_m")
             if self.final_gate_segment is None:
@@ -140,6 +171,7 @@ class DrivingMissionRecord:
             "s_start_m": self.s_start_m,
             "s_goal_m": self.s_goal_m,
             "final_gate_segment": None if self.final_gate_segment is None else asdict(self.final_gate_segment),
+            "route_occurrences": [asdict(occurrence) for occurrence in self.route_occurrences],
         }
         if include_hash:
             payload["mission_hash"] = self.mission_hash
@@ -170,19 +202,32 @@ class DrivingMissionRecord:
             for item in payload["sections"]
         )
         final_segment = payload.get("final_gate_segment")
+        occurrences = tuple(
+            RouteOccurrence(
+                int(item["occurrence_index"]),
+                str(item["lane_id"]),
+                str(item["orientation"]),
+                tuple(tuple(float(value) for value in point) for point in item["oriented_centerline_points_xyz"]),
+                float(item["source_start_s_m"]),
+                float(item["source_end_s_m"]),
+                str(item["orientation_provenance"]),
+                str(item["source_geometry_hash"]),
+            )
+            for item in payload.get("route_occurrences", ())
+        )
         record = cls(
-            payload["scenario_uid"],
-            payload["builder_version"],
-            sections,
-            gate(payload["final_goal"]),
-            payload.get("schema_version", MISSION_SCHEMA_VERSION),
-            tuple(str(value) for value in payload.get("route_lane_ids", ())),
-            tuple(tuple(float(value) for value in point) for point in payload.get("canonical_route_points_xyz", ())),
-            str(payload.get("start_occurrence_id", "")),
-            str(payload.get("final_occurrence_id", "")),
-            float(payload.get("s_start_m", 0.0)),
-            float(payload.get("s_goal_m", 0.0)),
-            None if final_segment is None else FinalGateSegment(
+            scenario_uid=payload["scenario_uid"],
+            builder_version=payload["builder_version"],
+            sections=sections,
+            final_goal=gate(payload["final_goal"]),
+            schema_version=payload.get("schema_version", MISSION_SCHEMA_VERSION),
+            route_lane_ids=tuple(str(value) for value in payload.get("route_lane_ids", ())),
+            canonical_route_points_xyz=tuple(tuple(float(value) for value in point) for point in payload.get("canonical_route_points_xyz", ())),
+            start_occurrence_id=str(payload.get("start_occurrence_id", "")),
+            final_occurrence_id=str(payload.get("final_occurrence_id", "")),
+            s_start_m=float(payload.get("s_start_m", 0.0)),
+            s_goal_m=float(payload.get("s_goal_m", 0.0)),
+            final_gate_segment=None if final_segment is None else FinalGateSegment(
                 tuple(tuple(float(value) for value in point) for point in final_segment["line_xy"]),
                 tuple(float(value) for value in final_segment["static_tangent_xy"]),
                 float(final_segment["elevation_m"]),
@@ -191,6 +236,7 @@ class DrivingMissionRecord:
                 str(final_segment["source_geometry_hash"]),
                 str(final_segment["builder_identity"]),
             ),
+            route_occurrences=occurrences,
         )
         expected = payload.get("mission_hash")
         if expected is not None and expected != record.mission_hash:
