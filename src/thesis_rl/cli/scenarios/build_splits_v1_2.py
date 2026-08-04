@@ -30,6 +30,7 @@ from thesis_rl.scenarios.catalog import (
     write_scenario_catalog,
 )
 from thesis_rl.scenarios.manifests import validate_split_manifest
+from thesis_rl.mission.types import MISSION_SCHEMA_VERSION
 from thesis_rl.scenarios.pipeline import (
     SOURCES,
     SPLITS,
@@ -149,6 +150,11 @@ def main() -> int:
         default=0.05,
         help="Max allowed deviation from the equiprobable PG holdout mixture before failing.",
     )
+    parser.add_argument(
+        "--require-driving-mission",
+        action="store_true",
+        help="Fail unless every Rulebook-eligible candidate has a v1.1.1 driving mission.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     if (args.pg_holdout_seed_start is None) != (args.pg_holdout_count_per_profile is None):
@@ -236,6 +242,20 @@ def main() -> int:
         rulebook_eligible_entries = tuple(
             entry for entry in valid_or_warning_entries if entry.record.rulebook_eligible is True
         )
+        if args.require_driving_mission:
+            missing_mission = tuple(
+                entry.record.scenario_uid
+                for entry in rulebook_eligible_entries
+                if (
+                    not isinstance(entry.record.driving_mission, dict)
+                    or entry.record.driving_mission.get("schema_version") != MISSION_SCHEMA_VERSION
+                )
+            )
+            if missing_mission:
+                raise ValueError(
+                    "catalog is not mission-ready; missing driving_mission for "
+                    f"{missing_mission[:5]}"
+                )
         empirical_candidate_entries = tuple(
             entry
             for entry in rulebook_eligible_entries

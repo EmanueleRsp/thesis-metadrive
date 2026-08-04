@@ -142,6 +142,7 @@ catalog_rulebook="${SCENARIONET_RULEBOOK_V2_CATALOG_PATH:-${data_root}/catalog/s
 catalog_split="${SCENARIONET_SPLIT_CATALOG_PATH:-${data_root}/catalog/scenario_catalog_split.parquet}"
 catalog_final="${SCENARIONET_FINAL_CATALOG_PATH:-${data_root}/catalog/scenario_catalog.parquet}"
 rulebook_eligibility="${SCENARIONET_RULEBOOK_V2_ELIGIBILITY_PATH:-${data_root}/rulebook_v2/catalog_eligibility.json}"
+mission_eligibility="${SCENARIONET_DRIVING_MISSION_ELIGIBILITY_PATH:-${data_root}/rulebook_v2/driving_mission_eligibility.json}"
 rulebook_ego_config="${data_root}/rulebook_v2/ego_config.json"
 rulebook_calibration="${data_root}/rulebook_v2/calibration_b_e.json"
 rulebook_ego_config_host="${host_data_root}/rulebook_v2/ego_config.json"
@@ -266,6 +267,7 @@ split_args=(
   --waymo-batch-shards "$waymo_batch_shards"
   --waymo-max-new-shards "$waymo_max_new_shards"
   --arm-minimums-config "$pipeline_config"
+  --require-driving-mission
 )
 if is_true "$auto_split"; then
   split_args+=(
@@ -329,15 +331,16 @@ for ((cycle=0; ; cycle++)); do
     "${derived_overwrite[@]}"
 
   stage \
-    "[4/9] Filtering the catalog with Rulebook v2 static eligibility" \
-    "evaluating and persisting Rulebook v2 catalog eligibility" \
-    "Inspect the eligibility error above and verify the ego geometry and calibration artifacts. Retry reuses valid cached eligibility records."
+    "[4/9] Filtering the catalog with Rulebook v2 and driving-mission eligibility" \
+    "evaluating Rulebook v2 static eligibility and building immutable driving missions before split selection" \
+    "Inspect the Rulebook or driving-mission eligibility report above. Records without a valid mission are excluded before split feasibility is evaluated."
   docker compose run --rm "$pipeline_service" uv run --no-sync python \
     -m thesis_rl.cli.scenarios.filter_rulebook_v2_catalog \
     --catalog "$catalog_raw" \
     --data-root "$data_root" \
     --output-catalog "$catalog_rulebook" \
     --eligibility-output "$rulebook_eligibility" \
+    --mission-eligibility-output "$mission_eligibility" \
     --ego-config "$rulebook_ego_config" \
     --calibration "$rulebook_calibration" \
     --workers "$rulebook_v2_workers" \

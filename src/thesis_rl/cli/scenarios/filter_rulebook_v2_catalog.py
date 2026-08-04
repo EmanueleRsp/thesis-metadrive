@@ -30,6 +30,11 @@ from thesis_rl.scenarios.catalog import (
     write_scenario_catalog,
 )
 from thesis_rl.scenarios.runtime_database import sha256_file
+from thesis_rl.scenarios.mission_eligibility import (
+    MISSION_BUILDER_IDENTITY,
+    MISSION_ELIGIBILITY_SCHEMA,
+    evaluate_driving_mission_entries,
+)
 
 
 def _canonical_json_hash(path: Path) -> str:
@@ -118,6 +123,11 @@ def main() -> int:
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--output-catalog", type=Path, required=True)
     parser.add_argument("--eligibility-output", type=Path, required=True)
+    parser.add_argument(
+        "--mission-eligibility-output",
+        type=Path,
+        help="JSON report for the mandatory pre-split driving-mission validation.",
+    )
     parser.add_argument("--ego-config", type=Path, required=True)
     parser.add_argument("--calibration", type=Path, required=True)
     parser.add_argument(
@@ -140,6 +150,14 @@ def main() -> int:
     data_root = args.data_root.expanduser().resolve()
     output_catalog = args.output_catalog.expanduser().resolve()
     eligibility_output = args.eligibility_output.expanduser().resolve()
+    mission_eligibility_output = (
+        (
+            args.mission_eligibility_output
+            or output_catalog.with_name("driving_mission_eligibility.json")
+        )
+        .expanduser()
+        .resolve()
+    )
     ego_hash = _canonical_json_hash(args.ego_config.expanduser().resolve())
     calibration = load_calibration_artifact(
         args.calibration.expanduser().resolve(),
@@ -213,13 +231,73 @@ def main() -> int:
         )
         for entry in catalog.entries
     )
-    selected = tuple(entry for entry in annotated_entries if entry.record.rulebook_eligible is True)
+    rulebook_selected = tuple(
+        entry for entry in annotated_entries if entry.record.rulebook_eligible is True
+    )
+    console.log(f"Building driving missions for {len(rulebook_selected)} Rulebook-eligible entries")
+    mission_results = evaluate_driving_mission_entries(
+        rulebook_selected,
+        data_root=data_root,
+        workers=args.workers,
+    )
+    mission_by_uid = {result.scenario_uid: result for result in mission_results}
+    selected = tuple(
+        ScenarioCatalogEntry(
+            record=replace(
+                entry.record,
+                driving_mission=mission_by_uid[entry.record.scenario_uid].mission,
+            ),
+            features=entry.features,
+        )
+        for entry in rulebook_selected
+        if mission_by_uid[entry.record.scenario_uid].eligible
+    )
+    mission_cause_counts = Counter(
+        error for result in mission_results for error in result.validation_errors
+    )
+    mission_source_counts = {
+        source: {
+            "eligible": sum(
+                result.eligible for result in mission_results if result.source == source
+            ),
+            "excluded": sum(
+                not result.eligible for result in mission_results if result.source == source
+            ),
+        }
+        for source in ("pg", "waymo")
+    }
+    mission_payload = {
+        "schema": MISSION_ELIGIBILITY_SCHEMA,
+        "builder_identity": MISSION_BUILDER_IDENTITY,
+        "input_catalog": str(catalog_path),
+        "input_catalog_hash": sha256_file(catalog_path),
+        "total_rulebook_eligible_records": len(mission_results),
+        "mission_eligible_records": len(selected),
+        "mission_excluded_records": len(mission_results) - len(selected),
+        "counts_by_source": mission_source_counts,
+        "excluded_by_cause": dict(sorted(mission_cause_counts.items())),
+        "records": [result.to_dict() for result in mission_results],
+    }
+    mission_eligibility_output.parent.mkdir(parents=True, exist_ok=True)
+    mission_eligibility_output.write_text(
+        json.dumps(mission_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    console.log(
+        f"Driving-mission filtering complete: eligible={len(selected)}, "
+        f"excluded={len(mission_results) - len(selected)}"
+    )
     if not selected:
-        raise ValueError("Rulebook v2 eligibility rejected every catalog entry")
+        raise ValueError("driving-mission validation rejected every Rulebook-eligible entry")
     if output_catalog.exists() and not args.overwrite:
         raise FileExistsError(f"refusing to overwrite Rulebook catalog: {output_catalog}")
     if eligibility_output.exists() and not args.overwrite:
         raise FileExistsError(f"refusing to overwrite eligibility artifact: {eligibility_output}")
+    if mission_eligibility_output.exists() and not args.overwrite:
+        raise FileExistsError(
+            "refusing to overwrite driving-mission eligibility artifact: "
+            f"{mission_eligibility_output}"
+        )
     write_scenario_catalog(selected, output_catalog, overwrite=True)
 
     cause_counts = Counter(error for record in eligibility for error in record.validation_errors)
@@ -276,8 +354,10 @@ def main() -> int:
             {
                 "catalog": str(output_catalog),
                 "eligibility": str(eligibility_output),
+                "mission_eligibility": str(mission_eligibility_output),
                 "eligible_records": len(selected),
                 "excluded_records": len(eligibility) - len(selected),
+                "mission_excluded_records": len(mission_results) - len(selected),
             },
             sort_keys=True,
         )

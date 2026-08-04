@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
+from thesis_rl.mission.types import MISSION_SCHEMA_VERSION
 from thesis_rl.scenarios.catalog import (
     ScenarioCatalog,
     ScenarioCatalogEntry,
@@ -259,6 +260,8 @@ def _validate_selected_population(
     catalog: ScenarioCatalog,
     split_manifest: Mapping[str, Any],
     data_root: Path | None,
+    *,
+    require_driving_mission: bool = False,
 ) -> None:
     expected_counts = split_manifest["counts"]
     for split in SPLITS:
@@ -291,6 +294,17 @@ def _validate_selected_population(
         raise ValueError(
             f"cannot freeze records outside the validated runtime population: {rejected[:5]}"
         )
+    if require_driving_mission:
+        missing_mission = [
+            entry.record.scenario_uid
+            for entry in catalog.entries
+            if not isinstance(entry.record.driving_mission, dict)
+            or entry.record.driving_mission.get("schema_version") != MISSION_SCHEMA_VERSION
+        ]
+        if missing_mission:
+            raise ValueError(
+                f"cannot freeze records without a validated driving mission: {missing_mission[:5]}"
+            )
 
     expected_indices: dict[str, int | None] = {}
     for split in SPLITS:
@@ -324,6 +338,7 @@ def build_frozen_index(
     shard_ledger_path: str | Path,
     output_path: str | Path,
     overwrite: bool = False,
+    require_driving_mission: bool = False,
 ) -> Path:
     """Write an immutable selection index from the final ScenarioNet catalog."""
 
@@ -333,7 +348,12 @@ def build_frozen_index(
     output = Path(output_path).expanduser().resolve()
     selected_catalog = read_scenario_catalog(catalog_file)
     split_payload = validate_split_manifest(yaml.safe_load(split_file.read_text(encoding="utf-8")))
-    _validate_selected_population(selected_catalog, split_payload, root)
+    _validate_selected_population(
+        selected_catalog,
+        split_payload,
+        root,
+        require_driving_mission=require_driving_mission,
+    )
 
     waymo_entries = [entry for entry in selected_catalog.entries if entry.record.source == "waymo"]
     waymo_paths = tuple(entry.record.relative_path for entry in waymo_entries)

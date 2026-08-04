@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pickle
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from thesis_rl.rulebook.v2.context.catalog_eligibility import (
 from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact
 from thesis_rl.scenarios.catalog import ScenarioCatalogEntry
 from thesis_rl.scenarios.catalog import read_scenario_catalog, write_scenario_catalog
+from thesis_rl.scenarios.mission_eligibility import evaluate_driving_mission_entry
 from thesis_rl.scenarios.records import ScenarioFeatures, ScenarioRecord
 
 
@@ -191,6 +193,23 @@ def test_catalog_eligibility_rejects_non_positive_worker_count(tmp_path: Path) -
         )
 
 
+def test_driving_mission_eligibility_fails_closed_before_split(tmp_path: Path) -> None:
+    relative = _write_scenario(tmp_path, off_lane=True)
+    entry = _entry(path=relative)
+    entry = ScenarioCatalogEntry(
+        record=replace(
+            entry.record,
+            assigned_route_lane_ids=("lane",),
+            assigned_route_source="offline_test_route",
+        ),
+        features=entry.features,
+    )
+    result = evaluate_driving_mission_entry(entry, data_root=tmp_path)
+    assert result.eligible is False
+    assert result.mission is None
+    assert result.validation_errors[0].startswith("mission_build_error:")
+
+
 def test_catalog_filter_cli_writes_audit_artifact_and_filters_split_input(
     tmp_path: Path,
     monkeypatch,
@@ -238,6 +257,13 @@ def test_catalog_filter_cli_writes_audit_artifact_and_filters_split_input(
     selected_record = selected_catalog.entries[0].record
     assert selected_record.rulebook_eligible is True
     assert selected_record.rulebook_validation_errors == ()
+    assert selected_record.driving_mission is not None
+    assert selected_record.driving_mission["schema_version"] == "driving_mission_v1_1_1"
+    mission_artifact = tmp_path / "driving_mission_eligibility.json"
+    assert mission_artifact.is_file()
+    mission_payload = json.loads(mission_artifact.read_text(encoding="utf-8"))
+    assert mission_payload["mission_eligible_records"] == 1
+    assert mission_payload["mission_excluded_records"] == 0
     payload = json.loads(artifact.read_text(encoding="utf-8"))
     assert payload["eligible_records"] == 1
     assert payload["excluded_records"] == 0

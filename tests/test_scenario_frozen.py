@@ -129,6 +129,19 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, tuple[ScenarioCatalogEnt
     return root, catalog, ledger, entries
 
 
+def test_freeze_can_require_mission_ready_catalog(tmp_path: Path) -> None:
+    root, catalog, ledger, _entries = _fixture(tmp_path)
+    with pytest.raises(ValueError, match="validated driving mission"):
+        build_frozen_index(
+            catalog_path=catalog,
+            split_manifest_path=root / "splits/split_manifest.yaml",
+            data_root=root,
+            shard_ledger_path=ledger,
+            output_path=root / "frozen/index.json",
+            require_driving_mission=True,
+        )
+
+
 def test_freeze_index_captures_waymo_shards_and_pg_generation(tmp_path: Path) -> None:
     root, catalog, ledger, entries = _fixture(tmp_path)
     output = root / "frozen/scenario_selection_index.json"

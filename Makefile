@@ -56,6 +56,7 @@ RULEBOOK_V2_PILOT_PRELIMINARY_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/ru
 RULEBOOK_V2_RAW_CATALOG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_raw.parquet
 RULEBOOK_V2_FILTERED_CATALOG_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_rulebook_v2.parquet
 RULEBOOK_V2_ELIGIBILITY_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/catalog_eligibility.json
+RULEBOOK_V2_MISSION_ELIGIBILITY_CONTAINER ?= $(RULEBOOK_V2_CONTAINER_DATA_ROOT)/rulebook_v2/driving_mission_eligibility.json
 
 # Optional override for the existing-source ScenarioNet rebuild. If empty, the
 # filtering CLI default applies. Example: make scenarionet-rebuild-existing SCENARIONET_REBUILD_WORKERS=64
@@ -107,6 +108,7 @@ rulebook-v2-filter-catalog:
 		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
 		--output-catalog "$(RULEBOOK_V2_FILTERED_CATALOG_CONTAINER)" \
 		--eligibility-output "$(RULEBOOK_V2_ELIGIBILITY_CONTAINER)" \
+		--mission-eligibility-output "$(RULEBOOK_V2_MISSION_ELIGIBILITY_CONTAINER)" \
 		--ego-config "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" \
 		--calibration "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" \
 		--workers "$(RULEBOOK_V2_WORKERS)" \
@@ -202,6 +204,7 @@ scenarionet-rebuild-existing:
 		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
 		--output-catalog "$(RULEBOOK_V2_FILTERED_CATALOG_CONTAINER)" \
 		--eligibility-output "$(RULEBOOK_V2_ELIGIBILITY_CONTAINER)" \
+		--mission-eligibility-output "$(RULEBOOK_V2_MISSION_ELIGIBILITY_CONTAINER)" \
 		--ego-config "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" \
 		--calibration "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" \
 		$(if $(strip $(SCENARIONET_REBUILD_WORKERS)),--workers "$(SCENARIONET_REBUILD_WORKERS)",) \
@@ -219,6 +222,7 @@ scenarionet-rebuild-existing:
 		--waymo-batch-shards 128 \
 		--waymo-max-new-shards 1000 \
 		--arm-minimums-config /workspace/thesis-metadrive/conf/scenarios/pipeline_v1.yaml \
+		--require-driving-mission \
 		--auto-targets \
 		--waymo-target-train 1000 \
 		--waymo-target-validation 250 \
@@ -309,6 +313,7 @@ scenarionet-v1-2-rebuild:
 		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
 		--output-catalog "$(RULEBOOK_V2_FILTERED_CATALOG_CONTAINER)" \
 		--eligibility-output "$(RULEBOOK_V2_ELIGIBILITY_CONTAINER)" \
+		--mission-eligibility-output "$(RULEBOOK_V2_MISSION_ELIGIBILITY_CONTAINER)" \
 		--ego-config "$(RULEBOOK_V2_EGO_CONFIG_CONTAINER)" \
 		--calibration "$(RULEBOOK_V2_CALIBRATION_CONTAINER)" \
 		--workers "$(SCENARIONET_V12_RULEBOOK_WORKERS)" \
@@ -325,6 +330,7 @@ scenarionet-v1-2-rebuild:
 		--pg-train "$(SCENARIONET_V12_PG_TRAIN)" \
 		--stratified-total 300 \
 		--train-arm-minimums-config /workspace/thesis-metadrive/conf/scenarios/pipeline_v1_2.yaml \
+		--require-driving-mission \
 		--pg-holdout-seed-start "$(SCENARIONET_V12_PG_HOLDOUT_SEED_START)" \
 		--pg-holdout-count-per-profile "$(SCENARIONET_V12_PG_HOLDOUT_PER_PROFILE)" \
 		--pg-holdout-batch-size-per-profile "$(SCENARIONET_V12_PG_HOLDOUT_BATCH_SIZE)" \
