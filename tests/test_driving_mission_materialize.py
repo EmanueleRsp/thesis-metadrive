@@ -63,7 +63,7 @@ def test_candidate_materialization_preserves_identity_and_never_writes_source(
 
     candidate = build_candidate_index(index, tmp_path)
 
-    assert candidate["schema"] == "scenarionet_frozen_mission_candidate_v1"
+    assert candidate["schema"] == "scenarionet_frozen_mission_candidate_v1_1"
     assert candidate["parent_selection_hash"] == "parent"
     assert candidate["records"][0]["scenario_uid"] == "pg:test:one"
     assert candidate["records"][0]["driving_mission"]["scenario_uid"] == "pg:test:one"
@@ -71,7 +71,7 @@ def test_candidate_materialization_preserves_identity_and_never_writes_source(
 
 
 def test_candidate_writer_refuses_overwrite(tmp_path: Path) -> None:
-    payload = {"schema": "scenarionet_frozen_mission_candidate_v1", "records": []}
+    payload = {"schema": "scenarionet_frozen_mission_candidate_v1_1", "records": []}
     output = tmp_path / "candidate.json"
     write_candidate_index(payload, output)
     assert json.loads(output.read_text()) == payload
@@ -212,7 +212,7 @@ def test_promoted_candidate_preserves_parent_metadata_and_uses_new_identity(
 
     promoted = promote_candidate_index(candidate, index)
 
-    assert promoted["schema"] == "scenarionet_frozen_selection_mission_v1"
+    assert promoted["schema"] == "scenarionet_frozen_selection_mission_v1_1"
     assert promoted["parent_selection_hash"] == "parent"
     assert promoted["selection_hash"] == candidate["mission_selection_hash"]
     assert promoted["split_manifest"] == {"counts": {}}

@@ -7,7 +7,7 @@ from typing import Any, Sequence
 from omegaconf import DictConfig, OmegaConf
 
 
-MISSION_CATALOG_FILENAME = "scenario_catalog_driving_mission_v1.parquet"
+MISSION_CATALOG_FILENAME = "scenario_catalog_driving_mission_v1_1.parquet"
 
 
 def _to_plain_dict(cfg: DictConfig | dict[str, Any]) -> dict[str, Any]:

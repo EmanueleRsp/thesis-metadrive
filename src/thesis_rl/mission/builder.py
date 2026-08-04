@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from typing import Any, Mapping
 
+from shapely.geometry import LineString, Point
+
 from thesis_rl.mission.gates import GateGeometry
-from thesis_rl.mission.types import DirectedGate, DrivingMissionRecord, LaneSpan, MissionSection
-from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
-from thesis_rl.rulebook.v2.geometry.lanes import associate_route_lane
+from thesis_rl.mission.types import (
+    DirectedGate,
+    DrivingMissionRecord,
+    FinalGateSegment,
+    LaneSpan,
+    MissionSection,
+)
+from thesis_rl.rulebook.v2.geometry.route import GEOMETRY_EPSILON_M, RoutePolyline
+
+
+FINAL_GATE_BUILDER_EPSILON_M = 0.01
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +30,7 @@ class NormalizedLane:
     successor_lane_ids: tuple[str, ...] = ()
     lateral_lane_ids: tuple[str, ...] = ()
     centerline: RoutePolyline | None = None
+    polygon_xy: Any | None = None
 
     def __post_init__(self) -> None:
         if not self.lane_id or self.length_m <= 0.0:
@@ -190,25 +203,187 @@ def build_driving_mission_from_source(
             lane.successor_lane_ids,
             tuple(sorted(set(neighbors))),
             lane.centerline,
+            lane.polygon_xy,
         )
     valid = state.get("valid", ())
+    reset_index = next((index for index, value in enumerate(valid) if bool(value)), -1)
+    if reset_index < 0:
+        raise ValueError("SDC trajectory has no valid reset pose")
+    reset_position = state["position"][reset_index]
+    reset_xy = (float(reset_position[0]), float(reset_position[1]))
+    reset_z = (float(reset_position[2]) if len(reset_position) > 2 else 0.0) - z_origin
+    assigned_route_lane_ids = _repair_reset_route(
+        tuple(str(value) for value in assigned_route_lane_ids),
+        lanes,
+        reset_xy,
+        reset_z,
+    )
     terminal_index = max((index for index, value in enumerate(valid) if bool(value)), default=-1)
     if terminal_index < 0:
         raise ValueError("SDC trajectory has no valid terminal pose")
     position = state["position"][terminal_index]
     heading = float(state["heading"][terminal_index])
-    association = associate_route_lane(
-        position_xy=(float(position[0]), float(position[1])),
-        position_z=(float(position[2]) if len(position) > 2 else 0.0) - z_origin,
-        heading_rad=heading,
-        route_lanes=tuple(lane_map[lane_id] for lane_id in assigned_route_lane_ids),
-    )
-    if association is None:
-        raise ValueError("terminal SDC pose cannot be projected to the assigned route")
-    return build_driving_mission(
+    del heading
+    return _build_source_route_mission(
         scenario_uid,
+        source,
         assigned_route_lane_ids,
         lanes,
-        final_goal_lane_id=association.lane_id,
-        final_goal_s_m=association.route_projection_s_m,
+        reset_xy=reset_xy,
+        reset_z=reset_z,
+        terminal_position=(float(position[0]), float(position[1])),
+        terminal_z=(float(position[2]) if len(position) > 2 else 0.0) - z_origin,
     )
+
+
+def _line_parts(geometry: Any) -> tuple[Any, ...]:
+    if geometry.is_empty:
+        return ()
+    if geometry.geom_type in {"LineString", "LinearRing"}:
+        return (geometry,)
+    if hasattr(geometry, "geoms"):
+        return tuple(part for item in geometry.geoms for part in _line_parts(item))
+    return ()
+
+
+def _build_source_route_mission(
+    scenario_uid: str,
+    source: str,
+    route_lane_ids: tuple[str, ...],
+    lanes: Mapping[str, NormalizedLane],
+    *,
+    reset_xy: tuple[float, float],
+    reset_z: float,
+    terminal_position: tuple[float, float],
+    terminal_z: float,
+) -> DrivingMissionRecord:
+    """Build the v1.1 normalized record and its frozen anchor-based gate."""
+    route_lanes = tuple(lanes[lane_id] for lane_id in route_lane_ids)
+    if any(lane.centerline is None or lane.polygon_xy is None for lane in route_lanes):
+        raise ValueError("source route lanes require centerline and polygon geometry")
+    canonical = RoutePolyline.from_lane_centerlines(
+        tuple(lane.centerline.points_xyz for lane in route_lanes if lane.centerline is not None)
+    )
+    reset_projection = canonical.project(reset_xy, position_z=reset_z)
+    final_projection = route_lanes[-1].centerline.project(terminal_position, position_z=terminal_z)
+    final_prefix_m = sum(lane.length_m for lane in route_lanes[:-1])
+    raw_goal_m = final_prefix_m + final_projection.s_m
+    s_goal_m = raw_goal_m - reset_projection.s_m
+    if s_goal_m <= 0.0:
+        raise ValueError("normalized route has non-positive goal station")
+    goal_xyz = canonical.point_at(raw_goal_m)
+    goal = canonical.project(goal_xyz[:2], position_z=goal_xyz[2])
+    tangent = goal.tangent_xy
+    normal = (-tangent[1], tangent[0])
+    cross = LineString(
+        (
+            (goal_xyz[0] - 100.0 * normal[0], goal_xyz[1] - 100.0 * normal[1]),
+            (goal_xyz[0] + 100.0 * normal[0], goal_xyz[1] + 100.0 * normal[1]),
+        )
+    )
+    intervals: list[tuple[float, float, str]] = []
+    final_intervals: list[tuple[float, float, str]] = []
+    for lane in lanes.values():
+        if lane.centerline is None or lane.polygon_xy is None:
+            continue
+        try:
+            projection = lane.centerline.project(goal_xyz[:2], position_z=goal_xyz[2])
+        except ValueError as error:
+            if "vertically compatible" in str(error):
+                continue
+            raise
+        if projection.tangent_xy[0] * tangent[0] + projection.tangent_xy[1] * tangent[1] <= 0.0:
+            continue
+        for part in _line_parts(cross.intersection(lane.polygon_xy)):
+            first, last = part.coords[0], part.coords[-1]
+            lo = cross.project(Point(first)) - 100.0
+            hi = cross.project(Point(last)) - 100.0
+            lo, hi = min(lo, hi), max(lo, hi)
+            if hi - lo <= FINAL_GATE_BUILDER_EPSILON_M:
+                continue
+            item = (lo, hi, lane.lane_id)
+            intervals.append(item)
+            if lane.lane_id == route_lane_ids[-1]:
+                final_intervals.append(item)
+    merged: list[list[Any]] = []
+    for lo, hi, lane_id in sorted(intervals):
+        if not merged or lo > merged[-1][1] + FINAL_GATE_BUILDER_EPSILON_M:
+            merged.append([lo, hi, [lane_id]])
+        else:
+            merged[-1][1] = max(merged[-1][1], hi)
+            merged[-1][2].append(lane_id)
+    containing = [
+        item
+        for item in merged
+        if item[0] - FINAL_GATE_BUILDER_EPSILON_M <= 0.0 <= item[1] + FINAL_GATE_BUILDER_EPSILON_M
+    ]
+    if len(containing) != 1:
+        raise ValueError(f"final gate anchor component count is {len(containing)}")
+    selected = containing[0]
+    if not any(
+        selected[0] - FINAL_GATE_BUILDER_EPSILON_M <= lo
+        and hi <= selected[1] + FINAL_GATE_BUILDER_EPSILON_M
+        for lo, hi, _ in final_intervals
+    ):
+        raise ValueError("final occurrence is inconsistent with the anchor gate")
+    source_geometry_hash = hashlib.sha256(
+        json.dumps(
+            {"route": route_lane_ids, "points": canonical.points_xyz},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    gate = FinalGateSegment(
+        (
+            (goal_xyz[0] + selected[0] * normal[0], goal_xyz[1] + selected[0] * normal[1]),
+            (goal_xyz[0] + selected[1] * normal[0], goal_xyz[1] + selected[1] * normal[1]),
+        ),
+        tangent,
+        goal_xyz[2],
+        route_lane_ids[-1],
+        f"offline:{source}:anchor_cross_section",
+        source_geometry_hash,
+        "driving-mission-v1.1-anchor-builder",
+    )
+    legacy_span = LaneSpan(route_lane_ids[-1], 0.0, route_lanes[-1].length_m)
+    legacy_goal = DirectedGate(
+        "goal:final", (legacy_span,), route_lane_ids[-1], final_projection.s_m, None
+    )
+    return DrivingMissionRecord(
+        scenario_uid,
+        "mission-builder-v1.1",
+        (MissionSection("section:route", legacy_span, (legacy_span,), legacy_goal),),
+        legacy_goal,
+        route_lane_ids=route_lane_ids,
+        canonical_route_points_xyz=canonical.points_xyz,
+        start_occurrence_id=route_lane_ids[0],
+        final_occurrence_id=route_lane_ids[-1],
+        s_start_m=0.0,
+        s_goal_m=s_goal_m,
+        final_gate_segment=gate,
+    )
+
+
+def _repair_reset_route(
+    route_lane_ids: tuple[str, ...],
+    lanes: Mapping[str, NormalizedLane],
+    reset_xy: tuple[float, float],
+    reset_z: float,
+) -> tuple[str, ...]:
+    """Apply the approved offline correction-first reset normalization."""
+    candidates: list[int] = []
+    for index, lane_id in enumerate(route_lane_ids):
+        lane = lanes[lane_id]
+        if lane.polygon_xy is None or not lane.polygon_xy.buffer(GEOMETRY_EPSILON_M).covers(Point(reset_xy)):
+            continue
+        try:
+            projection = lane.centerline.project(reset_xy, position_z=reset_z)
+        except ValueError:
+            continue
+        if index == 0 or projection.s_m <= GEOMETRY_EPSILON_M:
+            candidates.append(index)
+    if not candidates:
+        raise ValueError("reset pose is not contained by the first occurrence or shared boundary")
+    if len(set(candidates)) != 1:
+        raise ValueError("reset pose has multiple offline route-occurrence associations")
+    return route_lane_ids[candidates[0] :]

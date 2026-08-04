@@ -1,0 +1,1583 @@
+{
+  "candidate_counts": {
+    "no_shared_boundary": 479,
+    "complementary_interval_fail": 10,
+    "shared_wrong_sides": 9
+  },
+  "record_counts": {
+    "no_shared_boundary_at_goal": 194,
+    "shared_boundary_interval_or_side_failure": 8,
+    "shared_boundary_wrong_side": 8
+  },
+  "records": [
+    {
+      "uid": "waymo:training_20s:215d94eecfef01aa",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:589267cf6c864dd6",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e4a7d09653eccc5f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:43ea2af6d776319",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c503d5efdf34e0c3",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:837646eae071bcb7",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c5d7a3e51ec72721",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 8
+      }
+    },
+    {
+      "uid": "waymo:training_20s:75877dd0c62ee354",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 6
+      }
+    },
+    {
+      "uid": "waymo:training_20s:b3fd25148b7a700c",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:b14fe74f8ee6c980",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:69d0d2b77db68317",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e7e2e0dd0c0833a2",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:a33f0f5a68ff6249",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:1e215c9f95a467b6",
+      "reason": "shared_boundary_interval_or_side_failure",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 9,
+        "complementary_interval_fail": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:26e51875b2a26adf",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:6bc166ae8320525a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:2b17bd772f0f025e",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:b88d89bdb03179dd",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:85fb60c298939ae9",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:665d1830e7cec2fe",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:f3be84358fad7cb5",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:79bf72cf5eb245db",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:ec942e2e13771ad1",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:2a388cec54afc4c0",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:8d6c907f6bc7f10f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:286b6df97600f57f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:62ec9802d0a3cebc",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:9ec2ae895742b059",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:8b91b91fb6014bb4",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:ec770b4daa4db64",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:921f091628e40364",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:a9e207a01616b90f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:6831d5237e9a9129",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:b283d5c31a721c99",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:8a5af38ae5ff9647",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:bcf1201797a09e9",
+      "reason": "shared_boundary_wrong_side",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1,
+        "shared_wrong_sides": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:128721da33ec4751",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:72f428a220ec47a8",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:62f443ea0667719f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:6508fb91f692576f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:5f7e449e3979f4ed",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:35e359cbc321b9df",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:b425e4b8df8b00d4",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:696e0202c240bdaa",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4bcf022fa489a2a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:6e3e3c917cf607f1",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:beaa71486c79dd82",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:aa3e2ca657a477cc",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:7acfb37c529685b9",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:141f284b8bb5d418",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 8
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c15487cee32474f9",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:f848d6a993d64af6",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:506a646cd2cb7762",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:5c6086541dea3374",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e0810a0842ef700b",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:471d0853f7ea090d",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:f8eb26fb0765a309",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:2bcc3873b73eff5f",
+      "reason": "shared_boundary_interval_or_side_failure",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1,
+        "complementary_interval_fail": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:681f24871535ae3f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:1fbd86bd99623a0f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:d5b1e325f5a085b3",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:b840d87276e1338c",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:270e6e1eb097ac2a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:939c487d55112e",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:eefe623e83d842a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4b7b283101fe6273",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:833f7a82ef7568e5",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:ab1fed29a8241c0e",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e4a35b70638bb29d",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:796632637cd34877",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:1045c02314af50e3",
+      "reason": "shared_boundary_wrong_side",
+      "candidate_diagnostics": {
+        "shared_wrong_sides": 1,
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:2095a0e2c51a42e8",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e4e377b4deb52f04",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:14139de6bce54874",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4e78aaa0a24b5133",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:18c3c5bd63b5180",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:5f811ad7d73a193b",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:214fddd72f088cf2",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:1103e46c7433e74a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:d6edfa5a34b40aa8",
+      "reason": "shared_boundary_interval_or_side_failure",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3,
+        "complementary_interval_fail": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:f434cce8851af1ed",
+      "reason": "shared_boundary_interval_or_side_failure",
+      "candidate_diagnostics": {
+        "complementary_interval_fail": 1,
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:22f0b6500d59451",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e2ec5b79e47766f5",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e60be7487bba54a0",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:f8fd1fe2571644d",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:568365d7e2121420",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:cffb9a4685518410",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:fb473de4a4e1d875",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:a0e0a886e9c37e13",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c0a37d4660ae5beb",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c20f514f5d1bd230",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:94d05e4b56a22a8",
+      "reason": "shared_boundary_wrong_side",
+      "candidate_diagnostics": {
+        "shared_wrong_sides": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:707f27ea3927b4f5",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:a986b5ab7da14cf5",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:7d9dd44d4bc099f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:d760a5077f6548d3",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:685c6e1b4951dac",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:a44fca230989ef6a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e606088ff1e616b6",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:23eb3a96bc381cb7",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:9e95700888cc3baa",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:2dfc007d6ab0bc6a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:8a9e85a2152f8bb2",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:745c6fb195b0dc4d",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c594c19d19820ff4",
+      "reason": "shared_boundary_interval_or_side_failure",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2,
+        "complementary_interval_fail": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:5393aa8f9b733244",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:d03f20fae509c48e",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:72c89b35a605fbb6",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:a4d8700ba0e1fac4",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:9e55e622850e2905",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:515c3088a349c526",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:f69421bf63988982",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:53177a6fda55ddc7",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:afdf1c629b5751c2",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:3daefe29a1579218",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4d23111b6592e1ca",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:539714e6f7ff4c19",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:d0bb94ff0583b47d",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:d126daed81b4a8e9",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:cc995fcf2190499b",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:bb475d2d00505b56",
+      "reason": "shared_boundary_wrong_side",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4,
+        "shared_wrong_sides": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:10bf00836286b3b0",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 9
+      }
+    },
+    {
+      "uid": "waymo:training_20s:9ed954e2d8dbffcc",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:1400845d2f39a9a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c3ce0acd134f7a4b",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:5348ddd8408c286c",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:8b2fce70fe9bee69",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:973b5bc2b7fbea7b",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:d5189b83f4921b0a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4038717dcf3a3afd",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:37ad1d55cba9fcf4",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:cac16bc44bef0c83",
+      "reason": "shared_boundary_wrong_side",
+      "candidate_diagnostics": {
+        "shared_wrong_sides": 1,
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:b5aa374a572b9e94",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4cafec96676c3053",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:11957390619f698a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 8
+      }
+    },
+    {
+      "uid": "waymo:training_20s:bc58d58fa9efec06",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:3fc82ddc822e1f10",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:a4689745e1fe4928",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:2773699e0892bca8",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4d4fc76f0e07d4d9",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:7e1cb4ba365b2a7f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:21364efbc20daad4",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:b6070bda77e14081",
+      "reason": "shared_boundary_wrong_side",
+      "candidate_diagnostics": {
+        "shared_wrong_sides": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:6a997977b0b49f92",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:fe6b9519e0e15547",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:3f5c9f36860e299e",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e028754632ec8c1c",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e8d4704c51b012bd",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:430814e5aab56147",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:bd4825d3fab8ffac",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:191d717593eba490",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:2fd49f7370101b3d",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:8b9e8f0aa3bb86b8",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:b93464eb9fca7f0f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:a9c2be6e76c51dcf",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4fc774efaefc2a1f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:69d48400f8d32601",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c6d966578810f58c",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 9
+      }
+    },
+    {
+      "uid": "waymo:training_20s:f4e910679c50bbc9",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:6b19670d477ae3d3",
+      "reason": "shared_boundary_wrong_side",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 10,
+        "shared_wrong_sides": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:82b9452d05eb833a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:152de09eccb7b59d",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 8
+      }
+    },
+    {
+      "uid": "waymo:training_20s:f049ab81c3970862",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c2852df55cf4afa6",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:364cdd3b5a7db829",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:ef80eb9a28c8ead9",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 10
+      }
+    },
+    {
+      "uid": "waymo:training_20s:17536e299dadc73a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:d7d64f5d00ffa88d",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:dd61c698815190a9",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:66060191375bf5fd",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e13b0c505dfe5440",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 8
+      }
+    },
+    {
+      "uid": "waymo:training_20s:a9c2826ef1d23e3b",
+      "reason": "shared_boundary_wrong_side",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1,
+        "shared_wrong_sides": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e134ecc01ae33464",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e352584cdd879ae",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:28cde570d536c9d8",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:5cd0565d26e15ee3",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:8e438c9e86f4290e",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c7ab10245529fa72",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:de3bae4bfb6e7c48",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:20bf7bcc356ed3cd",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 10
+      }
+    },
+    {
+      "uid": "waymo:training_20s:b744ccbc5b46eab4",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:dff5fb4f08657ae",
+      "reason": "shared_boundary_interval_or_side_failure",
+      "candidate_diagnostics": {
+        "shared_wrong_sides": 1,
+        "complementary_interval_fail": 3,
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:225140cc87e0f03e",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:330abd526a0c9207",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:33cc6dd5f49c182d",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c681877a72819cb4",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 3
+      }
+    },
+    {
+      "uid": "waymo:training_20s:143b5ff117b6d5ed",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:530c9d5ef39e39bf",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:49f9c2486a32218",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:93ac71c16fbe2288",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:d1abe983c3539e68",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:ca973f3cd29ca4d4",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:76abfafc4a782b1c",
+      "reason": "shared_boundary_interval_or_side_failure",
+      "candidate_diagnostics": {
+        "complementary_interval_fail": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:ff5e16daf7614a42",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4540abfac42f859b",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 13
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4bf3255988ae3beb",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:d033f3fd4fa37b49",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:96d95d819330cba6",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:c66d88a28b85430e",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e2f630d259a9b42a",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:5f7aa9b5c56e852f",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:52a709ed7fda2e94",
+      "reason": "shared_boundary_interval_or_side_failure",
+      "candidate_diagnostics": {
+        "complementary_interval_fail": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:4a60bc3adcf3f892",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:29d0b0f6a010bd67",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:7021cd6f69b197be",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:58ebc32298d4215b",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 5
+      }
+    },
+    {
+      "uid": "waymo:training_20s:8c36715540a0d4f4",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 4
+      }
+    },
+    {
+      "uid": "waymo:training_20s:f4238e33cbd9ba3b",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 1
+      }
+    },
+    {
+      "uid": "waymo:training_20s:ac70da96f11cba68",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    },
+    {
+      "uid": "waymo:training_20s:e73a63cff0364a28",
+      "reason": "no_shared_boundary_at_goal",
+      "candidate_diagnostics": {
+        "no_shared_boundary": 2
+      }
+    }
+  ],
+  "examples": [
+    {
+      "uid": "waymo:training_20s:215d94eecfef01aa",
+      "diagnostics": {
+        "no_shared_boundary": 1
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:589267cf6c864dd6",
+      "diagnostics": {
+        "no_shared_boundary": 2
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:e4a7d09653eccc5f",
+      "diagnostics": {
+        "no_shared_boundary": 1
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:43ea2af6d776319",
+      "diagnostics": {
+        "no_shared_boundary": 2
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:c503d5efdf34e0c3",
+      "diagnostics": {
+        "no_shared_boundary": 1
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:837646eae071bcb7",
+      "diagnostics": {
+        "no_shared_boundary": 1
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:c5d7a3e51ec72721",
+      "diagnostics": {
+        "no_shared_boundary": 8
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:75877dd0c62ee354",
+      "diagnostics": {
+        "no_shared_boundary": 6
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:b3fd25148b7a700c",
+      "diagnostics": {
+        "no_shared_boundary": 1
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:b14fe74f8ee6c980",
+      "diagnostics": {
+        "no_shared_boundary": 2
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:69d0d2b77db68317",
+      "diagnostics": {
+        "no_shared_boundary": 1
+      },
+      "candidates": []
+    },
+    {
+      "uid": "waymo:training_20s:e7e2e0dd0c0833a2",
+      "diagnostics": {
+        "no_shared_boundary": 1
+      },
+      "candidates": []
+    }
+  ]
+}

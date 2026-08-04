@@ -11,7 +11,7 @@ from shapely.ops import unary_union
 
 from thesis_rl.mission.distance import LaneGraph
 from thesis_rl.mission.gates import GateGeometry
-from thesis_rl.mission.tracker import MissionTracker
+from thesis_rl.mission.tracker import MissionTracker, RouteCoordinateMissionTracker
 from thesis_rl.mission.types import (
     DirectedGate,
     DrivingMissionRecord,
@@ -19,6 +19,7 @@ from thesis_rl.mission.types import (
     ordered_mission_gates,
 )
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord, associate_route_lane
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.types import EnvSnapshot
 
 
@@ -149,6 +150,17 @@ class MissionRuntime:
         all_by_id = {lane.lane_id: lane for lane in all_lanes}
         if len(all_by_id) != len(all_lanes):
             raise ValueError("mission runtime requires unique live lane IDs")
+        if mission.route_lane_ids:
+            missing = sorted(set(mission.route_lane_ids).difference(all_by_id))
+            if missing:
+                raise ValueError(f"mission route references unavailable lanes: {missing[:5]}")
+            route = RoutePolyline(tuple(mission.canonical_route_points_xyz))
+            initial_route_station = _initial_route_station(mission, all_by_id, initial_snapshot)
+            self._route_lanes = tuple(all_lanes)
+            self._tracker = RouteCoordinateMissionTracker(
+                mission, route, 0.0, route_offset_m=initial_route_station
+            )
+            return
         referenced_lane_ids = {
             span.lane_id for section in mission.sections for span in section.allowed_spans
         }
@@ -200,6 +212,18 @@ class MissionRuntime:
         return self._tracker.gates
 
     def update(self, pre: EnvSnapshot, post: EnvSnapshot) -> MissionSnapshot:
+        if isinstance(self._tracker, RouteCoordinateMissionTracker):
+            pre_projection = self._tracker.project(pre.ego.position_xy, pre.ego.position_z)
+            post_projection = self._tracker.project(post.ego.position_xy, post.ego.position_z)
+            return self._tracker.update(
+                pre_projection.s_m,
+                post_projection.s_m,
+                pre_footprint=pre.ego.footprint,
+                post_footprint=post.ego.footprint,
+                pre_heading_rad=pre.ego.heading_rad,
+                post_heading_rad=post.ego.heading_rad,
+                post_ego_z_m=post.ego.position_z,
+            )
         pre_association = _associate(pre, self._route_lanes)
         post_association = _associate(post, self._route_lanes)
         return self._tracker.update(
@@ -222,3 +246,24 @@ def _associate(snapshot: EnvSnapshot, route_lanes: tuple[RouteLaneRecord, ...]):
         heading_rad=snapshot.ego.heading_rad,
         route_lanes=route_lanes,
     )
+
+
+def _initial_route_station(
+    mission: DrivingMissionRecord,
+    lanes: dict[str, RouteLaneRecord],
+    snapshot: EnvSnapshot,
+) -> float:
+    """Apply the v1.1 reset invariant: first lane, or second only at boundary."""
+    first = lanes[mission.route_lane_ids[0]]
+    try:
+        projection = first.centerline.project(snapshot.ego.position_xy, position_z=snapshot.ego.position_z)
+        return projection.s_m
+    except ValueError:
+        pass
+    if len(mission.route_lane_ids) < 2:
+        raise ValueError("reset pose is not vertically compatible with first occurrence")
+    second = lanes[mission.route_lane_ids[1]]
+    projection = second.centerline.project(snapshot.ego.position_xy, position_z=snapshot.ego.position_z)
+    if projection.s_m > 0.01:
+        raise ValueError("reset pose is outside first occurrence and shared boundary")
+    return first.centerline.length_m + projection.s_m

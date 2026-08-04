@@ -771,6 +771,10 @@ class ThesisScenarioEnv(ScenarioEnv):
             raise RuntimeError("Driving mission runtime is unavailable before route metrics")
         snapshot = runtime.snapshot
         info["route_completion"] = snapshot.route_completion
+        info["mission_completion_instant"] = snapshot.instantaneous_completion
+        info["mission_completion_max"] = snapshot.maximum_completion
+        info["mission_s_m"] = snapshot.s_m
+        info["mission_delta_s_m"] = snapshot.delta_s_m
         info["mission_remaining_distance_m"] = snapshot.remaining_distance_m
         info["mission_pending_gate_index"] = snapshot.pending_gate_index
         info["mission_hash"] = snapshot.mission_hash
@@ -792,18 +796,10 @@ class ThesisScenarioEnv(ScenarioEnv):
             info["native_reference_route_length_m"] = route_length_value
 
     def reward_function(self, vehicle_id: str):
-        """Remove ScenarioEnv's terminal bonus for a degenerate Waymo route."""
+        """Return the base reward; mission success is tracker-owned."""
 
         reward, step_info = super().reward_function(vehicle_id)
-        vehicle = self.agents[vehicle_id]
-        native_success = bool(self._is_arrive_destination(vehicle))
-        thesis_success = self._is_thesis_success(vehicle)
-        if native_success and not thesis_success:
-            # ScenarioEnv stores the dense pre-terminal reward before it
-            # replaces it with ``success_reward``. Restore that value instead
-            # of training the policy to exploit a stationary SDC snippet.
-            reward = float(step_info.get("step_reward", reward))
-            step_info["success_reward_suppressed"] = True
+        thesis_success = self._is_thesis_success(None)
         step_info["thesis_success"] = thesis_success
         return reward, step_info
 

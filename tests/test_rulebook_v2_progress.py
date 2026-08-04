@@ -7,23 +7,24 @@ from thesis_rl.rulebook.v2.components.progress import (
 )
 
 
-def _snapshot(*, step: int, remaining_distance_m: float, mission_hash: str = "mission"):
+def _snapshot(*, step: int, s_m: float, mission_hash: str = "mission"):
     return MissionSnapshot(
         mission_hash=mission_hash,
         step_index=step,
         pending_gate_index=0,
-        remaining_distance_m=remaining_distance_m,
+        remaining_distance_m=max(0.0, 120.0 - s_m),
         route_completion=0.0,
         reachable=True,
         mission_success=False,
         mission_unreachable=False,
+        s_m=s_m,
     )
 
 
 def test_progress_uses_signed_mission_distance_reduction_with_global_normalizer() -> None:
     result, delta, _ = evaluate_progress(
-        pre_mission=_snapshot(step=4, remaining_distance_m=102.0),
-        post_mission=_snapshot(step=5, remaining_distance_m=100.0),
+        pre_mission=_snapshot(step=4, s_m=10.0),
+        post_mission=_snapshot(step=5, s_m=12.0),
         delta_t_s=0.1,
     )
 
@@ -35,13 +36,13 @@ def test_progress_uses_signed_mission_distance_reduction_with_global_normalizer(
 
 def test_progress_is_cap_invariant_and_clips_signed_distance_reduction() -> None:
     forward, _, _ = evaluate_progress(
-        pre_mission=_snapshot(step=0, remaining_distance_m=100.0),
-        post_mission=_snapshot(step=1, remaining_distance_m=50.0),
+        pre_mission=_snapshot(step=0, s_m=0.0),
+        post_mission=_snapshot(step=1, s_m=50.0),
         delta_t_s=0.1,
     )
     reverse, _, _ = evaluate_progress(
-        pre_mission=_snapshot(step=1, remaining_distance_m=50.0),
-        post_mission=_snapshot(step=2, remaining_distance_m=100.0),
+        pre_mission=_snapshot(step=1, s_m=50.0),
+        post_mission=_snapshot(step=2, s_m=0.0),
         delta_t_s=0.1,
     )
 
@@ -52,14 +53,14 @@ def test_progress_is_cap_invariant_and_clips_signed_distance_reduction() -> None
 def test_progress_rejects_nonconsecutive_or_cross_mission_snapshots() -> None:
     with pytest.raises(ValueError, match="consecutive"):
         evaluate_progress(
-            pre_mission=_snapshot(step=0, remaining_distance_m=10.0),
-            post_mission=_snapshot(step=2, remaining_distance_m=8.0),
+        pre_mission=_snapshot(step=0, s_m=10.0),
+            post_mission=_snapshot(step=2, s_m=12.0),
             delta_t_s=0.1,
         )
     with pytest.raises(ValueError, match="identity"):
         evaluate_progress(
-            pre_mission=_snapshot(step=0, remaining_distance_m=10.0, mission_hash="one"),
-            post_mission=_snapshot(step=1, remaining_distance_m=8.0, mission_hash="two"),
+            pre_mission=_snapshot(step=0, s_m=10.0, mission_hash="one"),
+            post_mission=_snapshot(step=1, s_m=12.0, mission_hash="two"),
             delta_t_s=0.1,
         )
 
@@ -75,6 +76,7 @@ def test_progress_accepts_terminal_unreachable_reset_noop() -> None:
         mission_success=False,
         mission_unreachable=True,
         reason="mission_unreachable",
+        s_m=0.0,
     )
 
     result, delta, _ = evaluate_progress(

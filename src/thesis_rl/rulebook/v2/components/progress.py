@@ -13,7 +13,6 @@ from thesis_rl.rulebook.v2.types import CacheDelta, ComponentStatus, MemoryDelta
 # itself, so a raw factor of 1.0 would deprioritize legitimate motion.  The
 # bound is a preference inside ``project``, never a hard gate.  Recorded here so
 # it is visible rather than buried in an expression.
-ROUTE_CONTINUITY_JUMP_FACTOR = 2.0
 
 
 def route_outside_fraction(ego_footprint, task_corridor) -> float | None:
@@ -44,7 +43,7 @@ MISSION_PROGRESS_REFERENCE_SPEED_MPS = 22.2222222222
 
 def evaluate_progress(*, pre_mission: MissionSnapshot, post_mission: MissionSnapshot, delta_t_s: float,
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
-    """Evaluate signed legal mission-distance reduction with the global R4 reference speed."""
+    """Evaluate R4 exclusively from the exact canonical-route ``delta_s``."""
     from thesis_rl.mission.types import MissionSnapshot
 
     if not isinstance(pre_mission, MissionSnapshot) or not isinstance(post_mission, MissionSnapshot):
@@ -60,12 +59,13 @@ def evaluate_progress(*, pre_mission: MissionSnapshot, post_mission: MissionSnap
         raise ValueError(
             "Progress mission snapshots must be consecutive: "
             f"pre_step={pre_mission.step_index}, post_step={post_mission.step_index}, "
-            f"pre_remaining_m={pre_mission.remaining_distance_m}, "
-            f"post_remaining_m={post_mission.remaining_distance_m}"
+            f"pre_s_m={pre_mission.s_m}, post_s_m={post_mission.s_m}"
         )
     if not isfinite(delta_t_s) or delta_t_s <= 0.0:
         raise ValueError("Progress requires a positive finite timestep")
-    raw_delta = pre_mission.remaining_distance_m - post_mission.remaining_distance_m
+    if pre_mission.s_m is None or post_mission.s_m is None:
+        raise ValueError("R4 requires exact canonical route stations")
+    raw_delta = post_mission.s_m - pre_mission.s_m
     margin = min(max(raw_delta / (MISSION_PROGRESS_REFERENCE_SPEED_MPS * delta_t_s), -1.0), 1.0)
     diagnostics = {
         "reference_speed_mps": MISSION_PROGRESS_REFERENCE_SPEED_MPS,
@@ -75,7 +75,11 @@ def evaluate_progress(*, pre_mission: MissionSnapshot, post_mission: MissionSnap
     result = RuleComponentResult(
         "progress",
         margin,
-        {"route_delta_m": raw_delta, "mission_distance_delta_m": raw_delta},
+        {
+            "route_delta_m": raw_delta,
+            "delta_s_m": raw_delta,
+            "mission_distance_delta_m": raw_delta,
+        },
         True,
         True,
         ComponentStatus.SATISFIED,

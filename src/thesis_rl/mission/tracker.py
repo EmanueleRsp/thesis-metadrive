@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import math
+from dataclasses import replace
 from math import hypot
 
 from shapely.geometry import Polygon
 
 from thesis_rl.mission.distance import LaneGraph
-from thesis_rl.mission.gates import directed_gate_crossed
+from thesis_rl.mission.gates import GateGeometry, directed_gate_crossed
 from thesis_rl.rulebook.v2.geometry.footprint import front_bumper_segment
 from thesis_rl.mission.types import (
     DirectedGate,
@@ -15,6 +17,8 @@ from thesis_rl.mission.types import (
     MissionSnapshot,
     ordered_mission_gates,
 )
+from thesis_rl.mission.types import FinalGateSegment
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 
 
 class MissionTracker:
@@ -172,3 +176,111 @@ def _gate_anchor(gate: DirectedGate) -> tuple[float, float]:
         raise ValueError("mission gate has no materialized geometry")
     start, end = gate.geometry.line_xy
     return ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+
+
+class RouteCoordinateMissionTracker:
+    """Environment-owned v1.1 tracker for one immutable canonical route."""
+
+    def __init__(
+        self,
+        mission: DrivingMissionRecord,
+        route: RoutePolyline,
+        initial_s_m: float,
+        route_offset_m: float = 0.0,
+    ) -> None:
+        if mission.final_gate_segment is None or not mission.route_lane_ids:
+            raise ValueError("route-coordinate mission requires a frozen route and final gate")
+        if not 0.0 <= initial_s_m <= mission.s_goal_m:
+            raise ValueError("initial route station is outside the mission")
+        self._mission = mission
+        self._route = route
+        self._route_offset_m = route_offset_m
+        self._gate = mission.final_gate_segment
+        self._s_goal = mission.s_goal_m
+        self._s_m = float(initial_s_m)
+        self._current_segment = 0
+        self._step = 0
+        self._maximum_completion = 0.0
+        self._snapshot = self._make_snapshot(0.0, False)
+        self._snapshots = {0: self._snapshot}
+
+    @property
+    def snapshot(self) -> MissionSnapshot:
+        return self._snapshot
+
+    @property
+    def route(self) -> RoutePolyline:
+        return self._route
+
+    @property
+    def gate(self) -> FinalGateSegment:
+        return self._gate
+
+    @property
+    def gates(self) -> tuple[FinalGateSegment, ...]:
+        return (self._gate,)
+
+    def project(self, position_xy: tuple[float, float], position_z: float):
+        """Project on the sequential cursor without a jump envelope or clamp."""
+        projection = self._route.project(
+            position_xy,
+            position_z=position_z,
+            previous_s_m=self._s_m + self._route_offset_m,
+        )
+        self._current_segment = projection.segment_index
+        return replace(projection, s_m=projection.s_m - self._route_offset_m)
+
+    def _make_snapshot(self, delta_s_m: float, success: bool) -> MissionSnapshot:
+        instantaneous = min(max(self._s_m / self._s_goal, 0.0), 1.0)
+        self._maximum_completion = max(self._maximum_completion, instantaneous)
+        return MissionSnapshot(
+            mission_hash=self._mission.mission_hash,
+            step_index=self._step,
+            pending_gate_index=0,
+            remaining_distance_m=max(0.0, self._s_goal - self._s_m),
+            route_completion=self._maximum_completion,
+            reachable=True,
+            mission_success=success,
+            mission_unreachable=False,
+            s_m=self._s_m,
+            delta_s_m=delta_s_m,
+            completion_instant=instantaneous,
+            completion_max=self._maximum_completion,
+        )
+
+    def update(
+        self,
+        pre_s_m: float,
+        post_s_m: float,
+        *,
+        pre_footprint: Polygon,
+        post_footprint: Polygon,
+        pre_heading_rad: float,
+        post_heading_rad: float,
+        post_ego_z_m: float,
+    ) -> MissionSnapshot:
+        if self._snapshot.mission_success:
+            return self._snapshot
+        if not all(math.isfinite(value) for value in (pre_s_m, post_s_m)):
+            raise ValueError("route projection station must be finite")
+        self._s_m = post_s_m
+        self._step += 1
+        gate = GateGeometry(
+            self._gate.line_xy,
+            self._gate.static_tangent_xy,
+            self._gate.elevation_m,
+        )
+        success = directed_gate_crossed(
+            gate,
+            pre_footprint=pre_footprint,
+            post_footprint=post_footprint,
+            pre_heading_rad=pre_heading_rad,
+            post_heading_rad=post_heading_rad,
+            post_ego_z_m=post_ego_z_m,
+        )
+        self._snapshot = self._make_snapshot(post_s_m - pre_s_m, success)
+        self._snapshots[self._step] = self._snapshot
+        return self._snapshot
+
+    def snapshot_at(self, step_index: int) -> MissionSnapshot:
+        return self._snapshots[step_index]

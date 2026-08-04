@@ -11,7 +11,7 @@ from typing import Any
 from thesis_rl.mission.gates import GateGeometry
 
 
-MISSION_SCHEMA_VERSION = "driving_mission_v1"
+MISSION_SCHEMA_VERSION = "driving_mission_v1_1"
 
 
 def _finite(value: float, name: str) -> None:
@@ -56,6 +56,28 @@ class DirectedGate:
 
 
 @dataclass(frozen=True, slots=True)
+class FinalGateSegment:
+    """Frozen offline terminal segment consumed passively by runtime."""
+
+    line_xy: tuple[tuple[float, float], tuple[float, float]]
+    static_tangent_xy: tuple[float, float]
+    elevation_m: float
+    final_occurrence_id: str
+    provenance: str
+    source_geometry_hash: str
+    builder_identity: str
+
+    def __post_init__(self) -> None:
+        values = (*self.line_xy[0], *self.line_xy[1], *self.static_tangent_xy, self.elevation_m)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("final gate segment values must be finite")
+        if self.line_xy[0] == self.line_xy[1] or math.hypot(*self.static_tangent_xy) <= 0.0:
+            raise ValueError("final gate segment must have non-zero geometry and tangent")
+        if not all((self.final_occurrence_id, self.provenance, self.source_geometry_hash, self.builder_identity)):
+            raise ValueError("final gate segment identity fields are required")
+
+
+@dataclass(frozen=True, slots=True)
 class MissionSection:
     section_id: str
     preferred_span: LaneSpan
@@ -77,12 +99,28 @@ class DrivingMissionRecord:
     final_goal: DirectedGate
     schema_version: str = MISSION_SCHEMA_VERSION
     mission_hash: str = field(init=False)
+    route_lane_ids: tuple[str, ...] = ()
+    canonical_route_points_xyz: tuple[tuple[float, float, float], ...] = ()
+    start_occurrence_id: str = ""
+    final_occurrence_id: str = ""
+    s_start_m: float = 0.0
+    s_goal_m: float = 0.0
+    final_gate_segment: FinalGateSegment | None = None
 
     def __post_init__(self) -> None:
         if not self.scenario_uid or not self.builder_version or not self.sections:
             raise ValueError("scenario UID, builder version, and sections are required")
         if self.schema_version != MISSION_SCHEMA_VERSION:
             raise ValueError(f"unsupported mission schema: {self.schema_version!r}")
+        if self.route_lane_ids:
+            if not self.canonical_route_points_xyz or not self.final_occurrence_id:
+                raise ValueError("route mission requires canonical route and final occurrence")
+            if not math.isfinite(self.s_start_m) or self.s_start_m < 0.0:
+                raise ValueError("route mission requires finite non-negative s_start_m")
+            if not math.isfinite(self.s_goal_m) or self.s_goal_m <= 0.0:
+                raise ValueError("route mission requires positive finite s_goal_m")
+            if self.final_gate_segment is None:
+                raise ValueError("route mission requires a frozen final gate segment")
         payload = self.to_dict(include_hash=False)
         object.__setattr__(
             self, "mission_hash", hashlib.sha256(_canonical_json(payload)).hexdigest()
@@ -95,6 +133,13 @@ class DrivingMissionRecord:
             "sections": [asdict(section) for section in self.sections],
             "final_goal": asdict(self.final_goal),
             "schema_version": self.schema_version,
+            "route_lane_ids": list(self.route_lane_ids),
+            "canonical_route_points_xyz": [list(point) for point in self.canonical_route_points_xyz],
+            "start_occurrence_id": self.start_occurrence_id,
+            "final_occurrence_id": self.final_occurrence_id,
+            "s_start_m": self.s_start_m,
+            "s_goal_m": self.s_goal_m,
+            "final_gate_segment": None if self.final_gate_segment is None else asdict(self.final_gate_segment),
         }
         if include_hash:
             payload["mission_hash"] = self.mission_hash
@@ -124,12 +169,28 @@ class DrivingMissionRecord:
             )
             for item in payload["sections"]
         )
+        final_segment = payload.get("final_gate_segment")
         record = cls(
             payload["scenario_uid"],
             payload["builder_version"],
             sections,
             gate(payload["final_goal"]),
             payload.get("schema_version", MISSION_SCHEMA_VERSION),
+            tuple(str(value) for value in payload.get("route_lane_ids", ())),
+            tuple(tuple(float(value) for value in point) for point in payload.get("canonical_route_points_xyz", ())),
+            str(payload.get("start_occurrence_id", "")),
+            str(payload.get("final_occurrence_id", "")),
+            float(payload.get("s_start_m", 0.0)),
+            float(payload.get("s_goal_m", 0.0)),
+            None if final_segment is None else FinalGateSegment(
+                tuple(tuple(float(value) for value in point) for point in final_segment["line_xy"]),
+                tuple(float(value) for value in final_segment["static_tangent_xy"]),
+                float(final_segment["elevation_m"]),
+                str(final_segment["final_occurrence_id"]),
+                str(final_segment["provenance"]),
+                str(final_segment["source_geometry_hash"]),
+                str(final_segment["builder_identity"]),
+            ),
         )
         expected = payload.get("mission_hash")
         if expected is not None and expected != record.mission_hash:
@@ -162,6 +223,10 @@ class MissionSnapshot:
     mission_success: bool
     mission_unreachable: bool
     reason: str | None = None
+    s_m: float | None = None
+    delta_s_m: float | None = None
+    completion_instant: float | None = None
+    completion_max: float | None = None
 
     def __post_init__(self) -> None:
         if self.step_index < 0 or self.pending_gate_index < 0:
@@ -172,6 +237,28 @@ class MissionSnapshot:
             raise ValueError("mission snapshot values are outside their valid ranges")
         if self.mission_success and self.mission_unreachable:
             raise ValueError("success and unreachable cannot both be true")
+        if self.s_m is not None:
+            _finite(self.s_m, "s_m")
+        if self.delta_s_m is not None:
+            _finite(self.delta_s_m, "delta_s_m")
+        instant = self.route_completion if self.completion_instant is None else self.completion_instant
+        maximum = self.route_completion if self.completion_max is None else self.completion_max
+        _finite(instant, "completion_instant")
+        _finite(maximum, "completion_max")
+        if not 0.0 <= instant <= 1.0 or not 0.0 <= maximum <= 1.0:
+            raise ValueError("completion values must be within [0, 1]")
+        if maximum < instant and self.completion_max is not None:
+            raise ValueError("completion_max cannot be below completion_instant")
+        object.__setattr__(self, "completion_instant", instant)
+        object.__setattr__(self, "completion_max", maximum)
+
+    @property
+    def instantaneous_completion(self) -> float:
+        return float(self.completion_instant)
+
+    @property
+    def maximum_completion(self) -> float:
+        return float(self.completion_max)
 
 
 def _canonical_json(payload: dict[str, Any]) -> bytes:
