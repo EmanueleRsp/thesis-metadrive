@@ -610,8 +610,19 @@ def _solve_scalable_singleton_group_assignment(
     assignments: dict[str, str] = {}
     for source_index, source in enumerate(SOURCES):
         for arm_index, arm in enumerate(ARMS):
-            group_ids = list(groups_by_source_arm[source][arm])
-            np.random.default_rng([int(seed), source_index, arm_index]).shuffle(group_ids)
+            # A population-size-independent key (see `_stable_permutation_key`):
+            # sorting by this key, rather than shuffling a Python list with
+            # `numpy`'s `Generator.shuffle`, keeps every existing candidate's
+            # relative order fixed when upstream filtering (for example
+            # driving-mission eligibility) removes other candidates from this
+            # cell, so only the removed candidates -- not the whole cell --
+            # change which split they land in.
+            group_ids = sorted(
+                groups_by_source_arm[source][arm],
+                key=lambda name: _stable_permutation_key(
+                    (int(seed), source_index, arm_index), name
+                ),
+            )
             offset = 0
             for split in SPLITS:
                 count = allocations[source][split][arm]

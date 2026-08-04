@@ -999,6 +999,58 @@ def test_arm_balanced_selector_scales_beyond_exact_group_threshold() -> None:
     )
 
 
+def test_arm_balanced_selector_is_stable_when_unselected_candidates_are_removed() -> None:
+    """A removed candidate that was never selected must not perturb the rest.
+
+    Regression for a bug where the scalable singleton-group allocator ordered
+    each (source, arm) cell with `numpy.random.Generator.shuffle`, whose
+    result depends on the shuffled list's length. Removing scenarios that an
+    upstream filter (for example driving-mission eligibility) rejects -- even
+    ones that were never selected -- silently reshuffled every other
+    candidate's split assignment. This mirrors `SCENARIONET-INTEGRATION`
+    v1.2's population-size-independence requirement (`REQ-005`), already
+    upheld elsewhere via `_stable_permutation_key`.
+    """
+
+    entries = []
+    index = 0
+    for source in ("waymo", "pg"):
+        for arm in (
+            "A0_simple_low_traffic",
+            "A1_traffic",
+            "A2_junction",
+            "A3_complex_junction",
+            "A4_vru",
+            "A5_critical_mixed",
+        ):
+            for _ in range(40):
+                base = _entry(source, index)
+                entries.append(
+                    ScenarioCatalogEntry(
+                        replace(base.record, primary_arm=arm, rulebook_eligible=True),
+                        base.features,
+                    )
+                )
+                index += 1
+    targets = {
+        "waymo": {"train": 6, "validation": 6, "test": 0},
+        "pg": {"train": 6, "validation": 6, "test": 0},
+    }
+
+    selected = assign_arm_balanced_splits_to_targets(tuple(entries), targets=targets, seed=9)
+    selected_uids = {entry.record.scenario_uid for entry in selected}
+
+    unselected = [entry for entry in entries if entry.record.scenario_uid not in selected_uids]
+    assert len(unselected) >= 10
+    reduced_entries = tuple(entry for entry in entries if entry not in unselected[:10])
+
+    reselected = assign_arm_balanced_splits_to_targets(reduced_entries, targets=targets, seed=9)
+    reselected_by_uid = {entry.record.scenario_uid: entry.record.split for entry in reselected}
+    original_by_uid = {entry.record.scenario_uid: entry.record.split for entry in selected}
+
+    assert reselected_by_uid == original_by_uid
+
+
 def test_arm_balanced_selector_stratifies_each_source_arm_across_splits() -> None:
     """Keep each selected source/arm quota proportional across primary splits."""
 

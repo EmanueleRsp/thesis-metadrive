@@ -1,4 +1,4 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-rebuild-existing scenarionet-recatalog scenarionet-pg-replenish scenarionet-v1-2-seed-check scenarionet-v1-2-generate-pg-holdouts scenarionet-v1-2-verify-pg-holdouts scenarionet-v1-2-replenish-pg-holdouts scenarionet-v1-2-rebuild scenarionet-v1-2-prepare scenarionet-v1-2-bootstrap scenarionet-v1-2-build-panels scenarionet-v1-2-freeze scenarionet-v1-2-regenerate-freeze scenarionet-freeze scenarionet-from-frozen scenarionet-materialize-frozen up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu run run-train run-golden-rulebook config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-rebuild-existing scenarionet-recatalog scenarionet-pg-replenish scenarionet-v1-2-seed-check scenarionet-v1-2-generate-pg-holdouts scenarionet-v1-2-verify-pg-holdouts scenarionet-v1-2-replenish-pg-holdouts scenarionet-v1-2-rebuild scenarionet-v1-2-prepare scenarionet-v1-2-bootstrap scenarionet-v1-2-build-panels scenarionet-v1-2-freeze scenarionet-v1-2-regenerate-freeze scenarionet-v1-2-rebuild-existing scenarionet-freeze scenarionet-from-frozen scenarionet-materialize-frozen up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu run run-train run-golden-rulebook config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
 
 PYTHON_QUALITY_PATHS ?= src tests scripts
 
@@ -355,6 +355,13 @@ scenarionet-v1-2-freeze:
 	$${MAKE:-make} scenarionet-freeze OVERWRITE=1
 
 scenarionet-v1-2-regenerate-freeze: scenarionet-v1-2-prepare scenarionet-v1-2-build-panels scenarionet-v1-2-freeze
+
+# Revalidate and rebuild the v1.2 empirical-holdout dataset from already
+# materialized Waymo/PG sources: no PG holdout batch generation, no Waymo
+# acquisition. Use this to pick up driving-mission or Rulebook filter changes
+# without repeating source generation. This is the v1.2 counterpart of
+# `scenarionet-rebuild-existing`, which reproduces the superseded v1.1 split.
+scenarionet-v1-2-rebuild-existing: scenarionet-v1-2-rebuild scenarionet-v1-2-build-panels scenarionet-v1-2-freeze
 
 scenarionet-recatalog:
 	SCENARIONET_SKIP_PG=true SCENARIONET_SKIP_WAYMO=true bash scripts/prepare_scenarionet_dataset.sh

@@ -2,3 +2,4 @@
 Dockerfile text eol=lf
 *.yaml text eol=lf
 *.toml text eol=lf
+data/scenarionet/frozen/scenario_selection_index.json filter=lfs diff=lfs merge=lfs -text
