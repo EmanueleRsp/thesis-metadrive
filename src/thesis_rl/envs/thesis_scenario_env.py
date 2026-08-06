@@ -577,6 +577,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             transition_evaluator_factory,
         )
         from thesis_rl.rulebook.v2.wrapper import RulebookV2Adapter
+        from thesis_rl.rulebook.v2.types import EnvSnapshot
 
         scenario = getattr(getattr(self.engine, "data_manager", None), "current_scenario", None)
         record = self.current_scenario_record
