@@ -56,7 +56,7 @@ def test_checkpoint_manifest_infers_v12_identity_for_semantic_v3() -> None:
         seed=7,
     )
 
-    assert manifest.observation_schema_version == "1.2-perception-bounded"
+    assert manifest.observation_schema_version == "1.2-perception-bounded-mission-route-v1"
     assert manifest.flat_dim == 3009
     assert manifest.raw_token_count == 143
 

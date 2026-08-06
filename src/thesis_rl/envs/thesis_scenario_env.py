@@ -342,10 +342,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             )
         raise ValueError(f"Unsupported scenario source for causal route: {source!r}")
 
-    @staticmethod
-    def _build_causal_frame_builder(
-        scenario: Mapping[str, Any], record: Any, config: Mapping[str, Any]
-    ) -> Any:
+    def _build_causal_frame_builder(self, config: Mapping[str, Any]) -> Any:
         from thesis_rl.envs.observations.assigned_route import (
             AssignedRouteWaypointAdapter,
             MapRouteNavigationObservation22,
@@ -353,10 +350,14 @@ class ThesisScenarioEnv(ScenarioEnv):
         from thesis_rl.envs.observations.causal_lidar import CausalLidarFrameBuilder
         from thesis_rl.envs.observations.ray_noise import RayNoiseWrapper
 
-        static_result = ThesisScenarioEnv._build_static_adapter_result(scenario, record)
-        route = static_result.assigned_route_polyline
+        # The mission's canonical route (not the legacy assigned-route polyline) is
+        # the sole ego route-station authority shared with R4/completion/semantic
+        # observation, per DRIVING-MISSION-V1.1 §3/§5.
+        route = self._mission_runtime.route
         navigation = MapRouteNavigationObservation22(
-            AssignedRouteWaypointAdapter(route, num_waypoints=10, spacing_m=5.0)
+            AssignedRouteWaypointAdapter(
+                route, num_waypoints=10, spacing_m=5.0, mission_provider=lambda: self._mission_runtime
+            )
         )
         observation_cfg = config.get("observation", {})
         if not isinstance(observation_cfg, Mapping):
@@ -402,7 +403,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         if not isinstance(scenario, Mapping):
             raise RuntimeError("Causal observation requires the loaded scenario mapping")
         if frame_setters:
-            builder = self._build_causal_frame_builder(scenario, record, self.config)
+            builder = self._build_causal_frame_builder(self.config)
             for setter in frame_setters:
                 setter(builder)
         self._causal_semantic_builders = []
@@ -414,17 +415,14 @@ class ThesisScenarioEnv(ScenarioEnv):
             from thesis_rl.envs.observations.semantic_state_v3 import SemanticStateObservationV3
 
             static_result = self._build_static_adapter_result(scenario, record)
-            # The live Rulebook cache may apply a source-to-simulator elevation
-            # datum translation at reset. Reuse that committed geometry for
-            # semantic observations so the causal route identity is exact in
-            # 2.5D, rather than comparing a pre-alignment static copy.
+            # The mission's canonical route is the sole ego route-station authority
+            # shared with R4/completion, per DRIVING-MISSION-V1.1 §3/§5; it never
+            # independently reprojects the ego. Lane geometry lookups (route_lanes)
+            # are unaffected -- the live Rulebook cache still applies the
+            # source-to-simulator elevation datum translation for those.
+            route = self._mission_runtime.route
             rulebook_adapter = getattr(self, "rulebook_v2_adapter", None)
             episode_cache = getattr(rulebook_adapter, "initial_cache", None)
-            route = (
-                episode_cache.route_polyline
-                if episode_cache is not None
-                else static_result.assigned_route_polyline
-            )
             route_lanes = (
                 episode_cache.route_lanes
                 if episode_cache is not None
@@ -471,7 +469,9 @@ class ThesisScenarioEnv(ScenarioEnv):
         snapshot = adapter.snapshotter(self)
         from thesis_rl.contracts.causal_scene_context import CausalSceneContext
 
-        context = CausalSceneContext(adapter.initial_cache, snapshot, adapter.initial_memory)
+        context = CausalSceneContext(
+            adapter.initial_cache, snapshot, adapter.initial_memory, self._mission_runtime.route
+        )
         self.causal_scene_context = context
         for builder in getattr(self, "_causal_semantic_builders", ()):
             builder.reset()
@@ -656,6 +656,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             transition_evaluator=transition_evaluator_factory(transition_config),
             initial_memory=initial_memory_for_snapshot(initial_snapshot, cache),
             initial_cache=cache,
+            mission_route=self._mission_runtime.route,
         )
 
     def make_rulebook_v2_adapter(self) -> Any:

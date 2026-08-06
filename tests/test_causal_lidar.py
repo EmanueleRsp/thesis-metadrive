@@ -72,7 +72,11 @@ class _Vehicle:
 def test_causal_lidar_frame_builder_produces_exact_308_dimensions() -> None:
     route = RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0)))
     builder = CausalLidarFrameBuilder(
-        MapRouteNavigationObservation22(AssignedRouteWaypointAdapter(route)),
+        MapRouteNavigationObservation22(
+            AssignedRouteWaypointAdapter(
+                route, mission_provider=lambda: SimpleNamespace(snapshot=SimpleNamespace(s_m=2.0))
+            )
+        ),
         RayNoiseWrapper(enabled=False),
     )
 
@@ -103,7 +107,10 @@ def test_causal_lidar_builder_accepts_mapping_like_config_not_a_dict_subclass() 
     vehicle.config = _MappingLikeConfig(dict(_Vehicle.config))
     builder = CausalLidarFrameBuilder(
         MapRouteNavigationObservation22(
-            AssignedRouteWaypointAdapter(RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0))))
+            AssignedRouteWaypointAdapter(
+                RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0))),
+                mission_provider=lambda: SimpleNamespace(snapshot=SimpleNamespace(s_m=2.0)),
+            )
         ),
         RayNoiseWrapper(enabled=False),
     )
@@ -118,7 +125,10 @@ def test_causal_lidar_builder_rejects_non_mapping_config() -> None:
     vehicle.config = object()
     builder = CausalLidarFrameBuilder(
         MapRouteNavigationObservation22(
-            AssignedRouteWaypointAdapter(RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0))))
+            AssignedRouteWaypointAdapter(
+                RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0))),
+                mission_provider=lambda: SimpleNamespace(snapshot=SimpleNamespace(s_m=2.0)),
+            )
         ),
         RayNoiseWrapper(enabled=False),
     )
@@ -136,7 +146,10 @@ def test_causal_lidar_builder_rejects_missing_sensor_block() -> None:
     vehicle.engine.get_sensor = lambda _name: _BadSensor(1)
     builder = CausalLidarFrameBuilder(
         MapRouteNavigationObservation22(
-            AssignedRouteWaypointAdapter(RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0))))
+            AssignedRouteWaypointAdapter(
+                RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0))),
+                mission_provider=lambda: SimpleNamespace(snapshot=SimpleNamespace(s_m=2.0)),
+            )
         ),
         RayNoiseWrapper(enabled=False),
     )

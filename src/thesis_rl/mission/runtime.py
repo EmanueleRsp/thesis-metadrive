@@ -26,9 +26,7 @@ from thesis_rl.rulebook.v2.types import EnvSnapshot
 GATE_ROAD_ENVELOPE_MARGIN_M = 0.5
 
 
-def _materialize_gate(
-    gate: DirectedGate, lanes: dict[str, RouteLaneRecord]
-) -> DirectedGate:
+def _materialize_gate(gate: DirectedGate, lanes: dict[str, RouteLaneRecord]) -> DirectedGate:
     lane = lanes.get(gate.lane_id)
     if lane is None:
         raise ValueError(f"mission gate references unknown live lane: {gate.lane_id}")
@@ -40,10 +38,13 @@ def _materialize_gate(
         [candidate.polygon_xy for candidate in _lateral_road_envelope(gate.lane_id, lanes)]
     ).buffer(GATE_ROAD_ENVELOPE_MARGIN_M)
     min_x, min_y, max_x, max_y = envelope.bounds
-    probe_half_width = max(
-        hypot(min_x - point[0], min_y - point[1]),
-        hypot(max_x - point[0], max_y - point[1]),
-    ) + GATE_ROAD_ENVELOPE_MARGIN_M
+    probe_half_width = (
+        max(
+            hypot(min_x - point[0], min_y - point[1]),
+            hypot(max_x - point[0], max_y - point[1]),
+        )
+        + GATE_ROAD_ENVELOPE_MARGIN_M
+    )
     probe = LineString(
         (
             (point[0] - normal[0] * probe_half_width, point[1] - normal[1] * probe_half_width),
@@ -54,9 +55,7 @@ def _materialize_gate(
     coordinates = _line_coordinates(cross_section)
     if len(coordinates) < 2:
         raise ValueError(f"mission gate cannot derive road envelope: {gate.gate_id}")
-    offsets = tuple(
-        (x - point[0]) * normal[0] + (y - point[1]) * normal[1] for x, y in coordinates
-    )
+    offsets = tuple((x - point[0]) * normal[0] + (y - point[1]) * normal[1] for x, y in coordinates)
     geometry = GateGeometry(
         (
             (point[0] + normal[0] * min(offsets), point[1] + normal[1] * min(offsets)),
@@ -102,9 +101,7 @@ def _line_coordinates(geometry) -> tuple[tuple[float, float], ...]:
         return tuple((float(x), float(y)) for x, y, *_ in geometry.coords)
     if hasattr(geometry, "geoms"):
         return tuple(
-            coordinate
-            for part in geometry.geoms
-            for coordinate in _line_coordinates(part)
+            coordinate for part in geometry.geoms for coordinate in _line_coordinates(part)
         )
     return ()
 
@@ -156,9 +153,7 @@ class MissionRuntime:
                 raise ValueError(f"mission route references unavailable lanes: {missing[:5]}")
             route = RoutePolyline(tuple(mission.canonical_route_points_xyz))
             self._route_lanes = tuple(all_lanes)
-            self._tracker = RouteCoordinateMissionTracker(
-                mission, route, 0.0
-            )
+            self._tracker = RouteCoordinateMissionTracker(mission, route, 0.0)
             return
         referenced_lane_ids = {
             span.lane_id for section in mission.sections for span in section.allowed_spans
@@ -202,6 +197,8 @@ class MissionRuntime:
 
     @property
     def snapshot(self) -> MissionSnapshot:
+        if isinstance(self._tracker, RouteCoordinateMissionTracker):
+            return self._tracker.snapshot
         return self._tracker.snapshot()
 
     @property
@@ -209,6 +206,23 @@ class MissionRuntime:
         """Return materialized ordered gates for read-only diagnostics."""
 
         return self._tracker.gates
+
+    @property
+    def route(self) -> RoutePolyline:
+        """Return the immutable mission canonical route.
+
+        This is the sole authority for ego route-station projection shared by
+        R4, completion, semantic/LiDAR observation, and route samples per
+        DRIVING-MISSION-V1.1 §3/§5. Only route-coordinate (v1.1.1) missions
+        carry a canonical route; requesting it for a legacy graph mission is a
+        programming error, not a recoverable fallback.
+        """
+
+        if not isinstance(self._tracker, RouteCoordinateMissionTracker):
+            raise ValueError(
+                "mission runtime has no canonical route for a non-route-coordinate mission"
+            )
+        return self._tracker.route
 
     def update(self, pre: EnvSnapshot, post: EnvSnapshot) -> MissionSnapshot:
         if isinstance(self._tracker, RouteCoordinateMissionTracker):

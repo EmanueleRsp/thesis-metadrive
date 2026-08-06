@@ -44,9 +44,33 @@ def test_offroad_area_fraction_and_numeric_epsilon():
 def test_wrongway_uses_signed_route_velocity_and_not_heading_at_rest():
     route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
     result, _, _ = evaluate_wrongway(ego=_ego(velocity=(-5.0, 0.0), heading=pi), route=route)
-    assert result.cost == pytest.approx(0.5)
+    # Rulebook v4.12 (ADR-056): cost = (reverse_speed - eps) / (cap - eps),
+    # eps=0.1, cap=10.0 -> 4.9 / 9.9, not the pre-amendment 5.0 / 10.0 = 0.5.
+    assert result.cost == pytest.approx(4.9 / 9.9)
     result, _, _ = evaluate_wrongway(ego=_ego(velocity=(0.0, 0.0), heading=pi), route=route)
     assert result.cost == 0.0
+
+
+def test_wrongway_uses_source_declared_direction_independent_of_mission_orientation():
+    """Regression for DRIVING-MISSION-V1.1.1 amendment §6: wrong-way legality
+    must stay bound to the source-declared lane direction, never to the
+    mission's per-occurrence traversal orientation. A ``REVERSED`` mission
+    occurrence (the mission traverses the lane opposite to its declared
+    direction, e.g. ``waymo:training_20s:5e7bbc00b872c2ba``) must not flip
+    the wrong-way tangent. ``evaluate_wrongway`` must therefore always be
+    called with the legacy source-declared-direction route, never the
+    mission's oriented canonical route."""
+
+    source_declared_route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    mission_reversed_route = RoutePolyline(((10.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+
+    forward_ego = _ego(velocity=(5.0, 0.0), heading=0.0)
+    legacy_result, _, _ = evaluate_wrongway(ego=forward_ego, route=source_declared_route)
+    assert legacy_result.cost == 0.0
+
+    mission_result, _, _ = evaluate_wrongway(ego=forward_ego, route=mission_reversed_route)
+    # Rulebook v4.12 (ADR-056) deadband reparameterization, see note above.
+    assert mission_result.cost == pytest.approx(4.9 / 9.9)
 
 
 def test_wrongway_status_has_a_deadband_against_standstill_physics_noise():
@@ -54,18 +78,71 @@ def test_wrongway_status_has_a_deadband_against_standstill_physics_noise():
     not flicker between SATISFIED and VIOLATED. Observed on
     ``videos/final_eval/.../episode_0001`` (PGMap-24921253): a parked ego's
     ``status`` alternated every few steps while ``cost`` stayed ~0, because
-    the pre-fix status check (``cost > 0.0``) had no tolerance."""
+    the pre-fix status check (``cost > 0.0``) had no tolerance. Rulebook
+    v4.12 (ADR-056) extended the same deadband to ``cost`` itself, so the
+    noisy-reverse case now also has exactly zero cost, not just a satisfied
+    status over a nonzero cost."""
     from thesis_rl.rulebook.v2.types import ComponentStatus
 
     route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
     noisy_reverse = _ego(velocity=(-0.01, 0.0), heading=0.0)
     result, _, _ = evaluate_wrongway(ego=noisy_reverse, route=route)
     assert result.status is ComponentStatus.SATISFIED
-    assert result.cost > 0.0
+    assert result.cost == 0.0
 
     real_reverse = _ego(velocity=(-1.0, 0.0), heading=0.0)
     result, _, _ = evaluate_wrongway(ego=real_reverse, route=route)
     assert result.status is ComponentStatus.VIOLATED
+
+
+def test_wrongway_deadband_zeroes_cost_for_standstill_noise():
+    """AC-RBWW-001 (rulebook_v4.12_specification.md). Any residual reverse
+    speed at or below the 0.1 m/s physics noise floor must produce exactly
+    zero cost, not just a satisfied status over a small positive cost."""
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    for reverse_speed in (0.0, 1e-6, 0.05, 0.1):
+        result, _, _ = evaluate_wrongway(
+            ego=_ego(velocity=(-reverse_speed, 0.0), heading=0.0), route=route
+        )
+        assert result.cost == 0.0
+
+
+def test_wrongway_cost_deadband_is_continuous_at_the_boundary():
+    """AC-RBWW-002. No jump discontinuity at the 0.1 m/s threshold: cost
+    approaches zero from both sides as the reverse speed approaches the
+    deadband boundary."""
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    below, _, _ = evaluate_wrongway(
+        ego=_ego(velocity=(-(0.1 - 1e-6), 0.0), heading=0.0), route=route
+    )
+    above, _, _ = evaluate_wrongway(
+        ego=_ego(velocity=(-(0.1 + 1e-6), 0.0), heading=0.0), route=route
+    )
+    assert below.cost == 0.0
+    assert above.cost == pytest.approx(0.0, abs=1e-5)
+
+
+def test_wrongway_reaches_full_cost_at_speed_cap():
+    """AC-RBWW-003. Reverse speed at the configured cap still saturates cost
+    at exactly 1.0, unchanged from the pre-amendment boundary value."""
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    result, _, _ = evaluate_wrongway(ego=_ego(velocity=(-10.0, 0.0), cap=10.0), route=route)
+    assert result.cost == pytest.approx(1.0)
+
+
+def test_wrongway_status_derives_from_cost_not_a_separate_epsilon():
+    """AC-RBWW-005. status must be exactly VIOLATED iff cost > 0.0, with no
+    separately maintained status-only tolerance."""
+    from thesis_rl.rulebook.v2.types import ComponentStatus
+
+    route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+    at_boundary, _, _ = evaluate_wrongway(ego=_ego(velocity=(-0.1, 0.0)), route=route)
+    assert at_boundary.cost == 0.0
+    assert at_boundary.status is ComponentStatus.SATISFIED
+
+    just_past, _, _ = evaluate_wrongway(ego=_ego(velocity=(-0.2, 0.0)), route=route)
+    assert just_past.cost > 0.0
+    assert just_past.status is ComponentStatus.VIOLATED
 
 
 def test_wrong_carriageway_fully_in_aligned_lane_is_zero():

@@ -17,7 +17,7 @@ from shapely import affinity
 from shapely.geometry import LineString, Point, box
 
 import thesis_rl.envs.observations.causal_semantic as causal_semantic
-from test_causal_semantic_batch import _Vehicle, _actor
+from test_causal_semantic_batch import _Vehicle, _actor, _mission_snapshot
 from thesis_rl.contracts.causal_scene_context import CausalSceneContext
 from thesis_rl.envs.observations.causal_semantic import (
     CausalSemanticBatchBuilder,
@@ -150,9 +150,17 @@ def _ctx(
         route_polyline=route,
     )
     snapshot = EnvSnapshot(
-        "scene", step, step * 0.1, ego, (ego, *actors), (), frozenset(), signals or {}
+        "scene",
+        step,
+        step * 0.1,
+        ego,
+        (ego, *actors),
+        (),
+        frozenset(),
+        signals or {},
+        mission_snapshot=_mission_snapshot(route, ego, step),
     )
-    return CausalSceneContext(cache, snapshot, memory or RulebookMemory())
+    return CausalSceneContext(cache, snapshot, memory or RulebookMemory(), route)
 
 
 def _builder(route, lanes, **kwargs) -> PerceptionBoundedSemanticBatchBuilder:

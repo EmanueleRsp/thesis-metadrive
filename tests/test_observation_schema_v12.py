@@ -23,7 +23,7 @@ def _batch() -> SemanticObservationBatchV12:
 def test_v12_schema_has_normative_dimensions_and_order() -> None:
     schema = SemanticObservationSchemaV12()
 
-    assert schema.version == "1.2-perception-bounded"
+    assert schema.version == "1.2-perception-bounded-mission-route-v1"
     assert schema.flat_dim == 3009
     assert schema.raw_token_count == 143
     assert tuple(schema.group_shapes) == (

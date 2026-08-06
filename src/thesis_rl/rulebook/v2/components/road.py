@@ -23,12 +23,13 @@ DASHED_T0_S = 1.0
 DASHED_TCAP_S = 2.0
 # The physics solver leaves a residual velocity on a body at rest (the same
 # noise floor RSS_STANDSTILL_SPEED_MPS in components/rss.py addresses), which
-# can carry a hairline reverse-longitudinal component and flip `status` to
-# VIOLATED every few steps while parked, even though `cost` stays negligible.
-# This deadband only gates the boolean status classification; `cost` itself
-# is unchanged (still continuous, still 0 only at exactly zero or forward
-# longitudinal speed), so the scalarizer input is unaffected.
-WRONGWAY_STATUS_SPEED_EPSILON_MPS = 0.1
+# can carry a hairline reverse-longitudinal component. Rulebook v4.12
+# (ADR-056, superseding ADR-050's narrower cost-untouched scope) applies this
+# floor directly to `cost`, not only to the diagnostic `status` classification,
+# because the scalarizer's own 1e-8 numerical tolerance does not catch noise
+# at this 0.1 m/s scale: an unfloored cost silently flips the R3 satisfaction
+# indicator on a correctly stopped ego.
+WRONGWAY_SPEED_EPSILON_MPS = 0.1
 
 
 def dashed_lateral_penetration(ego_footprint, boundary_geometry) -> float:
@@ -178,12 +179,24 @@ def evaluate_wrongway(
     cap = ego.configured_speed_cap_mps
     if cap is None or not isfinite(cap) or cap <= 0.0:
         raise ValueError("Wrong-way requires a positive configured ego speed cap")
+    if cap <= WRONGWAY_SPEED_EPSILON_MPS:
+        raise ValueError(
+            "Wrong-way requires a configured ego speed cap above the physics "
+            f"noise floor ({WRONGWAY_SPEED_EPSILON_MPS} m/s)"
+        )
     projection = route.project(
         ego.position_xy, position_z=ego.position_z, previous_s_m=previous_s_m
     )
     vx, vy = ego.velocity_xy
     longitudinal_speed = vx * projection.tangent_xy[0] + vy * projection.tangent_xy[1]
-    cost = min(max(-longitudinal_speed, 0.0) / cap, 1.0)
+    reverse_speed = max(-longitudinal_speed, 0.0)
+    if reverse_speed <= WRONGWAY_SPEED_EPSILON_MPS:
+        cost = 0.0
+    else:
+        cost = min(
+            (reverse_speed - WRONGWAY_SPEED_EPSILON_MPS) / (cap - WRONGWAY_SPEED_EPSILON_MPS),
+            1.0,
+        )
     ego_heading = ego.heading_rad
     route_heading = atan2(projection.tangent_xy[1], projection.tangent_xy[0])
     result = RuleComponentResult(
@@ -192,11 +205,7 @@ def evaluate_wrongway(
         raw={"v_parallel_mps": longitudinal_speed, "route_s_m": projection.s_m},
         applicable=True,
         evaluable=True,
-        status=(
-            ComponentStatus.VIOLATED
-            if -longitudinal_speed > WRONGWAY_STATUS_SPEED_EPSILON_MPS
-            else ComponentStatus.SATISFIED
-        ),
+        status=ComponentStatus.VIOLATED if cost > 0.0 else ComponentStatus.SATISFIED,
         diagnostics={
             "ego_heading_rad": ego_heading,
             "route_heading_rad": route_heading,

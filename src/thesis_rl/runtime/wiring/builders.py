@@ -292,9 +292,7 @@ def build_planner(cfg: DictConfig, env: Any, seed: int | None = None) -> "BasePl
     # SB3 PPO with the project's MLP policy is CPU-bound; passing ``auto``
     # selects CUDA when available and triggers SB3's performance warning.
     device = (
-        "cpu"
-        if algorithm_name == "ppo_sb3" and configured_device == "auto"
-        else configured_device
+        "cpu" if algorithm_name == "ppo_sb3" and configured_device == "auto" else configured_device
     )
     return build_planner_backend(
         planner_name=algorithm_name,
@@ -328,9 +326,7 @@ def load_planner(
     algorithm_name = str(cfg.agent.planner.algorithm.name)
     configured_device = str(cfg.device)
     device = (
-        "cpu"
-        if algorithm_name == "ppo_sb3" and configured_device == "auto"
-        else configured_device
+        "cpu" if algorithm_name == "ppo_sb3" and configured_device == "auto" else configured_device
     )
     return load_planner_backend(
         planner_name=algorithm_name,
@@ -394,17 +390,20 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
 
             initial_memory = None
             initial_cache = None
+            mission_route = None
         else:
             snapshotter = adapter.snapshotter
             transition_evaluator = adapter.transition_evaluator
             initial_memory = adapter.initial_memory
             initial_cache = adapter.initial_cache
+            mission_route = adapter.mission_route
         return RulebookV2MonitorWrapper(
             env,
             snapshotter=snapshotter,
             transition_evaluator=transition_evaluator,
             initial_memory=initial_memory,
             initial_cache=initial_cache,
+            mission_route=mission_route,
             scalarizer=scalarizer,
             adapter_factory=adapter_factory,
             rule_margin_log_path=cfg.reward.get("rule_margin_log_path"),

@@ -7,6 +7,7 @@ import gymnasium as gym
 import numpy as np
 from shapely.geometry import box
 
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.types import (
     ActorClass,
     ActorSnapshot,
@@ -18,6 +19,8 @@ from thesis_rl.rulebook.v2.types import (
     TaskRouteRecord,
 )
 from thesis_rl.rulebook.v2.wrapper import RulebookV2MonitorWrapper
+
+_MISSION_ROUTE = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
 
 
 def test_causal_context_import_does_not_trigger_rulebook_wrapper_cycle() -> None:
@@ -101,6 +104,7 @@ def test_wrapper_publishes_committed_context_without_rulebook_result() -> None:
         transition_evaluator=evaluate,
         initial_memory=RulebookMemory(),
         initial_cache=cache,
+        mission_route=_MISSION_ROUTE,
     )
     wrapper.reset()
     wrapper.step(np.zeros(1, dtype=np.float32))
@@ -134,6 +138,7 @@ def test_wrapper_refreshes_observation_after_memory_context_commit() -> None:
         transition_evaluator=evaluate,
         initial_memory=RulebookMemory(),
         initial_cache=cache,
+        mission_route=_MISSION_ROUTE,
     )
     wrapper.reset()
     observation, *_ = wrapper.step(np.zeros(1, dtype=np.float32))

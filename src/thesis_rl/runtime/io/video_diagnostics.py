@@ -258,21 +258,21 @@ def diagnostic_geometry(
     context = getattr(base, "causal_scene_context", None)
     if context is None:
         context = getattr(getattr(base, "engine", None), "causal_scene_context", None)
-    route = getattr(context, "route_polyline", None)
-    if route is None:
-        adapter = getattr(base, "rulebook_v2_adapter", None)
-        cache = getattr(adapter, "cache", None)
-        if cache is None:
-            cache = getattr(adapter, "initial_cache", None)
-        route = getattr(cache, "route_polyline", None)
+    # DRIVING-MISSION-V1.1 §5: the overlay must follow the committed mission
+    # snapshot's station, never an independent reprojection of the ego -- so
+    # the mission's canonical route is used, anchored to `mission_s_m`, not
+    # the legacy source-declared-direction route.
+    route = getattr(context, "mission_route", None)
     route_points = getattr(route, "points_xyz", None)
+    mission_snapshot = getattr(getattr(context, "snapshot", None), "mission_snapshot", None)
+    mission_s_m = _number(getattr(mission_snapshot, "s_m", None))
     ego = info.get("ego_state") if isinstance(info.get("ego_state"), Mapping) else {}
     ego_position = _point_xy(_get(ego, "position"))
     if ego_position is None and track_agent is not None:
         ego_position = _point_xy(getattr(track_agent, "position", None))
-    if route is not None and route_points and ego_position is not None:
+    if route is not None and route_points and ego_position is not None and mission_s_m is not None:
         try:
-            projection = route.project(ego_position)
+            projection = route.project(ego_position, previous_s_m=mission_s_m)
             future_world = [
                 route.point_at(projection.s_m),
                 *route_points[projection.segment_index + 1 :],

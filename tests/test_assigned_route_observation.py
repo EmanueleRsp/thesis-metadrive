@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -19,11 +21,18 @@ class _Vehicle:
         return np.asarray(point) - np.asarray(origin)
 
 
+def _mission_provider(s_m: float):
+    """Stand in for MissionRuntime: only `.snapshot.s_m` is read."""
+
+    return lambda: SimpleNamespace(snapshot=SimpleNamespace(s_m=s_m))
+
+
 def test_assigned_route_waypoints_use_frozen_polyline_and_fixed_spacing() -> None:
     adapter = AssignedRouteWaypointAdapter(
         RoutePolyline(((0.0, 0.0, 0.0), (20.0, 0.0, 0.0))),
         num_waypoints=3,
         spacing_m=5.0,
+        mission_provider=_mission_provider(2.0),
     )
 
     waypoints = adapter.observe(_Vehicle())
@@ -33,7 +42,10 @@ def test_assigned_route_waypoints_use_frozen_polyline_and_fixed_spacing() -> Non
 
 
 def test_assigned_route_waypoints_fail_closed_without_local_transform() -> None:
-    adapter = AssignedRouteWaypointAdapter(RoutePolyline(((0.0, 0.0, 0.0), (20.0, 0.0, 0.0))))
+    adapter = AssignedRouteWaypointAdapter(
+        RoutePolyline(((0.0, 0.0, 0.0), (20.0, 0.0, 0.0))),
+        mission_provider=_mission_provider(1.0),
+    )
     with pytest.raises(ValueError, match="world-to-local"):
         adapter.observe(type("Vehicle", (), {"position": (1.0, 0.0, 0.0)})())
 
@@ -42,6 +54,7 @@ def test_map_route_navigation_observation_has_exact_22_dimensions() -> None:
     navigation = MapRouteNavigationObservation22(
         AssignedRouteWaypointAdapter(
             RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0))),
+            mission_provider=_mission_provider(2.0),
         )
     )
 

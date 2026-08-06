@@ -11,6 +11,7 @@ from thesis_rl.envs.observations.causal_semantic import (
     CausalSemanticBatchBuilder,
     CausalSemanticObservationError,
 )
+from thesis_rl.mission.types import MissionSnapshot
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.types import (
@@ -25,6 +26,29 @@ from thesis_rl.rulebook.v2.types import (
     RulebookMemory,
     TaskRouteRecord,
 )
+
+
+def _mission_snapshot(route: RoutePolyline, ego: ActorSnapshot, step: int) -> MissionSnapshot:
+    """Build the MissionSnapshot a real MissionRuntime.update() would commit.
+
+    Test fixtures project once here (the mission tracker's job in production)
+    so the builder under test can read ``s_m`` instead of reprojecting.
+    """
+
+    s_m = route.project(ego.position_xy, position_z=ego.position_z).s_m
+    completion = min(max(s_m / route.length_m, 0.0), 1.0)
+    return MissionSnapshot(
+        mission_hash="test-mission",
+        step_index=step,
+        pending_gate_index=0,
+        remaining_distance_m=max(0.0, route.length_m - s_m),
+        route_completion=completion,
+        reachable=True,
+        mission_success=False,
+        mission_unreachable=False,
+        s_m=s_m,
+        delta_s_m=0.0,
+    )
 
 
 class _Vehicle:
@@ -79,8 +103,18 @@ def _context(
         route_lanes=lanes,
         route_polyline=route,
     )
-    snapshot = EnvSnapshot("scene", step, step * 0.1, ego, (ego, *actors), (), frozenset(), {})
-    return CausalSceneContext(cache, snapshot, RulebookMemory())
+    snapshot = EnvSnapshot(
+        "scene",
+        step,
+        step * 0.1,
+        ego,
+        (ego, *actors),
+        (),
+        frozenset(),
+        {},
+        mission_snapshot=_mission_snapshot(route, ego, step),
+    )
+    return CausalSceneContext(cache, snapshot, RulebookMemory(), route)
 
 
 def test_builder_emits_schema_groups_without_legacy_vector_recycling() -> None:
@@ -395,3 +429,56 @@ def test_global_translation_preserves_relative_observation() -> None:
     )
     assert np.allclose(batch_a.dynamic, batch_b.dynamic)
     assert np.allclose(batch_a.route, batch_b.route)
+
+
+def test_ego_route_station_is_bit_identical_to_the_committed_mission_snapshot() -> None:
+    """DRIVING-MISSION-V1.1 §3/§5: semantic observation must consume the
+    mission tracker's committed ``s_m`` instead of independently reprojecting
+    the ego. On a folded/self-intersecting route two branches lie exactly
+    equidistant from the ego, so an unanchored search is genuinely ambiguous
+    (`RoutePolyline.project` ties broken toward the smallest `s_m`, i.e. the
+    outbound branch). Only the committed mission snapshot decides which
+    branch is correct; this pins that the observation follows it exactly,
+    for both the outbound and the return branch, rather than always
+    resolving to the same (wrong, for the return case) tie-break.
+    """
+
+    centerline = RoutePolyline(
+        ((0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 0.02, 0.0), (0.0, 0.02, 0.0))
+    )
+    lane = RouteLaneRecord("lane-0", box(-1.0, -2.0, 11.0, 2.02), centerline)
+    lanes = (lane,)
+    ego = _actor("ego", (5.0, 0.01), (1.0, 0.0))
+    task_route = TaskRouteRecord("scene", ("lane-0",), "test", "v1", "geometry")
+    cache = EpisodeCache("scene", task_route, route_lanes=lanes, route_polyline=centerline)
+
+    for committed_s_m, branch_name in ((5.0, "outbound"), (15.02, "return")):
+        snapshot = EnvSnapshot(
+            "scene",
+            0,
+            0.0,
+            ego,
+            (ego,),
+            (),
+            frozenset(),
+            {},
+            mission_snapshot=MissionSnapshot(
+                mission_hash="test-mission",
+                step_index=0,
+                pending_gate_index=0,
+                remaining_distance_m=centerline.length_m - committed_s_m,
+                route_completion=committed_s_m / centerline.length_m,
+                reachable=True,
+                mission_success=False,
+                mission_unreachable=False,
+                s_m=committed_s_m,
+                delta_s_m=0.0,
+            ),
+        )
+        context = CausalSceneContext(cache, snapshot, RulebookMemory(), centerline)
+        builder = CausalSemanticBatchBuilder(route=centerline, route_lanes=lanes)
+
+        batch = builder.build(_Vehicle(), context)
+
+        expected_normalized_s = committed_s_m / max(centerline.length_m, 1.0)
+        assert batch.ego_current[2] == pytest.approx(expected_normalized_s), branch_name

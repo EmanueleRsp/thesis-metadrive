@@ -1,7 +1,7 @@
 name: latent_query_v2
 type: latent_query_v2
 architecture_version: 1.0-final
-required_observation_schema: 1.1-final
+required_observation_schema: 1.1-final-mission-route-v1
 token_dim: 64
 num_latents: 16
 latent_dim: 128

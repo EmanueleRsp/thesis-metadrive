@@ -18,6 +18,7 @@ import gymnasium as gym
 
 from thesis_rl.contracts.causal_scene_context import CausalSceneContext
 from thesis_rl.reward.scalarization import RulebookScalarizer, ScalarizationResult
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.memory import apply_cache_delta
 from thesis_rl.rulebook.v2.errors import RuntimeScenarioNotEvaluableError
 from thesis_rl.rulebook.v2.transition import control_line_diagnostics
@@ -47,6 +48,7 @@ class RulebookV2Adapter:
     transition_evaluator: TransitionEvaluator
     initial_memory: RulebookMemory
     initial_cache: EpisodeCache
+    mission_route: RoutePolyline
 
 
 class RulebookV2MonitorWrapper(gym.Wrapper):
@@ -60,6 +62,7 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         transition_evaluator: TransitionEvaluator,
         initial_memory: RulebookMemory | None,
         initial_cache: EpisodeCache | None,
+        mission_route: RoutePolyline | None = None,
         scalarizer: RulebookScalarizer | None = None,
         adapter_factory: AdapterFactory | None = None,
         rule_margin_log_path: str | None = None,
@@ -86,6 +89,7 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
             self._runtime_info_debug_path.parent.mkdir(parents=True, exist_ok=True)
         self._memory = initial_memory
         self._cache = initial_cache
+        self._mission_route = mission_route
         self._pre_snapshot: EnvSnapshot | None = None
         self._causal_scene_context: CausalSceneContext | None = None
         self._control_line_diagnostics: dict[str, int] | None = None
@@ -120,10 +124,13 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         if not isinstance(snapshot, EnvSnapshot):
             self._causal_scene_context = None
             return
+        if self._mission_route is None:
+            raise RuntimeError("Causal scene context requires the installed mission route")
         context = CausalSceneContext(
             episode_cache=self._cache,
             snapshot=snapshot,
             memory=self._memory,
+            mission_route=self._mission_route,
         )
         self._causal_scene_context = context
         # ``BaseObservation`` has access to MetaDrive's engine, while the
@@ -148,6 +155,7 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
             self._transition_evaluator = adapter.transition_evaluator
             self._initial_memory = adapter.initial_memory
             self._initial_cache = adapter.initial_cache
+            self._mission_route = adapter.mission_route
         self._memory = self._initial_memory
         self._cache = self._initial_cache
         self._control_line_diagnostics = (

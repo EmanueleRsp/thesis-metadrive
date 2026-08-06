@@ -4,6 +4,7 @@ import pytest
 from shapely.geometry import box
 
 from thesis_rl.contracts.causal_scene_context import CausalSceneContext
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.types import (
     ActorClass,
     ActorSnapshot,
@@ -31,10 +32,13 @@ def _snapshot(scenario_id: str) -> EnvSnapshot:
 
 def test_causal_scene_context_is_bound_to_one_committed_scenario() -> None:
     route = TaskRouteRecord("scene-a", ("lane-0",), "task", "v1", "hash")
+    mission_route = RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
     context = CausalSceneContext(
-        EpisodeCache("scene-a", route), _snapshot("scene-a"), RulebookMemory()
+        EpisodeCache("scene-a", route), _snapshot("scene-a"), RulebookMemory(), mission_route
     )
 
     assert context.task_route is route
     with pytest.raises(ValueError, match="same scenario"):
-        CausalSceneContext(EpisodeCache("scene-a", route), _snapshot("scene-b"), RulebookMemory())
+        CausalSceneContext(
+            EpisodeCache("scene-a", route), _snapshot("scene-b"), RulebookMemory(), mission_route
+        )

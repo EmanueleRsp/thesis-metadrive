@@ -1,7 +1,7 @@
 name: latent_query_v3
 type: latent_query_v3
 architecture_version: 1.2-perception-bounded
-required_observation_schema: 1.2-perception-bounded
+required_observation_schema: 1.2-perception-bounded-mission-route-v1
 token_dim: 64
 num_latents: 16
 latent_dim: 128

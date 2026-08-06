@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.types import EpisodeCache, EnvSnapshot, RulebookMemory
 
 
@@ -19,6 +20,7 @@ class CausalSceneContext:
     episode_cache: EpisodeCache
     snapshot: EnvSnapshot
     memory: RulebookMemory
+    mission_route: RoutePolyline
 
     def __post_init__(self) -> None:
         if self.episode_cache.scenario_id != self.snapshot.scenario_id:

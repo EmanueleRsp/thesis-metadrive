@@ -61,7 +61,13 @@ class SemanticObservationTensorBatch:
 class SemanticObservationSchemaV11:
     """The frozen v1.1 semantic observation layout and LQ token contract."""
 
-    version: ClassVar[str] = "1.1-final"
+    # Route-derived fields (ego route station, route samples, lane offset,
+    # heading error, route-relative actor/feature positions) now source from
+    # the mission's canonical trimmed/oriented route and the shared
+    # MissionSnapshot station instead of the legacy assigned-route polyline,
+    # per DRIVING-MISSION-V1.1 §3/§5. Same tensor widths, new numeric values
+    # (DEC-MSN-004): bump the schema identity so old checkpoints are flagged.
+    version: ClassVar[str] = "1.1-final-mission-route-v1"
     flat_dim: ClassVar[int] = 2541
     raw_token_count: ClassVar[int] = 122
     group_shapes: ClassVar[dict[str, tuple[int, ...]]] = {
@@ -238,7 +244,9 @@ class SemanticObservationTensorBatchV12:
 class SemanticObservationSchemaV12:
     """The approved perception-bounded OBS-V1.2 layout and token contract."""
 
-    version: ClassVar[str] = "1.2-perception-bounded"
+    # See SemanticObservationSchemaV11's mission-route note; the same route
+    # consumer swap applies here.
+    version: ClassVar[str] = "1.2-perception-bounded-mission-route-v1"
     flat_dim: ClassVar[int] = 3009
     raw_token_count: ClassVar[int] = 143
     group_shapes: ClassVar[dict[str, tuple[int, ...]]] = {

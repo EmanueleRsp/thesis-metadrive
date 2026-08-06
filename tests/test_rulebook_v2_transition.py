@@ -50,7 +50,14 @@ def _snapshot(step: int, time_s: float, x: float) -> EnvSnapshot:
         10.0,
     )
     return EnvSnapshot(
-        "scenario", step, time_s, ego, (), (), frozenset(), {},
+        "scenario",
+        step,
+        time_s,
+        ego,
+        (),
+        (),
+        frozenset(),
+        {},
         MissionSnapshot("test-mission", step, 0, 100.0 - x, 0.0, True, False, False),
     )
 
@@ -69,6 +76,44 @@ def _cache() -> EpisodeCache:
         route_lanes=(lane,),
         route_polyline=route,
     )
+
+
+def test_front_s_uses_source_declared_direction_independent_of_mission_orientation() -> None:
+    """Regression for DRIVING-MISSION-V1.1.1 amendment §6: control-line
+    crossing and approach-speed geometry must stay bound to the
+    source-declared lane direction, never to the mission's per-occurrence
+    traversal orientation. ``evaluate_transition`` reads
+    ``route = cache.route_polyline``, which ``build_episode_cache``
+    populates exclusively from ``static_result.assigned_route_polyline``
+    (the legacy, source-declared route) -- never from the mission runtime's
+    oriented canonical route. This pins ``_front_s`` (the swept front-bumper
+    station feeding control-line crossing detection and R3 approach speed)
+    to that same source-declared route, mirroring
+    ``test_wrongway_uses_source_declared_direction_independent_of_mission_orientation``
+    in ``tests/test_rulebook_v2_road.py``.
+
+    A vehicle centered at ``x=5.0`` with a 2m-long footprint (``x`` in
+    ``[4, 6]``) moving with ``velocity=(1.0, 0.0)`` (i.e. towards ``+x``,
+    per ``_snapshot``) has its real leading edge at ``x=6``. On the
+    source-declared route ``(0,0)->(20,0)``, ``s`` increases with ``x``, so
+    ``front_s_m`` correctly resolves to that leading edge (``s=6.0``). If
+    ``evaluate_transition`` were ever fed the mission-oriented route
+    instead -- reversed on this occurrence, ``(20,0)->(0,0)`` -- ``s``
+    would decrease with ``x``, and the geometric maximum-``s`` vertex would
+    flip to the vehicle's real *trailing* edge (``s=16.0`` at ``x=4``),
+    silently corrupting every control-line crossing decision downstream.
+    """
+
+    source_declared_route = RoutePolyline(((0.0, 0.0, 0.0), (20.0, 0.0, 0.0)))
+    mission_reversed_route = RoutePolyline(((20.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+    snapshot = _snapshot(0, 0.0, 5.0)
+
+    source_front_s = transition_module._front_s(snapshot, source_declared_route)
+    assert source_front_s == pytest.approx(6.0)
+
+    mission_front_s = transition_module._front_s(snapshot, mission_reversed_route)
+    assert mission_front_s == pytest.approx(16.0)
+    assert mission_front_s != pytest.approx(source_front_s)
 
 
 def test_control_line_diagnostics_counts_approach_filter_and_off_route_drops() -> None:

@@ -43,6 +43,43 @@ class CausalSemanticObservationError(ValueError):
     """Raised when a required causal semantic input is unavailable or invalid."""
 
 
+def _mission_s_m(context: CausalSceneContext) -> float:
+    """Return the ego route station already committed by the mission tracker.
+
+    DRIVING-MISSION-V1.1 §3/§5: semantic observation consumes the immutable
+    ``MissionSnapshot`` and never independently reprojects the ego.
+    """
+
+    mission_snapshot = context.snapshot.mission_snapshot
+    if mission_snapshot is None or mission_snapshot.s_m is None:
+        raise CausalSemanticObservationError(
+            "Semantic observation requires a committed mission snapshot with a route station"
+        )
+    return mission_snapshot.s_m
+
+
+_MISSION_S_CONSISTENCY_TOLERANCE_M = 1e-6
+
+
+def _ego_local_projection(
+    route: RoutePolyline, ego: ActorSnapshot, mission_s_m: float
+) -> RouteProjection:
+    """Return route tangent/lateral offset at the ego without reprojecting its `s`.
+
+    Anchored at the mission tracker's already-committed ``mission_s_m`` using
+    the same tie-break authority the tracker itself uses, and asserts the
+    result agrees with the committed snapshot rather than silently accepting
+    an independently derived station (DRIVING-MISSION-V1.1 §3/§5).
+    """
+
+    projection = route.project(ego.position_xy, position_z=ego.position_z, previous_s_m=mission_s_m)
+    if abs(projection.s_m - mission_s_m) > _MISSION_S_CONSISTENCY_TOLERANCE_M:
+        raise CausalSemanticObservationError(
+            "Ego route geometry query diverged from the committed mission route station"
+        )
+    return projection
+
+
 @dataclass(frozen=True, slots=True)
 class SemanticOverflowDiagnostics:
     """Debug-only capacity diagnostics; never included in the policy tensor."""
@@ -396,9 +433,9 @@ class CausalSemanticBatchBuilder:
             raise CausalSemanticObservationError(
                 "Semantic observation requires an environment-owned committed CausalSceneContext"
             )
-        if selected.route_polyline is not None and selected.route_polyline != self.route:
+        if selected.mission_route != self.route:
             raise CausalSemanticObservationError(
-                "Semantic route differs from committed route geometry"
+                "Semantic route differs from committed mission route geometry"
             )
         self.commit_context(selected)
         return selected
@@ -411,8 +448,8 @@ class CausalSemanticBatchBuilder:
     ) -> SemanticObservationBatch:
         context = self._context(context)
         ego = context.snapshot.ego
-        self._record_ego_frame(vehicle, ego)
-        route_projection = self.route.project(ego.position_xy, position_z=ego.position_z)
+        mission_s_m = _mission_s_m(context)
+        self._record_ego_frame(vehicle, ego, mission_s_m)
         ego_speed_cap = self.ego_speed_cap_mps or ego.configured_speed_cap_mps
         if ego_speed_cap is None or ego_speed_cap <= 0.0:
             raise CausalSemanticObservationError(
@@ -424,19 +461,19 @@ class CausalSemanticBatchBuilder:
             [
                 _clip(_dimensions(ego.footprint)[0], 10.0, lower=0.0),
                 _clip(_dimensions(ego.footprint)[1], 5.0, lower=0.0),
-                _clip(route_projection.s_m, max(self.route.length_m, 1.0), lower=0.0),
+                _clip(mission_s_m, max(self.route.length_m, 1.0), lower=0.0),
             ],
             dtype=np.float32,
         )
-        route, route_mask = self._build_route(ego, route_projection.s_m)
+        route, route_mask = self._build_route(ego, mission_s_m)
         dynamic, dynamic_mask = self._build_dynamic(context, ego, ego_speed_cap)
         static, static_mask = self._build_static(context, ego)
         self._last_diagnostics = replace(
             self._last_diagnostics,
             route_incompatible_static_features=self._route_incompatible_static_features,
         )
-        lane_road = self._build_lane_road(context, ego, route_projection.s_m, vehicle)
-        controls, controls_mask = self._build_controls(context, ego, route_projection.s_m)
+        lane_road = self._build_lane_road(context, ego, mission_s_m, vehicle)
+        controls, controls_mask = self._build_controls(context, ego, mission_s_m)
         interactions, interactions_mask = self._build_interactions(context, ego)
         temporal = self._build_temporal(context)
         return SemanticObservationBatch(
@@ -457,7 +494,7 @@ class CausalSemanticBatchBuilder:
             temporal=temporal,
         )
 
-    def _record_ego_frame(self, vehicle: object, ego: ActorSnapshot) -> None:
+    def _record_ego_frame(self, vehicle: object, ego: ActorSnapshot, mission_s_m: float) -> None:
         if self._ego_frames and self._last_context_step is not None:
             last = self._ego_frames[-1]
             if last.snapshot == ego:
@@ -515,7 +552,7 @@ class CausalSemanticBatchBuilder:
             )
         if yaw_rate_value is None:
             raise CausalSemanticObservationError("Current ego yaw rate is unavailable")
-        projection = self.route.project(ego.position_xy, position_z=ego.position_z)
+        projection = _ego_local_projection(self.route, ego, mission_s_m)
         heading_error = atan2(
             sin(ego.heading_rad - atan2(*reversed(projection.tangent_xy))),
             cos(ego.heading_rad - atan2(*reversed(projection.tangent_xy))),
@@ -1456,8 +1493,10 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             raise CausalSemanticObservationError(
                 "Semantic observation requires an environment-owned committed CausalSceneContext"
             )
-        if selected.route_polyline is not None and selected.route_polyline != self.route:
-            raise CausalSemanticObservationError("Semantic route differs from committed route geometry")
+        if selected.mission_route != self.route:
+            raise CausalSemanticObservationError(
+                "Semantic route differs from committed mission route geometry"
+            )
         self.commit_context(selected, vehicle)
         return selected
 
@@ -1466,27 +1505,29 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
     ) -> SemanticObservationBatchV12:
         context = self._context_v12(context, vehicle)
         ego = context.snapshot.ego
-        self._record_ego_frame(vehicle, ego)
-        route_projection = self.route.project(ego.position_xy, position_z=ego.position_z)
+        mission_s_m = _mission_s_m(context)
+        self._record_ego_frame(vehicle, ego, mission_s_m)
         ego_speed_cap = self.ego_speed_cap_mps or ego.configured_speed_cap_mps
         if ego_speed_cap is None or ego_speed_cap <= 0.0:
-            raise CausalSemanticObservationError("Ego speed cap is required for semantic normalization")
+            raise CausalSemanticObservationError(
+                "Ego speed cap is required for semantic normalization"
+            )
 
         ego_history, ego_history_mask = self._build_ego_history(ego, ego_speed_cap)
         ego_current = np.asarray(
             [
                 _clip(_dimensions(ego.footprint)[0], 10.0, lower=0.0),
                 _clip(_dimensions(ego.footprint)[1], 5.0, lower=0.0),
-                _clip(route_projection.s_m, max(self.route.length_m, 1.0), lower=0.0),
+                _clip(mission_s_m, max(self.route.length_m, 1.0), lower=0.0),
             ],
             dtype=np.float32,
         )
-        route, route_mask = self._build_route_v12(ego, route_projection.s_m)
+        route, route_mask = self._build_route_v12(ego, mission_s_m)
         dynamic, dynamic_mask = self._build_dynamic_v12(context, ego, ego_speed_cap)
         static, static_mask = self._build_static_v12(context, ego)
-        lane_road = self._build_lane_road(context, ego, route_projection.s_m, vehicle)
+        lane_road = self._build_lane_road(context, ego, mission_s_m, vehicle)
         controls, controls_mask, control_trace = self._build_controls_v12(
-            context, ego, route_projection.s_m, vehicle, ego_speed_cap
+            context, ego, mission_s_m, vehicle, ego_speed_cap
         )
         interactions, interactions_mask = self._build_interactions(context, ego)
         context_history, context_history_mask = self._append_context_row(
@@ -1522,7 +1563,9 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             if actor.actor_id in self._visible_actor_ids
         ]
 
-    def _build_route_v12(self, ego: ActorSnapshot, current_s: float) -> tuple[np.ndarray, np.ndarray]:
+    def _build_route_v12(
+        self, ego: ActorSnapshot, current_s: float
+    ) -> tuple[np.ndarray, np.ndarray]:
         payload = np.zeros((10, 7), dtype=np.float32)
         mask = np.zeros(10, dtype=np.float32)
         for index in range(10):
@@ -1565,14 +1608,22 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
     ) -> dict[int, ActorSnapshot]:
         current = {actor.actor_id: conflict for actor, conflict in selected}
         for slot, actor_id in list(self._slot_actor.items()):
-            if actor_id not in current and step - self._slot_last_seen.get(slot, step) >= self.history_length:
+            if (
+                actor_id not in current
+                and step - self._slot_last_seen.get(slot, step) >= self.history_length
+            ):
                 self._slot_actor.pop(slot, None)
                 self._slot_last_seen.pop(slot, None)
         assignments: dict[int, ActorSnapshot] = {}
         used: set[int] = set()
         for actor, is_conflict in selected:
-            previous = next((slot for slot, actor_id in self._slot_actor.items() if actor_id == actor.actor_id), None)
-            if previous is not None and ((is_conflict and previous < 8) or (not is_conflict and previous >= 8)):
+            previous = next(
+                (slot for slot, actor_id in self._slot_actor.items() if actor_id == actor.actor_id),
+                None,
+            )
+            if previous is not None and (
+                (is_conflict and previous < 8) or (not is_conflict and previous >= 8)
+            ):
                 assignments[previous] = actor
                 used.add(previous)
         for actor, is_conflict in selected:
@@ -1580,7 +1631,9 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 continue
             preferred = tuple(range(0, 8)) if is_conflict else tuple(range(8, 16))
             fallback = tuple(range(8, 16)) if is_conflict else tuple(range(0, 8))
-            slot = next((candidate for candidate in (*preferred, *fallback) if candidate not in used), None)
+            slot = next(
+                (candidate for candidate in (*preferred, *fallback) if candidate not in used), None
+            )
             if slot is None:
                 raise CausalSemanticObservationError("Dynamic slot assignment exceeded capacity")
             assignments[slot] = actor
@@ -1597,16 +1650,25 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         conflict_ids = self._zone_actor_ids(context, ego)
         ordered = sorted(candidates, key=lambda actor: self._dynamic_key(actor, ego, conflict_ids))
         conflicts = [actor for actor in ordered if actor.actor_id in conflict_ids]
-        selected = conflicts[:8] + [actor for actor in ordered if actor not in conflicts[:8]][: 16 - len(conflicts[:8])]
+        selected = (
+            conflicts[:8]
+            + [actor for actor in ordered if actor not in conflicts[:8]][: 16 - len(conflicts[:8])]
+        )
         slots = self._assign_slots_v12(
-            [(actor, actor.actor_id in conflict_ids) for actor in selected], context.snapshot.step_index
+            [(actor, actor.actor_id in conflict_ids) for actor in selected],
+            context.snapshot.step_index,
         )
         payload = np.zeros((16, 5, 22), dtype=np.float32)
         mask = np.zeros((16, 5), dtype=np.float32)
         for slot, actor in slots.items():
-            samples = {step: snapshot for step, snapshot in self._v12_actor_cache.get(actor.actor_id, ())}
+            samples = {
+                step: snapshot for step, snapshot in self._v12_actor_cache.get(actor.actor_id, ())
+            }
             for history_index, sample_step in enumerate(
-                range(context.snapshot.step_index - self.history_length + 1, context.snapshot.step_index + 1)
+                range(
+                    context.snapshot.step_index - self.history_length + 1,
+                    context.snapshot.step_index + 1,
+                )
             ):
                 snapshot = samples.get(sample_step)
                 if snapshot is None:
@@ -1725,12 +1787,15 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 return width
         raise CausalSemanticObservationError("Canonical lane width is unavailable")
 
-    def _front_bumper_s(self, ego: ActorSnapshot) -> float:
+    def _front_bumper_s(self, ego: ActorSnapshot, mission_s_m: float) -> float:
         """Route abscissa of the ego front bumper (REQ-009).
 
         The Rulebook decides control-line crossing and zone entry with the
         swept front bumper, so a centre-based distance would offset every
-        threshold the policy has to learn by half a vehicle length.
+        threshold the policy has to learn by half a vehicle length. The
+        search is anchored at the mission tracker's committed ``mission_s_m``
+        (same tie-break authority the tracker itself uses), not an
+        independently chosen anchor, per DRIVING-MISSION-V1.1 §3.
         """
 
         half_length = _dimensions(ego.footprint)[0] / 2.0
@@ -1739,9 +1804,11 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             ego.position_xy[1] + sin(ego.heading_rad) * half_length,
         )
         try:
-            return self.route.project(bumper, position_z=ego.position_z).s_m
+            return self.route.project(
+                bumper, position_z=ego.position_z, previous_s_m=mission_s_m
+            ).s_m
         except ValueError:
-            return self.route.project(ego.position_xy, position_z=ego.position_z).s_m
+            return mission_s_m
 
     def _build_lane_road(
         self, context: CausalSceneContext, ego: ActorSnapshot, current_s: float, vehicle: object
@@ -1758,9 +1825,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 MapFeatureClass.ROAD_BOUNDARY,
             }:
                 continue
-            elevation = (
-                feature.elevation_m if feature.elevation_m is not None else ego.position_z
-            )
+            elevation = feature.elevation_m if feature.elevation_m is not None else ego.position_z
             if abs(elevation - ego.position_z) > self.vertical_tolerance_m:
                 continue
             signed = _signed_footprint_clearance(feature.geometry, ego.footprint)
@@ -1825,9 +1890,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 return control.control_type
         return ApproachControl.NONE
 
-    def _zone_route_limits(
-        self, polygon: Any, fallback_s: float
-    ) -> tuple[float, float]:
+    def _zone_route_limits(self, polygon: Any, fallback_s: float) -> tuple[float, float]:
         """True curvilinear entry/exit of a zone along the assigned route."""
 
         centerline = LineString([(x, y) for x, y, _z in self.route.points_xyz])
@@ -1839,9 +1902,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         for geometry in geometries:
             for coordinate in getattr(geometry, "coords", ()):
                 try:
-                    abscissas.append(
-                        self.route.project((coordinate[0], coordinate[1])).s_m
-                    )
+                    abscissas.append(self.route.project((coordinate[0], coordinate[1])).s_m)
                 except ValueError:
                     continue
         if not abscissas:
@@ -1852,7 +1913,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         self, context: CausalSceneContext, ego: ActorSnapshot
     ) -> tuple[np.ndarray, np.ndarray]:
         candidates: list[_InteractionCandidate] = []
-        ego_front_s = self._front_bumper_s(ego)
+        ego_front_s = self._front_bumper_s(ego, _mission_s_m(context))
         for zone in context.conflict_zones.values():
             if zone.other_movement_key is None:
                 continue
@@ -2012,9 +2073,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 *_one_hot(_actor_type_index(actor.actor_class), 3),
                 _clip(ego_interval.start_s if ego_interval else 0.0, 3.0, lower=0.0),
                 _clip(
-                    ego_interval.end_s
-                    if ego_interval and ego_interval.end_s is not None
-                    else 3.0,
+                    ego_interval.end_s if ego_interval and ego_interval.end_s is not None else 3.0,
                     3.0,
                     lower=0.0,
                 ),
@@ -2092,11 +2151,12 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             _source, closest = nearest_points(feature.geometry, ego_point)
             position = (float(closest.x), float(closest.y))
             elevation = feature.elevation_at_xy(position)
-            if elevation is not None and abs(elevation - ego.position_z) > self.vertical_tolerance_m:
+            if (
+                elevation is not None
+                and abs(elevation - ego.position_z) > self.vertical_tolerance_m
+            ):
                 continue
-            distance = hypot(
-                position[0] - ego.position_xy[0], position[1] - ego.position_xy[1]
-            )
+            distance = hypot(position[0] - ego.position_xy[0], position[1] - ego.position_xy[1])
             if distance > self.static_radius_m:
                 continue
             projection_z = elevation if elevation is not None else ego.position_z
@@ -2130,7 +2190,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                     projection.lateral_distance_m,
                 )
             )
-        ego_front_s = self._front_bumper_s(ego)
+        ego_front_s = self._front_bumper_s(ego, _mission_s_m(context))
         candidates.sort(
             key=lambda item: (
                 not (item[5] >= ego_front_s),
@@ -2170,7 +2230,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         vehicle: object,
         ego_speed_cap: float,
     ) -> tuple[np.ndarray, np.ndarray, tuple[str | None, ApproachControl | None, str, float, bool]]:
-        front_s = self._front_bumper_s(ego)
+        front_s = self._front_bumper_s(ego, current_s)
         candidates = [
             control
             for control in context.traffic_controls
@@ -2219,9 +2279,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 (midpoint.x, midpoint.y), ego.position_xy, ego.heading_rad
             )
             coordinates = (
-                list(control.control_line.coords)
-                if hasattr(control.control_line, "coords")
-                else []
+                list(control.control_line.coords) if hasattr(control.control_line, "coords") else []
             )
             direction = (
                 atan2(
@@ -2342,7 +2400,9 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             if abs(elevation - ego.position_z) > self.vertical_tolerance_m:
                 continue
             if feature.geometry.intersects(ego.footprint):
-                candidates.append((float(feature.geometry.distance(ego.footprint)), feature.feature_id))
+                candidates.append(
+                    (float(feature.geometry.distance(ego.footprint)), feature.feature_id)
+                )
         return min(candidates)[1] if candidates else None
 
     def _append_timestamped_context_row(

@@ -168,8 +168,15 @@ def test_geometry_extraction_uses_renderer_and_vehicle_fallbacks() -> None:
         current_track_agent = Vehicle()
         target_agent_heading_up = False
 
+    class MissionSnap:
+        s_m = 5.0
+
+    class EnvSnap:
+        mission_snapshot = MissionSnap()
+
     class Context:
-        route_polyline = RoutePolyline(((0.0, 5.0, 0.0), (10.0, 5.0, 0.0)))
+        mission_route = RoutePolyline(((0.0, 5.0, 0.0), (10.0, 5.0, 0.0)))
+        snapshot = EnvSnap()
 
     class Env:
         top_down_renderer = Renderer()
@@ -205,8 +212,15 @@ def test_geometry_extraction_uses_mission_gates_instead_of_route_checkpoints() -
     class Runtime:
         gates = ()
 
+    class MissionSnap:
+        s_m = 5.0
+
+    class EnvSnap:
+        mission_snapshot = MissionSnap()
+
     class Context:
-        route_polyline = RoutePolyline(((0.0, 5.0, 0.0), (20.0, 5.0, 0.0)))
+        mission_route = RoutePolyline(((0.0, 5.0, 0.0), (20.0, 5.0, 0.0)))
+        snapshot = EnvSnap()
 
     class Env:
         top_down_renderer = Renderer()
@@ -263,8 +277,15 @@ def test_geometry_extraction_projects_mission_gates_with_progress_colours() -> N
         )
         snapshot = MissionSnapshot("mission", 2, 1, 3.0, 0.5, True, False, False)
 
+    class MissionSnap:
+        s_m = 5.0
+
+    class EnvSnap:
+        mission_snapshot = MissionSnap()
+
     class Context:
-        route_polyline = RoutePolyline(((0.0, 5.0, 0.0), (10.0, 5.0, 0.0)))
+        mission_route = RoutePolyline(((0.0, 5.0, 0.0), (10.0, 5.0, 0.0)))
+        snapshot = EnvSnap()
 
     class Env:
         top_down_renderer = Renderer()
@@ -273,9 +294,13 @@ def test_geometry_extraction_projects_mission_gates_with_progress_colours() -> N
 
     geometry = diagnostic_geometry(Env(), {})
 
+    # Screen coordinates are camera-relative (`to_screen` subtracts the
+    # camera's own screen offset, matching every other overlay in this
+    # function); with the track agent at world (5, 5) and a 200x200 canvas,
+    # world (3, 4) does not map to raw `pos2pix(3, 4)`.
     assert geometry["mission_gates"] == [
-        {"line": [(30.0, 40.0), (30.0, 60.0)], "state": "passed", "final": False},
-        {"line": [(80.0, 40.0), (80.0, 60.0)], "state": "pending", "final": True},
+        {"line": [(80.0, 90.0), (80.0, 110.0)], "state": "passed", "final": False},
+        {"line": [(130.0, 90.0), (130.0, 110.0)], "state": "pending", "final": True},
     ]
 
 

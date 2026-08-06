@@ -4,10 +4,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import atan2, isfinite, pi
+from typing import Callable
 
 import numpy as np
 
+from thesis_rl.mission.runtime import MissionRuntime
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+
+# DRIVING-MISSION-V1.1 §3/§5: consume the mission tracker's committed route
+# station instead of independently reprojecting the ego, so navigation samples
+# stay bit-identical to R4/completion/semantic observation for the same step.
+_MISSION_S_CONSISTENCY_TOLERANCE_M = 1e-6
+
+
+def _mission_s_m(mission_provider: "Callable[[], MissionRuntime] | None") -> float:
+    if mission_provider is None:
+        raise ValueError("Assigned route observation requires a mission_provider")
+    mission_runtime = mission_provider()
+    s_m = mission_runtime.snapshot.s_m
+    if s_m is None:
+        raise ValueError("Mission snapshot is missing a route-coordinate station")
+    return s_m
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +34,7 @@ class AssignedRouteWaypointAdapter:
     route: RoutePolyline
     num_waypoints: int = 10
     spacing_m: float = 5.0
+    mission_provider: "Callable[[], MissionRuntime] | None" = None
 
     def __post_init__(self) -> None:
         if self.num_waypoints <= 0 or not isfinite(self.spacing_m) or self.spacing_m <= 0.0:
@@ -26,13 +44,10 @@ class AssignedRouteWaypointAdapter:
         position = np.asarray(getattr(vehicle, "position"), dtype=float).reshape(-1)
         if position.size < 2 or not np.all(np.isfinite(position[:2])):
             raise ValueError("Vehicle position must contain finite XY coordinates")
-        position_z = float(position[2]) if position.size >= 3 else None
-        projection = self.route.project(
-            (float(position[0]), float(position[1])), position_z=position_z
-        )
+        mission_s_m = _mission_s_m(self.mission_provider)
         points = []
         for index in range(self.num_waypoints):
-            world_point = self.route.point_at(projection.s_m + index * self.spacing_m)
+            world_point = self.route.point_at(mission_s_m + index * self.spacing_m)
             convert = getattr(vehicle, "convert_to_local_coordinates", None)
             if not callable(convert):
                 raise ValueError("Vehicle must expose causal world-to-local conversion")
@@ -69,10 +84,16 @@ class MapRouteNavigationObservation22:
     def observe(self, vehicle: object) -> np.ndarray:
         waypoints = self.waypoint_adapter.observe(vehicle) / self.waypoint_scale_m
         position = np.asarray(getattr(vehicle, "position"), dtype=float).reshape(-1)
+        mission_s_m = _mission_s_m(self.waypoint_adapter.mission_provider)
         projection = self.waypoint_adapter.route.project(
             (float(position[0]), float(position[1])),
             position_z=float(position[2]) if position.size >= 3 else None,
+            previous_s_m=mission_s_m,
         )
+        if abs(projection.s_m - mission_s_m) > _MISSION_S_CONSISTENCY_TOLERANCE_M:
+            raise ValueError(
+                "Route navigation geometry query diverged from the committed mission route station"
+            )
         heading = float(getattr(vehicle, "heading_theta"))
         route_heading = atan2(projection.tangent_xy[1], projection.tangent_xy[0])
         lateral = float(np.clip(projection.lateral_distance_m / self.lateral_scale_m, -1.0, 1.0))
