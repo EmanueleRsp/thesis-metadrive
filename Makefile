@@ -10,6 +10,7 @@ RUN_PROFILE ?= smoke
 RUN_NAME ?= run
 RUN_OVERRIDES ?=
 NUM_ENVS ?= 20
+SMOKE_NUM_ENVS ?= 1
 SEED ?= 42
 RUN_ALGORITHM_CONFIGS := ppo ppo_sb3 sac sac_sb3 td3 td3_sb3
 RUN_PROFILE_CONFIGS := default fast medium long thesis tune smoke
@@ -416,7 +417,9 @@ smoke:
 	docker compose run --rm dev uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train
 
 smoke-gpu:
-	docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train
+	docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev uv run --no-sync python -m thesis_rl.cli.train --config-name presets/test/smoke_train \
+		env.vectorized.enabled=$(if $(filter 1,$(SMOKE_NUM_ENVS)),false,true) \
+		env.vectorized.num_envs=$(SMOKE_NUM_ENVS)
 
 # Canonical final-pipeline entry point. The dev service supplies the repository
 # and outputs mounts and mounts the dataset read-only; the GPU overlay is

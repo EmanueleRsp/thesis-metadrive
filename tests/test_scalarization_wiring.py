@@ -20,7 +20,11 @@ def test_all_algorithm_backends_receive_the_same_configured_scalar_reward() -> N
 def _run_config(reward_compression_mode: str) -> dict:
     return {
         "reward": {"behavior": "scalar_reward"},
-        "rulebook": {"implementation_family": "v2", "specification_id": "RULEBOOK-V4.12", "version": "v2"},
+        "rulebook": {
+            "implementation_family": "v2",
+            "specification_id": "RULEBOOK-V4.12",
+            "version": "v2",
+        },
         "scalarization": {
             "specification_id": "SCAL-V1.1",
             "version": "1.1",

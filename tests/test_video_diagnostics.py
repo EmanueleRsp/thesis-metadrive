@@ -304,6 +304,72 @@ def test_geometry_extraction_projects_mission_gates_with_progress_colours() -> N
     ]
 
 
+def test_geometry_extraction_renders_final_gate_segment_without_nested_geometry() -> None:
+    """Regression: a route-coordinate mission's sole gate is a frozen
+    ``FinalGateSegment`` (direct ``line_xy`` field), not a legacy
+    ``DirectedGate`` (``line_xy`` nested under ``.geometry``). Without a
+    fallback for the flat shape, ``getattr(gate, "geometry", None)`` is
+    always ``None`` and no gate -- in particular the final gate -- is ever
+    drawn for any PG or Waymo v1.1.1 mission.
+    """
+    from thesis_rl.runtime.io.video_diagnostics import diagnostic_geometry
+    from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+
+    class Canvas:
+        def pos2pix(self, x, y):
+            return (int(x * 10), int(y * 10))
+
+        def get_size(self):
+            return (200, 200)
+
+    class Vehicle:
+        position = (5.0, 5.0, 0.0)
+
+    class Renderer:
+        _frame_canvas = Canvas()
+        _screen_canvas = Canvas()
+        position = None
+        current_track_agent = Vehicle()
+        target_agent_heading_up = False
+
+    from thesis_rl.mission.types import FinalGateSegment, MissionSnapshot
+
+    class Runtime:
+        gates = (
+            FinalGateSegment(
+                ((8.0, 4.0), (8.0, 6.0)),
+                (1.0, 0.0),
+                0.0,
+                "occurrence:0:a",
+                "offline:pg:anchor_cross_section",
+                "hash",
+                "driving-mission-v1.1.1-anchor-builder",
+            ),
+        )
+        snapshot = MissionSnapshot("mission", 2, 0, 3.0, 0.5, True, False, False)
+
+    class MissionSnap:
+        s_m = 5.0
+
+    class EnvSnap:
+        mission_snapshot = MissionSnap()
+
+    class Context:
+        mission_route = RoutePolyline(((0.0, 5.0, 0.0), (10.0, 5.0, 0.0)))
+        snapshot = EnvSnap()
+
+    class Env:
+        top_down_renderer = Renderer()
+        causal_scene_context = Context()
+        _mission_runtime = Runtime()
+
+    geometry = diagnostic_geometry(Env(), {})
+
+    assert geometry["mission_gates"] == [
+        {"line": [(130.0, 90.0), (130.0, 110.0)], "state": "pending", "final": True},
+    ]
+
+
 def test_geometry_extraction_projects_ego_trail_when_given() -> None:
     from thesis_rl.runtime.io.video_diagnostics import diagnostic_geometry
 

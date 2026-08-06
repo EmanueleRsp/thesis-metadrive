@@ -134,6 +134,112 @@ def _lanes_reaching_any_gate(
     return frozenset(reachable)
 
 
+# A frame error is a metres-to-kilometres mistake, never sub-metre noise, so
+# this guard is deliberately loose: it must catch a wrong or missing datum
+# without rejecting ordinary polyline-consolidation differences.
+MISSION_FRAME_ALIGNMENT_TOLERANCE_M = 1.0
+
+
+def _align_route_coordinate_mission_to_live_frame(
+    mission: DrivingMissionRecord,
+    initial_snapshot: EnvSnapshot,
+    *,
+    origin_offset_xy: tuple[float, float],
+    live_lanes: dict[str, RouteLaneRecord],
+) -> DrivingMissionRecord:
+    """Materialize a frozen route-coordinate mission in MetaDrive's live frame.
+
+    The frozen mission is built offline from the *raw* source file, but
+    ``ScenarioDataManager`` loads every scenario with ``centralize=True``, so
+    the live map, the live ego, and the episode cache all live in a frame
+    translated by the SDC's first raw position
+    (``ScenarioDescription.centralize_to_ego_car_initial_position``). MetaDrive
+    records the inverse translation in the live scenario's
+    ``old_origin_in_current_coordinate`` metadata precisely so the raw data can
+    be mapped back; ``origin_offset_xy`` is that value. Without applying it the
+    canonical route and the final gate sit in a different coordinate frame than
+    the vehicle they are supposed to measure -- kilometres away for Waymo's
+    global coordinates -- which pins the route station, the completion ratio and
+    the gate crossing at their initial values.
+
+    Elevation is aligned separately and for a different reason: MetaDrive does
+    not translate Z at all, so the mission keeps the source's own Z datum and is
+    pinned to the live ego datum here exactly as
+    ``align_episode_cache_to_live_elevation`` pins the episode cache.
+
+    The frozen ``mission_hash`` is deliberately preserved: it identifies the
+    frozen *task*, which a pure change of datum does not alter, and it is what
+    every artifact reports as provenance.
+    """
+
+    if not mission.route_lane_ids:
+        # Legacy graph missions need no alignment: their gates are always
+        # re-materialized from the already-aligned live lanes.
+        return mission
+    assert mission.final_gate_segment is not None
+    dx, dy = float(origin_offset_xy[0]), float(origin_offset_xy[1])
+    translated = tuple((x + dx, y + dy, z) for x, y, z in mission.canonical_route_points_xyz)
+    reference = RoutePolyline(translated).project(initial_snapshot.ego.position_xy)
+    dz = initial_snapshot.ego.position_z - reference.z_m
+    aligned = replace(
+        mission,
+        canonical_route_points_xyz=tuple((x, y, z + dz) for x, y, z in translated),
+        final_gate_segment=replace(
+            mission.final_gate_segment,
+            line_xy=tuple((x + dx, y + dy) for x, y in mission.final_gate_segment.line_xy),
+            elevation_m=mission.final_gate_segment.elevation_m + dz,
+        ),
+        route_occurrences=tuple(
+            replace(
+                occurrence,
+                oriented_centerline_points_xyz=tuple(
+                    (x + dx, y + dy, z + dz)
+                    for x, y, z in occurrence.oriented_centerline_points_xyz
+                ),
+            )
+            for occurrence in mission.route_occurrences
+        ),
+    )
+    _verify_mission_frame(aligned, live_lanes)
+    # ``__post_init__`` recomputed the hash from the translated payload; restore
+    # the frozen identity (see the docstring). This mirrors how the record
+    # assigns the field in the first place.
+    object.__setattr__(aligned, "mission_hash", mission.mission_hash)
+    return aligned
+
+
+def _verify_mission_frame(
+    mission: DrivingMissionRecord, live_lanes: dict[str, RouteLaneRecord]
+) -> None:
+    """Fail closed when the aligned mission does not match the live map.
+
+    Each frozen occurrence stores its lane's complete centerline in mission
+    order, so undoing the orientation must reproduce the live lane's own
+    centerline. Comparing the endpoints is enough to detect a wrong datum and
+    cheap enough to run at every reset.
+    """
+
+    worst_lane_id = ""
+    worst_deviation = 0.0
+    for occurrence in mission.route_occurrences:
+        lane = live_lanes.get(occurrence.lane_id)
+        if lane is None:
+            continue
+        points = occurrence.oriented_centerline_points_xyz
+        if occurrence.orientation == "REVERSED":
+            points = tuple(reversed(points))
+        live = lane.centerline.points_xyz
+        for mission_point, live_point in ((points[0], live[0]), (points[-1], live[-1])):
+            deviation = hypot(mission_point[0] - live_point[0], mission_point[1] - live_point[1])
+            if deviation > worst_deviation:
+                worst_deviation, worst_lane_id = deviation, occurrence.lane_id
+    if worst_deviation > MISSION_FRAME_ALIGNMENT_TOLERANCE_M:
+        raise ValueError(
+            "mission geometry is not in the live scenario frame: lane "
+            f"{worst_lane_id!r} deviates by {worst_deviation:.3f} m"
+        )
+
+
 class MissionRuntime:
     """Own a tracker and its static live-map realization for one episode."""
 
@@ -142,7 +248,20 @@ class MissionRuntime:
         mission: DrivingMissionRecord,
         route_lanes: Iterable[RouteLaneRecord],
         initial_snapshot: EnvSnapshot,
+        *,
+        origin_offset_xy: tuple[float, float] = (0.0, 0.0),
     ) -> None:
+        """Own a frozen mission realized in the live scenario frame.
+
+        ``origin_offset_xy`` is the live scenario's
+        ``old_origin_in_current_coordinate`` metadata, which maps the raw source
+        coordinates the mission was frozen in onto MetaDrive's centralized live
+        frame. It defaults to no translation because a legacy graph mission
+        never needs it and because a scenario MetaDrive did not centralize
+        carries no such metadata; a wrong value is caught by
+        ``_verify_mission_frame`` rather than silently accepted.
+        """
+
         all_lanes = tuple(route_lanes)
         all_by_id = {lane.lane_id: lane for lane in all_lanes}
         if len(all_by_id) != len(all_lanes):
@@ -151,6 +270,12 @@ class MissionRuntime:
             missing = sorted(set(mission.route_lane_ids).difference(all_by_id))
             if missing:
                 raise ValueError(f"mission route references unavailable lanes: {missing[:5]}")
+            mission = _align_route_coordinate_mission_to_live_frame(
+                mission,
+                initial_snapshot,
+                origin_offset_xy=origin_offset_xy,
+                live_lanes=all_by_id,
+            )
             route = RoutePolyline(tuple(mission.canonical_route_points_xyz))
             self._route_lanes = tuple(all_lanes)
             self._tracker = RouteCoordinateMissionTracker(mission, route, 0.0)

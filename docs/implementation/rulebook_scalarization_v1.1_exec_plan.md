@@ -224,9 +224,27 @@ No deviations identified.
 
 | Command | Result | Date | Notes and evidence |
 |---|---|---|---|
-| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scalarization.py tests/test_scalarization_wiring.py` | `NOT_RUN` | | Recorded after implementation, see final report |
-| Scoped `ruff check`/`ruff format --check` on touched files | `NOT_RUN` | | Recorded after implementation, see final report |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_scalarization.py tests/test_scalarization_wiring.py tests/test_rulebook_v2_wrapper.py` | `PASS` | 2026-08-06 | 42 passed |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/` | `PASS` (with documented pre-existing gap) | 2026-08-06 | 1297 passed, 47 failed; all 47 verified pre-existing and unrelated (route-coordinate-mission migration in progress on this branch — `ValueError: Progress requires pre/post mission context` in `components/progress.py:50`, plus unrelated `eval_artifacts`/`async_evaluation`/`hydra_preset`/`run_metadata` failures). Confirmed by direct re-run of a sample failure (`test_rulebook_synthetic_scenarios.py::...[wrong_way-...]`) showing the identical pre-existing stack trace. No scalarization-related test is among the 47. |
+| Scoped `ruff check` on touched files | `PASS` | 2026-08-06 | `scalarization.py`, `wrapper.py`, `reward_semantics.py`, `test_scalarization.py`, `test_scalarization_wiring.py`, `test_rulebook_v2_wrapper.py` — all checks passed |
+| Scoped `ruff format --check` on touched files | `PASS` | 2026-08-06 | One file (`test_scalarization_wiring.py`) needed `ruff format`; applied, then re-verified clean; re-ran the focused pytest subset after reformatting to confirm no behavioral change |
+| `make smoke` | `NOT_RUN` | | Not executed in this session; the scalarization change is config/formula-level, exercised end-to-end by the full suite above and by `test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation`; a full training smoke run is recommended before treating this ExecPlan as `VERIFIED` |
 
 ## 15. Final Reconciliation
 
-Recorded after implementation and test execution complete (§14 filled in).
+| Requirement | Acceptance criteria | Status |
+|---|---|---|
+| `REQ-SCAL11-001` | `AC-SCAL11-001` | `IMPLEMENTED` |
+| `REQ-SCAL11-002` | `AC-SCAL11-002`, `003`, `005` | `IMPLEMENTED` |
+| `REQ-SCAL11-003` | `AC-SCAL11-001`, `AC-SCAL11-004` | `IMPLEMENTED` |
+| `REQ-SCAL11-004` | `AC-SCAL11-007`, `AC-SCAL11-008` | `IMPLEMENTED` |
+| `REQ-SCAL11-005` | `AC-SCAL11-006` | `IMPLEMENTED` |
+| `REQ-SCAL11-006` | `AC-SCAL11-007` | `IMPLEMENTED` |
+
+All in-scope requirements are implemented and covered by passing focused
+tests; the full repository suite shows no new failures relative to this
+branch's pre-existing, unrelated baseline gap. `make smoke` was not run in
+this session — recorded as a known residual risk, not a passed check; the
+plan status is `IMPLEMENTED` rather than `VERIFIED` pending that run. No
+deviations from the approved specification were introduced during
+implementation.

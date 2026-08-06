@@ -164,7 +164,9 @@ def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation(tmp_path):
         transition_evaluator=evaluate_transition,
         initial_memory=RulebookMemory(),
         initial_cache=cache,
-        scalarizer=RulebookScalarizer(ScalarizationConfig()),
+        scalarizer=RulebookScalarizer(
+            ScalarizationConfig(mode="bounded_satisfaction_rank", priority_base=2.01)
+        ),
         rule_margin_log_path=str(tmp_path / "rule_margins.jsonl"),
         runtime_info_debug_enabled=True,
         runtime_info_debug_path=str(tmp_path / "runtime_info_debug.jsonl"),
@@ -174,6 +176,7 @@ def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation(tmp_path):
     assert reward == pytest.approx(0.025)
     assert info["env_reward"] == 3.5
     assert info["scalar_reward"] == pytest.approx(0.025)
+    assert info["raw_scalar_reward"] == pytest.approx(0.025)
     assert info["scalar_rule_reward"] == pytest.approx(0.025)
     assert info["scalarization"]["mode"] == "bounded_satisfaction_rank"
     margin_record = (tmp_path / "rule_margins.jsonl").read_text(encoding="utf-8").strip()

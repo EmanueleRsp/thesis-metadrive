@@ -521,8 +521,21 @@ class ThesisScenarioEnv(ScenarioEnv):
         )
         self._mission_static_result = static_result
         self._mission_episode_cache = cache
+        # `ScenarioDataManager` loads every scenario with `centralize=True`, so
+        # the live map and ego are translated by the SDC's first raw position
+        # while the frozen mission is built from the raw source file. MetaDrive
+        # records the inverse translation here precisely so raw geometry can be
+        # mapped back onto the live frame; it is absent only when MetaDrive
+        # skipped centralization, in which case the two frames already coincide.
+        raw_origin = scenario.get("metadata", {}).get("old_origin_in_current_coordinate")
+        origin_offset_xy = (
+            (0.0, 0.0) if raw_origin is None else (float(raw_origin[0]), float(raw_origin[1]))
+        )
         self._mission_runtime = MissionRuntime(
-            DrivingMissionRecord.from_dict(mission_payload), cache.route_lanes, initial_snapshot
+            DrivingMissionRecord.from_dict(mission_payload),
+            cache.route_lanes,
+            initial_snapshot,
+            origin_offset_xy=origin_offset_xy,
         )
         initial_snapshot = replace(initial_snapshot, mission_snapshot=self._mission_runtime.snapshot)
 

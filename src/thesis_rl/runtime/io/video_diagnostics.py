@@ -292,6 +292,12 @@ def diagnostic_geometry(
         for index, gate in enumerate(gates):
             gate_geometry = getattr(gate, "geometry", None)
             line_xy = getattr(gate_geometry, "line_xy", None)
+            if line_xy is None:
+                # A route-coordinate mission's sole gate is a frozen
+                # ``FinalGateSegment``, whose ``line_xy`` is a direct field
+                # rather than nested under ``.geometry`` (legacy DirectedGate
+                # shape) -- without this fallback no gate is ever drawn.
+                line_xy = getattr(gate, "line_xy", None)
             if line_xy is None or len(line_xy) != 2:
                 continue
             line = [point for point in (to_screen(point) for point in line_xy) if point]
