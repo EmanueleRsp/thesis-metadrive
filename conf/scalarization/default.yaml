@@ -1,9 +1,13 @@
 # Approved Rulebook scalarization baseline.
-specification_id: SCAL-V1.0
-version: "1.0"
-mode: bounded_satisfaction_rank
+# SCAL-V1.1 (ADR-057): bounded_priority_weighted_rank is the default mode,
+# embedding each margin's severity in its own priority-weighted term instead
+# of SCAL-V1.0's diluted shared tie-breaker. bounded_satisfaction_rank
+# (priority_base: 2.01) remains available by explicit selection.
+specification_id: SCAL-V1.1
+version: "1.1"
+mode: bounded_priority_weighted_rank
 vector_schema_id: rulebook_v2_macro_v4
-priority_base: 2.01
+priority_base: 3.0
 numerical_tolerance: 1.0e-8
 native_environment_reward_weight: 0.0
 sigmoid:
@@ -11,3 +15,5 @@ sigmoid:
 legacy:
   vector_schema_id: null
   rule_scales: null
+reward_compression:
+  mode: none   # none | symlog; DEC-SCAL11-002=B, off by default

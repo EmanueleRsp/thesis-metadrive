@@ -239,6 +239,9 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         if scalarization_result is not None:
             reward = scalarization_result.reward
             info_dict["scalar_reward"] = scalarization_result.reward
+            # SCAL-V1.1 §5/§10.4: keep the pre-compression reward recoverable
+            # even when reward_compression.mode=symlog transforms `reward`.
+            info_dict["raw_scalar_reward"] = scalarization_result.raw_reward
             # The runtime logging/metric contract uses this explicit name to
             # distinguish the scalarized Rulebook reward from the native one.
             info_dict["scalar_rule_reward"] = scalarization_result.reward

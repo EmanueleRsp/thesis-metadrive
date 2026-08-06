@@ -18,7 +18,7 @@ defaults:
   - agent/planner/algorithm: td3_sb3   # Primary final learner; make run requires an explicit choice.
   - agent/adapter: identity            # Action adapter in `conf/agent/adapter/*`
 
-  - scalarization: default  # SCAL-V1.0 formula and immutable run parameters
+  - scalarization: default  # SCAL-V1.1 formula and immutable run parameters
   - curriculum: scenario_acl_scenarionet
   
   - override hydra/job_logging: disabled

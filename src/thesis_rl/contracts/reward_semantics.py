@@ -38,6 +38,7 @@ def build_reward_semantics_identity(config: Mapping[str, Any]) -> dict[str, Any]
         return None
     sigmoid = _mapping(scalarization.get("sigmoid"))
     legacy = _mapping(scalarization.get("legacy"))
+    reward_compression = _mapping(scalarization.get("reward_compression"))
     rulebook_version = str(rulebook.get("version", "v1"))
     identity = {
         "sidecar_version": REWARD_SEMANTICS_VERSION,
@@ -58,6 +59,7 @@ def build_reward_semantics_identity(config: Mapping[str, Any]) -> dict[str, Any]
             "native_environment_reward_weight": scalarization.get(
                 "native_environment_reward_weight"
             ),
+            "reward_compression_mode": reward_compression.get("mode", "none"),
             "legacy": {
                 "vector_schema_id": legacy.get("vector_schema_id"),
                 "rule_scales": legacy.get("rule_scales"),

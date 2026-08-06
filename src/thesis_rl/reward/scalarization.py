@@ -7,14 +7,25 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
 
-SCALARIZATION_SPECIFICATION_ID = "SCAL-V1.0"
-SCALARIZATION_VERSION = "1.0"
+SCALARIZATION_SPECIFICATION_ID = "SCAL-V1.1"
+SCALARIZATION_VERSION = "1.1"
 BOUNDED_VECTOR_SCHEMA_ID = "rulebook_v2_macro_v4"
 SCALARIZATION_MODES = (
     "legacy_scaled_sigmoid",
     "bounded_centered_sigmoid",
     "bounded_satisfaction_rank",
+    "bounded_priority_weighted_rank",
 )
+REWARD_COMPRESSION_MODES = ("none", "symlog")
+# SCAL-V1.1 REQ-SCAL11-003: each mode requires its own frozen priority_base;
+# legacy/centered-sigmoid/satisfaction-rank keep SCAL-V1.0's 2.01, while the
+# priority-weighted-rank mode requires the re-derived bound a'=3 (SCAL-V1.1 §7.6).
+_REQUIRED_PRIORITY_BASE_BY_MODE = {
+    "legacy_scaled_sigmoid": 2.01,
+    "bounded_centered_sigmoid": 2.01,
+    "bounded_satisfaction_rank": 2.01,
+    "bounded_priority_weighted_rank": 3.0,
+}
 
 
 class ScalarizationConfigurationError(ValueError):
@@ -29,14 +40,15 @@ class ScalarizationEvaluationError(ValueError):
 class ScalarizationConfig:
     """Immutable configuration shared by all algorithm backends."""
 
-    mode: str = "bounded_satisfaction_rank"
-    priority_base: float = 2.01
+    mode: str = "bounded_priority_weighted_rank"
+    priority_base: float = 3.0
     sigmoid_sharpness: float = 30.0
     numerical_tolerance: float = 1.0e-8
     vector_schema_id: str = BOUNDED_VECTOR_SCHEMA_ID
     legacy_vector_schema_id: str | None = None
     legacy_rule_scales: tuple[float, ...] | None = None
     native_environment_reward_weight: float = 0.0
+    reward_compression_mode: str = "none"
     specification_id: str = SCALARIZATION_SPECIFICATION_ID
     version: str = SCALARIZATION_VERSION
 
@@ -49,6 +61,18 @@ class ScalarizationConfig:
         if not math.isfinite(float(self.priority_base)) or float(self.priority_base) <= 1.0:
             raise ScalarizationConfigurationError(
                 "priority_base must be finite and greater than 1."
+            )
+        required_base = _REQUIRED_PRIORITY_BASE_BY_MODE[mode]
+        if float(self.priority_base) != required_base:
+            raise ScalarizationConfigurationError(
+                f"Mode {mode!r} requires priority_base={required_base}, "
+                f"got {float(self.priority_base)!r}."
+            )
+        compression_mode = str(self.reward_compression_mode)
+        if compression_mode not in REWARD_COMPRESSION_MODES:
+            raise ScalarizationConfigurationError(
+                f"Unknown reward_compression mode {compression_mode!r}; "
+                f"expected one of {REWARD_COMPRESSION_MODES}."
             )
         if not math.isfinite(float(self.sigmoid_sharpness)) or float(self.sigmoid_sharpness) <= 0.0:
             raise ScalarizationConfigurationError(
@@ -92,8 +116,12 @@ class ScalarizationConfig:
         sigmoid = raw.get("sigmoid")
         if isinstance(sigmoid, Mapping):
             raw.setdefault("sigmoid_sharpness", sigmoid.get("sharpness"))
+        reward_compression = raw.get("reward_compression")
+        if isinstance(reward_compression, Mapping):
+            raw.setdefault("reward_compression_mode", reward_compression.get("mode"))
         raw.pop("legacy", None)
         raw.pop("sigmoid", None)
+        raw.pop("reward_compression", None)
         if raw.get("legacy_rule_scales") is not None:
             raw["legacy_rule_scales"] = tuple(float(v) for v in raw["legacy_rule_scales"])
         allowed = {
@@ -105,6 +133,7 @@ class ScalarizationConfig:
             "legacy_vector_schema_id",
             "legacy_rule_scales",
             "native_environment_reward_weight",
+            "reward_compression_mode",
             "specification_id",
             "version",
         }
@@ -130,6 +159,8 @@ class ScalarizationResult:
     sigmoid_sharpness: float
     vector_schema_id: str
     legacy_rule_scales: tuple[float, ...] | None
+    raw_reward: float
+    reward_compression_mode: str = "none"
     specification_id: str = SCALARIZATION_SPECIFICATION_ID
     version: str = SCALARIZATION_VERSION
 
@@ -139,12 +170,21 @@ class ScalarizationResult:
 
         return self.reward
 
+    @property
+    def raw_scalar_reward(self) -> float:
+        """Pre-compression scalar reward, equal to ``scalar_reward`` when uncompressed."""
+
+        return self.raw_reward
+
     def to_dict(self) -> dict[str, Any]:
         """Return JSON-safe diagnostics for info and run artifacts."""
 
         return {
             "reward": self.reward,
             "scalar_reward": self.reward,
+            "raw_reward": self.raw_reward,
+            "raw_scalar_reward": self.raw_reward,
+            "reward_compression_mode": self.reward_compression_mode,
             "mode": self.mode,
             "canonical_margins": list(self.canonical_margins),
             "priority_contributions": list(self.priority_contributions),
@@ -180,6 +220,12 @@ def _stable_sigmoid(value: float) -> float:
         return 1.0 / (1.0 + math.exp(-value))
     exp_value = math.exp(value)
     return exp_value / (1.0 + exp_value)
+
+
+def _symlog(value: float) -> float:
+    """SCAL-V1.1 §7.7: sign(r) * log(1 + |r|), odd, strictly increasing, h(0)=0."""
+
+    return math.copysign(math.log1p(abs(value)), value) if value != 0.0 else 0.0
 
 
 def _canonicalize_bounded(margins: tuple[float, ...], tolerance: float) -> tuple[float, ...]:
@@ -254,14 +300,31 @@ def scalarize_rulebook_margins(
                     pattern,
                 )
             )
+        elif cfg.mode == "bounded_priority_weighted_rank":
+            # SCAL-V1.1 §7.6: embed each margin's severity inside its own
+            # priority-weighted term instead of a shared, diluted tie-breaker;
+            # m_4 keeps unit weight instead of the four-way average above.
+            priority_terms = tuple(
+                float(base) * ((float(is_satisfied) - 1.0) + margin)
+                for base, is_satisfied, margin in zip(
+                    (cfg.priority_base**3, cfg.priority_base**2, cfg.priority_base),
+                    pattern,
+                    canonical[:3],
+                )
+            )
+            continuous = canonical[3]
         else:  # pragma: no cover - ScalarizationConfig validates this branch.
             raise ScalarizationConfigurationError(cfg.mode)
 
-    reward = float(sum(priority_terms) + continuous)
-    if not math.isfinite(reward) or not math.isfinite(continuous):
+    raw_reward = float(sum(priority_terms) + continuous)
+    if not math.isfinite(raw_reward) or not math.isfinite(continuous):
         raise ScalarizationEvaluationError("Scalarization produced a non-finite result.")
     if any(not math.isfinite(value) for value in priority_terms):
         raise ScalarizationEvaluationError("Scalarization produced a non-finite contribution.")
+    compression_mode = str(cfg.reward_compression_mode)
+    reward = _symlog(raw_reward) if compression_mode == "symlog" else raw_reward
+    if not math.isfinite(reward):
+        raise ScalarizationEvaluationError("Reward compression produced a non-finite result.")
     return ScalarizationResult(
         reward=reward,
         mode=cfg.mode,
@@ -277,6 +340,8 @@ def scalarize_rulebook_margins(
             if cfg.legacy_rule_scales is None
             else tuple(float(value) for value in cfg.legacy_rule_scales)
         ),
+        raw_reward=raw_reward,
+        reward_compression_mode=compression_mode,
         specification_id=cfg.specification_id,
         version=cfg.version,
     )
