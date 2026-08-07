@@ -345,6 +345,13 @@ scenarionet-v1-2-rebuild:
 		--catalog "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog.parquet" \
 		--data-root "$(RULEBOOK_V2_CONTAINER_DATA_ROOT)" \
 		--overwrite
+	# `src/thesis_rl/envs/factory.py`'s `MISSION_CATALOG_FILENAME` is what
+	# evaluation falls back to reading when `env.catalog_path` is not set
+	# explicitly; without this copy that filename never exists on a freshly
+	# rebuilt host and evaluation fails closed with a missing-file error.
+	docker compose run --rm dataset-pipeline cp \
+		"$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog.parquet" \
+		"$(RULEBOOK_V2_CONTAINER_DATA_ROOT)/catalog/scenario_catalog_driving_mission_v1_1_1.parquet"
 
 scenarionet-v1-2-build-panels:
 	@for spec in test_waymo_empirical:400 test_pg:300 test_arm_stratified:300 validation_waymo_empirical:150 validation_pg:150; do \
