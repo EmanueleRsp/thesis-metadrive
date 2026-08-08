@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import pickle
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from thesis_rl.mission.types import MissionSnapshot
 from thesis_rl.rulebook.v2.context.waymo_static_adapter import build_waymo_static_adapter_result
 from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact
 from thesis_rl.rulebook.v2.context.live_adapter import LiveSnapshotAdapter, LiveSnapshotSources
@@ -23,6 +25,7 @@ from thesis_rl.rulebook.v2.transition import (
     initial_memory_for_snapshot,
     transition_evaluator_factory,
 )
+from thesis_rl.rulebook.v2.types import EnvSnapshot
 from rulebook_scenario_fixtures import (
     FIXTURE_COMPONENTS,
     build_scenarios,
@@ -31,6 +34,39 @@ from rulebook_scenario_fixtures import (
 
 
 PERSISTED_FIXTURE_ROOT = Path("tests/fixtures/rulebook_scenarios")
+
+
+def _attach_synthetic_mission_snapshot(
+    state: EnvSnapshot, route, *, previous_s_m: float | None = None
+) -> tuple[EnvSnapshot, float]:
+    """Attach a route-consistent ``MissionSnapshot`` to a live-captured snapshot.
+
+    ``LiveSnapshotAdapter`` deliberately never populates ``mission_snapshot``
+    (production wires it in afterwards from the real mission runtime, see
+    ``ThesisScenarioEnv``'s ``replace(snapshot, mission_snapshot=...)``
+    call sites). These synthetic-scenario tests exercise the raw
+    ``ScenarioOnlineEnv`` without a mission runtime, so this mirrors that
+    production pattern with an ``s_m`` projected onto the same
+    ``EpisodeCache`` route the transition evaluator itself uses, satisfying
+    R4's exact-canonical-route-station requirement (``AC-RCM-004``).
+    """
+
+    projection = route.project(state.ego.position_xy, previous_s_m=previous_s_m)
+    completion = (
+        min(max(projection.s_m / route.length_m, 0.0), 1.0) if route.length_m > 0.0 else 0.0
+    )
+    mission_snapshot = MissionSnapshot(
+        "synthetic-test-mission",
+        state.step_index,
+        0,
+        max(route.length_m - projection.s_m, 0.0),
+        completion,
+        True,
+        False,
+        False,
+        s_m=projection.s_m,
+    )
+    return replace(state, mission_snapshot=mission_snapshot), projection.s_m
 
 
 def test_synthetic_descriptors_pass_metadrive_schema_validation() -> None:
@@ -191,11 +227,15 @@ def test_descriptors_evaluate_one_live_rulebook_transition(
                 signal_states_by_physical_id=live_signal_states_by_physical_id,
             )
         )
-        pre_state = snapshotter.capture(env)
+        pre_state, pre_s_m = _attach_synthetic_mission_snapshot(
+            snapshotter.capture(env), cache.route_polyline
+        )
         _observation, _reward, _terminated, _truncated, _info = env.step(
             np.zeros(env.action_space.shape, dtype=env.action_space.dtype)
         )
-        post_state = snapshotter.capture(env)
+        post_state, _post_s_m = _attach_synthetic_mission_snapshot(
+            snapshotter.capture(env), cache.route_polyline, previous_s_m=pre_s_m
+        )
         result, _next_memory, _cache_delta = transition_evaluator_factory(
             RulebookTransitionConfig(
                 rss_calibration=RSSCalibrationArtifact(
@@ -279,7 +319,9 @@ def test_vru_collision_descriptors_produce_a_live_collision_onset(fixture_id: st
                 signal_states_by_physical_id=live_signal_states_by_physical_id,
             )
         )
-        pre_state = snapshotter.capture(env)
+        pre_state, pre_s_m = _attach_synthetic_mission_snapshot(
+            snapshotter.capture(env), cache.route_polyline
+        )
         memory = initial_memory_for_snapshot(pre_state, cache)
         evaluator = transition_evaluator_factory(
             RulebookTransitionConfig(
@@ -292,7 +334,9 @@ def test_vru_collision_descriptors_produce_a_live_collision_onset(fixture_id: st
         observed_collision_costs: list[float] = []
         for _ in range(3):
             env.step(np.zeros(env.action_space.shape, dtype=env.action_space.dtype))
-            post_state = snapshotter.capture(env)
+            post_state, post_s_m = _attach_synthetic_mission_snapshot(
+                snapshotter.capture(env), cache.route_polyline, previous_s_m=pre_s_m
+            )
             result, memory, cache_delta = evaluator(
                 pre_state=pre_state,
                 post_state=post_state,
@@ -302,6 +346,7 @@ def test_vru_collision_descriptors_produce_a_live_collision_onset(fixture_id: st
             cache = apply_cache_delta(cache, cache_delta)
             observed_collision_costs.append(result.components["collision"].cost)
             pre_state = post_state
+            pre_s_m = post_s_m
         assert any(cost > 0.0 for cost in observed_collision_costs)
     finally:
         env.close()

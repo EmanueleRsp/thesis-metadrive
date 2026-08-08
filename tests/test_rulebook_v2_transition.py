@@ -58,7 +58,17 @@ def _snapshot(step: int, time_s: float, x: float) -> EnvSnapshot:
         (),
         frozenset(),
         {},
-        MissionSnapshot("test-mission", step, 0, 100.0 - x, 0.0, True, False, False),
+        MissionSnapshot(
+            "test-mission",
+            step,
+            0,
+            100.0 - x,
+            0.0,
+            True,
+            False,
+            False,
+            s_m=x,
+        ),
     )
 
 
@@ -893,7 +903,9 @@ def test_vehicle_conflict_pair_cache_reuses_complete_canonical_candidates(
         step_index=2,
         sim_time_s=0.2,
         ego=replace(post.ego, position_xy=(7.0, 0.0)),
-        mission_snapshot=MissionSnapshot("test-mission", 2, 0, 93.0, 0.0, True, False, False),
+        mission_snapshot=MissionSnapshot(
+            "test-mission", 2, 0, 93.0, 0.0, True, False, False, s_m=7.0
+        ),
     )
     second, _memory, _delta = evaluate_transition(
         pre_state=post,

@@ -13,6 +13,8 @@ from thesis_rl.rulebook.v2.types import (
 )
 
 if TYPE_CHECKING:
+    from shapely.geometry.base import BaseGeometry
+
     from thesis_rl.mission.types import MissionSnapshot
 
 
@@ -55,6 +57,8 @@ def evaluate_progress(
     pre_mission: MissionSnapshot,
     post_mission: MissionSnapshot,
     delta_t_s: float,
+    ego_footprint: BaseGeometry | None = None,
+    task_corridor: BaseGeometry | None = None,
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
     """Evaluate R4 exclusively from the exact canonical-route ``delta_s``."""
     from thesis_rl.mission.types import MissionSnapshot
@@ -87,6 +91,11 @@ def evaluate_progress(
         "delta_t_s": delta_t_s,
         "terminal_mission_unreachable_noop": terminal_unreachable_noop,
     }
+    if ego_footprint is not None:
+        outside = route_outside_fraction(ego_footprint, task_corridor)
+        if outside is not None:
+            diagnostics["route_outside_fraction"] = outside
+            diagnostics["route_adherence"] = 1.0 - outside
     result = RuleComponentResult(
         "progress",
         margin,

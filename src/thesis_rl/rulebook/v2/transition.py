@@ -1544,6 +1544,8 @@ def evaluate_transition(
             "pre_mission": pre_state.mission_snapshot,
             "post_mission": post_state.mission_snapshot,
             "delta_t_s": delta_t_s,
+            "ego_footprint": post_state.ego.footprint,
+            "task_corridor": _task_corridor(cache),
         },
     }
     excluded_components = frozenset()

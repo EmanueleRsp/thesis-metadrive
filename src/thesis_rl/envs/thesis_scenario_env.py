@@ -811,10 +811,31 @@ class ThesisScenarioEnv(ScenarioEnv):
             info["native_reference_route_length_m"] = route_length_value
 
     def reward_function(self, vehicle_id: str):
-        """Return the base reward; mission success is tracker-owned."""
+        """Remove ScenarioEnv's terminal bonus for a degenerate native route.
+
+        Mission success/termination is tracker-owned (``done_function`` reads
+        only ``mission_snapshot.mission_success``), but the reward signal is
+        not: MetaDrive's native ``reward_function`` overwrites ``reward`` with
+        the flat ``success_reward`` config value on every step for which its
+        own ``_is_arrive_destination`` holds, independent of the thesis
+        mission. That native predicate is permanently true for the rest of an
+        episode once ``vehicle.navigation.reference_trajectory.length < 2``
+        (MetaDrive's own live-built navigation object, structurally
+        independent of the mission's route). When the native check disagrees
+        with the mission tracker, substitute the dense per-step reward so the
+        agent is never trained on a spurious flat bonus.
+        """
 
         reward, step_info = super().reward_function(vehicle_id)
+        vehicle = self.agents[vehicle_id]
+        native_success = bool(self._is_arrive_destination(vehicle))
         thesis_success = self._is_thesis_success(None)
+        if native_success and not thesis_success:
+            # ScenarioEnv stores the dense pre-terminal reward before it
+            # replaces it with ``success_reward``. Restore that value instead
+            # of training the policy to exploit a stationary SDC snippet.
+            reward = float(step_info.get("step_reward", reward))
+            step_info["success_reward_suppressed"] = True
         step_info["thesis_success"] = thesis_success
         return reward, step_info
 

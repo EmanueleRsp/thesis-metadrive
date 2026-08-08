@@ -72,7 +72,8 @@ def test_run_metadata_records_eval_protocol_reproducibility_fields(tmp_path) -> 
     assert metadata["acl"]["specification_id"] == "ACL-SN-EMA-001"
     assert metadata["transition_replay"]["specification_id"] == "TRANSITION-REPLAY"
     assert metadata["evaluation_protocol"]["specification_id"] == "EVAL-PROTOCOL"
-    assert metadata["evaluation_protocol"]["version"] == "1.0"
+    # EVAL-PROTOCOL v1.2 is the current authoritative version (ADR-042).
+    assert metadata["evaluation_protocol"]["version"] == "1.2"
 
 
 def test_run_metadata_records_panel_manifest_hash(tmp_path) -> None:
