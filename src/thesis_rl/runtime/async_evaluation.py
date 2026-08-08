@@ -417,8 +417,12 @@ class AsyncEvaluationManager:
             if progress_state
             else "0/0"
         )
-        panel = progress_state.job.panel_name if progress_state is not None else None
-        progress_description = "Evaluation idle" if panel is None else f"Evaluation {panel} ({current})"
+        label = (
+            (progress_state.job.panel_name or progress_state.job.eval_id)
+            if progress_state is not None
+            else None
+        )
+        progress_description = "Evaluation idle" if label is None else f"Evaluation {label} ({current})"
         self._progress.update(
             self._progress_task,
             description=progress_description,
