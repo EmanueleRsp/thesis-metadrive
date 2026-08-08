@@ -74,10 +74,13 @@ def _entry(
 
 
 def test_build_named_panel_manifest_for_empirical_waymo_test(tmp_path: Path, monkeypatch) -> None:
+    # test_waymo_empirical is a frozen pool of 400 (NAMED_PANELS["test_waymo_empirical"]);
+    # --size is a confirmation flag, not a diagnostic-size selector, so the
+    # synthetic catalog must supply at least that many eligible candidates.
     entries = []
     counter = 0
     for arm in ARMS:
-        for _ in range(20):
+        for _ in range(70):
             entries.append(_entry("waymo", arm, counter, split="test", holdout_pool="empirical"))
             counter += 1
     catalog_path = tmp_path / "catalog.parquet"
@@ -89,7 +92,7 @@ def test_build_named_panel_manifest_for_empirical_waymo_test(tmp_path: Path, mon
         "--panel-name",
         "test_waymo_empirical",
         "--size",
-        "50",
+        "400",
         "--seed",
         "7",
         "--catalog-path",
@@ -104,15 +107,18 @@ def test_build_named_panel_manifest_for_empirical_waymo_test(tmp_path: Path, mon
     assert manifest.draw_policy == "empirical"
     assert manifest.source == "waymo"
     assert manifest.split == "test"
-    assert len(manifest.scenario_uids) == 50
+    assert len(manifest.scenario_uids) == 400
 
 
 def test_build_named_panel_manifest_for_arm_stratified_test(tmp_path: Path, monkeypatch) -> None:
+    # test_arm_stratified is a frozen pool of 300 across 6 arms (50/arm);
+    # --size is a confirmation flag, not a diagnostic-size selector, so each
+    # arm needs at least 50 eligible candidates in the synthetic catalog.
     entries = []
     counter = 0
     for source in ("waymo", "pg"):
         for arm in ARMS:
-            for _ in range(10):
+            for _ in range(30):
                 entries.append(
                     _entry(source, arm, counter, split="test", holdout_pool="stratified")
                 )
@@ -126,7 +132,7 @@ def test_build_named_panel_manifest_for_arm_stratified_test(tmp_path: Path, monk
         "--panel-name",
         "test_arm_stratified",
         "--size",
-        "36",
+        "300",
         "--seed",
         "3",
         "--catalog-path",
@@ -141,7 +147,7 @@ def test_build_named_panel_manifest_for_arm_stratified_test(tmp_path: Path, monk
     assert manifest.draw_policy == "arm_balanced"
     assert manifest.source == "combined"
     assert manifest.arms == ARMS
-    assert sum(manifest.per_arm_counts) == 36
+    assert sum(manifest.per_arm_counts) == 300
 
 
 def test_build_named_panel_manifest_fails_closed_without_matching_holdout_pool(

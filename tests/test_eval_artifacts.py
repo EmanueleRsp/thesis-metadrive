@@ -162,9 +162,13 @@ def test_live_eval_recorder_writes_manifest_and_video(tmp_path: Path, monkeypatc
     )
 
     assert payload["video_recorded_live"] is True
-    assert payload["video_path"] == "videos/final_eval/eval_0003/episode_0001.gif"
-    assert payload["video_manifest_path"] == "videos/final_eval/eval_0003/episode_0001.manifest.json"
-    assert payload["trajectory_log_path"] == "videos/final_eval/eval_0003/episode_0001.trajectory.jsonl"
+    assert payload["video_path"] == "videos/final_eval/test/eval_0003/episode_0001.gif"
+    assert payload["video_manifest_path"] == (
+        "videos/final_eval/test/eval_0003/episode_0001.manifest.json"
+    )
+    assert payload["trajectory_log_path"] == (
+        "videos/final_eval/test/eval_0003/episode_0001.trajectory.jsonl"
+    )
 
     manifest_path = run_dir / str(payload["video_manifest_path"])
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -172,7 +176,9 @@ def test_live_eval_recorder_writes_manifest_and_video(tmp_path: Path, monkeypatc
     assert manifest["scenario_seed"] == 42
     assert manifest["episode_metrics"]["reward"] == 1.0
     assert "RenderEnv" in manifest["wrappers"]
-    assert manifest["trajectory_log_path"] == "videos/final_eval/eval_0003/episode_0001.trajectory.jsonl"
+    assert manifest["trajectory_log_path"] == (
+        "videos/final_eval/test/eval_0003/episode_0001.trajectory.jsonl"
+    )
 
     trajectory_path = run_dir / str(payload["trajectory_log_path"])
     rows = [json.loads(line) for line in trajectory_path.read_text(encoding="utf-8").splitlines()]
@@ -240,7 +246,7 @@ def test_trajectory_log_preserves_termination_diagnostics(tmp_path: Path, monkey
         },
     )
     recorder.finalize_episode(episode_metrics={})
-    trajectory_path = run_dir / "videos/final_eval/eval_0003/episode_0002.trajectory.jsonl"
+    trajectory_path = run_dir / "videos/final_eval/test/eval_0003/episode_0002.trajectory.jsonl"
     row = json.loads(trajectory_path.read_text(encoding="utf-8"))
     assert row["info"]["physical_out_of_road"] is False
     assert row["info"]["geometric_full_footprint_exit"] is False
@@ -295,10 +301,16 @@ def test_agent_evaluate_returns_live_artifact_paths(tmp_path: Path, monkeypatch)
 
     per_episode = metrics["per_episode"]
     assert per_episode["video_recorded_live"] == [True]
-    assert per_episode["video_path"] == ["videos/final_eval/eval_0001/episode_0001.gif"]
-    assert per_episode["video_authoritative_path"] == ["videos/final_eval/eval_0001/episode_0001.gif"]
-    assert per_episode["video_manifest_path"] == ["videos/final_eval/eval_0001/episode_0001.manifest.json"]
-    assert per_episode["trajectory_log_path"] == ["videos/final_eval/eval_0001/episode_0001.trajectory.jsonl"]
+    assert per_episode["video_path"] == ["videos/final_eval/test/eval_0001/episode_0001.gif"]
+    assert per_episode["video_authoritative_path"] == [
+        "videos/final_eval/test/eval_0001/episode_0001.gif"
+    ]
+    assert per_episode["video_manifest_path"] == [
+        "videos/final_eval/test/eval_0001/episode_0001.manifest.json"
+    ]
+    assert per_episode["trajectory_log_path"] == [
+        "videos/final_eval/test/eval_0001/episode_0001.trajectory.jsonl"
+    ]
     assert {row["rule_name"] for row in metrics["per_rule"]} == {
         "collision_impact",
         "dynamic_interaction_safety",
@@ -530,10 +542,10 @@ def test_final_eval_recorder_factory_unaffected_by_periodic_defaults(
     tmp_path: Path, monkeypatch
 ) -> None:
     """Regression: final-test rendering (`build_live_final_eval_recorder_factory`)
-    keeps its pre-existing path convention and unconditional full-panel
-    behavior -- it must not pick up the periodic tracked-subset output
-    directory or scenario_uid-based filename/filtering defaults added for
-    Milestone 9."""
+    keeps its `final_eval/<scenario_set>/eval_<id>/...` path convention and
+    unconditional full-panel behavior -- it must not pick up the periodic
+    tracked-subset output directory or scenario_uid-based filename/filtering
+    defaults added for Milestone 9."""
 
     def _fake_save_gif(frames, output_path: Path, fps: int) -> None:
         _ = (frames, fps)
@@ -576,5 +588,7 @@ def test_final_eval_recorder_factory_unaffected_by_periodic_defaults(
     payload = recorder.finalize_episode(episode_metrics={"reward": 1.0})
 
     assert payload["video_recorded_live"] is True
-    assert payload["video_path"] == "videos/final_eval/eval_0009/episode_0005.gif"
-    assert payload["video_manifest_path"] == "videos/final_eval/eval_0009/episode_0005.manifest.json"
+    assert payload["video_path"] == "videos/final_eval/test/eval_0009/episode_0005.gif"
+    assert payload["video_manifest_path"] == (
+        "videos/final_eval/test/eval_0009/episode_0005.manifest.json"
+    )

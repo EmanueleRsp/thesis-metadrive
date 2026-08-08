@@ -302,7 +302,9 @@ def test_run_profile_tune_overrides_experiment_budget() -> None:
     assert cfg.run_profile.name == "tune"
     assert cfg.experiment.name == "tune"
     assert int(cfg.experiment.total_timesteps) == 500000
-    assert int(cfg.experiment.eval_interval) == 25000
+    # eval_interval doubled 25000 -> 50000 alongside long/thesis profiles
+    # (commit 52b8ad4) to reduce evaluation overhead on longer runs.
+    assert int(cfg.experiment.eval_interval) == 50000
     assert int(cfg.experiment.eval_episodes) == 20
     assert int(cfg.experiment.final_eval_episodes) == 50
 
