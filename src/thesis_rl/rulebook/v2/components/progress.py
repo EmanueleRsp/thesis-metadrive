@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import TYPE_CHECKING
 
-from thesis_rl.rulebook.v2.types import CacheDelta, ComponentStatus, MemoryDelta, RuleComponentResult
+from thesis_rl.rulebook.v2.types import (
+    CacheDelta,
+    ComponentStatus,
+    MemoryDelta,
+    RuleComponentResult,
+)
+
+if TYPE_CHECKING:
+    from thesis_rl.mission.types import MissionSnapshot
 
 
 # OPEN-EF-03: derived implementation constant, not a scientific parameter.  The
@@ -41,12 +50,18 @@ def route_outside_fraction(ego_footprint, task_corridor) -> float | None:
 MISSION_PROGRESS_REFERENCE_SPEED_MPS = 22.2222222222
 
 
-def evaluate_progress(*, pre_mission: MissionSnapshot, post_mission: MissionSnapshot, delta_t_s: float,
+def evaluate_progress(
+    *,
+    pre_mission: MissionSnapshot,
+    post_mission: MissionSnapshot,
+    delta_t_s: float,
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
     """Evaluate R4 exclusively from the exact canonical-route ``delta_s``."""
     from thesis_rl.mission.types import MissionSnapshot
 
-    if not isinstance(pre_mission, MissionSnapshot) or not isinstance(post_mission, MissionSnapshot):
+    if not isinstance(pre_mission, MissionSnapshot) or not isinstance(
+        post_mission, MissionSnapshot
+    ):
         raise ValueError("Progress requires pre/post mission context")
     if pre_mission.mission_hash != post_mission.mission_hash:
         raise ValueError("Progress mission snapshot identity must match")

@@ -332,7 +332,9 @@ def test_final_scalar_pipeline_defaults_compose() -> None:
     assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
     assert str(cfg.reward.name) == "scalar_reward"
     assert str(cfg.reward.behavior) == "scalar_reward"
-    assert str(cfg.scalarization.mode) == "bounded_satisfaction_rank"
+    # SCAL-V1.1 (ADR-057, DEC-SCAL11-001=A): bounded_priority_weighted_rank
+    # is the default mode as of conf/scalarization/default.yaml.
+    assert str(cfg.scalarization.mode) == "bounded_priority_weighted_rank"
     assert str(cfg.curriculum.name) == "scenario_acl_scenarionet"
     assert str(cfg.rulebook.version) == "4.7-final-implementation-complete"
 
