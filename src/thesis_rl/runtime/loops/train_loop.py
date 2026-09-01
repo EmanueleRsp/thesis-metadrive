@@ -51,6 +51,10 @@ from thesis_rl.runtime.wiring.builders import (
 )
 from thesis_rl.runtime.io.console import print_evaluation_summary, print_run_setup
 from thesis_rl.runtime.io.csv_recorder import CSVRecorder
+from thesis_rl.runtime.comfort_diagnostics import (
+    comfort_aggregate_fields,
+    comfort_episode_fields,
+)
 from thesis_rl.runtime.io.eval_artifacts import (
     maybe_build_live_final_eval_recorder_factory,
     maybe_build_periodic_tracked_subset_recorder_factory,
@@ -1018,6 +1022,7 @@ def run_training(cfg: DictConfig) -> None:
                 recorder.append_row(
                     "eval_episodes.csv",
                     {
+                        **comfort_episode_fields(per_episode, episode_idx),
                         **fields,
                         "episode_id": episode_idx + 1,
                         "scenario_seed": scenario_seed,
@@ -1060,6 +1065,7 @@ def run_training(cfg: DictConfig) -> None:
             recorder.append_row(
                 "evals.csv",
                 {
+                    **comfort_aggregate_fields(metrics),
                     **fields,
                     "eval_episodes": len(returns),
                     **{
@@ -1929,6 +1935,7 @@ def run_training(cfg: DictConfig) -> None:
                 recorder.append_row(
                     "eval_episodes.csv",
                     {
+                        **comfort_episode_fields(per_episode, episode_idx),
                         **base_csv_fields,
                         "eval_id": eval_id,
                         "eval_type": "intermediate",
@@ -2058,6 +2065,7 @@ def run_training(cfg: DictConfig) -> None:
                 recorder.append_row(
                     "evals.csv",
                     {
+                        **comfort_aggregate_fields(metrics),
                         **base_csv_fields,
                         "eval_id": eval_id,
                         "eval_type": "intermediate",
@@ -2268,6 +2276,7 @@ def run_training(cfg: DictConfig) -> None:
             recorder.append_row(
                 "evals.csv",
                 {
+                    **comfort_aggregate_fields(metrics),
                     **base_csv_fields,
                     "eval_id": eval_id,
                     "eval_type": "intermediate",
@@ -2685,6 +2694,7 @@ def run_training(cfg: DictConfig) -> None:
         recorder.append_row(
             "evals.csv",
             {
+                **comfort_aggregate_fields(metrics),
                 **base_csv_fields,
                 "eval_id": final_eval_id,
                 "eval_type": "final",
@@ -2797,6 +2807,7 @@ def run_training(cfg: DictConfig) -> None:
             recorder.append_row(
                 "eval_episodes.csv",
                 {
+                    **comfort_episode_fields(per_episode, episode_idx),
                     **base_csv_fields,
                     "eval_id": final_eval_id,
                     "eval_type": "final",
@@ -2903,6 +2914,7 @@ def run_training(cfg: DictConfig) -> None:
         recorder.append_row(
             "final_eval.csv",
             {
+                **comfort_aggregate_fields(metrics),
                 **base_csv_fields,
                 "eval_type": "final",
                 "scenario_set": "test",

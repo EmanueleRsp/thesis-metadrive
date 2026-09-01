@@ -42,6 +42,10 @@ from thesis_rl.rulebook.v2.subrule_diagnostics import (
     SubruleEpisodeAccumulator,
     aggregate_subrule_episodes,
 )
+from thesis_rl.runtime.comfort_diagnostics import (
+    ComfortEpisodeAccumulator,
+    aggregate_comfort_episodes,
+)
 
 
 class _LiveEventLogHandler(logging.Handler):
@@ -145,6 +149,9 @@ class _ParallelEvaluationEpisode:
         # EP-SUBRULE-DIAG: additive R2/R3 sub-rule diagnostics, not a rulebook
         # or reward change; see `subrule_diagnostics.py`.
         self._subrule_acc = SubruleEpisodeAccumulator()
+        # EP-COMFORT-DIAG: ride-comfort diagnostics, excluded from the rulebook
+        # and the reward by `RULEBOOK-V5.1` §13; see `comfort_diagnostics.py`.
+        self._comfort_acc = ComfortEpisodeAccumulator()
 
     def observe_step(
         self,
@@ -192,6 +199,7 @@ class _ParallelEvaluationEpisode:
         if agent._has_top_rule_violation(step_info):
             self.ep_top_rule_violating_steps += 1
         self._subrule_acc.observe(step_info)
+        self._comfort_acc.observe(step_info)
         applicability = agent._extract_rule_applicability(step_info)
         for rule_name, rule_priority, margin in agent._extract_rule_margins(step_info):
             self.rule_priority_by_name[rule_name] = int(rule_priority)
@@ -332,6 +340,7 @@ class _ParallelEvaluationEpisode:
             "rule_applicable_step_counts": dict(self.ep_rule_applicable_step_count),
             "rule_priorities": dict(self.rule_priority_by_name),
             "subrule_summary": self._subrule_acc.finalize(),
+            "comfort_summary": self._comfort_acc.finalize(),
             "video_path": artifact_payload.get("video_path"),
             "video_authoritative_path": artifact_payload.get("video_authoritative_path"),
             "video_manifest_path": artifact_payload.get("video_manifest_path"),
@@ -1733,6 +1742,7 @@ class Agent:
         episode_gif_render_seconds: list[float] = []
         episode_scenario_metadata: list[dict[str, Any]] = []
         episode_subrule_summaries: list[dict[str, dict[str, Any]]] = []
+        episode_comfort_summaries: list[dict[str, Any]] = []
         all_rule_names: set[str] = set()
         rule_priority_by_name: dict[str, int] = {}
         per_rule_episode_min_margins: dict[str, list[float]] = {}
@@ -1823,6 +1833,7 @@ class Agent:
                 ep_hybrid_return = 0.0
                 ep_has_hybrid_reward = False
                 subrule_acc = SubruleEpisodeAccumulator()
+                comfort_acc = ComfortEpisodeAccumulator()
 
                 # Loop until episode ends
                 while not (done or truncated):
@@ -1864,6 +1875,7 @@ class Agent:
                     if self._has_top_rule_violation(step_info):
                         ep_top_rule_violating_steps += 1
                     subrule_acc.observe(step_info)
+                    comfort_acc.observe(step_info)
                     applicability = self._extract_rule_applicability(step_info)
                     for rule_name, rule_priority, margin in self._extract_rule_margins(step_info):
                         all_rule_names.add(rule_name)
@@ -2023,6 +2035,7 @@ class Agent:
                 episode_metadata["truncated"] = bool(truncated)
                 episode_scenario_metadata.append(episode_metadata)
                 episode_subrule_summaries.append(subrule_acc.finalize())
+                episode_comfort_summaries.append(comfort_acc.finalize())
 
                 if progress is not None and progress_task is not None:
                     progress.advance(progress_task)
@@ -2133,6 +2146,9 @@ class Agent:
             "gif_render_seconds_per_episode": (
                 float(np.mean(episode_gif_render_seconds)) if episode_gif_render_seconds else 0.0
             ),
+            # EP-COMFORT-DIAG: ride-comfort diagnostics, kept out of the
+            # rulebook and the reward by `RULEBOOK-V5.1` §13.
+            **aggregate_comfort_episodes(episode_comfort_summaries),
             "per_rule": per_rule_rows,
             # EP-SUBRULE-DIAG: additive R2/R3 sub-rule dominance/cost
             # diagnostics, aggregated over every evaluation episode (not the
@@ -2167,6 +2183,7 @@ class Agent:
                 "video_recorded_live": episode_video_recorded_live,
                 "replay_warning": episode_replay_warnings,
                 "scenario_metadata": episode_scenario_metadata,
+                "comfort": episode_comfort_summaries,
             }
         return metrics
 
@@ -2552,6 +2569,10 @@ class Agent:
             "gif_render_seconds_per_episode": (
                 float(np.mean(episode_gif_render_seconds)) if episode_gif_render_seconds else 0.0
             ),
+            # EP-COMFORT-DIAG: see the analogous comment in `evaluate()`.
+            **aggregate_comfort_episodes(
+                [record.get("comfort_summary", {}) for record in records]
+            ),
             "per_rule": per_rule_rows,
             # EP-SUBRULE-DIAG: see the analogous comment in `evaluate()`.
             "per_subrule": aggregate_subrule_episodes(
@@ -2588,6 +2609,7 @@ class Agent:
                 ],
                 "replay_warning": [record.get("replay_warning") for record in records],
                 "scenario_metadata": [record["scenario_metadata"] for record in records],
+                "comfort": [record.get("comfort_summary", {}) for record in records],
             }
         return metrics
 

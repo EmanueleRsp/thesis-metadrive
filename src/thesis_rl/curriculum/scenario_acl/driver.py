@@ -55,6 +55,9 @@ from thesis_rl.runtime.execution.seeding import (
 )
 from thesis_rl.runtime.io.console import print_evaluation_summary, print_run_setup
 from thesis_rl.runtime.io.csv_recorder import CSVRecorder
+from thesis_rl.runtime.comfort_diagnostics import (
+    comfort_aggregate_fields,
+)
 from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
 from thesis_rl.runtime.io.metadata import update_run_metadata
 from thesis_rl.runtime.io.run_logging import log_event
@@ -995,6 +998,7 @@ def _run_scenario_acl_vectorized_training(
         recorder.append_row(
             "evals.csv",
             {
+                **comfort_aggregate_fields(metrics),
                 **base_csv_fields,
                 "eval_id": job.eval_id,
                 "eval_type": "intermediate",
@@ -1423,6 +1427,7 @@ def _run_scenario_acl_vectorized_training(
     recorder.append_row(
         "final_eval.csv",
         {
+            **comfort_aggregate_fields(final_metrics),
             **base_csv_fields,
             "eval_type": "final",
             "scenario_set": f"test_{_WAYMO_STRATIFIED_SET}",
@@ -1686,6 +1691,7 @@ def run_scenario_acl_training(
         recorder.append_row(
             "evals.csv",
             {
+                **comfort_aggregate_fields(metrics),
                 **base_csv_fields,
                 "eval_id": job.eval_id,
                 "eval_type": "intermediate",
@@ -2219,6 +2225,7 @@ def run_scenario_acl_training(
                 recorder.append_row(
                     "evals.csv",
                     {
+                        **comfort_aggregate_fields(eval_metrics),
                         **base_csv_fields,
                         "eval_id": current_eval_id,
                         "eval_type": "intermediate",
@@ -2545,6 +2552,7 @@ def run_scenario_acl_training(
         recorder.append_row(
             "final_eval.csv",
             {
+                **comfort_aggregate_fields(final_metrics),
                 **base_csv_fields,
                 "eval_type": "final",
                 "scenario_set": f"test_{_WAYMO_STRATIFIED_SET}",

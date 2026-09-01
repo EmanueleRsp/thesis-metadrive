@@ -8,6 +8,7 @@ from pathlib import Path
 from thesis_rl.common.paths import default_analysis_root_str, default_outputs_root_str
 from thesis_rl.analysis.aggregate.aggregate_runs import aggregate_runs
 from thesis_rl.analysis.comparisons.make_comparison_views import make_comparison_views
+from thesis_rl.analysis.tables.make_comfort_tables import build_comfort_tables
 from thesis_rl.analysis.tables.make_curriculum_tables import build_curriculum_tables
 from thesis_rl.analysis.tables.make_factor_effect_tables import build_factor_effect_tables
 from thesis_rl.analysis.tables.make_final_tables import build_final_tables
@@ -47,6 +48,14 @@ def _build_tables_for_root(
     # (`DEC-SUB-001`); always built, since they carry their own explicit
     # diagnostic label (`REQ-SUB-07`) rather than requiring a separate flag.
     build_subrule_tables(aggregated_dir=aggregated_dir, tables_dir=tables_dir)
+    # EP-COMFORT-DIAG: additive ride-comfort diagnostics, kept out of the
+    # primary `final_evaluation.*` tables by `DEC-CMF-004`; always built, since
+    # the table carries its own diagnostic label.
+    build_comfort_tables(
+        aggregated_dir=aggregated_dir,
+        tables_dir=tables_dir,
+        include_ci=include_ci,
+    )
     build_sample_efficiency_tables(
         aggregated_dir=aggregated_dir,
         tables_dir=tables_dir,

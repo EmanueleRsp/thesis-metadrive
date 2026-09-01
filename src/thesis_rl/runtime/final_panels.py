@@ -9,6 +9,10 @@ from typing import Any, Callable, Mapping
 from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.runtime.evaluation_plan import EvaluationPanel, resolve_scenarionet_evaluation_panels
+from thesis_rl.runtime.comfort_diagnostics import (
+    comfort_aggregate_fields,
+    comfort_episode_fields,
+)
 from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
 from thesis_rl.runtime.wiring.builders import (
     build_eval_env,
@@ -31,7 +35,9 @@ def _metric_fields(metrics: Mapping[str, Any]) -> dict[str, Any]:
         "gif_render_seconds_total",
         "gif_render_seconds_per_episode",
     )
-    return {key: metrics.get(key) for key in keys}
+    # EP-COMFORT-DIAG: seed-level ride-comfort diagnostics, declared by both
+    # `evals.csv` and `final_eval.csv`.
+    return {key: metrics.get(key) for key in keys} | comfort_aggregate_fields(metrics)
 
 
 def _panel_fields(panel: EvaluationPanel, *, batch_id: str, checkpoint_identity: str) -> dict[str, Any]:
@@ -104,6 +110,7 @@ def _append_episode_rows(
         recorder.append_row(
             "eval_episodes.csv",
             {
+                **comfort_episode_fields(episode, index),
                 **base_fields, **common, "episode_id": index + 1,
                 "scenario_seed": None, "scenario_uid": metadata.get("scenario_uid"),
                 "scenario_id": metadata.get("scenario_id"), "source": metadata.get("source"),

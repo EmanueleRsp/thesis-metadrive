@@ -4,6 +4,11 @@ import csv
 from pathlib import Path
 from typing import Any
 
+from thesis_rl.runtime.comfort_diagnostics import (
+    COMFORT_AGGREGATE_COLUMNS,
+    COMFORT_EPISODE_COLUMNS,
+)
+
 
 class CSVRecorder:
     """Append structured rows to run-scoped CSV files with fixed schemas."""
@@ -121,6 +126,11 @@ class CSVRecorder:
             # step_timing_instrumentation_v1_exec_plan.md).
             "gif_render_seconds_total",
             "gif_render_seconds_per_episode",
+            # EP-COMFORT-DIAG: seed-level ride-comfort diagnostics
+            # (docs/implementation/comfort_and_jerk_diagnostics_exec_plan.md).
+            # Diagnostic only -- `RULEBOOK-V5.1` §13 excludes comfort and jerk
+            # from the rulebook and the reward.
+            *COMFORT_AGGREGATE_COLUMNS,
         ],
         "eval_episodes.csv": [
             "algorithm",
@@ -179,6 +189,10 @@ class CSVRecorder:
             "trajectory_log_path",
             "video_recorded_live",
             "replay_warning",
+            # EP-COMFORT-DIAG: per-episode ride-comfort diagnostics; an empty
+            # cell means the channel was undefined for that episode, which is
+            # not the same as comfortable (`REQ-CMF-07`).
+            *COMFORT_EPISODE_COLUMNS,
         ],
         "promotions.csv": [
             "algorithm",
@@ -338,6 +352,11 @@ class CSVRecorder:
             "data_abort_valid",
             "data_abort_invalid",
             "data_abort_coverage",
+            # EP-COMFORT-DIAG: seed-level ride-comfort diagnostics
+            # (docs/implementation/comfort_and_jerk_diagnostics_exec_plan.md).
+            # Diagnostic only -- `RULEBOOK-V5.1` §13 excludes comfort and jerk
+            # from the rulebook and the reward.
+            *COMFORT_AGGREGATE_COLUMNS,
         ],
         # step_timing_instrumentation_v1 REQ-001/REQ-002: tidy per-chunk,
         # per-component wall-clock breakdown (docs/implementation/
