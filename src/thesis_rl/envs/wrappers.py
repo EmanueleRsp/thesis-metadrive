@@ -199,15 +199,6 @@ class RuleRewardWrapper(gym.Wrapper):
         acceleration = self._extract_physical_acceleration(base_env, ego_vehicle)
         if acceleration is not None:
             ego_state.setdefault("acceleration", acceleration)
-            # EP-COMFORT-DIAG `DEC-CMF-005`: export the timestep this
-            # acceleration was differentiated over, so evaluation-time comfort
-            # diagnostics can differentiate again on exactly the same `dt`
-            # instead of assuming one. Present precisely when `acceleration`
-            # is, since `_extract_physical_acceleration` returns `None`
-            # without a usable `dt`.
-            acceleration_dt = self._extract_dt(base_env)
-            if acceleration_dt is not None and acceleration_dt > 0.0:
-                ego_state.setdefault("dt", float(acceleration_dt))
 
         length = self._safe_float(getattr(ego_vehicle, "LENGTH", None))
         if length is not None:

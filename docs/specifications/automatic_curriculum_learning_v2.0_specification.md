@@ -5,7 +5,7 @@
 - Feature: ScenarioNet automatic curriculum learning, arm-level teacher
 - Specification ID: `ACL-SN-EMA-001`
 - Version: `v2.0`
-- Status: `UNDER_REVIEW`
+- Status: `APPROVED`
 - Date: `2026-09-01` (revision 3; revision 2 dated `2026-07-31`, revision 1 `2026-07-30`)
 - Supersedes: `docs/specifications/automatic_curriculum_learning_v1.3_specification.md`
 - Related specifications: `docs/specifications/scenarionet_integration_v1.1_specification.md`,
@@ -28,7 +28,7 @@
   `docs/decisions/ADR-076-l6-progress-rate-below-relaxable-lane-compliance.md`
 - Supporting evidence: `docs/audits/acl_v2_teacher_power_analysis_2026-07-31/` (synthetic power and
   closed-loop dynamics analysis, source `FIND-010`; window-size power sweep, source `FIND-012`)
-- Authoritative: `NO` (review candidate; `v1.3` remains authoritative until this document is approved)
+- Authoritative: `YES` (approved 2026-09-01; supersedes `v1.3` in full, see §18)
 
 ## 1. Purpose And Context
 
@@ -320,7 +320,7 @@ over all steps, not only applicable ones.
 - `ADR-071` consequence, normative: a contact classified **not at fault** is charged nothing and is
   therefore invisible in `C_{1,e}`, which is the intended semantics — the teacher measures the arm's
   at-fault collision behavior, not its exposure to other agents' errors. The same contact **truncates**
-  the episode, which is not invisible: see `DEC-207` and the `T` dimension below.
+  the episode, which the teacher treats like any other truncation (`DEC-207`, §8).
 
 **L2, L3 and L5 (`interaction_risk`, `non_relaxable_compliance`, `relaxable_lane_compliance`).**
 
@@ -357,15 +357,16 @@ as zero cost. Otherwise:
   under v4.9, where §4.10.3 of `RULEBOOK-V5.0` measured `68.2 %` of the stopped-ego penalty mass as a
   controlled-invariance failure.
 
-**Task dimension `T`.** `T_e = (success_e, route_completion_e)`. Observed on every valid Generate episode
-**except** one truncated by a not-at-fault contact (`ADR-071`), which is excluded from the `T` window only
-and recorded as such (`DEC-207`).
+**Task dimension `T`.** `T_e = (success_e, route_completion_e)`. Always observed, including on an episode
+truncated by a not-at-fault contact (`ADR-071`): the teacher applies **no special case** for it
+(`DEC-207`). The not-at-fault rate is already a required Rulebook diagnostic, so if it proves frequent
+enough to distort `T` on the high-traffic arms, the evidence to reopen this exists without new
+instrumentation.
 
 - Invariants: `C_{k,e}` in `[0, 1]`; `F_{k,e}` in `[0, 1]`; `route_completion_e` in `[0, 1]`; all values
   finite.
 - Edge cases: an episode with zero environment steps is not a valid Generate episode and updates nothing.
-  An episode truncated by a not-at-fault contact remains a valid Generate episode: it counts toward
-  `N^{gen}_i`, updates the `L1`, `L2`, `L3` and `L5` windows, and enters the buffer normally.
+  An episode truncated by a not-at-fault contact is an ordinary valid Generate episode in every respect.
 - Failure behavior: a non-finite value, a margin outside `[-1, 0]` for a consumed level, or a missing
   applicability flag is fatal.
 
@@ -382,10 +383,9 @@ episode. `O_i^d` is the older half and `R_i^d` the newer half once `|W_i^d| = 2H
 
 - Replay episodes never update any window. They are selected by the teacher itself and are therefore not
   unbiased observations of the arm's distribution (`RAT-205`).
-- Dimension `d` is **available** for arm `i` iff `|W_i^d| = 2H`. `L1` becomes available for every arm at
-  the end of calibration (`REQ-008`), and `T` at the same time unless not-at-fault truncations have
-  removed observations from its window (`DEC-207`); `L2`, `L3` and `L5` become available when enough
-  episodes have observed them. `L3` is expected to track `L1` closely, because `offroad` is applicable at
+- Dimension `d` is **available** for arm `i` iff `|W_i^d| = 2H`. `T` and `L1` become available for every
+  arm at the end of calibration (`REQ-008`); `L2`, `L3` and `L5` become available when enough episodes
+  have observed them. `L3` is expected to track `L1` closely, because `offroad` is applicable at
   every step (§3.2).
 - Windows are updated at commit time, in the deterministic `(collection_tick, worker_id, episode_id)`
   order of `ADR-016`.
@@ -654,7 +654,7 @@ for each curriculum episode t:
                 no statistics, no window, no counter, no score, no buffer change
             else:
                 compute C_L1e, C_L2e, C_L3e, C_L5e, v_1e,                     # REQ-002
-                        F_L2e, F_L3e, F_L5e, T_e (unless not-at-fault truncation)
+                        F_L2e, F_L3e, F_L5e, T_e
                 append observed keys to W_i^d                                 # REQ-003
                 N_gen[i] <- N_gen[i] + 1
                 compute U, U_scaled, U_norm and log them                      # REQ-013
@@ -841,8 +841,7 @@ concurrent eviction of a record before its in-flight Replay episode commits
 
 **Required per-committed-episode log fields:** mode, arm, scenario UID, coverage cycle id,
 `C_{k,e}`/`N^{app}_{k,e}`/`N^{viol}_{k,e}`/`F_{k,e}` for `k` in `{L1, L2, L3, L5}`, `v_{1,e}`, `success`,
-`route_completion`, the not-at-fault truncation flag and whether the episode entered the `T` window
-(`DEC-207`), buffer action, and the diagnostic `U`, `U_scaled`, `U_norm`. The **global step index** of the
+`route_completion`, the not-at-fault truncation flag (`ADR-071` diagnostic), buffer action, and the diagnostic `U`, `U_scaled`, `U_norm`. The **global step index** of the
 commit must be logged alongside the arm and episode counters, so that the `SNR` and `LIM-203` diagnostics
 can be computed offline without re-instrumenting a run.
 
@@ -929,8 +928,8 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 - Then: `C_{1,e} = 0`, `v_{1,e} = 0`, the L1 window receives the observation, and the episode counts toward
   L1 availability. Given instead an episode with one at-fault contact of cost `0.4` and one of cost `0.7`,
   `C_{1,e} = 0.7` and `v_{1,e} = 1`. Given an episode whose only contact is classified **not at fault**
-  (`ADR-071`), `C_{1,e} = 0` and `v_{1,e} = 0`, the L1 window still receives the observation, and the
-  episode does **not** enter the `T` window (`DEC-207`).
+  (`ADR-071`), `C_{1,e} = 0` and `v_{1,e} = 0`, and every window including `T` receives its observation
+  (`DEC-207`).
 - Related requirements: `REQ-002`, `FIND-008`, `FIND-014`, `DEC-207`.
 
 ### AC-203b: L2/L3/L5 gate statistic is the step fraction and does not saturate
@@ -997,8 +996,7 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 - When: selections proceed until calibration completes.
 - Then: every selection before completion is Generate, no `q_i` changes from `0.50`, each arm reaches
   exactly `2H` valid Generate episodes, the per-arm counts differ by at most one at every intermediate
-  point, `L1` is available for every arm at completion and `T` is available for every arm that recorded no
-  not-at-fault truncation, and the first Replay cannot occur before
+  point, `T` and `L1` are available for every arm at completion, and the first Replay cannot occur before
   both `REQ-008` conditions hold. Episodes ending in a typed data-abort do not count toward `2H`.
 - Related requirements: `REQ-008`.
 
@@ -1135,18 +1133,18 @@ defensible if the approval precedes the runs, and the approval record in §18 is
 approval. They were re-examined in revision 2, two of them were changed on evidence. `DEC-205` was added
 in revision 2. `DEC-206` and `DEC-207` are new in revision 3 and are forced by the re-base onto
 `RULEBOOK-V5.1`: `DEC-206` was **selected by the user on 2026-09-01** from three stated alternatives,
-`DEC-207` is proposed by the assistant and is not yet selected. None of these should be cited as approved
-before the approval recorded in §18.
+`DEC-207` was proposed by the assistant and **the user selected the simpler alternative** on 2026-09-01.
+All seven were approved as a set on 2026-09-01; the approval and its provenance are recorded in §18.
 
-| ID | Question | Resolution in revision 2 | Status |
+| ID | Question | Resolution | Status |
 |---|---|---|---|
-| `DEC-201` | How is L1's episodic cost defined, given that L1 is `applicable=False` without an at-fault contact? | Unchanged in substance: maximum over all steps, L1 always observed; "not applicable" means satisfied. Re-based in revision 3 onto `ADR-071`, under which "not applicable" additionally covers a not-at-fault contact charged nothing (`REQ-002`) | reopened 2026-07-31, **confirmed**; re-based 2026-09-01, pending approval |
-| `DEC-202` | What does the Goldilocks gate consume? | **Changed** in revision 2: `v_{1,e}` incidence on L1, the violated-applicable-step fraction `Fbar` on the step-fraction levels, `route_completion` on `T`; `G` keeps the fine-grained cost `C`. Revision 3 extends the `Fbar` branch to L5 (`REQ-002`, `REQ-006`) | reopened 2026-07-31, **revised** on `FIND-011`; extended 2026-09-01, pending approval |
-| `DEC-203` | How is the neutrality band framed and corrected? | **Changed**: exact conditional permutation band at `0.05` **per dimension, uncorrected**; Holm removed on `FIND-010`; framing as a calibrated deadband retained and strengthened (`REQ-005`) | reopened 2026-07-31, **revised** on `FIND-010`, pending approval |
-| `DEC-204` | Is the prediction-error learning potential removed or retained? | Unchanged: retained as a strictly inert diagnostic channel, so the two signals are measurable within one run (`REQ-013`) | reopened 2026-07-31, **confirmed**, pending approval |
-| `DEC-205` | What is `H`? | `H = 20`, on the **measured** power sweep of `FIND-012` and the asymmetry of the two error directions (§9.1); `H = 30` is the indicated revision if the deferred `SNR` measurement returns below `0.5`; the measurement is a post-hoc validation, not a gate (`LIM-201`) | new in revision 2, pending approval |
-| `DEC-206` | Which `RULEBOOK-V5.1` levels are teacher dimensions, and in what order? | Five dimensions in the order `L1 → L2 → L3 → T → L5`. `T` occupies L4's position because `route_completion` is L4's episodic counterpart; `L5` is last because `ADR-072` placed the relaxable lane rules below mission progress; `L6` is excluded with L4 under `RAT-203`. Alternatives considered and rejected: four dimensions with L5 dropped (loses a measurable dimension for no gain, since priority ordering already consults it last), and `L1 → L2 → L3 → L5 → T` (would place lane relaxation above progress, inverting `ADR-072`) | new in revision 3, **selected by the user 2026-09-01**, pending approval as part of the set |
-| `DEC-207` | What happens to an episode truncated by a not-at-fault contact (`ADR-071`)? | It remains a valid Generate episode and updates `L1`, `L2`, `L3`, `L5`, the counters and the buffer, but is **excluded from the `T` window only**. Rationale: the truncation caps `route_completion` for a reason the policy is not charged for, so admitting it into `T` would inject a downward bias correlated with traffic density and therefore with the arm — precisely the kind of arm-correlated confound this version exists to remove. The per-step fractions of the other levels are normalized by applicable steps and are unbiased, merely noisier, on a shorter episode. Alternative rejected: admitting it everywhere, which is simpler but reintroduces an exogenous, arm-correlated term into the highest-traffic arms' `T` statistic | new in revision 3, **proposed, not yet selected** |
+| `DEC-201` | How is L1's episodic cost defined, given that L1 is `applicable=False` without an at-fault contact? | Unchanged in substance: maximum over all steps, L1 always observed; "not applicable" means satisfied. Re-based in revision 3 onto `ADR-071`, under which "not applicable" additionally covers a not-at-fault contact charged nothing (`REQ-002`) | reopened 2026-07-31, **confirmed**; re-based 2026-09-01; **approved 2026-09-01** |
+| `DEC-202` | What does the Goldilocks gate consume? | **Changed** in revision 2: `v_{1,e}` incidence on L1, the violated-applicable-step fraction `Fbar` on the step-fraction levels, `route_completion` on `T`; `G` keeps the fine-grained cost `C`. Revision 3 extends the `Fbar` branch to L5 (`REQ-002`, `REQ-006`) | reopened 2026-07-31, **revised** on `FIND-011`; extended 2026-09-01; **approved 2026-09-01** |
+| `DEC-203` | How is the neutrality band framed and corrected? | **Changed**: exact conditional permutation band at `0.05` **per dimension, uncorrected**; Holm removed on `FIND-010`; framing as a calibrated deadband retained and strengthened (`REQ-005`) | reopened 2026-07-31, **revised** on `FIND-010`; **approved 2026-09-01** |
+| `DEC-204` | Is the prediction-error learning potential removed or retained? | Unchanged: retained as a strictly inert diagnostic channel, so the two signals are measurable within one run (`REQ-013`) | reopened 2026-07-31, **confirmed**; **approved 2026-09-01** |
+| `DEC-205` | What is `H`? | `H = 20`, on the **measured** power sweep of `FIND-012` and the asymmetry of the two error directions (§9.1); `H = 30` is the indicated revision if the deferred `SNR` measurement returns below `0.5`; the measurement is a post-hoc validation, not a gate (`LIM-201`) | new in revision 2; **approved 2026-09-01** |
+| `DEC-206` | Which `RULEBOOK-V5.1` levels are teacher dimensions, and in what order? | Five dimensions in the order `L1 → L2 → L3 → T → L5`. `T` occupies L4's position because `route_completion` is L4's episodic counterpart; `L5` is last because `ADR-072` placed the relaxable lane rules below mission progress; `L6` is excluded with L4 under `RAT-203`. Alternatives considered and rejected: four dimensions with L5 dropped (loses a measurable dimension for no gain, since priority ordering already consults it last), and `L1 → L2 → L3 → L5 → T` (would place lane relaxation above progress, inverting `ADR-072`) | new in revision 3, selected by the user; **approved 2026-09-01** as part of the set |
+| `DEC-207` | What happens to an episode truncated by a not-at-fault contact (`ADR-071`)? | **No special case**: it is an ordinary valid Generate episode and updates every window, including `T`. The alternative — excluding it from the `T` window, because the truncation caps `route_completion` for a reason the policy is not charged for and its frequency grows with traffic and therefore with the arm — was proposed by the assistant and **rejected by the user on 2026-09-01** on the grounds that the distortion is hypothetical while the special case is certain: no measurement of the not-at-fault rate under an agent policy exists, and `ADR-071` already requires that rate as a diagnostic, so the evidence to reopen this will exist without new instrumentation. Recorded as `LIM-210` | new in revision 3, **selected by the user 2026-09-01** |
 
 **`DEC-202`, why it changed.** Revision 1 used an episode-level violation indicator `v_{k,e}` for all of
 R1–R3. The user identified, and repository inspection confirmed, that this saturates on R2: its
@@ -1371,6 +1369,15 @@ curriculum, a claim the same measurement falsifies.
   `L5` have none until `REQ-002` is implemented. **The expected operating behavior of this design remains
   a curriculum that stays close to uniform for much of a run and departs from it only on measured
   evidence**, and it must be reported as such rather than presented as an active curriculum.
+- **`LIM-210` — Not-at-fault truncations enter the `T` dimension unmodelled.** Under `ADR-071` a contact
+  the ego is not blamed for truncates the episode, capping its `route_completion` for a reason the policy
+  is not charged for. `DEC-207` admits such episodes into every window, including `T`, so an arm whose
+  traffic density produces more of them carries a downward pull on its `T` key that is exogenous to the
+  policy's competence. The magnitude is **unknown**: no not-at-fault rate under an agent policy has been
+  measured, only the expert's. This is accepted rather than corrected because the correction is a certain
+  special case against a hypothetical distortion; the rate is a required Rulebook diagnostic (`ADR-071`),
+  so reopening it needs analysis, not new instrumentation. The signature to look for is a systematic
+  association between an arm's not-at-fault rate and a depressed `T` gate.
 - **`LIM-209` — The `L3` dimension is not the same quantity across arms, because the arms are correlated
   with the data source.** `FIND-015` measures it: on PG records four of L3's six sub-rules are never
   applicable and a fifth is rare, so L3 there is essentially `offroad`, while on Waymo records it is a
@@ -1516,18 +1523,17 @@ harms policy performance (`FIND-007`, one seed, 40 episodes, and further weakene
 - [x] Required validation categories are selected.
 - [x] Scientific sources, project adaptations, and original constructions are kept distinct (§1.4).
 - [x] Known limitations are intentional and do not hide missing requirements (§15.4).
-- [ ] **One material decision remains open** — `DEC-201`…`DEC-206` are resolved and await approval as a
-      set; `DEC-207` (not-at-fault truncated episodes excluded from the `T` window) is proposed and needs
-      selection. The `SNR` measurement of `LIM-201` is a declared post-hoc validation and is explicitly
+- [x] **No material decision remains open** — `DEC-201`…`DEC-207` are resolved and were approved as a set
+      on 2026-09-01. The `SNR` measurement of `LIM-201` is a declared post-hoc validation and is explicitly
       **not** a gate on approval; under `RULEBOOK-V5.1` it additionally cannot be taken until a run under
       the new reward exists.
-- [ ] Approval recorded, `_UNDER_REVIEW` removed from the filename, `docs/project_index.md` updated, ADR
-      written, ExecPlan created.
+- [x] Approval recorded, `_UNDER_REVIEW` removed from the filename, `docs/project_index.md` updated, ADR
+      written (`ADR-077`), ExecPlan created (`ACL-PROG-004`).
 
 ## 18. Approval Record
 
-- Approved by: `pending`
-- Approval date: `pending`
+- Approved by: user (repository owner)
+- Approval date: `2026-09-01`
 - Approval evidence and provenance, stated precisely because revision 1 overstated it:
   - **2026-07-30** — the user presented the redesign and stated that the existing specifications are not
     binding if a better solution exists. `DEC-201`…`DEC-204` were **proposed by the assistant and selected
@@ -1542,10 +1548,21 @@ harms policy performance (`FIND-007`, one seed, 40 episodes, and further weakene
   - **2026-09-01, revision 3** — re-based onto `RULEBOOK-V5.1` after its implementation was verified
     (`FIND-014`). The user selected the five-dimension order `L1 → L2 → L3 → T → L5` (`DEC-206`) from
     three stated alternatives, and directed that the specification be rewritten before the learnability
-    runs rather than after them, so that §11's pre-registration requirement is satisfied. `DEC-207` is
-    proposed and not yet selected. No mechanism, weight, or measured result was changed.
-  - Approval of this document as the authoritative contract is **not yet given**.
+    runs rather than after them, so that §11's pre-registration requirement is satisfied. No mechanism,
+    weight, or measured result was changed.
+  - **2026-09-01, approval** — the assistant restated `DEC-201`…`DEC-207` in full, each with its question,
+    its resolution, its evidentiary basis, and the cost of choosing wrongly, explicitly separating the
+    three decisions resting on code verification (`DEC-201`, `DEC-202`, `DEC-204`) from the two resting on
+    reproducible synthetic measurement (`DEC-203`, `DEC-205`), the one resting on the approved rulebook
+    hierarchy (`DEC-206`), and the one resting on reasoning alone (`DEC-207`). The user then approved the
+    set and, on `DEC-207`, **selected the simpler option with the explicit instruction not to add
+    complexity that is not carrying its weight**. That instruction is the recorded ground for `DEC-207`
+    and for `LIM-210`: a special case is not added against a distortion no measurement establishes.
+  - This document is the authoritative contract for `ACL-SN-EMA-001` from 2026-09-01 and supersedes
+    `automatic_curriculum_learning_v1.3_specification.md`.
 - Approval notes: approval must precede any comparison run under this version (§11, pre-registration).
-- Repository path: `docs/specifications/automatic_curriculum_learning_v2.0_specification_UNDER_REVIEW.md`
-  (canonical path on approval: `docs/specifications/automatic_curriculum_learning_v2.0_specification.md`)
-- Project index updated: `NO` (pending approval)
+- Approval evidence: user message of 2026-09-01 approving `DEC-201`…`DEC-206` as a block and selecting
+  the simple option for `DEC-207`.
+- Repository path: `docs/specifications/automatic_curriculum_learning_v2.0_specification.md`
+- Recorded by: `docs/decisions/ADR-077-acl-v2-outcome-based-windowed-learning-progress.md`
+- Project index updated: `YES` (2026-09-01)

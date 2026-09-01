@@ -2,7 +2,7 @@
 
 - Date: 2026-07-31
 - Status: `EVIDENCE`; not a specification and not authoritative
-- Subject: `docs/specifications/automatic_curriculum_learning_v2.0_specification_UNDER_REVIEW.md`
+- Subject: `docs/specifications/automatic_curriculum_learning_v2.0_specification.md`
 - Purpose: answer, before freezing `v2.0`, three questions that were being argued from theory —
   (1) does the ordinal signal really have a noise-independent neutral expectation, (2) is the
   Holm correction the reason the curriculum might stay uniform, (3) what does the exact

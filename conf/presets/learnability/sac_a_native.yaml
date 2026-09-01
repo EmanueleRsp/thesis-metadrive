@@ -1,0 +1,43 @@
+# @package _global_
+# Learnability screening, arm A: MetaDrive's native reward drives learning.
+#
+# `monitor_only` rather than `native`: `conf/reward/native.yaml` sets
+# `behavior: "off"`, which skips the Rulebook wrapper entirely and therefore
+# produces no compliance metrics at all. `monitor_only` keeps the identical
+# RULEBOOK-V5.1 measuring instrument attached (`builders.py` routes both arms
+# through `RulebookV2MonitorWrapper`) and only withholds the scalarizer, so
+# arm A and arm B are measured with the same metre and differ in exactly one
+# factor: which signal reaches the learner. This is also the pairing key
+# `analysis/tables/make_factor_effect_tables.py::_pairs_rulebook_reward_effect`
+# already expects (`monitor_only` against `scalar_reward`).
+defaults:
+  - /config
+  - override /run_profile: medium
+  - override /reward: monitor_only
+  - override /curriculum: disabled
+  - override /agent/planner/algorithm: sac_sb3
+  - override /agent/planner/decoder: sac_sb3
+  # ENC-V1.3, the production architecture (16 latents, depth 4). NOT `lq_v3_lite`,
+  # which the repository itself labels `architecture_version: diagnostic-only` and
+  # names `latent_query_v3_lite_diagnostic`: a screening that licenses a freeze must
+  # not be able to fail for lack of encoder capacity, which would be indistinguishable
+  # from the reward being unlearnable. Measured cost of the production encoder:
+  # micro (4 latents, depth 1) ran at 7.71 fps and lite (8, 2) at 6.68 fps on the same
+  # `medium` profile, so the simulator dominates and the full encoder costs roughly
+  # 15 %, not a multiple.
+  - override /agent/planner/encoder: lq_v3
+  - _self_
+
+# EVAL-PROTOCOL REQ-018: a distinct comparison-block ID keeps this reduced-budget
+# diagnostic separable from BASELINE-SCALAR-01/EXTENSION-ALGORITHM-01 in the run
+# registry, so it can never be promoted post hoc into a core result.
+analysis:
+  experiment_group: SCREEN-LEARNABILITY-A-NATIVE-01
+
+experiment:
+  name: learnability-a-native
+
+env:
+  vectorized:
+    enabled: true
+    num_envs: 20

@@ -23,16 +23,23 @@ from thesis_rl.analysis.tables.make_comfort_tables import (
     build_comfort_tables,
 )
 from thesis_rl.runtime.comfort_diagnostics import (
+    ACCEL_SPEC,
     COMFORT_AGGREGATE_COLUMNS,
     COMFORT_EPISODE_COLUMNS,
     COMFORT_STATISTICS,
+    JERK_SPEC,
     NUPLAN_COMFORT_BOUNDS,
+    YAW_ACCEL_SPEC,
+    YAW_RATE_SPEC,
+    ComfortBounds,
     ComfortEpisodeAccumulator,
     aggregate_comfort_episodes,
     comfort_aggregate_fields,
     comfort_episode_fields,
     extract_comfort_step,
+    segment_statistics,
 )
+from thesis_rl.rulebook.v2.wrapper import _ego_kinematics_payload
 from thesis_rl.runtime.io.csv_recorder import CSVRecorder
 
 DT = 0.1
@@ -40,26 +47,27 @@ DT = 0.1
 
 def _step(
     *,
-    a_lon: float = 0.0,
-    a_lat: float = 0.0,
-    yaw: float = 0.0,
-    dt: float = DT,
-    a_x: float | None = None,
-    a_y: float | None = None,
+    t: float = 0.0,
+    vx: float = 0.0,
+    vy: float = 0.0,
+    heading: float = 0.0,
 ) -> dict[str, Any]:
-    """One step-info carrying the ego kinematics `RuleRewardWrapper` exports."""
+    """One step-info carrying the kinematics `RulebookV2MonitorWrapper` exports."""
     return {
-        "ego_state": {
-            "acceleration": {
-                "longitudinal": a_lon,
-                "lateral": a_lat,
-                "x": a_lon if a_x is None else a_x,
-                "y": a_lat if a_y is None else a_y,
-            },
-            "yaw": yaw,
-            "dt": dt,
+        "ego_kinematics": {
+            "sim_time_s": t,
+            "velocity_xy": (vx, vy),
+            "heading_rad": heading,
         }
     }
+
+
+def _series(entries: list[tuple[float, float, float]]) -> list[dict[str, Any]]:
+    """Build a step sequence from `(vx, vy, heading)` samples, one `DT` apart."""
+    return [
+        _step(t=index * DT, vx=vx, vy=vy, heading=heading)
+        for index, (vx, vy, heading) in enumerate(entries)
+    ]
 
 
 def _summary(steps: list[Any]) -> dict[str, Any]:
@@ -69,79 +77,153 @@ def _summary(steps: list[Any]) -> dict[str, Any]:
     return accumulator.finalize()
 
 
+# --- TEST-CMF-15: the devkit parameters are pinned ---
+
+
+def test_savgol_specs_match_the_nuplan_devkit() -> None:
+    """These four specs are transcriptions, not choices (`DEC-CMF-006`).
+
+    `state_extractors.py`: acceleration `poly_order=2, window_length=8`; jerk
+    `deriv_order=1, poly_order=2, window_length=15`; yaw rate
+    `deriv_order=1, poly_order=2`; yaw acceleration `deriv_order=2,
+    poly_order=3`. The yaw window is 5 because `extract_ego_yaw_rate` never
+    forwards its `window_length` to `approximate_derivatives`, whose own
+    default is 5 -- reproducing the devkit's real behaviour, not its docstring.
+    """
+
+    assert (ACCEL_SPEC.window_length, ACCEL_SPEC.poly_order, ACCEL_SPEC.deriv_order) == (8, 2, 1)
+    assert (JERK_SPEC.window_length, JERK_SPEC.poly_order, JERK_SPEC.deriv_order) == (15, 2, 1)
+    assert (
+        YAW_RATE_SPEC.window_length,
+        YAW_RATE_SPEC.poly_order,
+        YAW_RATE_SPEC.deriv_order,
+    ) == (5, 2, 1)
+    assert (
+        YAW_ACCEL_SPEC.window_length,
+        YAW_ACCEL_SPEC.poly_order,
+        YAW_ACCEL_SPEC.deriv_order,
+    ) == (5, 3, 2)
+
+
+def test_bounds_match_the_nuplan_devkit_configs() -> None:
+    """Transcribed from `simulation_metric/low_level/*.yaml`."""
+
+    assert NUPLAN_COMFORT_BOUNDS == ComfortBounds(
+        max_lon_accel=2.40,
+        min_lon_accel=-4.05,
+        max_abs_lat_accel=4.89,
+        max_abs_mag_jerk=8.37,
+        max_abs_lon_jerk=4.13,
+        max_abs_yaw_rate=0.95,
+        max_abs_yaw_accel=1.93,
+    )
+
+
 # --- TEST-CMF-01: closed-form kinematics ---
 
 
 def test_constant_jerk_trajectory_exact_statistics() -> None:
-    """A constant longitudinal jerk of 2 m/s^3 at dt=0.1 s, heading fixed."""
+    """A constant longitudinal jerk of 2 m/s^3: v(t) = t^2 along the heading.
 
-    steps = [_step(a_lon=value) for value in (0.0, 0.2, 0.4)]
+    A Savitzky-Golay derivative of order `p` reproduces a polynomial of degree
+    <= `p` exactly, so on this quadratic velocity the filtered acceleration is
+    the analytic `2t` and the filtered jerk is exactly 2.0 -- filtering costs
+    nothing on data the filter can represent, which is what makes it a fair
+    closed-form check.
+    """
+
+    steps = _series([(0.0, 0.0, 0.0), (0.01, 0.0, 0.0), (0.04, 0.0, 0.0), (0.09, 0.0, 0.0)])
     summary = _summary(steps)
 
-    assert summary["valid_step_count"] == 3
-    assert summary["max_lon_accel"] == pytest.approx(0.4)
+    assert summary["valid_step_count"] == 4
+    assert summary["max_lon_accel"] == pytest.approx(0.6)
     assert summary["min_lon_accel"] == pytest.approx(0.0)
-    assert summary["max_abs_lat_accel"] == pytest.approx(0.0)
+    assert summary["max_abs_lat_accel"] == pytest.approx(0.0, abs=1e-9)
     assert summary["max_abs_lon_jerk"] == pytest.approx(2.0)
     assert summary["max_abs_mag_jerk"] == pytest.approx(2.0)
-    assert summary["max_abs_yaw_rate"] == pytest.approx(0.0)
-    assert summary["max_abs_yaw_accel"] == pytest.approx(0.0)
+    assert summary["max_abs_yaw_rate"] == pytest.approx(0.0, abs=1e-9)
+    assert summary["max_abs_yaw_accel"] == pytest.approx(0.0, abs=1e-9)
     assert summary["is_comfortable"] is True
 
 
-def test_lateral_acceleration_uses_the_ego_frame_channel() -> None:
-    """`max_abs_lat_accel` tracks magnitude, so a left turn and a right turn
-    of equal severity score the same."""
+def test_acceleration_is_projected_onto_the_ego_heading() -> None:
+    """A vehicle heading along +y sees a +y velocity change as longitudinal,
+    not lateral: the projection must use the reported heading, not the axes."""
 
-    left = _summary([_step(a_lat=3.0), _step(a_lat=3.0), _step(a_lat=3.0)])
-    right = _summary([_step(a_lat=-3.0), _step(a_lat=-3.0), _step(a_lat=-3.0)])
+    heading = math.pi / 2.0
+    steps = _series([(0.0, value, heading) for value in (0.0, 0.3, 0.6, 0.9)])
+    summary = _summary(steps)
+
+    assert summary["max_lon_accel"] == pytest.approx(3.0)
+    assert summary["max_abs_lat_accel"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_lateral_acceleration_uses_magnitude() -> None:
+    """A left turn and a right turn of equal severity score the same."""
+
+    left = _summary(_series([(0.0, value, 0.0) for value in (0.0, 0.3, 0.6, 0.9)]))
+    right = _summary(_series([(0.0, -value, 0.0) for value in (0.0, 0.3, 0.6, 0.9)]))
 
     assert left["max_abs_lat_accel"] == pytest.approx(3.0)
     assert right["max_abs_lat_accel"] == pytest.approx(3.0)
+
+
+def test_magnitude_jerk_differentiates_the_acceleration_magnitude() -> None:
+    """nuPlan's `max_abs_mag_jerk` uses `acceleration_coordinate='magnitude'`,
+    so it is the derivative of `|a|`, not the norm of the jerk vector. On a
+    purely lateral jerk the two coincide in size, which is what pins the
+    channel to a number here."""
+
+    # a_y = 9t  =>  v_y = 4.5 t^2 ; a_x = 0, so |a| = 9t and d|a|/dt = 9.
+    steps = _series([(0.0, 4.5 * (index * DT) ** 2, 0.0) for index in range(4)])
+    summary = _summary(steps)
+
+    assert summary["max_abs_mag_jerk"] == pytest.approx(9.0)
+    assert summary["max_abs_lon_jerk"] == pytest.approx(0.0, abs=1e-9)
 
 
 # --- TEST-CMF-02: every bound flips the verdict on its own ---
 
 
 def _compliant_steps() -> list[dict[str, Any]]:
-    return [_step(a_lon=0.1), _step(a_lon=0.1), _step(a_lon=0.1)]
+    """Steady 1 m/s^2 forward acceleration: inside every nuPlan bound."""
+    return _series([(value, 0.0, 0.0) for value in (0.0, 0.1, 0.2, 0.3)])
 
 
 def test_compliant_trajectory_is_comfortable() -> None:
-    assert _summary(_compliant_steps())["is_comfortable"] is True
+    summary = _summary(_compliant_steps())
+
+    assert summary["max_lon_accel"] == pytest.approx(1.0)
+    assert summary["is_comfortable"] is True
 
 
 @pytest.mark.parametrize(
-    ("channel", "steps"),
+    ("channel", "entries"),
     [
-        # Above nuPlan's 2.40 m/s^2 upper longitudinal bound, nothing else.
-        ("max_lon_accel", [_step(a_lon=3.0)] * 3),
-        # Below the -4.05 m/s^2 lower longitudinal bound (hard braking).
-        ("min_lon_accel", [_step(a_lon=-5.0)] * 3),
-        # Above the 4.89 m/s^2 lateral bound.
-        ("max_abs_lat_accel", [_step(a_lat=5.0)] * 3),
-        # 0.5 m/s^2 step over 0.1 s = 5 m/s^3 > the 4.13 longitudinal-jerk
-        # bound, while the magnitude jerk stays inside its wider 8.37 bound.
-        ("max_abs_lon_jerk", [_step(a_lon=0.0), _step(a_lon=0.5), _step(a_lon=0.0)]),
-        # Jerk placed on the lateral axis only: 10 m/s^3 magnitude, zero
-        # longitudinal jerk, so only the magnitude bound is breached.
-        (
-            "max_abs_mag_jerk",
-            [
-                _step(a_lon=0.0, a_lat=0.0),
-                _step(a_lon=0.0, a_lat=1.0),
-                _step(a_lon=0.0, a_lat=0.0),
-            ],
-        ),
-        # 0.2 rad over 0.1 s = 2 rad/s > the 0.95 rad/s bound.
-        ("max_abs_yaw_rate", [_step(yaw=0.0), _step(yaw=0.2), _step(yaw=0.4)]),
-        # Yaw rate 0 then 0.9 rad/s (inside its own bound) in one step gives
-        # 9 rad/s^2, above the 1.93 rad/s^2 bound.
-        ("max_abs_yaw_accel", [_step(yaw=0.0), _step(yaw=0.0), _step(yaw=0.09)]),
+        # Steady 3 m/s^2, above nuPlan's 2.40 upper longitudinal bound.
+        ("max_lon_accel", [(0.3 * i, 0.0, 0.0) for i in range(4)]),
+        # Steady -5 m/s^2, below the -4.05 lower bound (hard braking).
+        ("min_lon_accel", [(-0.5 * i, 0.0, 0.0) for i in range(4)]),
+        # Steady 5 m/s^2 sideways at heading 0, above the 4.89 lateral bound.
+        ("max_abs_lat_accel", [(0.0, 0.5 * i, 0.0) for i in range(4)]),
+        # a = 5t  =>  v = 2.5 t^2: a 5 m/s^3 longitudinal jerk, above the 4.13
+        # bound, while the acceleration peaks at 1.5 and the magnitude jerk is
+        # the same 5.0, inside its wider 8.37 bound.
+        ("max_abs_lon_jerk", [(2.5 * (i * DT) ** 2, 0.0, 0.0) for i in range(4)]),
+        # The same construction on the lateral axis: 9 m/s^3 magnitude jerk
+        # with zero longitudinal jerk.
+        ("max_abs_mag_jerk", [(0.0, 4.5 * (i * DT) ** 2, 0.0) for i in range(4)]),
+        # 0.2 rad per 0.1 s = 2 rad/s, above the 0.95 rad/s bound.
+        ("max_abs_yaw_rate", [(0.0, 0.0, 0.2 * i) for i in range(4)]),
+        # heading = 1.5 t^2  =>  yaw rate 3t (peaking at 0.9, inside its own
+        # bound) and yaw acceleration 3.0, above the 1.93 bound.
+        ("max_abs_yaw_accel", [(0.0, 0.0, 1.5 * (i * DT) ** 2) for i in range(4)]),
     ],
 )
-def test_each_bound_flips_is_comfortable(channel: str, steps: list[dict[str, Any]]) -> None:
-    summary = _summary(steps)
+def test_each_bound_flips_is_comfortable(
+    channel: str, entries: list[tuple[float, float, float]]
+) -> None:
+    summary = _summary(_series(entries))
 
     assert summary["is_comfortable"] is False
     value = summary[channel]
@@ -162,55 +244,77 @@ def test_each_bound_flips_is_comfortable(channel: str, steps: list[dict[str, Any
             assert summary[other] <= other_bound, other
 
 
-# --- TEST-CMF-03: yaw wrapping ---
+# --- TEST-CMF-03: yaw unwrapping ---
 
 
-def test_yaw_rate_wraps_across_pi() -> None:
-    """Crossing +-pi must not fabricate a yaw rate of order 2*pi/dt.
+def test_yaw_rate_unwraps_across_pi() -> None:
+    """Crossing +-pi must not fabricate a yaw rate of order 2*pi/delta.
 
     A steady rotation carried across the branch cut: unwrapped, the second
     step's heading difference is -6.20 rad and would score a yaw rate of 62
-    rad/s, far outside every bound. Wrapped, it is the same small increment as
-    every other step, so the turn reads as the comfortable manoeuvre it is.
+    rad/s, far outside every bound. `np.unwrap` -- the devkit's `phase_unwrap`
+    -- turns the sequence back into the linear ramp it physically is.
     """
 
     increment = math.remainder(-3.10 - 3.10, 2.0 * math.pi)
-    steps = [_step(yaw=3.10), _step(yaw=-3.10), _step(yaw=-3.10 + increment)]
-    summary = _summary(steps)
+    headings = [3.10 + index * increment for index in range(4)]
+    wrapped = [math.remainder(heading, 2.0 * math.pi) for heading in headings]
+    summary = _summary(_series([(0.0, 0.0, heading) for heading in wrapped]))
 
     assert summary["max_abs_yaw_rate"] == pytest.approx(abs(increment) / DT)
     assert summary["max_abs_yaw_rate"] < NUPLAN_COMFORT_BOUNDS.max_abs_yaw_rate
-    assert summary["max_abs_yaw_accel"] == pytest.approx(0.0)
+    assert summary["max_abs_yaw_accel"] == pytest.approx(0.0, abs=1e-9)
     assert summary["is_comfortable"] is True
 
 
-# --- TEST-CMF-04: gaps break the derivative chain ---
+# --- TEST-CMF-04: gaps split the series, no window spans one ---
 
 
-def test_no_derivative_is_taken_across_a_gap() -> None:
-    """A step without usable kinematics must not become a differentiation
-    interval; otherwise the jump across the gap invents an enormous jerk."""
+def test_no_filter_window_spans_a_gap() -> None:
+    """A step without usable kinematics splits the series; neither one-sample
+    fragment can carry a derivative, so nothing is invented across the jump."""
 
-    steps = [_step(a_lon=0.0), {"ego_state": None}, _step(a_lon=10.0)]
+    steps = [_step(t=0.0, vx=0.0), {"ego_kinematics": None}, _step(t=0.2, vx=10.0)]
     summary = _summary(steps)
 
     assert summary["valid_step_count"] == 2
-    assert summary["max_abs_lon_jerk"] is None
-    assert summary["max_abs_mag_jerk"] is None
-    assert summary["max_lon_accel"] == pytest.approx(10.0)
+    assert all(summary[name] is None for name in COMFORT_STATISTICS)
     assert summary["is_comfortable"] is None
 
 
-def test_gap_also_resets_the_yaw_rate_chain() -> None:
-    """The yaw acceleration needs two consecutive yaw rates, which a gap
-    invalidates just as it does the jerk."""
+def test_a_gap_costs_only_the_segment_it_breaks() -> None:
+    """Steps after a gap resume measuring, they are not discarded."""
 
-    steps = [_step(yaw=0.0), _step(yaw=0.05), {}, _step(yaw=0.5), _step(yaw=1.0)]
+    steps = [_step(t=0.0, vx=0.0), {}] + [
+        _step(t=0.2 + index * DT, vx=0.3 * index) for index in range(4)
+    ]
     summary = _summary(steps)
 
-    # The surviving chain is the final pair: one yaw rate, no yaw acceleration.
-    assert summary["max_abs_yaw_rate"] == pytest.approx(5.0)
-    assert summary["max_abs_yaw_accel"] is None
+    assert summary["valid_step_count"] == 5
+    # The post-gap segment of four steps is a steady 3 m/s^2.
+    assert summary["max_lon_accel"] == pytest.approx(3.0)
+    assert summary["is_comfortable"] is False
+
+
+def test_the_episode_statistic_is_the_extremum_across_segments() -> None:
+    """Two gap-separated segments: the harsher one must win."""
+
+    gentle = [_step(t=index * DT, vx=0.1 * index) for index in range(4)]
+    harsh = [_step(t=1.0 + index * DT, vx=0.3 * index) for index in range(4)]
+    summary = _summary([*gentle, {}, *harsh])
+
+    assert summary["max_lon_accel"] == pytest.approx(3.0)
+    assert summary["is_comfortable"] is False
+
+
+def test_simulation_time_that_does_not_advance_splits_the_segment() -> None:
+    """A repeated timestamp gives the filter no spacing to work with."""
+
+    steps = [_step(t=0.0, vx=0.0), _step(t=0.0, vx=1.0), _step(t=0.0, vx=2.0)]
+    summary = _summary(steps)
+
+    assert summary["valid_step_count"] == 3
+    assert all(summary[name] is None for name in COMFORT_STATISTICS)
     assert summary["is_comfortable"] is None
 
 
@@ -222,15 +326,16 @@ def test_gap_also_resets_the_yaw_rate_chain() -> None:
     [
         None,
         {},
-        {"ego_state": {}},
-        {"ego_state": {"acceleration": None, "yaw": 0.0, "dt": DT}},
-        {"ego_state": {"acceleration": {"longitudinal": "x"}, "yaw": 0.0, "dt": DT}},
-        {"ego_state": {"acceleration": {"longitudinal": 1.0, "lateral": 1.0, "x": 1.0, "y": 1.0}}},
-        _step(dt=0.0),
-        _step(dt=-0.1),
-        _step(a_lon=float("nan")),
-        _step(a_lon=float("inf")),
-        _step(yaw=float("nan")),
+        {"ego_kinematics": {}},
+        {"ego_kinematics": None},
+        {"ego_kinematics": {"sim_time_s": 0.0, "heading_rad": 0.0}},
+        {"ego_kinematics": {"sim_time_s": 0.0, "velocity_xy": (1.0,), "heading_rad": 0.0}},
+        {"ego_kinematics": {"sim_time_s": 0.0, "velocity_xy": "xy", "heading_rad": 0.0}},
+        {"ego_kinematics": {"sim_time_s": None, "velocity_xy": (0.0, 0.0), "heading_rad": 0.0}},
+        {"ego_kinematics": {"sim_time_s": 0.0, "velocity_xy": (0.0, 0.0), "heading_rad": None}},
+        _step(vx=float("nan")),
+        _step(vx=float("inf")),
+        _step(heading=float("nan")),
     ],
 )
 def test_malformed_steps_are_treated_as_absent(step_info: Any) -> None:
@@ -245,7 +350,7 @@ def test_malformed_steps_are_treated_as_absent(step_info: Any) -> None:
 def test_observe_does_not_mutate_the_step_info() -> None:
     """TEST-CMF-13: the diagnostic reads evaluation state, never writes it."""
 
-    step_info = _step(a_lon=1.0, yaw=0.2)
+    step_info = _step(vx=1.0, heading=0.2)
     before = repr(step_info)
 
     accumulator = ComfortEpisodeAccumulator()
@@ -266,31 +371,92 @@ def test_module_does_not_depend_on_reward_or_rulebook() -> None:
     assert not any("thesis_rl.rulebook" in line for line in import_lines), import_lines
 
 
+# --- TEST-CMF-14: the producer/consumer contract (regression, BUG-CMF-002) ---
+
+
+class _FakeEgo:
+    def __init__(self) -> None:
+        self.velocity_xy = (1.5, -0.5)
+        self.heading_rad = 0.25
+
+
+class _FakeSnapshot:
+    def __init__(self) -> None:
+        self.sim_time_s = 3.4
+        self.ego = _FakeEgo()
+
+
+def test_monitor_payload_is_exactly_what_the_extractor_consumes() -> None:
+    """Regression: the diagnostic was first built against a key
+    (`info["ego_state"]`) that the live evaluation stack never publishes, so
+    every comfort column came out empty while every unit test passed. Producer
+    and consumer are now pinned to each other in one test."""
+
+    payload = _ego_kinematics_payload(_FakeSnapshot())
+    assert payload is not None
+
+    step = extract_comfort_step({"ego_kinematics": payload})
+    assert step is not None
+    assert step.sim_time_s == pytest.approx(3.4)
+    assert step.velocity_x == pytest.approx(1.5)
+    assert step.velocity_y == pytest.approx(-0.5)
+    assert step.heading_rad == pytest.approx(0.25)
+
+
+@pytest.mark.parametrize("snapshot", [0, None, object(), _FakeEgo()])
+def test_monitor_payload_tolerates_a_snapshot_without_ego_state(snapshot: Any) -> None:
+    """The snapshotter is injected, so a caller may supply a stand-in. A
+    diagnostic must never be able to fail a rulebook step."""
+
+    assert _ego_kinematics_payload(snapshot) is None
+
+
 # --- TEST-CMF-06: short episodes leave channels undefined ---
 
 
-def test_single_step_episode_defines_only_the_acceleration_channels() -> None:
-    summary = _summary([_step(a_lon=1.0, a_lat=2.0)])
+@pytest.mark.parametrize("length", [1, 2])
+def test_episodes_too_short_to_filter_define_nothing(length: int) -> None:
+    """`approximate_derivatives` clamps its window to the series length and
+    then needs `poly_order < window_length`, so two samples cannot carry even
+    the order-2 channels."""
 
-    assert summary["valid_step_count"] == 1
-    assert summary["max_lon_accel"] == pytest.approx(1.0)
-    assert summary["min_lon_accel"] == pytest.approx(1.0)
-    assert summary["max_abs_lat_accel"] == pytest.approx(2.0)
-    assert summary["max_abs_lon_jerk"] is None
-    assert summary["max_abs_mag_jerk"] is None
-    assert summary["max_abs_yaw_rate"] is None
-    assert summary["max_abs_yaw_accel"] is None
+    summary = _summary(_series([(0.1 * index, 0.0, 0.0) for index in range(length)]))
+
+    assert summary["valid_step_count"] == length
+    assert all(summary[name] is None for name in COMFORT_STATISTICS)
     assert summary["is_comfortable"] is None
 
 
-def test_two_step_episode_has_no_yaw_acceleration_and_no_verdict() -> None:
-    summary = _summary([_step(a_lon=0.0), _step(a_lon=0.1)])
+def test_three_steps_define_everything_but_the_yaw_acceleration() -> None:
+    """Yaw acceleration is the only order-3 channel, so it alone needs a
+    fourth sample -- and without it there is no verdict."""
 
-    assert summary["max_abs_lon_jerk"] == pytest.approx(1.0)
-    assert summary["max_abs_yaw_rate"] == pytest.approx(0.0)
+    summary = _summary(_series([(0.1 * index, 0.0, 0.0) for index in range(3)]))
+
+    assert summary["max_lon_accel"] == pytest.approx(1.0)
+    assert summary["max_abs_lon_jerk"] is not None
+    assert summary["max_abs_yaw_rate"] is not None
     assert summary["max_abs_yaw_accel"] is None
     # Undefined is not "comfortable" (`REQ-CMF-07`).
     assert summary["is_comfortable"] is None
+
+
+def test_four_valid_steps_are_enough_for_a_verdict() -> None:
+    summary = _summary(_compliant_steps())
+
+    assert all(summary[name] is not None for name in COMFORT_STATISTICS)
+    assert summary["is_comfortable"] is True
+
+
+def test_segment_statistics_is_reusable_on_a_bare_segment() -> None:
+    """The numerical core is public so it can be checked without an
+    accumulator, and it returns all-`None` rather than raising on a stub."""
+
+    segment = [extract_comfort_step(step) for step in _compliant_steps()]
+    stats = segment_statistics([step for step in segment if step is not None])
+
+    assert stats["max_lon_accel"] == pytest.approx(1.0)
+    assert all(value is None for value in segment_statistics([]).values())
 
 
 # --- TEST-CMF-07: aggregation excludes and counts undefined episodes ---
@@ -298,22 +464,22 @@ def test_two_step_episode_has_no_yaw_acceleration_and_no_verdict() -> None:
 
 def test_undefined_episodes_excluded_and_counted() -> None:
     comfortable = _summary(_compliant_steps())
-    uncomfortable = _summary([_step(a_lon=3.0)] * 3)
-    undefined = _summary([_step(a_lon=0.0)])
+    uncomfortable = _summary(_series([(0.3 * index, 0.0, 0.0) for index in range(4)]))
+    undefined = _summary([_step(vx=0.0)])
 
     metrics = aggregate_comfort_episodes([comfortable, uncomfortable, undefined])
 
     assert metrics["comfort_rate"] == pytest.approx(0.5)
     assert metrics["comfort_episode_count"] == 2
     assert metrics["comfort_excluded_episode_count"] == 1
-    # The undefined episode still contributes its defined channels.
-    assert metrics["mean_comfort_max_lon_accel"] == pytest.approx((0.1 + 3.0 + 0.0) / 3.0)
-    # ... and none of its undefined ones.
+    # The mean is over the episodes where the channel is defined: the
+    # single-sample episode measures nothing and contributes to neither.
+    assert metrics["mean_comfort_max_lon_accel"] == pytest.approx((1.0 + 3.0) / 2.0)
     assert metrics["mean_comfort_max_abs_yaw_accel"] == pytest.approx(0.0)
 
 
 def test_aggregate_with_no_defined_episode_reports_none_not_zero() -> None:
-    metrics = aggregate_comfort_episodes([_summary([_step(a_lon=0.0)])])
+    metrics = aggregate_comfort_episodes([_summary([_step(vx=0.0)])])
 
     assert metrics["comfort_rate"] is None
     assert metrics["comfort_episode_count"] == 0
@@ -327,12 +493,13 @@ def test_undefined_channel_wins_over_a_breached_one() -> None:
     reported as uncomfortable instead of unmeasured. Definedness must be
     settled across every channel before any bound is tested."""
 
-    # One step: the longitudinal bound is breached, every derivative channel
-    # is undefined. The verdict is "not measured", not "uncomfortable".
-    summary = _summary([_step(a_lon=99.0)])
+    # Three steps: enough for the order-2 channels, one short of the order-3
+    # yaw acceleration. The longitudinal bound is breached and the verdict is
+    # still "not measured", not "uncomfortable".
+    summary = _summary(_series([(9.9 * index, 0.0, 0.0) for index in range(3)]))
 
     assert summary["max_lon_accel"] > NUPLAN_COMFORT_BOUNDS.max_lon_accel
-    assert summary["max_abs_lon_jerk"] is None
+    assert summary["max_abs_yaw_accel"] is None
     assert summary["is_comfortable"] is None
 
 
@@ -375,7 +542,7 @@ def test_recorder_writes_comfort_columns(tmp_path: Path) -> None:
     rows = list(csv.DictReader((tmp_path / "eval_episodes.csv").open(encoding="utf-8")))
     assert len(rows) == 1
     assert rows[0]["comfort_is_comfortable"] == "1.0"
-    assert float(rows[0]["comfort_max_lon_accel"]) == pytest.approx(0.1)
+    assert float(rows[0]["comfort_max_lon_accel"]) == pytest.approx(1.0)
 
 
 # --- TEST-CMF-09: row helpers ---
@@ -383,7 +550,7 @@ def test_recorder_writes_comfort_columns(tmp_path: Path) -> None:
 
 def test_comfort_episode_fields_indexes_per_episode_vector() -> None:
     first = _summary(_compliant_steps())
-    second = _summary([_step(a_lon=3.0)] * 3)
+    second = _summary(_series([(0.3 * index, 0.0, 0.0) for index in range(4)]))
     per_episode = {"comfort": [first, second]}
 
     assert comfort_episode_fields(per_episode, 0)["comfort_is_comfortable"] == 1.0
@@ -418,11 +585,18 @@ def test_comfort_aggregate_fields_projects_metrics() -> None:
 
 
 class _ComfortEnv:
-    """Two fixed 3-step episodes with distinct, deterministic kinematics."""
+    """Two fixed 4-step episodes with distinct, deterministic kinematics.
 
+    Four samples because the order-3 yaw-acceleration channel needs a fourth
+    one before the episode has a verdict at all.
+    """
+
+    # (vx, heading) samples, one DT apart. Episode 0 accelerates gently at
+    # 1 m/s^2 and turns steadily; episode 1 accelerates at 3 m/s^2, past the
+    # 2.40 bound.
     EPISODES: tuple[tuple[tuple[float, float], ...], ...] = (
-        ((0.0, 0.0), (0.2, 0.05), (0.4, 0.10)),
-        ((0.0, 0.0), (3.0, 0.00), (0.0, 0.00)),
+        ((0.0, 0.00), (0.1, 0.01), (0.2, 0.02), (0.3, 0.03)),
+        ((0.0, 0.00), (0.3, 0.00), (0.6, 0.00), (0.9, 0.00)),
     )
 
     def __init__(self, *, fixed_pattern: tuple[tuple[float, float], ...] | None = None) -> None:
@@ -443,10 +617,10 @@ class _ComfortEnv:
             if self._fixed_pattern is not None
             else self.EPISODES[self._episode_idx]
         )
-        a_lon, yaw = pattern[self._step]
+        vx, heading = pattern[self._step]
+        info = _step(t=self._step * DT, vx=vx, heading=heading)
         self._step += 1
         done = self._step >= len(pattern)
-        info = _step(a_lon=a_lon, yaw=yaw)
         if done:
             info.update({"arrive_dest": True, "termination_reason": "success"})
         obs = np.array([self._step, self._step], dtype=np.float32)

@@ -25,10 +25,12 @@ from thesis_rl.runtime.comfort_diagnostics import (
 
 DIAGNOSTIC_LABEL = (
     "Diagnostic (EP-COMFORT-DIAG): ride comfort is excluded from the rulebook and the "
-    "reward by RULEBOOK-V5.1 §13 and is not a primary comparison metric. Channels follow "
-    "nuPlan's `ego_is_comfortable`, but are computed from raw finite differences rather "
-    "than nuPlan's filtered derivatives (DEV-CMF-001), which makes the verdict "
-    "conservative and not like-for-like with published nuPlan figures."
+    "reward by RULEBOOK-V5.1 §13 and is not a primary comparison metric. Channels "
+    "reproduce nuPlan's `ego_is_comfortable`: the published bounds, and the devkit's own "
+    "Savitzky-Golay derivative parameters. Two adaptations are documented as DEV-CMF-001 "
+    "-- acceleration is differentiated from the simulator's velocity, which MetaDrive "
+    "publishes instead of an acceleration, and the series is split at unusable steps so "
+    "no filter window spans a gap."
 )
 
 REQUIRED_COLUMNS = (

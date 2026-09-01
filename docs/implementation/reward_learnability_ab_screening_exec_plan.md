@@ -1,0 +1,417 @@
+# ExecPlan — Reward Learnability A/B Screening (`AB-LEARN`)
+
+## 1. Metadata
+
+| Field | Value |
+|---|---|
+| Feature | Pre-registered A/B screening of reward learnability: MetaDrive's native reward against the `RULEBOOK-V5.1` + `SCAL-V1.4` scalarized reward |
+| Plan ID | `AB-LEARN` |
+| Authoritative specifications | `EVAL-PROTOCOL` v1.0 (`docs/specifications/evaluation_protocol_v1.0_specification.md`, `AUTHORITATIVE`) with v1.1/v1.2/v1.3/v1.3.1 amendments; `RULEBOOK-V5.1` (`docs/specifications/rulebook_v5.1_specification.md`, `AUTHORITATIVE`); `SCAL-V1.4` (`RULEBOOK-V5.1` §5) |
+| Status | `AWAITING_DECISIONS` — arms, budget and probe algorithm approved 2026-09-01; the launch itself is not yet authorized |
+| Created | 2026-09-01 |
+| Last updated | 2026-09-01 |
+| Branch | `scenarionet-implementation` |
+| Related ADRs | ADR-063…ADR-076 (the rulebook under test), ADR-077 (ACL v2.0, which gates arms C/D), ADR-026 (`D4` sequencing) |
+
+This plan pre-registers an experiment. It changes no production behavior: its
+only repository artifacts are two Hydra presets and this document.
+
+## 2. Objective And Scope
+
+**Observable capability.** A decision, backed by measurement, on whether the
+`RULEBOOK-V5.1` six-level margin vector scalarized by `SCAL-V1.4` is
+*optimizable* by a standard continuous-control learner in a way comparable to
+MetaDrive's native reward — and therefore whether the rulebook and the
+scalarization function can be frozen and stopped being revisited.
+
+**Why it is needed.** `docs/open_items.md` `D4` records the user's sequencing
+decision of 2026-09-01: the serious runs come *after* the A/B/C/D learnability
+tests. `RULEBOOK-V5.1` establishes that the rulebook is *correct* — it does not
+pay the human expert a nonsensical return (expert mean `+70.70`, `3.36 %` of
+episodes below standstill, §5.5) — but correctness of the preference order and
+optimizability by gradient methods are different properties, and no training
+run exists under v5.1 beyond `make smoke`.
+
+**How success is recognized.** Not by "arm B wins". By arm B showing a genuine
+*learning trend* on the driving metrics and not exhibiting the historical
+pathology in which scalar return rises while driving quality degrades. See the
+decision rule in §7.
+
+**In scope.** Arms A and B of the A/B/C/D factorial, at reduced budget, with
+the curriculum disabled; the two presets that express them; the analysis of the
+resulting artifacts through the existing `make analyze` pipeline.
+
+**Out of scope.** Arms C and D (they require the ACL, `open_items` `F5`, not
+implemented — `ACL-SN-EMA-001` v2.0 was approved 2026-09-01 but has no
+ExecPlan); algorithm selection; hyper-parameter tuning; observation or encoder
+selection; any change to the rulebook, the scalarization, the termination
+contract or the evaluation panels. If arm B fails, the response is analysis,
+not an immediate specification change.
+
+**Compatibility.** No public interface, checkpoint schema, dataset or metric
+convention changes. The two new presets are additive.
+
+## 3. Authoritative Requirements
+
+| ID | Requirement | Specification section |
+|---|---|---|
+| `REQ-AB-001` | A reduced-budget, reduced-seed comparison is a descriptive engineering diagnostic and may never be promoted post hoc into a core result; it carries its own comparison-block ID | `EVAL-PROTOCOL` v1.0 `REQ-018`, `DEC-007` |
+| `REQ-AB-002` | Conditions are compared under an identical environment-interaction budget and an identical evaluation protocol | `EVAL-PROTOCOL` v1.0 `REQ-002` (§8 of the superseded comparison protocol) |
+| `REQ-AB-003` | Seeds are the independent replication unit; the same seed list is used for every condition, and a failed run is relaunched on the same seed rather than replaced | `EVAL-PROTOCOL` v1.0 `REQ-003`, `DEC-001` |
+| `REQ-AB-004` | All conditions use identical ordered validation and test panels, independent of the training seed | `EVAL-PROTOCOL` v1.0 `REQ-004` |
+| `REQ-AB-005` | Reporting is descriptive: raw seed-level values plus mean and sample standard deviation; no confidence interval, bootstrap or significance test is claimed from this seed count | `EVAL-PROTOCOL` v1.0 `DEC-003` |
+| `REQ-AB-006` | `route_completion` is the primary continuous metric; the geometric gate remains the binary success event; nuPlan's making-progress gate at `0.2` zeroes degenerate episodes in evaluation only | `EVAL-PROTOCOL` v1.3 |
+| `REQ-AB-007` | Never publish a single score pooled across sources; report Waymo and PG separately | `open_items` `D5`, closed 2026-09-01 |
+| `REQ-AB-008` | Every Waymo success figure is reported alongside the feasibility ceiling | `EVAL-PROTOCOL-V1.3.1` |
+| `REQ-AB-009` | The reward under test is `RULEBOOK-V5.1`'s six-level vector scalarized by `SCAL-V1.4` as configured in `conf/scalarization/default.yaml`; no scalarization parameter is tuned during the screening | `RULEBOOK-V5.1` §5 |
+
+## 4. Current Repository Analysis
+
+All statements below are `VERIFIED` on 2026-09-01 unless labeled otherwise.
+
+| Fact | Evidence |
+|---|---|
+| `reward=native` disables the rulebook wrapper entirely and therefore produces no compliance metrics | `conf/reward/native.yaml`: `behavior: "off"`, `rulebook_config: none`; `runtime/wiring/builders.py:413` returns the bare env for `mode == "off"` |
+| `reward=monitor_only` keeps the identical Rulebook v2 instrument attached and withholds only the scalarizer | `runtime/wiring/builders.py:372-411`: both behaviors construct `RulebookV2MonitorWrapper`; `scalarizer` is built only when `behavior == "scalar_reward"` |
+| Both reward configs inherit `rulebook_config: selection`, so the analysis pipeline can pair them | `conf/reward/rulebook_defaults.yaml`; `analysis/tables/make_factor_effect_tables.py:161` keys on `rulebook_config` and pairs `monitor_only` against `scalar_reward` |
+| The curriculum factor is already an analysis primitive, so arms C/D need no new machinery once the ACL exists | `analysis/tables/make_factor_effect_tables.py:140` pairs `curriculum_enabled` false/true |
+| The authoritative scalarization is the top-level `scalarization` group, not the legacy `a`/`scales` keys under `reward` | `runtime/wiring/builders.py:373-382` consumes `cfg.scalarization`; `conf/scalarization/default.yaml` declares `SCAL-V1.4`, `priority_base: 2.2`, `mode: six_level_priority_weighted_rank` |
+| The historical 3×2 factorial presets under `conf/presets/td3/` are stale: they select the legacy `td3` backend, predate `RULEBOOK-V5.1`, and one arm uses `reward: native` | `conf/presets/td3/*.yaml`; `EVAL-PROTOCOL` v1.0 §229 records them as retained `REQ-018` ablation material |
+| The project already expresses a "native contract" arm as `monitor_only` | `conf/presets/selection/sac_sb3_native_contract_fast.yaml` |
+| `make run-train` hard-codes `curriculum=scenario_acl_scenarionet` and cannot express arm A or B without overrides | `Makefile:459` |
+| `env` defaults already pin `provider.strict: true`, `allow_fallback: false`, `source_probability` 0.5/0.5 and `num_scenarios: -1`; only vectorization needs enabling | `conf/env/scenarionet.yaml` |
+| The prior four-configuration diagnostic (2026-08-08, SAC-lite, 120k steps, one seed) is void as evidence | `docs/audits/acl_v2_teacher_power_analysis_2026-07-31/README.md:284`; the reward it measured was subsequently falsified (expert mean `-203.35`) and replaced |
+| That diagnostic's methodological finding survives and motivates this plan's design | Same source, §"The improvement is a level shift, not a learning trend": at 120k the ranking of configurations was not stable, and only the native arm showed a real slope (`route +0.087` early→late) |
+| Arm C (native reward + ACL) has never been run in any form | The 2026-08-08 set substituted a rulebook variant for that cell |
+
+## 5. Assumptions And Invariants
+
+- **Single varied factor.** `VERIFIED` by diff of the two fully resolved Hydra
+  configurations: the only differences are `reward.name/type/behavior`, the
+  dependent `lambda_env`/`lambda_rule`, and the run-identity paths. Algorithm,
+  encoder, decoder, observation, environment, budget, seed, evaluation panels
+  and the `scalarization` block are bit-identical. In arm A the `scalarization`
+  block is present but inert, because no scalarizer is constructed.
+- **Encoder.** `lq_v3` (`latent_query_v3`, ENC-V1.3), the production
+  architecture, identical in both arms.
+- **Expected wall clock.** Anchored on a real `medium` SAC run of 2026-07-27
+  (`EXP_sac-lite-cmp_RP_medium`, 21 envs, curriculum enabled): 350,000 steps in
+  **14.6 h** at 6.68 fps. With the production encoder, roughly 16-17 h per run,
+  so four runs are about 2.5 days sequentially. `INFERRED` from the
+  micro/lite throughput ratio, not measured for `lq_v3`.
+- **Budget.** `run_profile=medium`, `experiment.total_timesteps = 350000`
+  environment transitions per run, `eval_interval = 25000`,
+  `eval_episodes = 50`, `final_eval_episodes = 100`.
+- **Seeds.** `[0, 1]`, identical across both arms. `seed` also seeds the
+  ScenarioNet provider (`env.global_seed: ${seed}`), so record choice and
+  learner belong to one reproducible run.
+- **Source mix.** Waymo 0.5 / PG 0.5. `RULEBOOK-V5.1` `M8a` established that
+  five of six L3 sub-rules never apply on PG, so the two sources are graded by
+  substantially different rulebooks — hence `REQ-AB-007`.
+- **Termination/truncation.** Unchanged from production: at-fault contacts
+  terminate and are charged (ADR-071); not-at-fault contacts cost zero and
+  truncate through the `MAX_STEP` channel. `γ = 1` (ADR-075).
+- **Units.** L4 is signed route advance normalized by `D_REF = v_ref · Δt = 2.2222 m`
+  (ADR-073); speeds in m/s; the vehicle is capped at `max_speed_km_h = 80`.
+- **Instrument identity.** Both arms report the same `RULEBOOK-V5.1` margins,
+  so any compliance difference is a difference in behavior, not in measurement.
+
+## 6. Decisions And Approval Gates
+
+| ID | Category | Issue | Alternatives | Recommendation | Impact | Status |
+|---|---|---|---|---|---|---|
+| `DEC-AB-001` | Implementation detail | How is arm A's "native reward" expressed? | `reward=native` (no instrument) / `reward=monitor_only` (instrument kept, native reward trains) / both | `monitor_only` | Without it arm A yields no compliance metrics and the A–B contrast collapses to MetaDrive's own metrics | **Approved** (user, 2026-09-01) |
+| `DEC-AB-002` | Specification clarification | What budget licenses the freeze decision? | `thesis` 1.5M × 3 seeds (conclusion-grade under `REQ-018`) / `medium` 350k × 2 seeds (diagnostic) / staged | `medium` first, then escalate | A `medium` result is descriptive only and cannot by itself close the freeze; it de-risks before committing 6 × 1.5M runs | **Approved** (user, 2026-09-01): `medium`, seeds `[0, 1]` |
+| `DEC-AB-003` | Implementation detail | Probe algorithm | SAC only / TD3 only / both | SAC only | The question is about the reward, not the learner; algorithm selection is a separate, later step | **Approved** (user, 2026-09-01) |
+| `DEC-AB-006` | Implementation detail | Which encoder? | `lq_v3` (ENC-V1.3 production, 16 latents, depth 4) / `lq_v3_lite` (`architecture_version: diagnostic-only`) | `lq_v3` | A screening that licenses a freeze must not be able to fail for lack of encoder capacity, which is indistinguishable from an unlearnable reward. Measured: micro (4, 1) 7.71 fps against lite (8, 2) 6.68 fps on `medium`, so the simulator dominates and the production encoder costs roughly 15 %, not a multiple | **Corrected 2026-09-01**; the first draft inherited `lq_v3_lite` from the `Makefile` `ENCODER` default |
+| `DEC-AB-004` | Blocking technical issue | Authorization to consume GPU time for four runs | Launch now / wait for the GPU to free / stage sequentially | Confirm before launch | GPU 0 was at 98 % utilization and 89/98 GB on 2026-09-01 with another container training | **Awaiting approval** |
+| `DEC-AB-005` | Specification clarification | What exactly does a passing screening license freezing? | Rulebook + scalarization jointly / scalarization only / nothing without the `thesis` budget | Freeze both on a passing screening; the `thesis`-budget confirmation arrives as a by-product of the core runs that follow | Determines whether `D1`'s `τ₄` and the algorithm-selection phase can start | **Approved** (user, 2026-09-01). See §7.5 |
+
+`DEC-AB-004` is the only open gate. No run is launched while it is unresolved.
+
+## 7. Proposed Design
+
+### 7.1 Arms
+
+| Arm | Reward driving the learner | Rulebook instrument | Curriculum | Comparison-block ID |
+|---|---|---|---|---|
+| **A** | MetaDrive native | attached, measured, not optimized | disabled | `SCREEN-LEARNABILITY-A-NATIVE-01` |
+| **B** | `SCAL-V1.4` over the `RULEBOOK-V5.1` six-level vector | attached, measured **and** optimized | disabled | `SCREEN-LEARNABILITY-B-RULEBOOK-01` |
+| C | native | attached | ACL enabled | *blocked on `F5`* |
+| D | `SCAL-V1.4` | attached | ACL enabled | *blocked on `F5`* |
+
+### 7.2 Pre-registered hypotheses
+
+- `H1` (**learnability**): under arm B, `route_completion` and `success_rate`
+  improve from the early to the late portion of training by more than the
+  within-arm seed spread. This is the property the 2026-08-08 diagnostic found
+  *absent* under the old reward, and it is the primary question.
+- `H2` (**comparability**): arm B's late-training driving metrics are not
+  materially worse than arm A's. "Materially worse" is read against the seed
+  spread, descriptively — no significance is claimed (`REQ-AB-005`).
+- `H3` (**no inverted incentive**): under arm B, scalar return and driving
+  quality move together. The falsified historical pathology was return rising
+  while off-road rate rose with it. Operationalized as the sign of the
+  chunk-wise association between `mean_scalar_rule_reward` and
+  `route_completion` within arm B.
+- `H4` (**compliance dividend**): arm B's rulebook violation metrics are lower
+  than arm A's. This is what optimizing the rulebook is *for*; it is expected
+  but is not the freeze criterion, because a policy can reduce violations by
+  refusing to move — which `H1` and the below-standstill fraction detect.
+
+### 7.3 Decision rule, pre-registered
+
+- `H1` holds and `H3` holds → the screening **passes**; escalate to the
+  `thesis`-budget confirmation before declaring the freeze (`DEC-AB-005`).
+- `H1` fails → the reward is not optimizable as configured. Diagnose before
+  changing anything: first distinguish a *learner* problem (arm A also flat)
+  from a *reward* problem (arm A learns, arm B does not). The 2026-08-08
+  precedent shows the second is the informative case.
+- `H3` fails → stop. An inverted incentive is a rulebook or scalarization
+  defect and reopens `RULEBOOK-V5.1`, which is exactly what this screening
+  exists to detect before 1.5M-step runs are spent.
+- `H2` fails while `H1` and `H3` hold → record it and continue; a rulebook
+  reward that trades raw task performance for compliance is the intended
+  trade-off, not a failure, provided the loss is bounded and reported.
+
+### 7.5 What a passing screening licenses, and what it does not
+
+Approved 2026-09-01. A passing screening freezes **the rulebook and the
+scalarization jointly**, and the algorithm-selection phase and `D1`'s `tau_4`
+may then start.
+
+Three qualifications make that coherent rather than a shortcut.
+
+1. **The two components are not in the same position.** The rulebook's
+   *correctness* is already established by falsification against 1100 logged
+   Waymo records and by the O1-O6 orderings on constructed fixtures; the
+   screening adds the second half only -- that the preference order is
+   optimizable by gradient methods. The **scalarization** is the component the
+   screening actually tests: `SCAL-V1.4` was verified only for
+   rank-preservation, which is a mathematical property, and `RULEBOOK-V5.1`
+   sec. 5.5 records that `eta` "is the one weight in this document not pinned by
+   measurement" because the expert almost never relaxes and the panel cannot
+   discriminate. This screening is the first and only empirical test that
+   function will receive before the core runs.
+
+2. **A `medium` result can license the freeze even though it cannot be a
+   reported number.** The screening exists to stop the core runs being wasted,
+   not to produce a thesis figure. On a pass, the freeze is declared, the core
+   runs proceed at the `thesis` budget as `EVAL-PROTOCOL` requires, and those
+   runs are what produce the reportable quantities. The residual risk accepted
+   by `DEV-AB-001` is a pathology that only appears beyond 350k steps; the gross
+   failure modes -- the ones that would waste six full-budget runs -- are
+   exactly what the screening detects.
+
+3. **The gate is legitimate only because it was pre-registered.** A negative
+   `H3` licenses reopening `RULEBOOK-V5.1` because sec. 7.3 defined an inverted
+   incentive as a *defect* before any run existed, not because the result was
+   disliked. A gate declared after seeing the numbers would be the post-hoc
+   promotion `REQ-018` prohibits.
+
+**The ACL is frozen in the opposite order, and this is normative, not stylistic.**
+`ACL-SN-EMA-001` v2.0 sec. 11 requires that the specification "must be approved
+and frozen **before** any comparison run under it begins", because "the claim
+that no parameter was chosen by observing run performance is only defensible if
+the approval precedes the runs". The specification was accordingly approved on
+2026-09-01 (ADR-077), before any learnability run. Arms C and D therefore
+**measure** the curriculum; they are not an acceptance gate for it. A C/D result
+showing that the curriculum does not help is a thesis result to be reported, not
+a defect to be removed by adjusting the ACL until it helps -- that adjustment
+would forfeit the ACL as a scientific claim. The ACL's remaining freeze step is
+implementation verified against the approved specification (`F5`), which is
+independent of what C/D subsequently measure.
+
+### 7.4 Artifacts and analysis
+
+Both arms write the standard run tree (`csv/`, `artifacts/`, `checkpoints/`,
+`videos/`). Analysis uses the existing pipeline; the paired factor-effect table
+for the reward factor is produced by
+`analysis/tables/make_factor_effect_tables.py`, which is excluded from
+`make analyze` by default per `REQ-018` and must be requested explicitly.
+
+Reporting obligations: per source (`REQ-AB-007`), with the Waymo feasibility
+ceiling (`REQ-AB-008`), seed-level values plus mean and sample standard
+deviation only (`REQ-AB-005`).
+
+## 8. Traceability
+
+| Requirement | Acceptance criteria | Implementation | Tests | Status |
+|---|---|---|---|---|
+| `REQ-AB-001` | `AC-AB-001` | `conf/presets/learnability/*.yaml` (`analysis.experiment_group`) | `TEST-AB-001` | Implemented, unverified |
+| `REQ-AB-002` | `AC-AB-002` | `override /run_profile: medium` in both presets | `TEST-AB-002` | Implemented, verified |
+| `REQ-AB-003` | `AC-AB-003` | `seed=` override at launch | `TEST-AB-004` | Planned |
+| `REQ-AB-004` | `AC-AB-004` | `evaluation: scenarionet_panels` inherited unchanged | `TEST-AB-002` | Implemented, verified |
+| `REQ-AB-005` | `AC-AB-005` | Report only | — | Planned |
+| `REQ-AB-006` | `AC-AB-006` | Existing evaluation runtime | — | Pre-existing |
+| `REQ-AB-007` | `AC-AB-007` | Report only | — | Planned |
+| `REQ-AB-008` | `AC-AB-008` | Report only | — | Planned |
+| `REQ-AB-009` | `AC-AB-009` | `scalarization: default` inherited unchanged | `TEST-AB-002` | Implemented, verified |
+
+## 9. Test Strategy Defined Before Implementation
+
+Acceptance criteria:
+
+- `AC-AB-001` — each arm resolves to its own `analysis.experiment_group`, and
+  neither collides with `BASELINE-SCALAR-01` or `EXTENSION-ALGORITHM-01`.
+- `AC-AB-002` — the two fully resolved configurations differ **only** in the
+  reward group and the derived run identity.
+- `AC-AB-003` — both arms complete on seeds `0` and `1`; a crashed run is
+  relaunched on the same seed.
+- `AC-AB-004` — both arms report `final_eval` over identical panels.
+- `AC-AB-005` — the report contains seed-level values, mean and sample standard
+  deviation, and no CI or p-value.
+- `AC-AB-006` — `route_completion` is the primary reported continuous metric.
+- `AC-AB-007` — no metric is published pooled across Waymo and PG.
+- `AC-AB-008` — every Waymo success figure is accompanied by the feasibility ceiling.
+- `AC-AB-009` — the resolved `scalarization` block equals `conf/scalarization/default.yaml` in both arms.
+
+Mandatory matrix:
+
+| ID | Level | Behavior | Fixture/input | Expected result | Requirement |
+|---|---|---|---|---|---|
+| `TEST-AB-001` | Config | Each preset composes and carries a distinct comparison-block ID | `--cfg job --resolve` on each preset | Exit 0; `SCREEN-LEARNABILITY-A-NATIVE-01` / `SCREEN-LEARNABILITY-B-RULEBOOK-01` | `REQ-AB-001` |
+| `TEST-AB-002` | Config | Single-factor invariance | Diff of the two resolved configurations | Differences confined to `reward.*` and run identity | `REQ-AB-002`, `REQ-AB-004`, `REQ-AB-009` |
+| `TEST-AB-003` | Smoke | Each arm starts, logs, evaluates and terminates | `run_profile=smoke` override on each preset | Exit 0; `final_eval.csv` present; no NaN | `REQ-AB-002` |
+| `TEST-AB-004` | Integration | Both seeds complete at the screening budget | The four screening runs | Four completed runs, 350k transitions each | `REQ-AB-003` |
+| `TEST-AB-005` | Regression | The repository suite is unaffected by the added presets | `uv run --no-sync python -m pytest -q` | No new failures | — |
+
+Commands (all verified to exist in this repository):
+
+- Config composition: `docker compose -f compose.yaml run --rm dev uv run --no-sync python -m thesis_rl.cli.train --config-name presets/learnability/<arm> --cfg job --resolve`
+- Smoke: `make smoke`
+- Full suite: `make test`
+- Lint: `make lint`
+- Analysis regeneration: `make analyze RUN_PROFILE=medium ANALYSIS_ARGS="--include-effects-tables"`
+
+No mypy target exists; static checking is not part of this plan.
+
+## 10. Milestones
+
+### `M1` — Presets and pre-registration — **complete**
+
+- Objective: express arms A and B as two Hydra presets differing in one factor, and record the hypotheses and decision rule *before* any run.
+- Files: `conf/presets/learnability/sac_a_native.yaml`, `conf/presets/learnability/sac_b_rulebook.yaml`, this document.
+- Evidence: `TEST-AB-001` and `TEST-AB-002` executed 2026-09-01, both `PASS` (§14).
+- Dependencies: `DEC-AB-001`, `DEC-AB-002`, `DEC-AB-003` — all approved.
+
+### `M2` — Per-arm smoke — **not started**
+
+- Objective: confirm each preset starts, evaluates and terminates before spending the screening budget.
+- Tests: `TEST-AB-003`.
+- Dependencies: none.
+
+### `M3` — Screening runs — **blocked**
+
+- Objective: four runs — arms A and B × seeds 0 and 1 — at `run_profile=medium`.
+- Tests: `TEST-AB-004`.
+- Dependencies: `DEC-AB-004` (GPU authorization).
+
+### `M4` — Analysis and verdict — **not started**
+
+- Objective: evaluate `H1`–`H4` against §7.3 and record the verdict.
+- Dependencies: `M3`; `DEC-AB-005` for what the verdict licenses.
+
+## 11. Progress And Findings Log
+
+**2026-09-01.** Plan created. Recovered the A/B/C/D design from `open_items`
+`D4`, from the user's message of 16:12 the same day, and from `EVAL-PROTOCOL`
+v1.0 §229, which shows the factorial is the project's own historical design and
+is already implemented as a pairing primitive in the analysis pipeline.
+
+Finding, material: `reward=native` would have made arm A unmeasurable on
+compliance, because it detaches the rulebook wrapper. Resolved as `DEC-AB-001`
+by using `monitor_only`, which is also the convention the repository already
+follows in `conf/presets/selection/sac_sb3_native_contract_fast.yaml`.
+
+Finding, methodological: the 2026-08-08 four-configuration diagnostic is void
+as evidence — its reward was subsequently falsified — but its *method* finding
+survives and shaped `H1`: at 120k steps the ranking of configurations was not
+stable, and level differences between arms were not the same quantity as the
+learning slope within an arm. This plan therefore pre-registers the slope, not
+the level, as the primary criterion.
+
+`TEST-AB-001` and `TEST-AB-002` executed and passed; the resolved-config diff
+confirms single-factor invariance by measurement rather than by inspection.
+
+**2026-09-01, later.** `DEC-AB-005` resolved by the user: a passing screening
+freezes the rulebook and the scalarization jointly. Recorded as sec. 7.5, together
+with the asymmetry the user's question surfaced -- the ACL is frozen *before* its
+comparison runs, not after them, under `ACL-SN-EMA-001` v2.0 sec. 11's
+pre-registration requirement, so arms C/D measure the curriculum rather than
+gating it. `DEC-AB-004` (GPU authorization) remains the only open gate; the user
+is arranging for memory to be freed.
+
+**2026-09-01, third pass.** The user challenged the framing of the ACL freeze and
+asked for the encoder and budget facts. Three outcomes.
+
+*Framing corrected.* The previous entry conflated two questions that the ACL
+specification keeps apart: **verification** that the implementation works, which
+is `F5`, must precede the freeze and a failure there is a defect to fix; and the
+**C/D comparison**, whose outcome §11 forbids feeding back into parameter
+choice. The specification is not a straitjacket on the first: `DEC-205` states
+that the deferred `SNR` measurement for `H` is "a post-hoc validation, **not a
+gate**", with `H = 30` pre-declared as the revision if it returns below `0.5`.
+A pre-declared revision driven by a real learning run is legitimate precisely
+because it was declared in advance.
+
+*Encoder corrected.* `DEC-AB-006`. The first draft inherited `lq_v3_lite` from
+the `Makefile` `ENCODER` default; the repository labels it
+`architecture_version: diagnostic-only`. Both presets now select `lq_v3`, and
+`TEST-AB-001`/`TEST-AB-002` were re-run and pass.
+
+*Throughput measured, not guessed.* See §5.
+
+Next step: `DEC-AB-004`, then `M2`.
+
+## 12. Deviations
+
+| ID | Original contract | Actual or proposed change | Reason | Approval | Affected tests/docs |
+|---|---|---|---|---|---|
+| `DEV-AB-001` | `EVAL-PROTOCOL` v1.0 `REQ-002`/`REQ-003`: `thesis` profile, 1,500,000 steps, three seeds `[0, 1, 2]` | `medium` profile, 350,000 steps, two seeds `[0, 1]` | Screening before committing six full-budget runs under a reward that has never been trained on | User, 2026-09-01 (`DEC-AB-002`) | The result is a descriptive diagnostic under `REQ-018` and is not a core result; it cannot by itself close the freeze |
+
+## 13. Files
+
+| Path | Action | Purpose |
+|---|---|---|
+| `conf/presets/learnability/sac_a_native.yaml` | Added | Arm A |
+| `conf/presets/learnability/sac_b_rulebook.yaml` | Added | Arm B |
+| `docs/implementation/reward_learnability_ab_screening_exec_plan.md` | Added | This pre-registration |
+| `docs/project_index.md` | Planned modification | Record the plan in the implementation register |
+
+## 14. Validation Results
+
+| Command | Result | Date | Notes and evidence |
+|---|---|---|---|
+| `... --config-name presets/learnability/sac_a_native --cfg job --resolve` | `PASS` | 2026-09-01 | Exit 0; `reward.behavior=monitor_only`, `curriculum.enabled=false`, `run_profile.name=medium`, `scalarization.version=1.4`, `mode=six_level_priority_weighted_rank`, `priority_base=2.2`, `experiment_group=SCREEN-LEARNABILITY-A-NATIVE-01` |
+| `... --config-name presets/learnability/sac_b_rulebook --cfg job --resolve` | `PASS` | 2026-09-01 | Exit 0; `reward.behavior=scalar_reward`, same budget/curriculum/scalarization, `experiment_group=SCREEN-LEARNABILITY-B-RULEBOOK-01` |
+| Diff of the two resolved configurations | `PASS` | 2026-09-01 | Re-run after `DEC-AB-006` switched both arms to `lq_v3`; invariance preserved. Differences confined to `reward.name/type/behavior`, `lambda_env`/`lambda_rule`, `experiment.name`, `analysis.experiment_group` and the derived paths. Algorithm, encoder, decoder, observation, environment, budget, seed, panels and `scalarization` identical |
+| `make smoke` on each preset (`TEST-AB-003`) | `NOT_RUN` | — | `M2`. **Load-bearing, not a formality**: `conf/presets/test/smoke_train.yaml` selects `obs=lidar_state` and `encoder=none`, so the `semantic_v3` + `lq_v3` path has not been smoke-tested since `RB51` took the observation to `D = 3011` (`factory.py:76`). Risk: a startup failure on the production encoder discovered only at launch. Follow-up: `run_profile=smoke env.vectorized.num_envs=2` with the preset selected |
+| The four screening runs (`TEST-AB-004`) | `NOT_RUN` | — | `M3`, blocked on `DEC-AB-004` |
+| `make test` (`TEST-AB-005`) | `NOT_RUN` | — | The change is configuration-only and adds no code path; to be run before the plan is marked `VERIFIED` |
+
+## 15. Final Reconciliation
+
+Not reachable: the plan is `AWAITING_DECISIONS` and no screening run has been
+executed.
+
+**Known limitations, stated in advance.**
+
+1. Two seeds and 350k steps cannot support an inferential claim, and the plan
+   does not make one (`DEC-AB-003` of `EVAL-PROTOCOL` v1.0 forbids it even at
+   three seeds and 1.5M steps).
+2. The screening cannot validate the rulebook's *correctness*. That was
+   established by a different instrument — Test A/Test B falsification against
+   1100 logged Waymo records and the O1–O6 orderings on constructed fixtures —
+   and no training run can add to or subtract from it.
+3. A negative result on `H1` does not localize the cause between the reward,
+   the learner, the observation and the budget. Arm A is the control that
+   separates the first two; the remaining two require further work.
+4. The calibration underlying the reward is Waymo-only, and `M8a` measured that
+   five of six L3 sub-rules never apply on PG. Pooled reporting is therefore
+   prohibited (`REQ-AB-007`), and PG results speak to a materially smaller
+   rulebook.
+
+**Deferred required work.** Arms C and D, which answer the second half of
+`D4`'s question — whether the ACL actually helps — and which cannot start
+before `F5`.

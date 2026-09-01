@@ -53,6 +53,32 @@ class RulebookV2Adapter:
     mission_route: RoutePolyline
 
 
+def _ego_kinematics_payload(snapshot: Any) -> dict[str, Any] | None:
+    """EP-COMFORT-DIAG: the snapshot's ego kinematics, or `None` if absent.
+
+    A diagnostic must never be able to fail a step, and the snapshotter is
+    injected, so a caller may legitimately supply a stand-in that carries no
+    ego state. Anything unreadable yields `None`, which downstream reports as
+    "not measured" rather than as a comfortable episode.
+    """
+    ego = getattr(snapshot, "ego", None)
+    sim_time_s = getattr(snapshot, "sim_time_s", None)
+    velocity_xy = getattr(ego, "velocity_xy", None)
+    heading_rad = getattr(ego, "heading_rad", None)
+    if sim_time_s is None or heading_rad is None:
+        return None
+    if not isinstance(velocity_xy, (list, tuple)) or len(velocity_xy) != 2:
+        return None
+    try:
+        return {
+            "sim_time_s": float(sim_time_s),
+            "velocity_xy": (float(velocity_xy[0]), float(velocity_xy[1])),
+            "heading_rad": float(heading_rad),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
 class RulebookV2MonitorWrapper(gym.Wrapper):
     """Attach v2 diagnostics and optionally replace the native Gym reward."""
 
@@ -298,6 +324,16 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         if self._control_line_diagnostics is not None:
             info_dict["rulebook_control_line_diagnostics"] = dict(self._control_line_diagnostics)
         info_dict["rulebook"] = result.to_dict()
+        # EP-COMFORT-DIAG `DEC-CMF-005`: export the ego kinematics of the
+        # authoritative post-transition snapshot -- the very state the rulebook
+        # grades -- so the evaluation-time comfort diagnostic differentiates
+        # exactly what was evaluated. `sim_time_s` is carried instead of a
+        # configured timestep so the derivative uses the interval the simulator
+        # actually advanced. Diagnostic only: `RULEBOOK-V5.1` §13 excludes
+        # comfort and jerk from the rulebook and the reward.
+        ego_kinematics = _ego_kinematics_payload(post_snapshot)
+        if ego_kinematics is not None:
+            info_dict["ego_kinematics"] = ego_kinematics
         info_dict.update(self._level_diagnostics(result))
         if scalarization_result is not None:
             reward = scalarization_result.reward

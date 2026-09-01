@@ -7,28 +7,38 @@ termination decision, and it lives under `runtime/` rather than `rulebook/`
 precisely so it cannot be mistaken for a rulebook channel. See
 `docs/implementation/comfort_and_jerk_diagnostics_exec_plan.md`.
 
-The statistic set is nuPlan's `ego_is_comfortable`: seven kinematic channels,
-each with a published bound determined empirically from expert trajectories,
-and the boolean their conjunction implies (`DEC-CMF-001`).
+The instrument is nuPlan's `ego_is_comfortable`: seven kinematic channels, each
+with a published bound determined empirically from expert trajectories, and the
+boolean their conjunction implies (`DEC-CMF-001`). Both the bounds and the
+Savitzky-Golay derivative parameters below are transcribed from the devkit
+rather than chosen here (`DEC-CMF-006`); every value carries its source in a
+comment.
 
-**Deviation from nuPlan (`DEC-CMF-003` / `DEV-CMF-001`).** nuPlan extracts its
-channels from Savitzky-Golay-filtered trajectories; this module uses raw
-backward finite differences, because `scipy` is not a declared dependency of
-this repository and a hand-rolled filter would be an unapproved numerical
-convention. Simulator contact impulses and controller chatter therefore inflate
-the max-statistics, which makes the comfort verdict **conservative**: a
-trajectory nuPlan would call comfortable may be called uncomfortable here, not
-the other way round. Comparisons between arms measured by this same instrument
-are unaffected; comparisons against published nuPlan figures are not
-like-for-like.
+Two adaptations are unavoidable and are the only places this differs from the
+devkit; both are recorded as `DEV-CMF-001`:
+
+1. **Acceleration source.** nuPlan reads the simulator's own
+   `dynamic_car_state.center_acceleration_2d` and smooths it (`savgol`,
+   `window_length=8`, `poly_order=2`, `deriv=0`). MetaDrive's authoritative
+   snapshot publishes velocity, not acceleration, so the acceleration here is
+   the Savitzky-Golay **first derivative** of velocity at the same window and
+   polynomial order. Same filter, same window, one differentiation earlier.
+2. **Segmentation.** nuPlan filters one contiguous trajectory. An evaluation
+   episode may contain steps whose kinematics are unusable, so the series is
+   split at those gaps and each contiguous segment is filtered independently,
+   with the episode statistic taken across segments. No filter window ever
+   spans a gap.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
+
+import numpy as np
+from scipy.signal import savgol_filter
 
 # The seven per-episode channels, in the order they are reported. `min_lon_accel`
 # is a lower bound and every other entry is an upper bound; `_BOUND_IS_LOWER`
@@ -55,6 +65,44 @@ COMFORT_AGGREGATE_COLUMNS: tuple[str, ...] = (
     "comfort_episode_count",
     "comfort_excluded_episode_count",
 ) + tuple(f"mean_comfort_{name}" for name in COMFORT_STATISTICS)
+
+
+@dataclass(frozen=True, slots=True)
+class SavgolSpec:
+    """One Savitzky-Golay derivative configuration, as nuPlan parameterises it."""
+
+    window_length: int
+    poly_order: int
+    deriv_order: int
+
+    def min_samples(self) -> int:
+        """Shortest series this spec can be evaluated on.
+
+        `approximate_derivatives` clamps the window to the series length and
+        then requires `poly_order < window_length`, so a series of
+        `poly_order + 1` samples is the shortest that does not raise.
+        """
+        return self.poly_order + 1
+
+
+# Transcribed from nuplan-devkit `nuplan/planning/metrics/utils/state_extractors.py`:
+#
+# - `extract_ego_acceleration(..., poly_order=2, window_length=8)` smooths the
+#   acceleration series (`deriv=0`); here the same window and order take the
+#   first derivative of velocity instead (adaptation 1 above).
+# - `extract_ego_jerk(..., deriv_order=1, poly_order=2, window_length=15)`.
+# - `extract_ego_yaw_rate(..., deriv_order=1, poly_order=2, window_length=15)`
+#   and, for yaw acceleration, `deriv_order=2, poly_order=3`.
+#
+# The yaw window is **5, not 15**, and that is deliberate: `extract_ego_yaw_rate`
+# accepts `window_length` but never forwards it to `approximate_derivatives`,
+# which therefore applies its own default of 5. Reproducing the devkit's actual
+# behaviour is what makes these numbers comparable to published nuPlan figures;
+# passing 15 would silently measure something nuPlan never measured.
+ACCEL_SPEC = SavgolSpec(window_length=8, poly_order=2, deriv_order=1)
+JERK_SPEC = SavgolSpec(window_length=15, poly_order=2, deriv_order=1)
+YAW_RATE_SPEC = SavgolSpec(window_length=5, poly_order=2, deriv_order=1)
+YAW_ACCEL_SPEC = SavgolSpec(window_length=5, poly_order=3, deriv_order=2)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,11 +141,16 @@ class ComfortBounds:
         return True
 
 
-# nuPlan devkit `ego_is_comfortable` defaults, in m/s^2, m/s^3, rad/s and
-# rad/s^2. Taken as published rather than refitted here: the repository's own
-# rulebook documents (`RULEBOOK-V5.0` §13) already record these as the
-# expert-derived anchor for comfort, and re-deriving them against this
-# repository's expert panel is deferred work, not a silent substitution.
+# Transcribed from the nuplan-devkit metric configs under
+# `nuplan/planning/script/config/common/simulation_metric/low_level/`:
+# `ego_lon_acceleration_statistics.yaml` (min -4.05, max 2.40),
+# `ego_lat_acceleration_statistics.yaml` (4.89), `ego_jerk_statistics.yaml`
+# (8.37), `ego_lon_jerk_statistics.yaml` (4.13),
+# `ego_yaw_rate_statistics.yaml` (0.95), `ego_yaw_acceleration_statistics.yaml`
+# (1.93). Taken as published rather than refitted: `RULEBOOK-V5.0` §13 already
+# records these as the expert-derived anchor for comfort, and re-deriving them
+# against this repository's own expert panel is deferred work, not a silent
+# substitution.
 NUPLAN_COMFORT_BOUNDS = ComfortBounds(
     max_lon_accel=2.40,
     min_lon_accel=-4.05,
@@ -111,14 +164,12 @@ NUPLAN_COMFORT_BOUNDS = ComfortBounds(
 
 @dataclass(frozen=True, slots=True)
 class ComfortStep:
-    """One step's ego kinematics, in the ego frame of `RuleRewardWrapper`."""
+    """One step's authoritative ego kinematics, as the rulebook snapshotted it."""
 
-    a_lon: float
-    a_lat: float
-    a_x: float
-    a_y: float
-    yaw: float
-    dt: float
+    sim_time_s: float
+    velocity_x: float
+    velocity_y: float
+    heading_rad: float
 
 
 def _finite_float(value: Any) -> float | None:
@@ -128,118 +179,180 @@ def _finite_float(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _wrap_angle(delta: float) -> float:
-    """Wrap a heading difference to `(-pi, pi]`.
+def _savgol(values: np.ndarray, delta: float, spec: SavgolSpec) -> np.ndarray | None:
+    """Apply one nuPlan-parameterised Savitzky-Golay derivative, or `None`.
 
-    Without this a heading crossing `+-pi` fabricates a yaw rate of order
-    `2*pi/dt`, which would breach the yaw bounds on a perfectly smooth turn.
+    Mirrors `approximate_derivatives`: the window is clamped to the series
+    length, and a series too short for the polynomial order yields nothing
+    rather than an exception.
     """
-    return math.remainder(delta, 2.0 * math.pi)
+    window_length = min(spec.window_length, len(values))
+    if window_length <= spec.poly_order or delta <= 0.0:
+        return None
+    filtered: np.ndarray = savgol_filter(
+        values,
+        window_length=window_length,
+        polyorder=spec.poly_order,
+        deriv=spec.deriv_order,
+        delta=delta,
+    )
+    return filtered
 
 
 def extract_comfort_step(step_info: Any) -> ComfortStep | None:
     """Read one step's kinematics, or `None` when they are unusable.
 
-    Mirrors `extract_subrule_step`'s tolerance: a missing or malformed
+    The source is `info["ego_kinematics"]`, published by
+    `RulebookV2MonitorWrapper.step` from the post-transition `EnvSnapshot`:
+    the same ego state the rulebook grades, so the comfort diagnostic and the
+    rulebook can never disagree about what the vehicle did.
+
+    Tolerance mirrors `extract_subrule_step`: a missing or malformed
     `step_info` is treated as absent rather than as an error, because
-    evaluation must not fail on a diagnostic. `dt` is read from `ego_state`
-    (`DEC-CMF-005`) so the derivative below is taken over exactly the timestep
-    `RuleRewardWrapper._extract_physical_acceleration` differentiated the
-    velocity over; no default timestep is assumed.
+    evaluation must not fail on a diagnostic. The legacy v1 `RuleRewardWrapper`
+    path publishes no `ego_kinematics`, so runs on that path report empty
+    comfort columns -- "not measured", which is what they are.
     """
     if not isinstance(step_info, Mapping):
         return None
-    ego_state = step_info.get("ego_state")
-    if not isinstance(ego_state, Mapping):
-        return None
-    acceleration = ego_state.get("acceleration")
-    if not isinstance(acceleration, Mapping):
+    kinematics = step_info.get("ego_kinematics")
+    if not isinstance(kinematics, Mapping):
         return None
 
-    a_lon = _finite_float(acceleration.get("longitudinal"))
-    a_lat = _finite_float(acceleration.get("lateral"))
-    a_x = _finite_float(acceleration.get("x"))
-    a_y = _finite_float(acceleration.get("y"))
-    yaw = _finite_float(ego_state.get("yaw"))
-    dt = _finite_float(ego_state.get("dt"))
-    if (
-        a_lon is None
-        or a_lat is None
-        or a_x is None
-        or a_y is None
-        or yaw is None
-        or dt is None
-        or dt <= 0.0
-    ):
+    velocity = kinematics.get("velocity_xy")
+    if not isinstance(velocity, (list, tuple)) or len(velocity) != 2:
         return None
-    return ComfortStep(a_lon=a_lon, a_lat=a_lat, a_x=a_x, a_y=a_y, yaw=yaw, dt=dt)
+
+    sim_time_s = _finite_float(kinematics.get("sim_time_s"))
+    velocity_x = _finite_float(velocity[0])
+    velocity_y = _finite_float(velocity[1])
+    heading_rad = _finite_float(kinematics.get("heading_rad"))
+    if sim_time_s is None or velocity_x is None or velocity_y is None or heading_rad is None:
+        return None
+    return ComfortStep(
+        sim_time_s=sim_time_s,
+        velocity_x=velocity_x,
+        velocity_y=velocity_y,
+        heading_rad=heading_rad,
+    )
+
+
+def segment_statistics(segment: Sequence[ComfortStep]) -> dict[str, float | None]:
+    """Reduce one gap-free run of steps to the seven channels.
+
+    Public because it is the whole numerical contract of this module and is
+    worth testing directly against closed-form trajectories.
+    """
+    stats: dict[str, float | None] = dict.fromkeys(COMFORT_STATISTICS)
+    if len(segment) < 2:
+        return stats
+
+    times = np.asarray([step.sim_time_s for step in segment], dtype=np.float64)
+    intervals = np.diff(times)
+    if not np.all(intervals > 0.0):
+        return stats
+    # `approximate_derivatives` collapses the sample spacing to its mean and
+    # feeds that single `delta` to `savgol_filter`; a per-interval spacing is
+    # not something the filter accepts.
+    delta = float(intervals.mean())
+
+    velocity_x = np.asarray([step.velocity_x for step in segment], dtype=np.float64)
+    velocity_y = np.asarray([step.velocity_y for step in segment], dtype=np.float64)
+    headings = np.asarray([step.heading_rad for step in segment], dtype=np.float64)
+
+    accel_x = _savgol(velocity_x, delta, ACCEL_SPEC)
+    accel_y = _savgol(velocity_y, delta, ACCEL_SPEC)
+    if accel_x is not None and accel_y is not None:
+        cos_h = np.cos(headings)
+        sin_h = np.sin(headings)
+        accel_lon = accel_x * cos_h + accel_y * sin_h
+        accel_lat = -accel_x * sin_h + accel_y * cos_h
+        stats["max_lon_accel"] = float(accel_lon.max())
+        stats["min_lon_accel"] = float(accel_lon.min())
+        stats["max_abs_lat_accel"] = float(np.abs(accel_lat).max())
+
+        # nuPlan's magnitude jerk differentiates the acceleration *magnitude*
+        # (`acceleration_coordinate='magnitude'`), not the acceleration vector,
+        # so the two jerk channels are derivatives of two scalar series.
+        accel_magnitude = np.hypot(accel_x, accel_y)
+        magnitude_jerk = _savgol(accel_magnitude, delta, JERK_SPEC)
+        if magnitude_jerk is not None:
+            stats["max_abs_mag_jerk"] = float(np.abs(magnitude_jerk).max())
+        longitudinal_jerk = _savgol(accel_lon, delta, JERK_SPEC)
+        if longitudinal_jerk is not None:
+            stats["max_abs_lon_jerk"] = float(np.abs(longitudinal_jerk).max())
+
+    # `phase_unwrap` in the devkit; unwrapping before differentiating is what
+    # stops a heading crossing +-pi from fabricating a yaw rate of 2*pi/delta.
+    unwrapped = np.unwrap(headings)
+    yaw_rate = _savgol(unwrapped, delta, YAW_RATE_SPEC)
+    if yaw_rate is not None:
+        stats["max_abs_yaw_rate"] = float(np.abs(yaw_rate).max())
+    yaw_accel = _savgol(unwrapped, delta, YAW_ACCEL_SPEC)
+    if yaw_accel is not None:
+        stats["max_abs_yaw_accel"] = float(np.abs(yaw_accel).max())
+    return stats
 
 
 class ComfortEpisodeAccumulator:
     """Reduce one episode's steps to the nuPlan comfort statistics.
 
-    One instance per episode. Derivatives are backward differences over
-    *consecutive* valid steps: a step whose kinematics are unusable resets the
-    carried state, so no derivative is ever taken across a gap in the episode.
+    One instance per episode. Steps are buffered into gap-free segments,
+    because a Savitzky-Golay window must not span a discontinuity; each
+    segment is filtered on `finalize()` and the episode statistic is the
+    extremum across segments. A step whose kinematics are unusable, or one
+    that does not advance simulation time, closes the current segment.
     """
 
-    __slots__ = ("_bounds", "_prev", "_prev_yaw_rate", "_stats", "_valid_steps")
+    __slots__ = ("_bounds", "_segment", "_segments", "_valid_steps")
 
     def __init__(self, bounds: ComfortBounds = NUPLAN_COMFORT_BOUNDS) -> None:
         self._bounds = bounds
         self._valid_steps = 0
-        self._prev: ComfortStep | None = None
-        self._prev_yaw_rate: float | None = None
-        self._stats: dict[str, float | None] = dict.fromkeys(COMFORT_STATISTICS)
+        self._segment: list[ComfortStep] = []
+        self._segments: list[list[ComfortStep]] = []
 
-    def _keep_max(self, name: str, value: float) -> None:
-        current = self._stats[name]
-        self._stats[name] = value if current is None else max(current, value)
-
-    def _keep_min(self, name: str, value: float) -> None:
-        current = self._stats[name]
-        self._stats[name] = value if current is None else min(current, value)
+    def _close_segment(self) -> None:
+        if self._segment:
+            self._segments.append(self._segment)
+            self._segment = []
 
     def observe(self, step_info: Any) -> None:
         step = extract_comfort_step(step_info)
         if step is None:
-            self._prev = None
-            self._prev_yaw_rate = None
+            self._close_segment()
             return
 
         self._valid_steps += 1
-        self._keep_max("max_lon_accel", step.a_lon)
-        self._keep_min("min_lon_accel", step.a_lon)
-        self._keep_max("max_abs_lat_accel", abs(step.a_lat))
-
-        previous = self._prev
-        if previous is None:
-            # First step of a run of consecutive valid steps: no difference to
-            # take, and the previous yaw rate belongs to a broken chain.
-            self._prev_yaw_rate = None
-            self._prev = step
-            return
-
-        dt = step.dt
-        self._keep_max("max_abs_lon_jerk", abs(step.a_lon - previous.a_lon) / dt)
-        self._keep_max(
-            "max_abs_mag_jerk",
-            math.hypot(step.a_x - previous.a_x, step.a_y - previous.a_y) / dt,
-        )
-        yaw_rate = _wrap_angle(step.yaw - previous.yaw) / dt
-        self._keep_max("max_abs_yaw_rate", abs(yaw_rate))
-        if self._prev_yaw_rate is not None:
-            self._keep_max("max_abs_yaw_accel", abs(yaw_rate - self._prev_yaw_rate) / dt)
-        self._prev_yaw_rate = yaw_rate
-        self._prev = step
+        if self._segment and step.sim_time_s <= self._segment[-1].sim_time_s:
+            # Simulation time did not advance: the filter has no spacing to
+            # work with, so this starts a fresh segment rather than corrupting
+            # the current one.
+            self._close_segment()
+        self._segment.append(step)
 
     def finalize(self) -> dict[str, Any]:
         """Return this episode's summary; `None` marks an undefined channel."""
+        self._close_segment()
+
+        stats: dict[str, float | None] = dict.fromkeys(COMFORT_STATISTICS)
+        for segment in self._segments:
+            for name, value in segment_statistics(segment).items():
+                if value is None:
+                    continue
+                current = stats[name]
+                if current is None:
+                    stats[name] = value
+                elif name in _BOUND_IS_LOWER:
+                    stats[name] = min(current, value)
+                else:
+                    stats[name] = max(current, value)
+
         summary: dict[str, Any] = {
             "valid_step_count": int(self._valid_steps),
-            "is_comfortable": self._bounds.satisfied_by(self._stats),
+            "is_comfortable": self._bounds.satisfied_by(stats),
         }
-        summary.update({name: self._stats[name] for name in COMFORT_STATISTICS})
+        summary.update({name: stats[name] for name in COMFORT_STATISTICS})
         return summary
 
 

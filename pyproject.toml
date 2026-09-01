@@ -12,6 +12,10 @@ dependencies = [
   "hydra-core>=1.3",
   "omegaconf>=2.3",
   "numpy>=1.24,<2",
+  # EP-COMFORT-DIAG: Savitzky-Golay derivatives, so the ride-comfort channels
+  # reproduce nuPlan's `ego_is_comfortable` instrument rather than an unfiltered
+  # approximation of it (user-approved 2026-09-01).
+  "scipy>=1.10,<2",
   "pandas>=2,<3",
   "pyarrow>=14",
   "pyyaml>=6",
