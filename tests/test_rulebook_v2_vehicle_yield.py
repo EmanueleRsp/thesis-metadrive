@@ -28,7 +28,13 @@ def test_vehicle_yield_approach_and_persistent_illegal_entry():
         previous_illegal_entries=frozenset(),
         ego_brake_mps2=4.0,
     )
-    assert result.cost == 1 and ("car", "z") in dict(delta.writes)["vehicle_yield_illegal_entries"]
+    # ADR-064: the illegal entry is still detected and recorded, but no longer
+    # priced. What used to be a latched 1.0 is now a diagnostic; the approach
+    # term above, which prices the decision while it is still being made, is what
+    # remains in the reward.
+    assert result.cost == 0.0
+    assert result.diagnostics["latched_illegal_entry"] is True
+    assert ("car", "z") in dict(delta.writes)["vehicle_yield_illegal_entries"]
 
 
 def test_vehicle_yield_freezes_movement_key_until_complete_exit():
@@ -64,10 +70,13 @@ def test_vehicle_yield_freezes_movement_key_until_complete_exit():
 
 
 def test_vehicle_yield_pre_state_gap_creates_latch_with_empty_post_state_intervals():
-    """DEC-005 Fase A/B (REQ-VY-01, REQ-VY-04): an illegal entry judged from
-    the pre-state gap must still latch, and stay applicable/violated, even
-    when the post-state has zero live prioritized actors (e.g. the actor
-    left the conflict zone during the same control step)."""
+    """DEC-005 Fase A/B (REQ-VY-01): an illegal entry judged from the pre-state
+    gap is still recorded when the post-state has zero live prioritized actors
+    (e.g. the actor left the conflict zone during the same control step).
+
+    ADR-064 removed REQ-VY-04's half of this: the latch no longer sets the cost
+    or forces applicability. The pre/post-state conformance the test exists for
+    is unchanged and is what is asserted here."""
     result, delta, _ = evaluate_vehicle_yield(
         zone_id="z",
         ego_interval=OccupancyInterval(1, 2),
@@ -81,8 +90,8 @@ def test_vehicle_yield_pre_state_gap_creates_latch_with_empty_post_state_interva
         pre_state_entered_actor_ids=frozenset({"car"}),
         pre_state_gap_violation=0.6,
     )
-    assert result.cost == 1.0
-    assert result.applicable is True
+    assert result.cost == 0.0
+    assert result.diagnostics["latched_illegal_entry"] is True
     assert ("car", "z") in dict(delta.writes)["vehicle_yield_illegal_entries"]
 
 
@@ -107,11 +116,16 @@ def test_vehicle_yield_pre_state_sufficient_gap_creates_no_latch():
     assert result.cost == 0.0
 
 
-def test_vehicle_yield_active_latch_stays_applicable_with_no_live_prioritized_actors():
-    """REQ-VY-04: an already-active latch must keep the component applicable
-    and VIOLATED while ego occupies the zone, even with zero live post-state
-    prioritized actors (regression: the old early-return branch hardcoded
-    ``applicable=False``/``cost=0.0``, silently discarding the latch)."""
+def test_vehicle_yield_active_latch_is_carried_but_no_longer_priced():
+    """ADR-064 supersedes REQ-VY-04.
+
+    The latch used to keep the component applicable and VIOLATED at cost 1.0 for
+    as long as the ego occupied the zone. That is removed: inside the zone no
+    action changes the cost, so the agent was charged repeatedly for a decision
+    already taken with no gradient toward better behaviour, and the latch was a
+    memory the agent could not see. It is still carried across steps and still
+    reported, so an illegal entry remains auditable -- it is simply not in the
+    reward."""
     result, delta, _ = evaluate_vehicle_yield(
         zone_id="z",
         ego_interval=OccupancyInterval(1, 2),
@@ -123,8 +137,9 @@ def test_vehicle_yield_active_latch_stays_applicable_with_no_live_prioritized_ac
         entered_actor_ids=frozenset(),
         previous_illegal_entries=frozenset({("car", "z")}),
     )
-    assert result.cost == 1.0
-    assert result.applicable is True
+    assert result.cost == 0.0
+    assert result.applicable is False
+    assert result.diagnostics["latched_illegal_entry"] is True
     assert ("car", "z") in dict(delta.writes)["vehicle_yield_illegal_entries"]
 
 
@@ -165,5 +180,5 @@ def test_vehicle_yield_legacy_caller_without_pre_state_gap_falls_back_to_post_st
         previous_illegal_entries=frozenset(),
         ego_brake_mps2=4.0,
     )
-    assert result.cost == 1.0
+    assert result.diagnostics["latched_illegal_entry"] is True
     assert ("car", "z") in dict(delta.writes)["vehicle_yield_illegal_entries"]

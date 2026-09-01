@@ -343,7 +343,9 @@ class ThesisScenarioEnv(ScenarioEnv):
             )
         raise ValueError(f"Unsupported scenario source for causal route: {source!r}")
 
-    def _build_causal_frame_builder(self, config: Mapping[str, Any]) -> Any:
+    def _build_causal_frame_builder(
+        self, config: Mapping[str, Any], route_lanes: tuple[Any, ...] = ()
+    ) -> Any:
         from thesis_rl.envs.observations.assigned_route import (
             AssignedRouteWaypointAdapter,
             MapRouteNavigationObservation22,
@@ -357,7 +359,10 @@ class ThesisScenarioEnv(ScenarioEnv):
         route = self._mission_runtime.route
         navigation = MapRouteNavigationObservation22(
             AssignedRouteWaypointAdapter(
-                route, num_waypoints=10, spacing_m=5.0, mission_provider=lambda: self._mission_runtime
+                route,
+                num_waypoints=10,
+                spacing_m=5.0,
+                mission_provider=lambda: self._mission_runtime,
             )
         )
         observation_cfg = config.get("observation", {})
@@ -373,6 +378,7 @@ class ThesisScenarioEnv(ScenarioEnv):
                 dropout_prob=float(ray_cfg.get("dropout_prob", 0.0)),
                 enabled=bool(ray_cfg.get("enabled", True)),
             ),
+            route_lanes=route_lanes,
         )
 
     def _install_causal_observation_builder(self) -> None:
@@ -404,7 +410,19 @@ class ThesisScenarioEnv(ScenarioEnv):
         if not isinstance(scenario, Mapping):
             raise RuntimeError("Causal observation requires the loaded scenario mapping")
         if frame_setters:
-            builder = self._build_causal_frame_builder(self.config)
+            # OBS-LIDAR-V2.0.2 needs the route lanes for the posted-limit feature,
+            # resolved the same way the semantic path below resolves them: the
+            # live Rulebook cache when it exists, since it carries the
+            # source-to-simulator elevation translation, and the static adapter
+            # result otherwise.
+            rulebook_adapter = getattr(self, "rulebook_v2_adapter", None)
+            episode_cache = getattr(rulebook_adapter, "initial_cache", None)
+            frame_route_lanes = (
+                episode_cache.route_lanes
+                if episode_cache is not None
+                else self._build_static_adapter_result(scenario, record).route_lanes
+            )
+            builder = self._build_causal_frame_builder(self.config, frame_route_lanes)
             for setter in frame_setters:
                 setter(builder)
         self._causal_semantic_builders = []
@@ -538,7 +556,9 @@ class ThesisScenarioEnv(ScenarioEnv):
             initial_snapshot,
             origin_offset_xy=origin_offset_xy,
         )
-        initial_snapshot = replace(initial_snapshot, mission_snapshot=self._mission_runtime.snapshot)
+        initial_snapshot = replace(
+            initial_snapshot, mission_snapshot=self._mission_runtime.snapshot
+        )
 
         def capture_with_mission(_env: Any) -> EnvSnapshot:
             snapshot = capture(_env)
@@ -621,11 +641,14 @@ class ThesisScenarioEnv(ScenarioEnv):
         initial_snapshot = snapshotter.capture(self)
         if self._mission_runtime is None:
             raise RuntimeError("Rulebook v2 adapter requires the installed driving mission runtime")
-        initial_snapshot = replace(initial_snapshot, mission_snapshot=self._mission_runtime.snapshot)
+        initial_snapshot = replace(
+            initial_snapshot, mission_snapshot=self._mission_runtime.snapshot
+        )
 
         def snapshot_with_mission(env: Any) -> EnvSnapshot:
             snapshot = snapshotter.capture(env)
             return replace(snapshot, mission_snapshot=self._mission_runtime.snapshot)
+
         calibration = None
         data_directory = Path(str(self.config.get("data_directory", "")))
         data_root = data_directory.parent.parent
@@ -870,9 +893,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             # The physical post-state is the causal pre-state for the next
             # transition, while the mission tracker has just committed the
             # new ordered-gate state. Keep both in one immutable snapshot.
-            self._mission_pre_snapshot = replace(
-                post_snapshot, mission_snapshot=mission_snapshot
-            )
+            self._mission_pre_snapshot = replace(post_snapshot, mission_snapshot=mission_snapshot)
             self._mission_last_update_episode_length = episode_length
         done, done_info = super().done_function(vehicle_id)
         vehicle = self.agents[vehicle_id]
@@ -926,14 +947,81 @@ class ThesisScenarioEnv(ScenarioEnv):
             done_info[TerminationState.MAX_STEP] = True
             done = False
 
+        # ADR-071, the load-bearing half. A collision the ego is not to blame for
+        # truncates instead of terminating, and R1 charges nothing for it.
+        #
+        # Zeroing the cost while keeping termination would be *worse* than the
+        # status quo: the agent would still be punished, through the zero
+        # bootstrap, and would additionally have learned that provoking one is
+        # free. Truncation closes that by construction -- a truncated episode
+        # returns the agent its own expected continuation value, i.e. exactly
+        # what it would have obtained by continuing to drive, so provoking the
+        # impact buys nothing. This is partial-episode bootstrapping (Pardo,
+        # Tavakoli, Levdik & Kormushev, ICML 2018) and it is the
+        # termination/truncation distinction this repository already commits to.
+        not_at_fault_only = self._collision_is_not_at_fault(post_snapshot)
+        done_info["not_at_fault_collision"] = bool(not_at_fault_only)
+        if not_at_fault_only:
+            for key in (
+                TerminationState.CRASH,
+                TerminationState.CRASH_VEHICLE,
+                TerminationState.CRASH_HUMAN,
+                TerminationState.CRASH_OBJECT,
+                TerminationState.CRASH_BUILDING,
+            ):
+                done_info[key] = False
+            done = self._recompute_terminated(done_info)
+            if not done:
+                # Truncation, not "keep driving": the physics contact happened
+                # and the episode cannot continue meaningfully, so the episode
+                # ends while the value target bootstraps from `V(s)`.
+                done_info[TerminationState.MAX_STEP] = True
+
         done_info["crossed_continuous_line"] = bool(line_only)
         done_info["physical_out_of_road"] = bool(physical_out)
         done_info.update(self.scene_context.get_physical_road_diagnostics(self, vehicle))
-        done_info["termination_reason"] = (
-            self.scene_context.get_termination_reason(self, vehicle, done_info)
+        done_info["termination_reason"] = self.scene_context.get_termination_reason(
+            self, vehicle, done_info
         )
         self._last_done_info = dict(done_info)
         return done, done_info
+
+    def _collision_is_not_at_fault(self, post_snapshot: Any) -> bool:
+        """Whether this step's contacts exist and are all not the ego's fault.
+
+        Uses the Rulebook's own classifier, never a second implementation: the
+        reward and the episode contract read the same function, so "charged" and
+        "terminated" cannot drift apart. Returns ``False`` when there is no
+        contact at all, when any contact is at fault, and when the inputs are not
+        resolvable -- the conservative direction in every case, because an
+        undeterminable state must not earn the softer ending.
+        """
+
+        from thesis_rl.rulebook.v2.components.collision_fault import (
+            classify_contact,
+            is_at_fault,
+        )
+        from thesis_rl.rulebook.v2.transition import ego_within_single_lane
+
+        onsets = getattr(post_snapshot, "contact_onset_records", ())
+        if not onsets:
+            return False
+        pre_snapshot = self._mission_pre_snapshot
+        if pre_snapshot is None:
+            return False
+        actors_by_id = {actor.actor_id: actor for actor in post_snapshot.actors}
+        adapter = getattr(self, "rulebook_v2_adapter", None)
+        cache = getattr(adapter, "initial_cache", None)
+        route_lanes = getattr(cache, "route_lanes", ()) if cache is not None else ()
+        within_single_lane = ego_within_single_lane(pre_snapshot.ego.footprint, route_lanes)
+        for record in onsets:
+            actor = actors_by_id.get(record.actor_id)
+            if actor is None:
+                return False
+            fault = classify_contact(pre_ego=pre_snapshot.ego, actor=actor)
+            if is_at_fault(fault, ego_within_single_lane=within_single_lane):
+                return False
+        return True
 
     def _scenario_metadata(self) -> dict[str, Any]:
         record = self.current_scenario_record

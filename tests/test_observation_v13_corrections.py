@@ -1018,13 +1018,13 @@ def test_022_to_025_group_shapes_match_obs_v13(monkeypatch) -> None:
     assert batch.controls.shape == (8, 15)
     assert batch.context_history.shape == (21, 23)
     assert batch.interactions.shape == (8, 33)
-    assert batch.lane_road.shape == (12,)
+    assert batch.lane_road.shape == (14,)
 
 
 def test_026_flat_dimension_and_token_count() -> None:
     from thesis_rl.contracts.observation_schema import SemanticObservationSchemaV12
 
-    assert SemanticObservationSchemaV12.flat_dim == 3009
+    assert SemanticObservationSchemaV12.flat_dim == 3011
     assert SemanticObservationSchemaV12.raw_token_count == 143
 
 

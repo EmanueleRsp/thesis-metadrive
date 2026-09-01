@@ -334,9 +334,12 @@ def test_final_scalar_pipeline_defaults_compose() -> None:
     assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
     assert str(cfg.reward.name) == "scalar_reward"
     assert str(cfg.reward.behavior) == "scalar_reward"
-    # SCAL-V1.1 (ADR-057, DEC-SCAL11-001=A): bounded_priority_weighted_rank
-    # is the default mode as of conf/scalarization/default.yaml.
-    assert str(cfg.scalarization.mode) == "bounded_priority_weighted_rank"
+    # SCAL-V1.4 (RULEBOOK-V5.1 §5, ADR-076): six_level_priority_weighted_rank
+    # is the default mode as of conf/scalarization/default.yaml. It replaced
+    # SCAL-V1.1's bounded_priority_weighted_rank when the rulebook went to six
+    # levels: the four-level modes remain selectable (`DEC-RB51-003`) but can no
+    # longer consume what the rulebook emits.
+    assert str(cfg.scalarization.mode) == "six_level_priority_weighted_rank"
     assert str(cfg.curriculum.name) == "scenario_acl_scenarionet"
     assert str(cfg.rulebook.version) == "4.7-final-implementation-complete"
 

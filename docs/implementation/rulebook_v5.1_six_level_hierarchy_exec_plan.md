@@ -259,18 +259,275 @@ and this plan does not invent one. New public interfaces are annotated.
   `components/progress_rate.py` implements `c_L6 = 1 - clip(dq, 0, 1)` as the
   `advance_shortfall` sub-rule, wired into `transition.py` from the same station
   delta L4 reads. `T-RB51-04` and `-05` still to be written as their own file.
-- [ ] **M3 — Inherited sub-rule redefinitions.** `ADR-064`, `-065`, `-067`.
-  Existing rulebook suite extended.
-- [ ] **M4 — `speed_limit`**, with the `OBS-V1.3` / `OBS-LIDAR-V2.0` amendment it requires. Test `T-RB51-16`.
-- [ ] **M5 — At-fault gate (`ADR-070`).** Test `T-RB51-10`.
-- [ ] **M6 — `SCAL-V1.4`.** Tests `T-RB51-06`, `-07`. *Not started; the module
-  was read during M1 to size the work, nothing was changed.*
-- [ ] **M7 — At-fault classification (`ADR-071`).** Termination vs truncation and the bootstrap value.
+- [x] **M3 — Inherited sub-rule redefinitions.** `DONE 2026-09-01`. `ADR-067`:
+  `ttc` moves to nuPlan's uniform **0.95 s** (the per-class 0.8/1.0 pair had no
+  source), with class *eligibility* split out of the threshold table so
+  "eligible" and "how urgent" stopped being one object; `clearance` is scoped to
+  VRU whose centroid lies on the drivable surface, which required threading the
+  surface into the component. `ADR-065`: `offroad` takes the **0.3 m** band,
+  `wrong_carriageway` the **centroid** gate, `solid_line` **graded penetration**
+  at tolerance 0.3 with the marking buffered by its real half width 0.075 m.
+  `ADR-064`: the persistence latches leave the cost of `crosswalk` and
+  `vehicle_yield`; the illegal-entry set is still tracked and now reported as
+  `latched_illegal_entry`, so "not charged" never becomes "not observed", and
+  `REQ-EF-08`'s applicability coupling goes with the latch because there is no
+  longer a latched cost for `aggregate_max_component` to discard.
+
+  **One judgment recorded rather than assumed.** `ADR-065` replaces "the binary
+  1.0 **on any contact**", and the swept-front-bumper crossing was one of the two
+  ways that 1.0 was reached, so it leaves the cost and becomes a diagnostic.
+  Three reasons, in order of weight: the measured 0.349 % was produced by a
+  variant with no swept term, so pricing it here would put production and the
+  oracle out of agreement before `T-RB51-12` is even run; an event term on a
+  binary scale beside a state term on a graded one is exactly the confusion the
+  redefinition removes; and under `ADR-072` a completed crossing that leaves the
+  ego correctly placed is the *relaxation* L5 exists to permit, so charging it
+  1.0 against sustained straddling's 0.328 would invert the intended ordering.
+- [x] **M4 — `speed_limit`.** `DONE 2026-09-01`. New `components/speed_limit.py`
+  at L3; `RouteLaneRecord` gains `posted_speed_limit_mps`, populated by the Waymo
+  adapter through a **provenance** gate (`speed_limit_mph` must be present) and
+  left `None` unconditionally by the PG adapter. The v1 extractor's
+  `max_speed_km_h` fallback is not carried over, as `ADR-068` requires.
+
+  Both observation amendments written and applied: `OBS-V1.3.1` (`lane_road`
+  12 -> 14, `D` 3009 -> **3011**) and `OBS-LIDAR-V2.0.2` (frame 308 -> **310**,
+  stacked 6489 -> **6531**). Checkpoint compatibility is broken by both, as
+  approved.
+
+  **The observation calls the reward's own lookup.** §7 requires the
+  "unavailable" encoding to fire under *exactly* the condition that makes the
+  sub-rule inapplicable, so `associated_speed_limit_mps` was made public and both
+  paths call it after the same `associate_route_lane`. Two implementations of
+  "is there a limit here" would eventually disagree and the failure would be
+  silent. Two values rather than a sentinel, because a sentinel inside the
+  normalized channel is indistinguishable from a real limit at that value once
+  the encoder has projected it.
+- [x] **M5 — At-fault gate (`ADR-070`).** `DONE 2026-09-01`. New
+  `components/at_fault_gate.py` holds the threshold, the covered sub-rules and
+  the inapplicable-result shape **once**: three components applying one rule from
+  three private constants is how one rule becomes three slightly different rules.
+  The gate reads the **post**-transition ego velocity for all three, including
+  the two whose costs come from the pre state, because it asks whether the ego is
+  stopped at the state the cost is charged against. `tests/test_at_fault_gate.py`
+  additionally pins the magnitude argument that licenses transplanting an
+  evaluation threshold into a reward: `5e-02 / v_ref < 0.005`, so crawling under
+  the gate earns nothing.
+- [x] **M6 — `SCAL-V1.4`.** `DONE 2026-09-01`. The formula, the §5.4
+  constructor gate and `tests/test_scal_v14.py` were already in the tree; what
+  was missing was that **nothing selected the mode**:
+  `conf/scalarization/default.yaml` still named `bounded_priority_weighted_rank`
+  at `priority_base 3.0`, a four-margin mode, while the rulebook has emitted six
+  since `M1`. Switched to `six_level_priority_weighted_rank` at
+  `a = 2.2, sigma = 0, phi = 0.25, lambda4 = 2.0, eta = 1.0, lambda6 = 0.2`,
+  with `vector_schema_id = rulebook_v5_1_six_level_v1` (the distinct id of §3.4,
+  which reaches the checkpoint identity as part of the already-approved break).
+  `_REQUIRED_MARGIN_COUNT_BY_MODE` was declared but never read, with 4 and 6
+  restated at the two `_canonicalize_bounded` call sites; the table is now the
+  single source and `expected` lost its default so no caller can omit it.
+- [x] **M7 — At-fault classification (`ADR-071`).** `DONE 2026-09-01`. New
+  `components/collision_fault.py` implements nuPlan's taxonomy in the order that
+  matters; `evaluate_collision_impact` charges **only** at-fault contacts and
+  reports the rest. Undeterminable lane containment resolves to **at fault**: an
+  input that cannot be resolved must never buy an exculpation, because the
+  failure would be silent and would reward exactly the states where the geometry
+  is hardest to resolve.
+
+  The truncation half is in `done_function`, which already snapshots the
+  post-state and so can classify without waiting for the outer Rulebook wrapper.
+  It calls the **same** pure classifier the reward calls, so "charged" and
+  "terminated" cannot drift. A not-at-fault-only step clears the crash flags and
+  sets `MAX_STEP`, which is the repository's existing truncation channel: the
+  episode ends and the value target bootstraps from `V(s)`, so provoking the
+  impact buys the agent exactly what continuing to drive would have.
+- [x] **M-DIAG — §7 diagnostics (`REQ-RB51-19`).** `DONE 2026-09-01`.
+  `l4_clip_binding_steps`, `l5_reached_steps` and the per-step ego speed feeding
+  `mean_ego_speed_by_source`. Two of the three exist to make a claim falsifiable
+  rather than to describe a run, and the tests assert that reading: a non-zero
+  L4 clip count says the 80 km/h cap was overridden and the Test A figures no
+  longer bound what the agent can earn, and an `l5_reached_steps` that stays zero
+  says the restructure bought nothing and must be reported as such.
+
 - [ ] **M8 — Reconciliation.** `T-RB51-12` .. `-15`, `make test`, `make lint`,
   `make smoke`; reconcile every `AC-RB5.1-*`; update `docs/project_index.md` and
   close `B1`/`B2` in `docs/open_items.md`.
 
+  **Three coverage measurements ride along with `M8`'s panel run** (approved
+  2026-09-01). They are measurements *against* the frozen definition, not
+  changes to it, and both expand what is measured rather than what is excused:
+  each can only add violations, never remove them, so if the channels stay clean
+  afterwards the frozen claim is strictly stronger. They are scheduled here and
+  not later because `M8` must re-derive `T-RB51-13`'s targets against production
+  anyway — folding them in costs one run, deferring them costs two.
+
+  - **`M8a` — PG dispatch (closes `F6`).**
+    `scripts/measure_expert_rulebook_transition.py:1634` calls
+    `build_waymo_static_adapter_result` unconditionally; dispatch on the record's
+    source so `build_pg_static_adapter_result` runs on PG. Then report
+    **applicability rates per sub-rule and geometric sanity** on the PG `train`
+    panel. This is **not** Test A and must never be reported as such: a PG
+    record's logged ego is `IDMPolicy`, which makes the headway rules circular
+    (limitation 5) and the positional rules vacuous (limitation 6), so replay
+    can establish nothing about satisfiability there. What it does establish is
+    whether the rulebook is *applicable* on PG at all — a sub-rule never
+    applicable on half the training distribution is a sub-rule silently absent
+    from it, which is `C2`'s failure mode transplanted to a whole data source.
+    Instrument-only: no production code changes, so no rulebook regression is
+    possible.
+  - **`M8b` — decompose the 209 (answers `C2`, closes `C3`).** ADR-051 already
+    reports the residual as **52** controls lost at adapter construction plus
+    **157** that are *"genuinely unrelated approaches **or** route ends more than
+    one lane short"*. That `or` is the whole point: the 157 mix correct
+    exclusions — a light governing an approach the ego never enters — with
+    recoverable ones, and the single-hop version cannot separate them. So `C2`'s
+    headline 25.2 % is an upper bound on a defect whose true size is unknown.
+    `control_line_diagnostics(cache)`
+    (`src/thesis_rl/rulebook/v2/transition.py:556`) already computes exactly this
+    and is already static per scenario; `C3` is precisely the missing
+    aggregation. Aggregate it over the 828 signalised records and report the
+    split. Read-only.
+  - **`M8c` — per-scenario applicability.** The instrument already reports
+    `applicable_steps` and `violated_fraction_of_applicable` per sub-rule; what
+    it does not report is the **per-scenario** view — on how many scenarios a
+    sub-rule is never applicable at all. That is the granularity `C2` needs and
+    the one Test A is structurally blind to (limitation 6: a rule that never
+    fires passes by never being tested).
+
+- [ ] **M9 — conditional: multi-hop route reachability.** *Gated on `M8b`.* If
+  the decomposition shows the recoverable share is material,
+  `route_reachable_control_lane_ids` (`transition.py:502`) extends from one hop
+  to a chain, walking successors while each remains unique. This is the
+  follow-up ADR-051 named and deliberately deferred for want of measurement, not
+  a new idea, and it preserves the load-bearing property unchanged — an
+  ambiguous branch is never guessed — which already carries its own regression
+  test. It amends `rulebook_v4.11` §2.9.5's operational predicate and therefore
+  needs its own ADR, but it does **not** reopen `RULEBOOK-V5.1` §3/§4/§5:
+  hierarchy, `L4`/`L6` and `SCAL-V1.4` are untouched.
+
 ## 11. Progress And Findings Log
+
+**2026-09-01 (later) — M8's measurements. Three findings, one of them large.**
+
+`T-RB51-12` and `T-RB51-13` **pass**, and passing them is what converts §5.5 from
+a claim about a script into a claim about production.
+
+- **`oracle_max_divergence` is 0.0** for `clearance`, `solid_line`, `ttc` and
+  `wrong_carriageway` across all 1100 Waymo records, and `5.97e-06` for
+  `offroad`. That residual is production's `OFFROAD_AREA_EPSILON_M2 = 1e-4`
+  clamp, which the variant does not apply: `1e-4` over a ~8 m² footprint is
+  `1.25e-5`, so the observed value sits inside the epsilon by construction. A
+  deliberate numerical net, not a drift.
+- **The panel reproduces §5.5 exactly** at the selected weights: mean **70.70**,
+  p1 **-61.81**, p5 **+5.29**, p50 **+51.85**, below standstill **3.36 %**. 1100
+  measured, 0 skipped, 0 errors.
+
+**The oracle was itself broken, and had been since `M1`.** Before it could be
+used it had to be found: the script still built the four-margin vector while
+production has emitted six since 2026-08-21, so `scalarize_rulebook_margins`
+raised on **every** record. The failure was invisible because
+`ScalarizationEvaluationError` subclasses `ValueError` and the replay's own
+handler counts that as a *skipped scenario* -- the report said "0 measured", and
+nobody read it because the script had not been run. Three further v4.7-era
+assumptions surfaced behind it: the self-check compared the old `r2`/`r3`
+aggregates against channels production no longer computes, and the `clearance`
+reproduction compared the unscoped rule against a production that now scopes and
+gates it. Each would have reported an *approved redefinition* as an instrument
+defect.
+
+**`M8b` -- `C2` decomposed, and it is worse for `stop` than for `signal`.**
+On the same 1100 records:
+
+| | total | dropped by route reachability |
+|---|---:|---:|
+| `SIGNAL` controls | 744 | **313 (42.1 %)** |
+| `STOP` controls | 536 | **400 (74.6 %)** |
+
+546 records carry a signal that survived adapter construction, and **122 of them
+have every signal dropped** by the filter. A further **13 569** controls are lost
+at adapter construction (`control_line_off_route_drop_count`). So `C2`'s 25.2 %
+headline is, on this panel, 122 records attributable to route reachability --
+the part `M9`'s multi-hop extension could recover -- and the rest to adapter
+construction, which is a different defect with a different fix. **`STOP` was
+never measured before and is the worse case**; `C2` should be restated to cover
+both.
+
+**`M8c` -- three L3 sub-rules are nearly inert on Waymo.** Records on which the
+sub-rule is applicable at least once, out of 1100: `crosswalk` **15 (1.4 %)`,
+`stop` **115 (10.5 %)**, `signal` **409 (37.2 %)**. Test A can only reject, so a
+rule that almost never applies passes it almost for free. Their clean §4 figures
+must be read against these denominators.
+
+**`M8a` -- the largest finding. PG and Waymo are not under the same rulebook.**
+The dispatch was one call site, as limitation 5 said. With it, 1089 of 1100 PG
+records replay (11 skipped on a missing `length` field), `oracle_max_divergence`
+is 0.0 throughout, and the expert scores mean **+142.06** with **5.6 %** below
+standstill against Waymo's +70.70 and 3.36 %.
+
+Records on which each sub-rule is ever applicable:
+
+| sub-rule | Waymo /1100 | PG /1089 |
+|---|---:|---:|
+| `offroad`, `solid_line`, `dashed_line`, `wrong_carriageway` | 1005-1100 | **1089** |
+| `ttc` | 1100 | 909 |
+| `rss_lateral` | 806 | 381 |
+| `vehicle_yield` | 725 | 196 |
+| `clearance` | 674 | **0** |
+| `signal` | 409 | **0** |
+| `stop` | 115 | **0** |
+| `crosswalk` | 15 | **0** |
+| `speed_limit` | 1100 | **0** |
+
+**Five of the six L3 sub-rules never apply on PG**, so L3 there is `offroad`
+alone, and `clearance` never applies either because PG has no VRU. This is a much
+stronger statement than limitation 13, which records only the speed regime: the
+two sources are graded by *substantially different rulebooks*, and PG carries no
+traffic controls at all (`control_line_coverage` is zero throughout). It bears
+directly on open item `D5` (arm/source confounding), and it is the reason `F6`
+was worth promoting out of *Deferred* rather than measuring after training.
+
+**None of this is a reason to reopen the definition.** Every figure is a
+measurement *against* the frozen hierarchy, and the hierarchy reproduced its own
+published numbers to the decimal on the way. What they change is what may be
+*claimed*: the admissibility evidence covers Waymo, and on PG the rulebook is
+largely inapplicable rather than largely satisfied.
+
+
+**2026-09-01 — M6 complete. The defect was the wiring, not the formula.**
+
+The full suite was run first, as a measurement rather than as a gate: **2 failed,
+1484 passed**. Both failures were informative and neither was in `SCAL-V1.4`'s
+arithmetic.
+
+1. *Nothing selected the new mode.* `conf/scalarization/default.yaml` still named
+   a four-margin mode while the rulebook has emitted six since `M1`, so
+   `tests/test_rulebook_v2_wrapper.py` failed with
+   `Scalarization requires 4 macro margins, got 6`. Worth stating precisely,
+   because the first reading was wrong: this is **not** an unguarded hole. The
+   arity contract is enforced, has its own two tests
+   (`test_six_level_mode_rejects_a_four_margin_vector`,
+   `test_legacy_modes_still_reject_a_six_margin_vector`), and it is what produced
+   the error. What was wrong is that the arity was *written in three places* —
+   the table, and a literal at each call site — with the table never read. The
+   table is now the single source and `expected` lost its default.
+
+   The consequence was larger than one red test: with that config, **a live
+   training run would have raised on its first step**, which is why `make smoke`
+   could not have passed either.
+
+2. *A fixture below its own tolerance.*
+   `test_progress_weight_cannot_overturn_a_non_relaxable_violation` used `-1e-9`
+   as "the smallest possible L3 violation", but `numerical_tolerance` is `1e-8`
+   and `_canonicalize_bounded` clamps at or under it to exactly zero **by
+   design**. The margin was therefore not a small violation but no violation,
+   the satisfaction indicator correctly did not fire, and the test asserted
+   `-0.12 > 2.0`. Corrected to `-1e-6`, with the clamped case now asserted
+   explicitly alongside it so the distinction cannot be silently undone. The
+   test is strengthened, not relaxed: before this it could not fail for the
+   reason it was written to check.
+
+Both test changes are migrations of the same class as `M1`'s 50-test ripple —
+they encoded the four-level contract — and neither weakens an acceptance
+criterion. `tests/test_hydra_preset_run_configs.py`'s pinned default mode was
+updated for the same reason.
 
 **2026-08-21 — M0, M1, M2 complete; two self-inflicted defects found and
 fixed with regressions.**
@@ -336,3 +593,17 @@ No deviations identified.
 | `make test` | 50 failed, 1418 passed | 2026-08-21 | first ripple measurement |
 | `make test` | 51 failed, 1417 passed | 2026-08-21 | after the first fixes; remaining causes isolated |
 | `make test` | *in progress* | 2026-08-21 | after the two defect fixes |
+| `make test` | **2 failed, 1484 passed** | 2026-09-01 | `M6` entry measurement: the stale four-margin default config, and the sub-tolerance fixture. Both diagnosed in §11 |
+| `uv run --no-sync python -m pytest -q` | **1486 passed** | 2026-09-01 | after `M6`; no test skipped, weakened or xfailed |
+| `uv run --no-sync ruff check src tests scripts` | **All checks passed** | 2026-09-01 | fixes a pre-existing `F821` in `aggregation.py:140` introduced by `M1`: `RulebookV2Registry` was annotated but never imported. Guarded under `TYPE_CHECKING`, since `registry` pulls in every evaluator |
+| `ruff format --check` (5 changed files) | **PASS** | 2026-09-01 | focused scope per `AGENTS.md`; `aggregation.py`'s single reformatted line is `M1`'s, in a file this change materially modifies |
+| `git diff --check` | **clean** | 2026-09-01 | |
+| `pytest -q` (full suite) | **1528 passed** | 2026-09-01 | after `M3`, `M4`, `M5`, `M7` and the §7 diagnostics |
+| `ruff check src tests scripts` | **All checks passed** | 2026-09-01 | |
+| `ruff format --check` (50 changed files) | **PASS** | 2026-09-01 | focused scope; 18 materially modified files formatted |
+| `T-RB51-12` — oracle divergence, 20 records | **PASS** | 2026-09-01 | 0.0 on every redefined sub-rule |
+| `T-RB51-13` — full Waymo `train` panel | **PASS** | 2026-09-01 | 1100 measured, 0 skipped, 0 errors; mean **70.70**, p1 −61.81, p5 +5.29, p50 +51.85, below standstill **3.36 %** — §5.5 reproduced to the decimal. `offroad` divergence 5.97e-06, explained by production's area epsilon |
+| `M8a` — PG coverage panel | **RUN** | 2026-09-01 | 1089/1100 measured, 11 skipped (missing `length`); mean +142.06, below standstill 5.6 %; five of six L3 sub-rules never applicable |
+| `M8b` — control-line decomposition | **RUN** | 2026-09-01 | `SIGNAL` 313/744 dropped, `STOP` **400/536** dropped, 122 records with no selectable signal |
+| `M8c` — per-scenario applicability | **RUN** | 2026-09-01 | `crosswalk` 15/1100, `stop` 115/1100, `signal` 409/1100 |
+| `make smoke` | **PASS** (exit 0) | 2026-09-01 | The direct check of what `M6` claimed was broken: an end-to-end training run under the six-level reward, which under the previous config would have raised on its first step. First smoke since `ADR-058` and the only one ever run under `gamma = 1`. **Not a substitute for `M8`'s smoke**: `M3`, `M4`, `M5` and `M7` are still missing, so this exercises the wiring, not the finished rulebook |

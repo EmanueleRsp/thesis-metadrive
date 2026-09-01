@@ -1,4 +1,4 @@
-"""21-frame masked wrapper for the causal 308D LiDAR observation.
+"""21-frame masked wrapper for the causal 310D LiDAR observation.
 
 Depth and mask rationale: see `docs/implementation/
 lidar_arm_temporal_alignment_and_lq_tokenization_v2.0_exec_plan.md` (`DEC-002`,
@@ -21,9 +21,9 @@ from metadrive.obs.observation_base import BaseObservation
 
 
 class StackedLidarObservationV2(BaseObservation):
-    """Stack 21 causal 308D frames, oldest to current, with a validity mask."""
+    """Stack 21 causal 310D frames, oldest to current, with a validity mask."""
 
-    FRAME_DIM = 308
+    FRAME_DIM = 310
     HISTORY_LENGTH = 21
     MASK_DIM = HISTORY_LENGTH
     STACKED_DIM = FRAME_DIM * HISTORY_LENGTH + MASK_DIM
@@ -54,7 +54,7 @@ class StackedLidarObservationV2(BaseObservation):
 
     def observe(self, vehicle: object) -> np.ndarray:
         if self._frame_builder is None:
-            raise RuntimeError("StackedLidarObservationV2 requires a causal 308D frame builder")
+            raise RuntimeError("StackedLidarObservationV2 requires a causal 310D frame builder")
         frame = np.asarray(self._frame_builder(vehicle), dtype=np.float32).reshape(-1)
         if frame.shape != (self.FRAME_DIM,):
             raise ValueError(

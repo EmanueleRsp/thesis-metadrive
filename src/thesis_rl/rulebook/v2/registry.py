@@ -12,6 +12,7 @@ from thesis_rl.rulebook.v2.components.progress import evaluate_progress
 from thesis_rl.rulebook.v2.components.progress_rate import evaluate_progress_rate
 from thesis_rl.rulebook.v2.components.rss import evaluate_rss
 from thesis_rl.rulebook.v2.components.rss_lateral import evaluate_rss_lateral
+from thesis_rl.rulebook.v2.components.speed_limit import evaluate_speed_limit
 from thesis_rl.rulebook.v2.components.road import (
     evaluate_dashed_line,
     evaluate_offroad,
@@ -120,6 +121,11 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
         frozenset({"vehicle_yield_illegal_entries", "frozen_actor_movement_keys"}),
     ),
     ComponentDefinition(
+        "speed_limit",
+        MacroRule.NON_RELAXABLE_COMPLIANCE,
+        evaluate_speed_limit,
+    ),
+    ComponentDefinition(
         "zone_lifecycle",
         MacroRule.NON_RELAXABLE_COMPLIANCE,
         None,
@@ -137,9 +143,7 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
     ComponentDefinition("progress", MacroRule.MISSION_PROGRESS, evaluate_progress),
     # L5 -- relaxable lane compliance (ADR-072): the rules a competent driver
     # may relax in order to complete a mission, therefore BELOW progress.
-    ComponentDefinition(
-        "solid_line", MacroRule.RELAXABLE_LANE_COMPLIANCE, evaluate_solid_line
-    ),
+    ComponentDefinition("solid_line", MacroRule.RELAXABLE_LANE_COMPLIANCE, evaluate_solid_line),
     ComponentDefinition(
         "wrong_carriageway",
         MacroRule.RELAXABLE_LANE_COMPLIANCE,

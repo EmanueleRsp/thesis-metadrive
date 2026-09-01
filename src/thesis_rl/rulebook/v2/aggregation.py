@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import TYPE_CHECKING
 
 from thesis_rl.rulebook.v2.types import (
     COST_MACRO_RULES,
@@ -12,6 +13,11 @@ from thesis_rl.rulebook.v2.types import (
     RuleComponentResult,
     RulebookResult,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - imported for the annotation only.
+    # Guarded rather than imported at module level: `registry` pulls in every
+    # component evaluator, and aggregation must stay importable without them.
+    from thesis_rl.rulebook.v2.registry import RulebookV2Registry
 
 
 def aggregate_max_component(
@@ -191,9 +197,7 @@ def aggregate_rulebook_result(
             macro.append(aggregate_max_component(name=level.value, components=group))
         else:
             macro.append(
-                aggregate_sum_component(
-                    name=level.value, components=group, denominator=denominator
-                )
+                aggregate_sum_component(name=level.value, components=group, denominator=denominator)
             )
 
     costs = tuple(max(0.0, min(1.0, result.cost)) for result in macro)

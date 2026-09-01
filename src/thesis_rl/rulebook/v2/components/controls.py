@@ -370,14 +370,21 @@ def evaluate_crosswalk_yield(
         active.update((actor_id, zone_id) for actor_id, _ in vru_intervals)
     elif not ego_occupied:
         active = {entry for entry in active if entry[1] != zone_id}
+    # ADR-064: the persistence latch is removed from the cost. It pinned the cost
+    # at 1.0 for as long as the ego occupied the zone, which is both a
+    # credit-assignment defect -- inside the zone no action changes the cost, so
+    # the agent is charged repeatedly for a decision already taken, with no
+    # gradient toward better behaviour -- and a Test B failure, because the latch
+    # is a memory the agent cannot see and is unbounded in duration, so it cannot
+    # be made a plausible perception feature either. The memoryless approach
+    # term, which prices that same decision while it is still being made, is
+    # retained. The illegal-entry set is still tracked and reported, following
+    # the convention of `rss` and the not-at-fault collisions: measured, never
+    # priced. REQ-EF-08's applicability coupling goes with it -- with no latched
+    # cost there is nothing for `aggregate_max_component` to discard.
     active_latch_for_zone = bool(ego_occupied and any(entry[1] == zone_id for entry in active))
-    cost = 1.0 if active_latch_for_zone else approach_cost
-    # REQ-EF-08: an active latch must keep the component applicable, otherwise
-    # ``aggregate_max_component`` — which filters on ``applicable`` — silently
-    # discards a cost of 1.0 and reports R3 = 0.  ``evaluate_vehicle_yield``
-    # already applies this rule; the crosswalk branch did not, so an illegal
-    # entry stopped being charged as soon as the VRU left the prediction set.
-    applicable = bool(vru_intervals) or active_latch_for_zone
+    cost = approach_cost
+    applicable = bool(vru_intervals)
     result = RuleComponentResult(
         "crosswalk",
         cost,
@@ -387,7 +394,7 @@ def evaluate_crosswalk_yield(
         ComponentStatus.VIOLATED
         if cost > 0.0
         else (ComponentStatus.SATISFIED if applicable else ComponentStatus.NOT_APPLICABLE),
-        {"before_gate": before},
+        {"before_gate": before, "latched_illegal_entry": active_latch_for_zone},
     )
     delta = MemoryDelta(
         writer="crosswalk", writes=(("crosswalk_illegal_entries", frozenset(active)),)
@@ -478,12 +485,15 @@ def evaluate_vehicle_yield(
     else:
         commit, before, approach = 0.0, False, 0.0
 
-    # DEC-005 Fase D: an active latch for this zone dominates the aggregated
-    # cost for as long as ego occupies it, independent of whether the
-    # post-state still has any live prioritized actor (REQ-VY-04).
+    # ADR-064 removes the latch from the cost, for the reasons given in
+    # `evaluate_crosswalk_yield`. This is where 353 of the 364 latched expert
+    # steps were charged -- 86.9 % of all traffic-control cost -- so the change
+    # is measurable here even though it is justified on observability and credit
+    # assignment rather than on magnitude. DEC-005 Fase D's dominance rule
+    # (REQ-VY-04) is superseded: the latch is reported, not priced.
     active_latch_for_zone = ego_occupied and any(key[1] == zone_id for key in illegal_keys)
-    cost = 1.0 if active_latch_for_zone else approach
-    applicable = bool(prioritized_intervals) or active_latch_for_zone
+    cost = approach
+    applicable = bool(prioritized_intervals)
     result = RuleComponentResult(
         "vehicle_yield",
         cost,
@@ -497,7 +507,7 @@ def evaluate_vehicle_yield(
         ComponentStatus.VIOLATED
         if cost > 0.0
         else (ComponentStatus.SATISFIED if applicable else ComponentStatus.NOT_APPLICABLE),
-        {"before_gate": before},
+        {"before_gate": before, "latched_illegal_entry": active_latch_for_zone},
     )
     delta = MemoryDelta(
         writer="vehicle_yield",

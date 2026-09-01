@@ -45,7 +45,12 @@ from typing import Any, Iterable, Mapping, Sequence
 import numpy as np
 
 from thesis_rl.mission.types import MissionSnapshot
-from thesis_rl.reward.scalarization import ScalarizationConfig, scalarize_rulebook_margins
+from thesis_rl.reward.scalarization import (
+    SIX_LEVEL_VECTOR_SCHEMA_ID,
+    ScalarizationConfig,
+    scalarize_rulebook_margins,
+)
+from thesis_rl.rulebook.v2.components.at_fault_gate import ego_is_stopped
 from thesis_rl.rulebook.v2.components.clearance import CLEARANCE_THRESHOLDS_M
 from thesis_rl.rulebook.v2.components.progress import MISSION_PROGRESS_REFERENCE_SPEED_MPS
 from thesis_rl.rulebook.v2.components.road import dashed_lateral_penetration
@@ -56,6 +61,7 @@ from thesis_rl.rulebook.v2.components.rss import (
     RSSCalibrationArtifact,
 )
 from thesis_rl.rulebook.v2.components.rss_lateral import lateral_safe_distance_m
+from thesis_rl.rulebook.v2.context.pg_static_adapter import build_pg_static_adapter_result
 from thesis_rl.rulebook.v2.context.waymo_static_adapter import build_waymo_static_adapter_result
 from thesis_rl.rulebook.v2.geometry.drivable import (
     DrivableLaneRecord,
@@ -67,6 +73,7 @@ from thesis_rl.rulebook.v2.geometry.vertical import VERTICAL_COMPATIBILITY_TOLER
 from thesis_rl.rulebook.v2.memory import apply_cache_delta
 from thesis_rl.rulebook.v2.geometry.lanes import associate_route_lane
 from thesis_rl.rulebook.v2.transition import (
+    control_line_diagnostics,
     RulebookTransitionConfig,
     _rss_candidates,
     _rss_lateral_candidates,
@@ -138,6 +145,10 @@ _NORMATIVE_COMPONENTS = (
     "stop",
     "crosswalk",
     "vehicle_yield",
+    # L3, ADR-068. Now a registered production sub-rule rather than a variant
+    # this script computed for itself; it is inapplicable throughout the PG
+    # panel, by provenance.
+    "speed_limit",
     # L6, ADR-076. Named for what it measures rather than for its level: a
     # sub-rule sharing its level's name shadowed the atomic result in the
     # component map.
@@ -1142,6 +1153,30 @@ class Measurement:
     v51_q_start: list[float] = field(default_factory=list)
     v51_q_end: list[float] = field(default_factory=list)
     v51_telescoping_max_error: float = 0.0
+    # `T-RB51-12`. Until `RB51`/`M3`-`M5` this script *reimplemented* the
+    # redefined sub-rules as variants, because production still charged the old
+    # ones. Production now implements them natively, so the two must agree to
+    # numerical tolerance on every step -- and if they do, the specification's
+    # published numbers become a claim about production rather than about a
+    # script. The divergence is accumulated on every run rather than gated behind
+    # a flag: a check that has to be remembered is a check that will be forgotten,
+    # and a silent drift here would invalidate every figure in §5.5.
+    oracle_divergence: dict[str, float] = field(default_factory=dict)
+    # `M8b`, closing `C3` and answering `C2`. `control_line_diagnostics` is static
+    # per scenario and has existed since ADR-051; what was missing was any
+    # cross-episode aggregation of it, so the 209 records where `SIGNAL` is never
+    # selectable stayed an undecomposed headline. These counters separate the
+    # controls lost at adapter construction from those excluded by route
+    # reachability, which is the split that says how much of `C2` is a defect at
+    # all.
+    control_line_totals: Counter[str] = field(default_factory=Counter)
+    scenarios_with_controls: int = 0
+    scenarios_with_no_selectable_signal: int = 0
+    # `M8c`. Test A can only reject, so a rule that is never *applicable* passes
+    # it perfectly. Per-step applicability is already reported; this is the
+    # per-scenario view -- on how many records a sub-rule never applies at all --
+    # which is the granularity `C2` needs and the one the method is blind to.
+    scenarios_where_applicable: Counter[str] = field(default_factory=Counter)
 
     def __post_init__(self) -> None:
         for name in (
@@ -1174,8 +1209,21 @@ class Measurement:
             self.components.setdefault(name, CostSamples())
         for name in _MACRO_COMPONENTS:
             self.macros.setdefault(name, CostSamples())
-        for channel in ("r1", "r2", "r3", "r4"):
+        # `RULEBOOK-V5.1` §3's six levels, replacing v4.7's `r1..r4`. The names
+        # are an output contract: they reach the report, so renaming them is the
+        # same class of change `DEC-RB51-005` approved for `MacroRule`.
+        for channel in ("l1", "l2", "l3", "l4", "l5", "l6"):
             self.channel_returns.setdefault(channel, [])
+
+    def observe_oracle(self, name: str, production: float, variant: float) -> None:
+        """Record the worst disagreement seen between production and the variant."""
+
+        # `setdefault` first: an absent key and a zero divergence must not read
+        # the same way. An empty report would say "perfect agreement" and "never
+        # compared" with the same evidence, which is the failure mode this whole
+        # check exists to catch.
+        divergence = abs(float(production) - float(variant))
+        self.oracle_divergence[name] = max(divergence, self.oracle_divergence.setdefault(name, 0.0))
 
     def merge(self, other: "Measurement") -> None:
         """Absorb one worker's partial accumulator; every field is additive.
@@ -1187,6 +1235,16 @@ class Measurement:
 
         self.scenarios_measured += other.scenarios_measured
         self.scenarios_skipped.update(other.scenarios_skipped)
+        self.control_line_totals.update(other.control_line_totals)
+        self.scenarios_with_controls += other.scenarios_with_controls
+        self.scenarios_with_no_selectable_signal += other.scenarios_with_no_selectable_signal
+        self.scenarios_where_applicable.update(other.scenarios_where_applicable)
+        for name, divergence in other.oracle_divergence.items():
+            # Same `setdefault`-first rule as `observe_oracle`: the key must
+            # survive the merge even when every worker saw exact agreement.
+            self.oracle_divergence[name] = max(
+                divergence, self.oracle_divergence.setdefault(name, 0.0)
+            )
         self.total_steps += other.total_steps
         for name, samples in other.components.items():
             self.components.setdefault(name, CostSamples()).merge(samples)
@@ -1261,6 +1319,23 @@ class Measurement:
             "error_samples": list(self.error_samples),
             "measured_steps": self.total_steps,
             "r1_status": "NOT_MEASURED: offline replay has no physics contact records",
+            # `T-RB51-12`. Every entry must be 0 (or below float tolerance): a
+            # non-zero value means production and the variant this script used to
+            # derive §5.5's numbers disagree, and every figure downstream of it is
+            # then a claim about the script rather than about production. Placed
+            # near the top of the report because it conditions everything below.
+            "control_line_coverage": {
+                "scenarios_with_controls": self.scenarios_with_controls,
+                "scenarios_with_no_selectable_signal": self.scenarios_with_no_selectable_signal,
+                **{name: int(value) for name, value in sorted(self.control_line_totals.items())},
+            },
+            "scenarios_where_sub_rule_applies": {
+                name: int(self.scenarios_where_applicable.get(name, 0))
+                for name in sorted(_NORMATIVE_COMPONENTS)
+            },
+            "oracle_max_divergence": {
+                name: round(value, 12) for name, value in sorted(self.oracle_divergence.items())
+            },
             "expert_episode_return": {
                 "p10": round(_percentile(returns, 0.10), 2) if returns else None,
                 "p50": round(_percentile(returns, 0.50), 2) if returns else None,
@@ -1626,12 +1701,40 @@ def replay_scenario(
     measurement: Measurement,
     ego_brake_mps2: float,
     scalarization: ScalarizationConfig,
+    source: str = "waymo",
 ) -> None:
-    """Replay one scenario through the full transition and accumulate its costs."""
+    """Replay one scenario through the full transition and accumulate its costs.
+
+    ``source`` selects the static adapter. On PG the result is a **coverage**
+    measurement -- applicability rates and geometric sanity -- and explicitly
+    **not Test A**: a PG record's logged ego is `IDMPolicy`, which makes the
+    headway rules circular and the positional rules vacuous, so replay can
+    establish nothing there about whether a rule is satisfiable. What it does
+    establish is whether the rulebook is *applicable* on PG at all, and a
+    sub-rule never applicable on half the training distribution is a sub-rule
+    silently absent from it.
+    """
 
     pavone_scalarization = ScalarizationConfig(mode="bounded_satisfaction_rank", priority_base=2.01)
+    # The production baseline is now `SCAL-V1.4` on the six-level vector, while
+    # the counterfactual variants below keep the four-margin family they were
+    # derived under. Conflating the two is what broke this script silently: since
+    # `RB51`/`M1` production emits six margins, and feeding them to the
+    # four-margin config raised `ScalarizationEvaluationError` on **every**
+    # record. The failure was invisible because it is a `ValueError` subclass and
+    # the replay's own handler counted it as a skipped scenario -- the report said
+    # "0 measured", which nobody read because the script had not been run since.
+    production_scalarization = ScalarizationConfig(
+        mode="six_level_priority_weighted_rank",
+        priority_base=2.2,
+        vector_schema_id=SIX_LEVEL_VECTOR_SCHEMA_ID,
+    )
 
-    static = build_waymo_static_adapter_result(scenario, scenario_uid=scenario_uid)
+    static = (
+        build_pg_static_adapter_result(scenario, scenario_uid=scenario_uid)
+        if source.lower() == "pg"
+        else build_waymo_static_adapter_result(scenario, scenario_uid=scenario_uid)
+    )
     if static.validation_errors:
         measurement.scenarios_skipped[
             f"validation:{static.validation_errors[0].split(':')[0]}"
@@ -1714,7 +1817,11 @@ def replay_scenario(
     v51_episode_delta_s = 0.0
     v51_episode_behind_peak = False
     episode_return = 0.0
-    episode_channels = {"r1": 0.0, "r2": 0.0, "r3": 0.0, "r4": 0.0}
+    # `M8c`: the per-scenario view of applicability. A rule that is never
+    # applicable on a record was never tested there, and Test A -- which can only
+    # reject -- reads that as a clean pass.
+    episode_applicable_sub_rules: set[str] = set()
+    episode_channels = {"l1": 0.0, "l2": 0.0, "l3": 0.0, "l4": 0.0, "l5": 0.0, "l6": 0.0}
     episode_steps = 0
     variant_totals = {variant: 0.0 for variant in all_variant_names()}
     # Blame accounting for the proposed rulebook, in reward units. Under max
@@ -1758,6 +1865,8 @@ def replay_scenario(
             component = result.components.get(name)
             if component is None:
                 continue
+            if component.applicable:
+                episode_applicable_sub_rules.add(name)
             measurement.components[name].add(component.cost, applicable=component.applicable)
             if name in {"crosswalk", "vehicle_yield"}:
                 _latch_attribution(name, component, measurement)
@@ -1767,20 +1876,33 @@ def replay_scenario(
                 measurement.macros[name].add(component.cost, applicable=component.applicable)
         measurement.progress_margins.append(float(result.margins[3]))
 
-        scalarized = scalarize_rulebook_margins(result.margins, scalarization)
+        scalarized = scalarize_rulebook_margins(result.margins, production_scalarization)
         episode_return += float(scalarized.reward)
-        # The per-channel decomposition mirrors the SCAL-V1.1 formula so the
-        # deficit can be attributed without re-deriving it downstream.
-        base = float(scalarization.priority_base)
-        for index, (channel, weight) in enumerate(
-            (("r1", base**3), ("r2", base**2), ("r3", base), ("r4", 1.0))
-        ):
+        # The per-channel decomposition mirrors the `SCAL-V1.4` formula so the
+        # deficit can be attributed without re-deriving it downstream. L1-L3 keep
+        # the priority-weighted indicator form; L4 is a utility and L5/L6 are
+        # costs scaled by `dt / T_REF`.
+        base = float(production_scalarization.priority_base)
+        dt_ratio = float(production_scalarization.step_dt_s) / float(
+            production_scalarization.reference_time_s
+        )
+        for index, (channel, weight) in enumerate((("l1", base**3), ("l2", base**2), ("l3", base))):
             margin = float(result.margins[index])
-            if channel == "r4":
-                episode_channels[channel] += margin
-            else:
-                indicator = -1.0 if margin < 0.0 else 0.0
-                episode_channels[channel] += weight * (indicator + margin)
+            indicator = -1.0 if margin < 0.0 else 0.0
+            episode_channels[channel] += weight * (indicator + margin) + (
+                float(production_scalarization.flat_tie_breaker) * margin
+            )
+        episode_channels["l4"] += float(production_scalarization.progress_weight) * float(
+            result.margins[3]
+        )
+        episode_channels["l5"] += (
+            float(production_scalarization.relaxable_weight) * float(result.margins[4]) * dt_ratio
+        )
+        episode_channels["l6"] += (
+            float(production_scalarization.progress_rate_weight)
+            * float(result.margins[5])
+            * dt_ratio
+        )
 
         progress_margin = float(result.margins[3])
         for variant, spec in _VARIANTS.items():
@@ -1802,11 +1924,36 @@ def replay_scenario(
                 # it on every real step is a far stronger guarantee than a unit
                 # test, and makes a divergence fail the run instead of silently
                 # reporting a wrong comparison.
-                for macro_name, recomputed in (
-                    ("dynamic_interaction_safety", r2_cost),
-                    ("road_traffic_compliance", r3_cost),
+                # The counterfactual family is v5.0-era: its `r2`/`r3` are the
+                # *old* macro rules, and production no longer computes either.
+                # `rss` left L2 (ADR-063) and the relaxable lane rules left R3
+                # for L5 (ADR-072), so the self-check is re-pointed at the v5.1
+                # channels and recomputed from the v5.1 memberships. Comparing
+                # the old aggregates against the new channels would fail on every
+                # step where `rss` is the worst L2 candidate -- 18.29 % of
+                # applicable steps -- and would say the instrument was broken
+                # when it was only measuring a rulebook that no longer exists.
+                for macro_name, members in (
+                    ("interaction_risk", V51_L2_SUB_RULES),
+                    ("non_relaxable_compliance", V51_L3_SUB_RULES),
+                    ("relaxable_lane_compliance", V51_L5_SUB_RULES),
                 ):
+                    recomputed, _ = macro_cost(
+                        members, result.components, drop=frozenset(), drop_latch=False
+                    )
                     produced = result.components[macro_name].cost
+                    if macro_name == "relaxable_lane_compliance":
+                        # L5 aggregates by normalized sum with a *fixed*
+                        # denominator of 3, not by max (§3.3), so it needs its own
+                        # recomputation rather than `macro_cost`'s worst-of.
+                        recomputed = (
+                            sum(
+                                result.components[name].cost
+                                for name in members
+                                if name in result.components and result.components[name].applicable
+                            )
+                            / 3.0
+                        )
                     if abs(produced - recomputed) > 1e-9:
                         raise ValueError(
                             f"Counterfactual recomputation diverged from production "
@@ -1837,6 +1984,9 @@ def replay_scenario(
                 ego_footprint=ego.footprint, drivable_surface=drivable
             )
             measurement.variant_components["offroad_tolerant"].add(variant_offroad, applicable=True)
+            measurement.observe_oracle(
+                "offroad", result.components["offroad"].cost, variant_offroad
+            )
             surfaces = carriageway_surfaces_for_ego(
                 ego_position_xy=ego.position_xy,
                 ego_position_z=ego.position_z,
@@ -1853,6 +2003,11 @@ def replay_scenario(
             measurement.variant_components["wrong_carriageway_entry"].add(
                 variant_carriageway, applicable=True
             )
+            measurement.observe_oracle(
+                "wrong_carriageway",
+                result.components["wrong_carriageway"].cost,
+                variant_carriageway,
+            )
         solid_boundaries = tuple(
             feature
             for feature in cache.map_feature_catalog.values()
@@ -1868,6 +2023,9 @@ def replay_scenario(
                 cost, applicable=bool(solid_boundaries)
             )
         variant_solid = solid_costs[SOLID_LINE_PROPOSED_TOLERANCE]
+        measurement.observe_oracle(
+            "solid_line", result.components["solid_line"].cost, variant_solid
+        )
         candidates = _rss_candidates(
             ego=rss_state.ego,
             actors=rss_state.actors,
@@ -1891,6 +2049,26 @@ def replay_scenario(
         # Blame accounting named clearance and rss_lateral as the two largest
         # residual costs of the proposed rulebook, so both are re-derived here
         # under a scoping that keeps only what the ego itself controls.
+        # `T-RB51-12` for the two gated sub-rules. Compared only above the
+        # at-fault gate: below it production reports NOT_APPLICABLE by design
+        # (ADR-070) while these variants still price the geometry, so a
+        # disagreement there is the gate working, not a drift.
+        if not ego_is_stopped(post_state.ego.velocity_xy):
+            measurement.observe_oracle(
+                "clearance",
+                result.components["clearance"].cost,
+                clearance_costs(
+                    ego_footprint=ego.footprint,
+                    actors=post_state.actors,
+                    ego_position_z=ego.position_z,
+                    drivable_surface=drivable,
+                )[1],
+            )
+            measurement.observe_oracle(
+                "ttc",
+                result.components["ttc"].cost,
+                ttc_costs_at(result.components["ttc"].raw)[FINAL_TTC_THRESHOLD_S],
+            )
         clearance_full, clearance_scoped = clearance_costs(
             ego_footprint=ego.footprint,
             actors=post_state.actors,
@@ -1907,14 +2085,26 @@ def replay_scenario(
         lateral_full, lateral_ego_only = lateral_rss_costs(lateral_candidates)
         # A variant is only worth reading if the reproduction it is derived from
         # matches what production charged on the same step.
-        for name, reproduced in (("clearance", clearance_full), ("rss_lateral", lateral_full)):
-            produced = result.components[name]
-            expected = float(produced.cost) if produced.applicable else 0.0
-            if abs(expected - reproduced) > 1e-6:
-                raise ValueError(
-                    f"Variant reproduction diverged from production {name}: "
-                    f"{expected!r} vs {reproduced!r}"
-                )
+        #
+        # What production charges changed under `RB51`: `clearance` is now scoped
+        # to VRU on the roadway (ADR-067), so the *scoped* reproduction is the one
+        # that must match, not the unscoped one this check was written against;
+        # and both sub-rules are inapplicable below the at-fault gate (ADR-070),
+        # where production has nothing to reproduce. Leaving the old comparison in
+        # place would have reported the rulebook's own approved redefinitions as
+        # an instrument defect.
+        if not ego_is_stopped(post_state.ego.velocity_xy):
+            for name, reproduced in (
+                ("clearance", clearance_scoped),
+                ("rss_lateral", lateral_full),
+            ):
+                produced = result.components[name]
+                expected = float(produced.cost) if produced.applicable else 0.0
+                if abs(expected - reproduced) > 1e-6:
+                    raise ValueError(
+                        f"Variant reproduction diverged from production {name}: "
+                        f"{expected!r} vs {reproduced!r}"
+                    )
         measurement.variant_components["clearance_on_road"].add(
             clearance_scoped, applicable=result.components["clearance"].applicable
         )
@@ -2251,6 +2441,23 @@ def replay_scenario(
         measurement.scenarios_skipped["no_valid_transition"] += 1
         return
     measurement.scenarios_measured += 1
+    for name in episode_applicable_sub_rules:
+        measurement.scenarios_where_applicable[name] += 1
+    # `M8b`. Static per scenario, so it is read once here rather than per step.
+    control_lines = control_line_diagnostics(cache)
+    if control_lines:
+        measurement.control_line_totals.update(control_lines)
+        signal_total = int(control_lines.get("signal_controls_total", 0))
+        if signal_total:
+            measurement.scenarios_with_controls += 1
+            dropped = int(control_lines.get("signal_controls_approach_filter_dropped", 0))
+            # ADR-051 reports 209 records where no `SIGNAL` is ever selectable and
+            # splits them into 52 lost at adapter construction and 157 that are
+            # "genuinely unrelated approaches **or** route ends more than one lane
+            # short". This counts the second kind directly, which is what makes
+            # the 25.2 % headline decomposable instead of an upper bound.
+            if dropped >= signal_total:
+                measurement.scenarios_with_no_selectable_signal += 1
     # AC-RB5.1-07. The monotone construction makes the undiscounted sum of the
     # per-step increments equal the episode's net completion exactly; any error
     # means `q` was not monotone or the clip bound.
@@ -2296,6 +2503,10 @@ class WorkItem:
     relative_path: str
     scenario_uid: str
     ego_brake_mps2: float
+    # `M8a`. The source decides which static adapter runs. It used to be absent
+    # because the script called the Waymo adapter unconditionally, which is why
+    # PG coverage was never measured -- not because a PG adapter was missing.
+    source: str = "waymo"
 
 
 _WORKER_DATA_ROOT: Path | None = None
@@ -2329,6 +2540,7 @@ def replay_work_item(item: WorkItem) -> Measurement:
             measurement=measurement,
             ego_brake_mps2=item.ego_brake_mps2,
             scalarization=ScalarizationConfig(),
+            source=item.source,
         )
     except (ValueError, KeyError, IndexError) as error:
         measurement.scenarios_skipped[f"error:{type(error).__name__}"] += 1
@@ -2380,6 +2592,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             relative_path=str(record["relative_path"]),
             scenario_uid=str(record["scenario_uid"]),
             ego_brake_mps2=float(args.ego_brake_mps2),
+            source=str(record.get("source", args.source)),
         )
         for record in records
     ]

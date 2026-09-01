@@ -1,15 +1,32 @@
 # Approved Rulebook scalarization baseline.
-# SCAL-V1.1 (ADR-057): bounded_priority_weighted_rank is the default mode,
-# embedding each margin's severity in its own priority-weighted term instead
-# of SCAL-V1.0's diluted shared tie-breaker. bounded_satisfaction_rank
-# (priority_base: 2.01) remains available by explicit selection.
-specification_id: SCAL-V1.1
-version: "1.1"
-mode: bounded_priority_weighted_rank
-vector_schema_id: rulebook_v2_macro_v4
-priority_base: 3.0
+# SCAL-V1.4 (RULEBOOK-V5.1 §5, ADR-076): `six_level_priority_weighted_rank` is
+# the default mode. It consumes the six-level margin vector the rulebook emits
+# after RB51/M1; the four SCAL-V1.0/V1.1 modes are retained (`DEC-RB51-003`) so
+# earlier runs stay reproducible, but they are four-level by contract and
+# reject a six-level vector rather than reading its first four entries as if
+# the preference order had not changed.
+specification_id: SCAL-V1.4
+version: "1.4"
+mode: six_level_priority_weighted_rank
+# A distinct schema id, not the four-level one: L5 and L6 sit *below* progress,
+# so a consumer reading the old schema and ignoring the tail would be reading a
+# different preference order rather than a truncated one. This value reaches the
+# checkpoint identity, which is part of the intentional break (`DEC-RB51-001`).
+vector_schema_id: rulebook_v5_1_six_level_v1
+# RULEBOOK-V5.1 §5.5: `a = 2.2`, re-derived for the six-level tail.
+priority_base: 2.2
 numerical_tolerance: 1.0e-8
 native_environment_reward_weight: 0.0
+# §5.5 selected weights. Admissible under §5.4: `2.0 + 0.1 * 1.2 = 2.12 < 2.2`.
+# The predicate is re-checked at construction, so an inadmissible edit here
+# fails the run instead of being priced.
+severity: 0.0            # sigma
+flat_tie_breaker: 0.25   # phi
+progress_weight: 2.0     # lambda4
+relaxable_weight: 1.0    # eta
+progress_rate_weight: 0.2  # lambda6
+step_dt_s: 0.1
+reference_time_s: 1.0
 sigmoid:
   sharpness: 30.0
 legacy:

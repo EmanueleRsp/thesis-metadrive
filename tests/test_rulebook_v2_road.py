@@ -4,6 +4,8 @@ import pytest
 from shapely.geometry import LineString, Polygon
 
 from thesis_rl.rulebook.v2.components.road import (
+    OFFROAD_TOLERANCE_M,
+    SOLID_LINE_PENETRATION_TOLERANCE,
     dashed_lateral_penetration,
     evaluate_dashed_line,
     evaluate_offroad,
@@ -31,11 +33,19 @@ def _ego(*, velocity=(0.0, 0.0), heading=0.0, cap=10.0):
 
 
 def test_offroad_area_fraction_and_numeric_epsilon():
+    """ADR-065: the fraction is taken against the surface widened by 0.3 m.
+
+    Half the footprint lies beyond the raw surface, but the band absorbs 0.3 m of
+    it, so 0.35 rather than 0.5 is charged. The band is a measurement tolerance
+    for the bounding box's over-approximation of the vehicle, not permissiveness:
+    the part beyond it is still charged in full and still graded by area.
+    """
     footprint = Polygon(((0, 0), (2, 0), (2, 1), (0, 1)))
     result, _, _ = evaluate_offroad(
         ego_footprint=footprint, drivable_surface=Polygon(((0, 0), (1, 0), (1, 1), (0, 1)))
     )
-    assert result.cost == pytest.approx(0.5)
+    assert result.cost == pytest.approx(0.35)
+    assert result.diagnostics["tolerance_m"] == pytest.approx(OFFROAD_TOLERANCE_M)
     tiny = Polygon(((-1e-5, 0), (2, 0), (2, 1), (-1e-5, 1)))
     result, _, _ = evaluate_offroad(ego_footprint=footprint, drivable_surface=tiny)
     assert result.cost == 0.0
@@ -169,15 +179,37 @@ def test_wrong_carriageway_fully_in_opposing_lane_is_one():
     assert result.status.name == "VIOLATED"
 
 
-def test_wrong_carriageway_straddling_is_graded():
-    """TEST-RBCOST-018 case (iii)."""
-    footprint = Polygon(((9, -1.0), (11, -1.0), (11, 1.0), (9, 1.0)))
+def test_wrong_carriageway_charges_only_once_the_centre_has_entered():
+    """TEST-RBCOST-018 case (iii), as amended by ADR-065.
+
+    Straddling is no longer graded on its own. Production charged any overlap,
+    which is what a curve's bounding-box corner and a junction's lane-polygon
+    seams produce, and the expert was charged on 0.843 % of steps for normal
+    cornering. Requiring the centroid inside took that to **0 of 217,189**. Once
+    the centre has entered, the invaded-area fraction grades the violation
+    exactly as before.
+    """
     aligned = Polygon(((0, 0), (20, 0), (20, 3.5), (0, 3.5)))
     opposing = Polygon(((0, -3.5), (20, -3.5), (20, 0), (0, 0)))
-    result, _, _ = evaluate_wrong_carriageway(
-        ego_footprint=footprint, aligned_surface=aligned, opposing_surface=opposing
+
+    # Centre still on the aligned side: half the footprint overlaps, nothing is
+    # charged. This is the case production priced and ADR-065 removes.
+    straddling, _, _ = evaluate_wrong_carriageway(
+        ego_footprint=Polygon(((9, -1.0), (11, -1.0), (11, 1.0), (9, 1.0))),
+        aligned_surface=aligned,
+        opposing_surface=opposing,
     )
-    assert result.cost == pytest.approx(0.5, abs=0.02)
+    assert straddling.cost == 0.0
+    assert straddling.diagnostics["centre_entered"] is False
+
+    # Centre inside the opposing carriageway: graded by the same area fraction.
+    entered, _, _ = evaluate_wrong_carriageway(
+        ego_footprint=Polygon(((9, -1.5), (11, -1.5), (11, 0.5), (9, 0.5))),
+        aligned_surface=aligned,
+        opposing_surface=opposing,
+    )
+    assert entered.diagnostics["centre_entered"] is True
+    assert entered.cost == pytest.approx(0.75, abs=0.02)
 
 
 def test_wrong_carriageway_empty_drivable_surface_is_not_applicable():
@@ -246,12 +278,68 @@ def test_wrongway_fails_without_speed_cap():
 
 def test_solid_line_detects_occupancy_and_crossing():
     footprint = Polygon(((0, 0), (2, 0), (2, 1), (0, 1)))
+    # The marking runs through the footprint centroid: maximal penetration, so
+    # the graded cost still saturates at 1.0.
     line = Polygon(((0.99, -1), (1.01, -1), (1.01, 2), (0.99, 2)))
     result, _, _ = evaluate_solid_line(ego_footprint=footprint, solid_boundaries=(line,))
     assert result.cost == 1.0
     clear = Polygon(((3, -1), (3.01, -1), (3.01, 2), (3, 2)))
     result, _, _ = evaluate_solid_line(ego_footprint=footprint, solid_boundaries=(clear,))
     assert result.cost == 0.0
+
+
+def test_solid_line_cost_grades_with_penetration_and_is_zero_below_the_tolerance():
+    """`TEST-RB5-02` (ADR-065).
+
+    Production charged a flat 1.0 on any contact, so an ego clipping the paint
+    with a bumper corner paid what one straddling the line paid -- and since L3
+    outranked L4, both behaviours were taught the same penalty. The cost now
+    grades on the same scale `dashed_line` uses.
+    """
+
+    footprint = Polygon(((0, 0), (2, 0), (2, 1), (0, 1)))
+
+    def cost_at(x: float) -> float:
+        marking = Polygon(((x - 0.01, -1), (x + 0.01, -1), (x + 0.01, 2), (x - 0.01, 2)))
+        result, _, _ = evaluate_solid_line(ego_footprint=footprint, solid_boundaries=(marking,))
+        return result.cost
+
+    # Strictly increasing as the marking moves from the footprint edge (x = 2.0)
+    # toward its centroid (x = 1.0).
+    costs = [cost_at(x) for x in (1.9, 1.7, 1.5, 1.3, 1.1)]
+    assert costs == sorted(costs)
+    assert costs[0] < costs[-1]
+
+    # Zero below the tolerance: a graze is not a crossing.
+    grazing, _, _ = evaluate_solid_line(
+        ego_footprint=footprint,
+        solid_boundaries=(Polygon(((1.99, -1), (2.01, -1), (2.01, 2), (1.99, 2))),),
+    )
+    assert grazing.cost == 0.0
+    assert grazing.raw["lateral_penetration"] <= SOLID_LINE_PENETRATION_TOLERANCE
+
+
+def test_solid_line_reports_a_completed_crossing_without_pricing_it():
+    """ADR-065 replaces "the binary 1.0 on any contact", and the swept front
+    bumper was one of the two ways that 1.0 was reached.
+
+    Under ADR-072 a completed crossing that leaves the ego correctly placed is
+    the relaxation L5 exists to permit; charging it a flat 1.0 while charging
+    sustained straddling 0.328 would invert the intended ordering. It stays
+    visible as a diagnostic, like `rss` and the not-at-fault collisions.
+    """
+
+    footprint = Polygon(((0, 0), (2, 0), (2, 1), (0, 1)))
+    far_marking = Polygon(((5.99, -1), (6.01, -1), (6.01, 2), (5.99, 2)))
+    swept = Polygon(((0, -2), (8, -2), (8, 3), (0, 3)))
+
+    result, _, _ = evaluate_solid_line(
+        ego_footprint=footprint,
+        solid_boundaries=(far_marking,),
+        swept_front_bumper=swept,
+    )
+    assert result.cost == 0.0
+    assert result.diagnostics["crossed_boundary_ids"] == ("0",)
 
 
 def test_dashed_line_timer_is_continuous_and_resets_on_boundary_change():

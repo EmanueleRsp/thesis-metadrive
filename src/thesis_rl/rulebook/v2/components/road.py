@@ -19,6 +19,23 @@ from thesis_rl.rulebook.v2.types import (
 
 OFFROAD_AREA_EPSILON_M2 = 1.0e-4
 GEOMETRY_EPSILON_M = 1.0e-2
+# ADR-065. nuPlan's own `drivable_area_compliance` tolerance, adopted for the
+# same reason it exists there: the oriented bounding box over-approximates the
+# vehicle, so a band of this width absorbs a measurement artifact rather than
+# excusing leaving the road.
+OFFROAD_TOLERANCE_M = 0.3
+# The real half width of a painted lane marking, replacing the 1 cm numerical
+# epsilon `evaluate_solid_line` used to buffer by. The epsilon answered "do the
+# geometries touch"; this answers "is the vehicle on the paint".
+SOLID_LINE_HALF_WIDTH_M = 0.075
+# Below this penetration the marking only grazes the footprint edge.
+# `dashed_lateral_penetration` is dimensionless -- 1.0 with the marking through
+# the centroid, 0.0 tangent to the edge -- so for a ~1.85 m wide vehicle this
+# corresponds to roughly the same 0.3 m of lateral slack the off-road band
+# allows. The two are one decision, not two independent calibrations. Swept
+# (0.1/0.2/0.3/0.4 -> 0.599/0.430/0.349/0.249 % of expert steps) rather than
+# chosen.
+SOLID_LINE_PENETRATION_TOLERANCE = 0.3
 DASHED_T0_S = 1.0
 DASHED_TCAP_S = 2.0
 # The physics solver leaves a residual velocity on a body at rest (the same
@@ -95,12 +112,20 @@ def _boundary_coordinates(geometry) -> tuple[tuple[float, ...], ...]:
 def evaluate_offroad(
     *, ego_footprint, drivable_surface
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
-    """Evaluate the footprint area outside the current compatible drivable surface."""
+    """Evaluate the footprint area outside the drivable surface, widened by ADR-065's band.
+
+    The surface is widened by ``OFFROAD_TOLERANCE_M`` before the difference is
+    taken. This is a measurement tolerance, not permissiveness: the ego footprint
+    is an oriented bounding box that over-approximates the vehicle, so without
+    the band the rule charges the corner of a box that is not there. Measured
+    1.190 % -> 0.593 % of expert steps.
+    """
     if ego_footprint.is_empty or not ego_footprint.is_valid or ego_footprint.area <= 0.0:
         raise ValueError("Off-road requires a valid, positive-area ego footprint")
     if drivable_surface is None or drivable_surface.is_empty or not drivable_surface.is_valid:
         raise ValueError("Off-road requires a valid drivable surface")
-    outside_area = ego_footprint.difference(drivable_surface).area
+    tolerant_surface = drivable_surface.buffer(OFFROAD_TOLERANCE_M)
+    outside_area = ego_footprint.difference(tolerant_surface).area
     if not isfinite(outside_area) or outside_area < 0.0:
         raise ValueError("Off-road difference area must be finite and non-negative")
     if outside_area < OFFROAD_AREA_EPSILON_M2:
@@ -113,7 +138,10 @@ def evaluate_offroad(
         applicable=True,
         evaluable=True,
         status=ComponentStatus.VIOLATED if ratio > 0.0 else ComponentStatus.SATISFIED,
-        diagnostics={"area_epsilon_m2": OFFROAD_AREA_EPSILON_M2},
+        diagnostics={
+            "area_epsilon_m2": OFFROAD_AREA_EPSILON_M2,
+            "tolerance_m": OFFROAD_TOLERANCE_M,
+        },
     )
     return result, MemoryDelta(), CacheDelta()
 
@@ -123,14 +151,15 @@ def evaluate_wrong_carriageway(
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
     """Evaluate the footprint area fraction occupying the opposing carriageway.
 
-    REQ-RBCOST-009. Structurally analogous to ``evaluate_offroad``: the cost is
-    the fraction of the ego footprint inside the opposing-direction lane
-    surface, excluding whatever a route-aligned lane already covers (so a left
-    turn inside its own aligned junction lane is not charged for overlapping
-    an opposing through lane's polygon). Memoryless, no time ramp: an earlier
-    draft proposed one as robustness against transient junction overlap, but
-    that overlap was hypothesised rather than measured, and off-road -- the
-    direct structural analogue -- has none either.
+    REQ-RBCOST-009, amended by ADR-065. The cost is the fraction of the ego
+    footprint inside the opposing-direction lane surface, excluding whatever a
+    route-aligned lane already covers (so a left turn inside its own aligned
+    junction lane is not charged for overlapping an opposing through lane's
+    polygon) -- but it is charged **only once the ego centroid is inside** that
+    exclusive surface. Memoryless, no time ramp: an earlier draft proposed one as
+    robustness against transient junction overlap, but that overlap was
+    hypothesised rather than measured, and the centroid gate addresses the same
+    transient directly rather than by delay.
     """
     if ego_footprint.is_empty or not ego_footprint.is_valid or ego_footprint.area <= 0.0:
         raise ValueError("Wrong-carriageway requires a valid, positive-area ego footprint")
@@ -150,7 +179,15 @@ def evaluate_wrong_carriageway(
         if aligned_surface is not None and not aligned_surface.is_empty
         else opposing_surface
     )
-    invaded_area = ego_footprint.intersection(exclusive_opposing).area
+    # ADR-065: the rule fires only once the ego *centre* has entered. Production's
+    # any-overlap criterion was measuring bounding-box corners clipping the
+    # opposing surface in curves -- geometric noise, which priced normal
+    # cornering. With the centroid gate the expert violates on 0 of 217,189
+    # steps, the sharpest single result of the falsification campaign.
+    centre_entered = not exclusive_opposing.is_empty and exclusive_opposing.contains(
+        ego_footprint.centroid
+    )
+    invaded_area = ego_footprint.intersection(exclusive_opposing).area if centre_entered else 0.0
     if not isfinite(invaded_area) or invaded_area < 0.0:
         raise ValueError("Wrong-carriageway invaded area must be finite and non-negative")
     if invaded_area < OFFROAD_AREA_EPSILON_M2:
@@ -163,7 +200,10 @@ def evaluate_wrong_carriageway(
         applicable=True,
         evaluable=True,
         status=ComponentStatus.VIOLATED if ratio > 0.0 else ComponentStatus.SATISFIED,
-        diagnostics={"area_epsilon_m2": OFFROAD_AREA_EPSILON_M2},
+        diagnostics={
+            "area_epsilon_m2": OFFROAD_AREA_EPSILON_M2,
+            "centre_entered": centre_entered,
+        },
     )
     return result, MemoryDelta(), CacheDelta()
 
@@ -220,11 +260,35 @@ def evaluate_wrongway(
 def evaluate_solid_line(
     *, ego_footprint, solid_boundaries: tuple, swept_front_bumper=None
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
-    """Detect current occupancy or completed front-bumper crossing of solid lines."""
+    """Grade how deeply a solid marking sits inside the ego footprint (ADR-065).
+
+    Production charged a flat 1.0 on any contact, buffering by a 1 cm numerical
+    epsilon, so an ego clipping the paint with a bumper corner for a centimetre
+    was charged exactly as much as one straddling the line. The cost is now
+    ``dashed_lateral_penetration`` -- 1.0 with the marking through the centroid,
+    0.0 tangent to the footprint edge -- rescaled above
+    ``SOLID_LINE_PENETRATION_TOLERANCE``, so solid and dashed markings finally
+    grade on the same scale. Measured 1.120 % of expert steps at a binary 1.000
+    to **0.349 %** at a mean 0.328.
+
+    **The completed-crossing term leaves the cost and becomes a diagnostic.**
+    ADR-065 replaces "the binary 1.0 on any contact", and the swept front bumper
+    was one of the two ways that 1.0 was reached. Keeping it would put an event
+    term on a binary scale beside a state term on a graded one, which is the very
+    confusion the redefinition removes -- and under ADR-072 a completed crossing
+    that leaves the ego correctly placed is the *relaxation* L5 exists to permit,
+    so charging it 1.0 while charging sustained straddling 0.328 would invert the
+    intended ordering. The crossing is still detected and reported, following the
+    same convention as `rss` and the not-at-fault collisions: measured, never
+    priced. It is also what the 0.349 % was measured without, so pricing it here
+    would put production and the measurement instrument out of agreement.
+    """
     if ego_footprint.is_empty or not ego_footprint.is_valid:
         raise ValueError("Solid-line evaluation requires a valid ego footprint")
     occupied: list[str] = []
     crossed: list[str] = []
+    worst_penetration = 0.0
+    cost = 0.0
     for index, boundary in enumerate(solid_boundaries):
         geometry = getattr(boundary, "geometry", boundary)
         boundary_id = (
@@ -234,24 +298,39 @@ def evaluate_solid_line(
         )
         if geometry.is_empty or not geometry.is_valid:
             raise ValueError("Solid boundary geometry must be valid")
-        if ego_footprint.intersects(geometry.buffer(GEOMETRY_EPSILON_M)):
-            occupied.append(str(boundary_id))
         if swept_front_bumper is not None and swept_front_bumper.intersects(geometry):
             crossed.append(str(boundary_id))
-    ids = tuple(sorted(set(occupied + crossed)))
+        if not ego_footprint.intersects(geometry.buffer(SOLID_LINE_HALF_WIDTH_M)):
+            continue
+        occupied.append(str(boundary_id))
+        penetration = dashed_lateral_penetration(ego_footprint, geometry)
+        worst_penetration = max(worst_penetration, penetration)
+        if penetration <= SOLID_LINE_PENETRATION_TOLERANCE:
+            continue
+        scaled = (penetration - SOLID_LINE_PENETRATION_TOLERANCE) / (
+            1.0 - SOLID_LINE_PENETRATION_TOLERANCE
+        )
+        cost = max(cost, min(max(scaled, 0.0), 1.0))
     result = RuleComponentResult(
         name="solid_line",
-        cost=1.0 if ids else 0.0,
+        cost=cost,
         raw={
             "occupied_boundary_ids": tuple(sorted(occupied)),
             "crossed_boundary_ids": tuple(sorted(crossed)),
+            "lateral_penetration": worst_penetration,
         },
         applicable=bool(solid_boundaries),
         evaluable=True,
         status=ComponentStatus.VIOLATED
-        if ids
+        if cost > 0.0
         else (ComponentStatus.SATISFIED if solid_boundaries else ComponentStatus.NOT_APPLICABLE),
-        diagnostics={"active_boundary_ids": ids, "geometry_epsilon_m": GEOMETRY_EPSILON_M},
+        diagnostics={
+            "active_boundary_ids": tuple(sorted(set(occupied))),
+            "crossed_boundary_ids": tuple(sorted(set(crossed))),
+            "lateral_penetration": worst_penetration,
+            "half_width_m": SOLID_LINE_HALF_WIDTH_M,
+            "penetration_tolerance": SOLID_LINE_PENETRATION_TOLERANCE,
+        },
     )
     return result, MemoryDelta(), CacheDelta()
 

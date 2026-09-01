@@ -42,7 +42,7 @@ def _manifest(*, observation_type: str = "semantic_v2", flat_dim: int = 2541):
 def test_checkpoint_manifest_infers_v12_identity_for_semantic_v3() -> None:
     manifest = build_checkpoint_manifest(
         observation_type="semantic_v3",
-        flat_dim=3009,
+        flat_dim=3011,
         raw_token_count=143,
         encoder_type="latent_query_v3",
         encoder_config={"output_dim": 256, "depth": 4},
@@ -56,8 +56,10 @@ def test_checkpoint_manifest_infers_v12_identity_for_semantic_v3() -> None:
         seed=7,
     )
 
-    assert manifest.observation_schema_version == "1.2-perception-bounded-mission-route-v1"
-    assert manifest.flat_dim == 3009
+    assert (
+        manifest.observation_schema_version == "1.3.1-perception-bounded-mission-route-speed-limit"
+    )
+    assert manifest.flat_dim == 3011
     assert manifest.raw_token_count == 143
 
 
@@ -133,7 +135,7 @@ def test_checkpoint_compatibility_rejects_scalarization_identity_change() -> Non
 def test_semantic_v3_manifest_uses_v12_schema_identity_and_rejects_v2() -> None:
     v3 = build_checkpoint_manifest(
         observation_type="semantic_v3",
-        flat_dim=3009,
+        flat_dim=3011,
         raw_token_count=143,
         encoder_type="latent_query_v3",
         encoder_config={"output_dim": 256, "depth": 4},

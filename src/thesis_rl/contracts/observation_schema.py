@@ -246,8 +246,13 @@ class SemanticObservationSchemaV12:
 
     # See SemanticObservationSchemaV11's mission-route note; the same route
     # consumer swap applies here.
-    version: ClassVar[str] = "1.2-perception-bounded-mission-route-v1"
-    flat_dim: ClassVar[int] = 3009
+    # OBS-V1.3.1: `lane_road` gains the posted speed limit and its explicit
+    # availability flag, required by RULEBOOK-V5.1's `speed_limit` sub-rule.
+    # `D` changes from 3009 to 3011 and **checkpoint compatibility is
+    # intentionally broken** (`DEC-RB51-001`), which is acceptable because the
+    # production runs have not started.
+    version: ClassVar[str] = "1.3.1-perception-bounded-mission-route-speed-limit"
+    flat_dim: ClassVar[int] = 3011
     raw_token_count: ClassVar[int] = 143
     group_shapes: ClassVar[dict[str, tuple[int, ...]]] = {
         "ego_history": (5, 10),
@@ -259,7 +264,7 @@ class SemanticObservationSchemaV12:
         "dynamic_mask": (16, 5),
         "static": (8, 13),
         "static_mask": (8,),
-        "lane_road": (12,),
+        "lane_road": (14,),
         "controls": (8, 15),
         "controls_mask": (8,),
         "interactions": (8, 33),

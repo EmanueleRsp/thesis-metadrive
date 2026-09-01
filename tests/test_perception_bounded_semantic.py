@@ -18,7 +18,9 @@ def test_v12_cache_preserves_an_actual_occlusion_gap(monkeypatch) -> None:
     route, lanes = _route()
     ego = _actor("ego", (0.0, 0.0), (5.0, 0.0))
     actor = _actor("other", (15.0, 0.0), (0.0, 0.0))
-    visible_ids = iter((frozenset({"other"}), frozenset({"other"}), frozenset(), frozenset({"other"})))
+    visible_ids = iter(
+        (frozenset({"other"}), frozenset({"other"}), frozenset(), frozenset({"other"}))
+    )
     monkeypatch.setattr(
         causal_semantic,
         "first_hit_lidar_sweep",
@@ -80,7 +82,7 @@ def test_v13_route_width_is_local_and_adjacency_fields_are_gone(monkeypatch) -> 
     batch = builder.build(_Vehicle(), _context(0, ego, (), route, lanes))
 
     assert batch.route[0, 5] == pytest.approx(4.0 / 6.0)
-    assert batch.lane_road.shape == (12,)
+    assert batch.lane_road.shape == (14,)
 
 
 def test_v12_rejects_route_samples_without_a_containing_lane(monkeypatch) -> None:
@@ -101,9 +103,7 @@ def test_v12_conflict_candidate_is_retained_over_noncritical_overflow(monkeypatc
     route, lanes = _route()
     ego = _actor("ego", (0.0, 0.0), (5.0, 0.0))
     conflict = _actor("conflict", (10.0, 0.0), lane_id="lane-1")
-    ordinary = tuple(
-        _actor(f"ordinary-{index:02d}", (20.0 + index, 1.0)) for index in range(16)
-    )
+    ordinary = tuple(_actor(f"ordinary-{index:02d}", (20.0 + index, 1.0)) for index in range(16))
     actors = (conflict, *ordinary)
     monkeypatch.setattr(
         causal_semantic,
@@ -128,7 +128,9 @@ def test_v12_conflict_candidate_is_retained_over_noncritical_overflow(monkeypatc
     assert builder.diagnostics.capacity_dropped["dynamic"] == 1
 
 
-def test_v12_compliance_trace_is_right_aligned_and_does_not_expose_rulebook_timers(monkeypatch) -> None:
+def test_v12_compliance_trace_is_right_aligned_and_does_not_expose_rulebook_timers(
+    monkeypatch,
+) -> None:
     route, lanes = _route()
     ego = _actor("ego", (0.0, 0.0), (5.0, 0.0))
     monkeypatch.setattr(

@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from math import atan2, cos, isfinite, pi, sin
 import time
+from typing import Any
 
 import shapely
 from shapely.geometry.base import BaseGeometry
@@ -226,6 +227,55 @@ def _vertical_actor_ids(ego: ActorSnapshot, actors: tuple[ActorSnapshot, ...]) -
 
 def _route_lane(cache: EpisodeCache, lane_id: str | None) -> RouteLaneRecord | None:
     return next((lane for lane in cache.route_lanes if lane.lane_id == lane_id), None)
+
+
+def ego_within_single_lane(
+    ego_footprint: Any,
+    route_lanes: tuple[RouteLaneRecord, ...],
+) -> bool | None:
+    """Whether the ego footprint lies wholly inside one route lane.
+
+    nuPlan's condition for the conditional lateral-collision branch: a side
+    impact is the ego's fault when its footprint is **not** fully within a single
+    lane or lane connector, i.e. when the ego was the one changing lanes or
+    straddling. ``None`` means undecidable -- no route lanes, or an unusable
+    footprint -- and the caller resolves that to at-fault.
+    """
+
+    if not route_lanes or ego_footprint is None:
+        return None
+    if ego_footprint.is_empty or not ego_footprint.is_valid:
+        return None
+    return any(lane.polygon_xy.contains(ego_footprint) for lane in route_lanes)
+
+
+def associated_speed_limit_mps(
+    route_lanes: tuple[RouteLaneRecord, ...],
+    ego_association: LaneAssociation | None,
+) -> float | None:
+    """The posted limit of the lane the ego is on, or ``None``.
+
+    The limit belongs to the *associated* lane, not to the route as a whole: a
+    route crosses limits, and averaging or taking the route's first would charge
+    the ego against a norm that does not apply where it is. ``None`` -- which
+    makes the sub-rule inapplicable -- covers both a failed association and a
+    lane with no real-map provenance, and there is deliberately no fallback
+    between them (ADR-068).
+
+    Public because the **observation** must call it too. RULEBOOK-V5.0 §7
+    requires the "unavailable" encoding to be emitted under exactly the condition
+    that makes the sub-rule inapplicable -- otherwise the agent would read a
+    numeric limit that no cost enforces, which is worse than reading nothing,
+    because the observation would assert a norm the reward does not back. One
+    function is how "exactly" is kept true.
+    """
+
+    if ego_association is None:
+        return None
+    for lane in route_lanes:
+        if lane.lane_id == ego_association.lane_id:
+            return lane.posted_speed_limit_mps
+    return None
 
 
 def _snapshot_lane_associations(
@@ -1487,6 +1537,12 @@ def evaluate_transition(
             # ego's fault) from "never observed by the snapshot pipeline"
             # (instrumentation gap).
             "post_actor_ids": frozenset(actor.actor_id for actor in post_state.actors),
+            # ADR-071's conditional lateral branch. `None` when it cannot be
+            # decided, which `is_at_fault` resolves to *at fault*: an
+            # undeterminable input must never buy an exculpation.
+            "ego_within_single_lane": ego_within_single_lane(
+                pre_state.ego.footprint, cache.route_lanes
+            ),
         },
         "rss": {
             "scenario_id": post_state.scenario_id,
@@ -1500,14 +1556,26 @@ def evaluate_transition(
             "ego_velocity_xy": pre_state.ego.velocity_xy,
             "actors": pre_state.actors,
             "vertically_compatible_actor_ids": _vertical_actor_ids(pre_state.ego, pre_state.actors),
+            # ADR-070's gate reads the *post* state for all three L2 sub-rules,
+            # including the two whose costs are computed from the pre state: it
+            # asks whether the ego is stopped at the state the cost is charged
+            # against.
+            "post_ego_velocity_xy": post_state.ego.velocity_xy,
         },
         "clearance": {
             "ego_footprint": post_state.ego.footprint,
             "actors": actors,
             "vertically_compatible_actor_ids": _vertical_actor_ids(post_state.ego, actors),
+            # ADR-067 scopes the rule to VRU on the roadway. The *plain* surface,
+            # not `offroad`'s 0.3 m-widened one: the band exists to absorb the
+            # bounding box's over-approximation of the ego, and has nothing to
+            # say about where a pedestrian is standing.
+            "drivable_surface": drivable,
+            "post_ego_velocity_xy": post_state.ego.velocity_xy,
         },
         "rss_lateral": {
             "candidates": rss_lateral_candidates,
+            "post_ego_velocity_xy": post_state.ego.velocity_xy,
         },
         "offroad": {"ego_footprint": post_state.ego.footprint, "drivable_surface": drivable},
         "wrong_carriageway": {
@@ -1531,6 +1599,12 @@ def evaluate_transition(
             "previous_boundary_id": memory.active_dashed_boundary_id,
             "previous_timer_s": memory.dashed_line_timer_s,
             "delta_t_s": delta_t_s,
+        },
+        "speed_limit": {
+            "ego_velocity_xy": post_state.ego.velocity_xy,
+            "posted_speed_limit_mps": associated_speed_limit_mps(
+                cache.route_lanes, post_ego_association
+            ),
         },
         "signal": signal_input,
         "stop": stop_input,

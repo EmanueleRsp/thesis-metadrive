@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
+import math
 import time
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from thesis_rl.rulebook.v2.errors import RuntimeScenarioNotEvaluableError
 from thesis_rl.rulebook.v2.transition import control_line_diagnostics
 from thesis_rl.rulebook.v2.types import (
     MACRO_RULE_ORDER,
+    MacroRule,
     EpisodeCache,
     EnvSnapshot,
     RulebookMemory,
@@ -93,6 +95,66 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         self._pre_snapshot: EnvSnapshot | None = None
         self._causal_scene_context: CausalSceneContext | None = None
         self._control_line_diagnostics: dict[str, int] | None = None
+        # RULEBOOK-V5.1 §7 (`REQ-RB51-19`). Episode counters, reported and never
+        # in the reward.
+        self._l4_clip_binding_steps = 0
+        self._l5_reached_steps = 0
+        self._ego_speed_sum_mps = 0.0
+        self._ego_speed_steps = 0
+
+    def _level_diagnostics(self, result: RulebookResult) -> dict[str, Any]:
+        """RULEBOOK-V5.1 §7's two counters, plus the ego speed for §7's third.
+
+        `l4_clip_binding_steps` should be **zero for any agent trajectory**:
+        MetaDrive caps every vehicle at `max_speed_km_h = 80 = v_ref`, so the
+        §4.1 clip cannot bind on a step the agent produces. A non-zero count is
+        therefore not a statistic, it is a signal that the cap was overridden and
+        that the Test A figures no longer bound what the agent can earn.
+
+        `l5_reached_steps` counts the steps where nothing above L5 is charged, so
+        L5 is the level that decides. **If this stays zero in practice the
+        restructure has not achieved what §1.1 claims, and that must be reported
+        as a result rather than discovered later**: moving the relaxable lane
+        rules below progress buys exactly one ordering, and a level that never
+        decides anything has not bought it.
+
+        `mean_ego_speed_by_source` is required by limitation 13: L6 rewards speed
+        while `speed_limit` is admitted on Waymo only, so the two sources sit
+        under different normative regimes and the divergence must be measured
+        rather than assumed away. The wrapper does not know the source, so it
+        publishes the per-step speed and the running mean; the evaluation
+        protocol groups them.
+        """
+
+        margins = result.margins
+        progress_index = MACRO_RULE_ORDER.index(MacroRule.MISSION_PROGRESS)
+        if abs(margins[progress_index]) >= 1.0 - 1e-9:
+            self._l4_clip_binding_steps += 1
+        above_l5 = tuple(
+            MACRO_RULE_ORDER.index(level)
+            for level in (
+                MacroRule.COLLISION_SAFETY,
+                MacroRule.INTERACTION_RISK,
+                MacroRule.NON_RELAXABLE_COMPLIANCE,
+            )
+        )
+        if all(margins[index] == 0.0 for index in above_l5):
+            self._l5_reached_steps += 1
+        # `isinstance`, not `is not None`: the snapshotter is a caller-supplied
+        # callable and `_publish_causal_scene_context` already treats a
+        # non-canonical snapshot as "no context" rather than as an error. A
+        # diagnostic must not be the one place that raises on it.
+        speed = 0.0
+        if isinstance(self._pre_snapshot, EnvSnapshot):
+            speed = math.hypot(*self._pre_snapshot.ego.velocity_xy)
+        self._ego_speed_sum_mps += speed
+        self._ego_speed_steps += 1
+        return {
+            "l4_clip_binding_steps": self._l4_clip_binding_steps,
+            "l5_reached_steps": self._l5_reached_steps,
+            "ego_speed_mps": speed,
+            "mean_ego_speed_mps": self._ego_speed_sum_mps / max(self._ego_speed_steps, 1),
+        }
 
     @property
     def memory(self) -> RulebookMemory:
@@ -236,6 +298,7 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         if self._control_line_diagnostics is not None:
             info_dict["rulebook_control_line_diagnostics"] = dict(self._control_line_diagnostics)
         info_dict["rulebook"] = result.to_dict()
+        info_dict.update(self._level_diagnostics(result))
         if scalarization_result is not None:
             reward = scalarization_result.reward
             info_dict["scalar_reward"] = scalarization_result.reward

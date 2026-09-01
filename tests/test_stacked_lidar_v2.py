@@ -5,16 +5,16 @@ import pytest
 
 from thesis_rl.envs.observations.stacked_lidar_v2 import StackedLidarObservationV2
 
-FRAME_DIM = 308
+FRAME_DIM = 310  # OBS-LIDAR-V2.0.2: + posted limit and its flag
 HISTORY_LENGTH = 21
 STACKED_DIM = FRAME_DIM * HISTORY_LENGTH + HISTORY_LENGTH
 
 
-def test_flat_dimension_is_6489() -> None:
+def test_flat_dimension_is_6531() -> None:
     observation = StackedLidarObservationV2({})
     observation.set_frame_builder(lambda vehicle: np.full(FRAME_DIM, 0.1, dtype=np.float32))
     out = observation.observe(object())
-    assert out.shape == (STACKED_DIM,) == (6489,)
+    assert out.shape == (STACKED_DIM,) == (6531,)
 
 
 def test_window_covers_21_samples_at_10hz_matching_dashed_tcap_s() -> None:

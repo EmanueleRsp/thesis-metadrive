@@ -23,8 +23,8 @@ def _batch() -> SemanticObservationBatchV12:
 def test_v12_schema_has_normative_dimensions_and_order() -> None:
     schema = SemanticObservationSchemaV12()
 
-    assert schema.version == "1.2-perception-bounded-mission-route-v1"
-    assert schema.flat_dim == 3009
+    assert schema.version == "1.3.1-perception-bounded-mission-route-speed-limit"
+    assert schema.flat_dim == 3011
     assert schema.raw_token_count == 143
     assert tuple(schema.group_shapes) == (
         "ego_history",
@@ -54,7 +54,7 @@ def test_v12_schema_numpy_round_trip_preserves_all_groups() -> None:
     flat = schema.flatten_numpy(batch)
     restored = schema.unflatten_numpy(flat)
 
-    assert flat.shape == (3009,)
+    assert flat.shape == (3011,)
     for name in schema.group_shapes:
         np.testing.assert_array_equal(getattr(restored, name), getattr(batch, name))
 

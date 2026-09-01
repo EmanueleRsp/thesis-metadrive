@@ -300,7 +300,9 @@ class LatentQueryEncoderV3(BaseEncoder):
         self.route_projection = _TokenProjection(7, token_dim)
         self.dynamic_projection = _TokenProjection(22, token_dim)
         self.static_projection = _TokenProjection(13, token_dim)
-        self.lane_road_projection = _TokenProjection(12, token_dim)
+        self.lane_road_projection = _TokenProjection(
+            14, token_dim
+        )  # OBS-V1.3.1: + posted limit and its flag
         self.controls_projection = _TokenProjection(15, token_dim)
         self.interactions_projection = _TokenProjection(33, token_dim)
         self.context_history_projection = _TokenProjection(23, token_dim)
@@ -376,9 +378,7 @@ class LatentQueryEncoderV3(BaseEncoder):
         interactions = interactions + self.interaction_slot_embedding(
             self._indices(8, device=device)
         ).view(1, 8, -1)
-        compliance = self._type(
-            self.context_history_projection(observation.context_history), 8
-        )
+        compliance = self._type(self.context_history_projection(observation.context_history), 8)
         compliance = compliance + self.history_time_embedding(
             self._indices(21, device=device)
         ).view(1, 21, -1)

@@ -144,11 +144,23 @@ def test_progress_weight_cannot_overturn_a_non_relaxable_violation() -> None:
 
     The worst case is a maximal progress step against the smallest possible L3
     violation, and it is why `lambda4` cannot be raised freely.
+
+    "Smallest possible" is bounded below by `numerical_tolerance = 1e-8`:
+    `_canonicalize_bounded` clamps anything at or under it to exactly zero, by
+    design, so a margin below the tolerance is not a small violation but *no*
+    violation, and the satisfaction indicator correctly does not fire. The
+    fixture therefore sits above the tolerance; a value under it would assert
+    nothing about the bound.
     """
 
-    violating = scalarize_rulebook_margins((0.0, 0.0, -1e-9, 1.0, 0.0, 0.0), config()).reward
+    violating = scalarize_rulebook_margins((0.0, 0.0, -1e-6, 1.0, 0.0, 0.0), config()).reward
     compliant = scalarize_rulebook_margins((0.0, 0.0, 0.0, 0.0, -1.0, -1.0), config()).reward
     assert compliant > violating
+
+    # And the clamped case is asserted rather than left implicit, so the
+    # distinction above cannot be silently undone by a future edit.
+    below_tolerance = scalarize_rulebook_margins((0.0, 0.0, -1e-9, 1.0, 0.0, 0.0), config()).reward
+    assert below_tolerance == pytest.approx(LAMBDA4)
 
 
 # ---------------------------------------------------------------------------

@@ -37,15 +37,32 @@ def _covers_lane_position(polygon: BaseGeometry, position_xy: tuple[float, float
 
 @dataclass(frozen=True, slots=True)
 class RouteLaneRecord:
+    """One lane of the assigned route.
+
+    ``posted_speed_limit_mps`` is ``None`` unless the source record carried a
+    *real-map* posted limit. It is deliberately not defaulted to anything: an
+    absent limit makes the `speed_limit` sub-rule inapplicable (ADR-068), and a
+    fallback -- in particular the ego's own ``max_speed_km_h`` -- would turn a
+    vehicle capability into a traffic norm.
+    """
+
     lane_id: str
     polygon_xy: BaseGeometry
     centerline: RoutePolyline
     successor_lane_ids: tuple[str, ...] = ()
     lateral_lane_ids: tuple[str, ...] = ()
+    posted_speed_limit_mps: float | None = None
 
     def __post_init__(self) -> None:
         if not self.lane_id:
             raise ValueError("Route lane_id must be non-empty")
+        if self.posted_speed_limit_mps is not None:
+            limit = float(self.posted_speed_limit_mps)
+            if not isfinite(limit) or limit <= 0.0:
+                raise ValueError(
+                    "Route lane posted speed limit must be finite and strictly positive "
+                    f"when present, got {self.posted_speed_limit_mps!r}"
+                )
         if self.polygon_xy.is_empty or not self.polygon_xy.is_valid:
             raise ValueError("Route lane polygon must be non-empty and valid")
         if any(not isinstance(lane_id, str) or not lane_id for lane_id in self.successor_lane_ids):

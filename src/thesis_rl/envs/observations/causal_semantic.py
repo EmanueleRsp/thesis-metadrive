@@ -26,7 +26,9 @@ from thesis_rl.rulebook.v2.geometry.continuous_sat import (
     OccupancyInterval,
     predict_occupancy_interval,
 )
+from thesis_rl.rulebook.v2.geometry.lanes import associate_route_lane
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline, RouteProjection
+from thesis_rl.rulebook.v2.transition import associated_speed_limit_mps
 from thesis_rl.rulebook.v2.types import (
     ActorClass,
     ActorSnapshot,
@@ -1848,6 +1850,20 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
                 boundaries[side] = (signed, type_index)
         left = boundaries["left"][0]
         right = boundaries["right"][0]
+        # OBS-V1.3.1 / OBS-LIDAR-V2.0.2: the posted limit of the ego's associated
+        # route lane, required by the `speed_limit` sub-rule (ADR-068). Two
+        # values, not one: the availability flag is an *explicit* "unavailable"
+        # encoding, because a sentinel inside the normalized channel would be
+        # indistinguishable from a real limit at that value. It is normalized by
+        # the ego speed cap, the same scale the other speed features use, so the
+        # agent can compare its own speed with the limit without a change of
+        # units.
+        posted_limit = self._posted_speed_limit_mps(context, ego)
+        speed_scale = self.ego_speed_cap_mps or ego.configured_speed_cap_mps
+        if speed_scale is None or speed_scale <= 0.0:
+            raise CausalSemanticObservationError(
+                "OBS-V1.3 speed-limit feature requires a positive ego speed cap"
+            )
         values = [
             _clip(lane_width, 6.0, lower=0.0),
             _clip(50.0 if left == float("inf") else left, 50.0),
@@ -1855,10 +1871,36 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             *_one_hot(boundaries["left"][1], 4),
             *_one_hot(boundaries["right"][1], 4),
             _clip(self._route_curvature(current_s), 0.2),
+            0.0 if posted_limit is None else _clip(posted_limit, speed_scale, lower=0.0),
+            0.0 if posted_limit is None else 1.0,
         ]
-        if len(values) != 12:
+        if len(values) != 14:
             raise RuntimeError(f"OBS-V1.3 lane/road contract produced {len(values)} values")
         return np.asarray(values, dtype=np.float32)
+
+    def _posted_speed_limit_mps(
+        self, context: CausalSceneContext, ego: ActorSnapshot
+    ) -> float | None:
+        """The same limit the reward reads, resolved the same way.
+
+        RULEBOOK-V5.0 §7 requires the "unavailable" encoding to fire under
+        *exactly* the condition that makes the sub-rule inapplicable. Calling the
+        rulebook's own lookup is what makes that an identity rather than a
+        promise: on the PG panel the feature is unavailable on every step,
+        because no PG lane carries real-map provenance.
+        """
+
+        cache = context.episode_cache
+        route_lanes = getattr(cache, "route_lanes", ())
+        if not route_lanes:
+            return None
+        association = associate_route_lane(
+            position_xy=ego.position_xy,
+            position_z=ego.position_z,
+            heading_rad=ego.heading_rad,
+            route_lanes=route_lanes,
+        )
+        return associated_speed_limit_mps(route_lanes, association)
 
     def _dynamic_features(
         self,

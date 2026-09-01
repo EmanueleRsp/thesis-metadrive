@@ -11,6 +11,11 @@ from thesis_rl.rulebook.v2.components.rss import RSSCalibrationArtifact, RSSCand
 from thesis_rl.rulebook.v2.components.ttc import evaluate_ttc
 from thesis_rl.rulebook.v2.types import ActorClass, ActorSnapshot, ContactOnsetRecord
 
+# ADR-070 gates the L2 interaction sub-rules on a stopped ego. These fixtures
+# are about the rules themselves, so they drive the ego well above the gate; the
+# gate has its own tests below.
+_MOVING_EGO = (5.0, 0.0)
+
 
 def _actor(
     actor_id: str,
@@ -81,7 +86,9 @@ def test_collision_cost_approaches_one_at_extreme_closing_speed():
         step_index=1,
         ego_configured_speed_cap_mps=10.0,
         pre_ego=_actor("ego", ActorClass.VEHICLE, x=0.0, y=0.0, velocity_xy=(5.0, 0.0)),
-        pre_actors_by_id={"other": _actor("other", ActorClass.VEHICLE, velocity_xy=(-100.0, 0.0), cap=10.0)},
+        pre_actors_by_id={
+            "other": _actor("other", ActorClass.VEHICLE, velocity_xy=(-100.0, 0.0), cap=10.0)
+        },
         onset_records=(_onset("other"),),
         previous_contact_ids=frozenset(),
         post_active_contact_ids=frozenset({"other"}),
@@ -107,12 +114,14 @@ def test_rss_no_front_vehicle_is_explicitly_not_applicable_and_bounded():
 def test_ttc_parallel_and_beyond_horizon_are_evaluable_without_cost():
     ego = Polygon(((0.0, -0.5), (1.0, -0.5), (1.0, 0.5), (0.0, 0.5)))
     parallel, _, _ = evaluate_ttc(
+        post_ego_velocity_xy=_MOVING_EGO,
         ego_footprint=ego,
         ego_velocity_xy=(1.0, 0.0),
         actors=(_actor("parallel", ActorClass.VEHICLE, x=2.0, y=3.0, velocity_xy=(1.0, 0.0)),),
         vertically_compatible_actor_ids=frozenset({"parallel"}),
     )
     distant, _, _ = evaluate_ttc(
+        post_ego_velocity_xy=_MOVING_EGO,
         ego_footprint=ego,
         ego_velocity_xy=(1.0, 0.0),
         actors=(_actor("distant", ActorClass.STATIC_COLLIDABLE, x=100.0, cap=None),),
@@ -127,12 +136,14 @@ def test_ttc_parallel_and_beyond_horizon_are_evaluable_without_cost():
 def test_ttc_current_overlap_and_clearance_thresholds_are_bounded():
     ego = Polygon(((0.0, -0.5), (1.0, -0.5), (1.0, 0.5), (0.0, 0.5)))
     ttc, _, _ = evaluate_ttc(
+        post_ego_velocity_xy=_MOVING_EGO,
         ego_footprint=ego,
         ego_velocity_xy=(0.0, 0.0),
         actors=(_actor("overlap", ActorClass.STATIC_COLLIDABLE, x=0.5, cap=None),),
         vertically_compatible_actor_ids=frozenset({"overlap"}),
     )
     clearance, _, _ = evaluate_clearance(
+        post_ego_velocity_xy=_MOVING_EGO,
         ego_footprint=ego,
         actors=(
             _actor("vehicle", ActorClass.VEHICLE, x=1.8),
@@ -140,6 +151,9 @@ def test_ttc_current_overlap_and_clearance_thresholds_are_bounded():
             _actor("static", ActorClass.STATIC_COLLIDABLE, x=2.5, cap=None),
         ),
         vertically_compatible_actor_ids=frozenset({"vehicle", "cyclist", "static"}),
+        # ADR-067 scopes `clearance` to VRU on the roadway; this fixture is about
+        # class eligibility and boundedness, so the roadway covers the scene.
+        drivable_surface=Polygon(((-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0))),
     )
     _assert_bounded(ttc)
     _assert_bounded(clearance)
@@ -163,4 +177,6 @@ def test_rss_safe_distance_equal_gap_has_zero_margin_and_finite_status():
     )
     _assert_bounded(result)
     assert result.applicable is True
-    assert result.raw["worst_deficit_m"] == pytest.approx(max(0.0, result.raw["worst_safe_distance_m"] - gap))
+    assert result.raw["worst_deficit_m"] == pytest.approx(
+        max(0.0, result.raw["worst_safe_distance_m"] - gap)
+    )

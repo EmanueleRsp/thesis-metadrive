@@ -9,6 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite
 
+from thesis_rl.rulebook.v2.components.at_fault_gate import (
+    at_fault_gated_result,
+    ego_is_stopped,
+)
 from thesis_rl.rulebook.v2.types import (
     CacheDelta,
     ComponentStatus,
@@ -53,9 +57,20 @@ def lateral_safe_distance_m(*, ego_inward_speed_mps: float, actor_inward_speed_m
 def evaluate_rss_lateral(
     *,
     candidates: tuple[LateralRSSCandidate, ...],
+    post_ego_velocity_xy: tuple[float, float],
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
-    """Evaluate the scoped lateral-RSS candidates; worst-of, NOT_APPLICABLE if empty."""
+    """Evaluate the scoped lateral-RSS candidates; worst-of, NOT_APPLICABLE if empty.
 
+    ADR-070: inapplicable when the post-transition ego is at or below the
+    at-fault gate speed. Its measured share of stopped-ego cost is only 9.1 %, so
+    this sub-rule gains almost nothing from the gate; it is included for
+    consistency of principle, since it is the same kind of rule -- one whose cost
+    another agent can set -- and a gate that covered two of the three would be a
+    gate with an unexplained exception.
+    """
+
+    if ego_is_stopped(post_ego_velocity_xy):
+        return at_fault_gated_result("rss_lateral")
     if not candidates:
         result = RuleComponentResult(
             name="rss_lateral",

@@ -98,6 +98,14 @@ def _lane_record(
         )
     successors = tuple(str(successor) for successor in lane.get("exit_lanes", ()))
     lateral = _lateral_lane_ids(lane)
+    # `posted_speed_limit_mps` is left `None` unconditionally, and this is not an
+    # omission. PG records do carry a `speed_limit_kmh`, but it is whichever
+    # default the MetaDrive lane constructor happened to hold, written out
+    # verbatim under a `_kmh` key while the blocks document their limits in m/s.
+    # PG blocks are synthetic, so there is no traffic law to encode: admitting a
+    # value here would invent a norm. `speed_limit` is therefore inapplicable
+    # throughout the PG panel, which RULEBOOK-V5.1 limitation 13 records as an
+    # accepted consequence rather than a defect. See ADR-068 and open item `D2`.
     return RouteLaneRecord(lane_id, polygon, centerline, successors, lateral)
 
 

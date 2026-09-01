@@ -347,6 +347,12 @@ def test_causal_builder_is_installed_only_on_observations_that_request_it() -> N
     env._build_causal_frame_builder = (
         thesis_env_module.ThesisScenarioEnv._build_causal_frame_builder.__get__(env)
     )
+    # OBS-LIDAR-V2.0.2: the frame builder now needs the route lanes for the
+    # posted-limit feature, so the installer resolves them from the live Rulebook
+    # cache or, as here, from the static adapter result.
+    env._build_static_adapter_result = (
+        thesis_env_module.ThesisScenarioEnv._build_static_adapter_result
+    )
 
     thesis_env_module.ThesisScenarioEnv._install_causal_observation_builder(env)
 

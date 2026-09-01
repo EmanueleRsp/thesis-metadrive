@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import isfinite
+
 import hashlib
 import json
 from collections.abc import Mapping
@@ -130,6 +132,44 @@ def _lane_polygon_from_widths(points: np.ndarray, width: Any, *, lane_id: str) -
     return polygon
 
 
+# A ScenarioNet record whose `speed_limit_kmh` reaches this value is carrying a
+# sentinel, not a limit: MetaDrive's `AbstractLane.speed_limit` defaults to 1000
+# ("should be set manually").
+SPEED_LIMIT_SENTINEL_KMH = 999.0
+
+
+def posted_speed_limit_mps(lane: Mapping[str, Any]) -> float | None:
+    """The lane's posted limit, admitted **by provenance** rather than by value.
+
+    ``speed_limit_kmh`` is written by every ScenarioNet producer, but only a
+    real-map converter fills it from a posted limit. Waymo lanes carry the source
+    datum ``speed_limit_mph`` alongside it (24.14 km/h = 15 mph, 40.23 = 25,
+    72.42 = 45). MetaDrive's PG exporter has no posted limit to read and writes
+    out whichever default the lane constructor happened to hold -- 1000 for lanes
+    built directly as `StraightLane`/`CircularLane`, 20 for lanes built through
+    `create_pg_block_utils` -- and writes it **verbatim under a `_kmh` key while
+    its own blocks document those numbers in m/s** (`ramp.py`:
+    ``SPEED_LIMIT = 12  # 12 m/s ~= 40 km/h``). Reading the PG value as km/h
+    understates it by 3.6x; reading it as m/s still reports a constructor default
+    as a traffic norm.
+
+    So the admission test is the presence of the source datum, not the
+    plausibility of the derived one. This subsumes the rejections of an
+    unrecorded 0.0 and of the sentinel, and additionally rejects every PG
+    default. See ADR-068.
+    """
+
+    if not isinstance(lane.get("speed_limit_mph"), (int, float)):
+        return None
+    limit_kmh = lane.get("speed_limit_kmh")
+    if not isinstance(limit_kmh, (int, float)):
+        return None
+    limit_kmh = float(limit_kmh)
+    if not isfinite(limit_kmh) or limit_kmh <= 0.0 or limit_kmh >= SPEED_LIMIT_SENTINEL_KMH:
+        return None
+    return limit_kmh / 3.6
+
+
 def _lane_record(
     lane_id: str, lane: Mapping[str, Any], *, z_origin_m: float = 0.0
 ) -> RouteLaneRecord:
@@ -145,7 +185,14 @@ def _lane_record(
     )
     successors = tuple(str(successor) for successor in lane.get("exit_lanes", ()))
     lateral = _lateral_lane_ids(lane)
-    return RouteLaneRecord(lane_id, polygon, centerline, successors, lateral)
+    return RouteLaneRecord(
+        lane_id,
+        polygon,
+        centerline,
+        successors,
+        lateral,
+        posted_speed_limit_mps(lane),
+    )
 
 
 def _lateral_lane_ids(lane: Mapping[str, Any]) -> tuple[str, ...]:

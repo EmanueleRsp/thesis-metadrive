@@ -68,9 +68,12 @@ def build_encoder(
             pooling=str(_get(cfg_encoder, "pooling", "mean")),
         )
     if encoder_type in {"latent_query_v3", "lq_v3"}:
-        if not isinstance(observation_schema, SemanticObservationSchemaV12) or input_dim != 3009:
+        if (
+            not isinstance(observation_schema, SemanticObservationSchemaV12)
+            or input_dim != SemanticObservationSchemaV12.flat_dim
+        ):
             raise ValueError(
-                "LatentQueryEncoderV3 requires semantic v1.2 observation schema and D=3009."
+                "LatentQueryEncoderV3 requires semantic v1.2 observation schema and D=3011."
             )
         if bool(_get(cfg_encoder, "residual_gating", False)):
             raise ValueError(
@@ -88,9 +91,12 @@ def build_encoder(
             pooling=str(_get(cfg_encoder, "pooling", "mean")),
         )
     if encoder_type in {"latent_query_v3_lite", "lq_v3_lite"}:
-        if not isinstance(observation_schema, SemanticObservationSchemaV12) or input_dim != 3009:
+        if (
+            not isinstance(observation_schema, SemanticObservationSchemaV12)
+            or input_dim != SemanticObservationSchemaV12.flat_dim
+        ):
             raise ValueError(
-                "LatentQueryEncoderV3Lite requires semantic v1.2 observation schema and D=3009."
+                "LatentQueryEncoderV3Lite requires semantic v1.2 observation schema and D=3011."
             )
         return LatentQueryEncoderV3Lite(
             schema=observation_schema,
@@ -104,9 +110,12 @@ def build_encoder(
             pooling=str(_get(cfg_encoder, "pooling", "mean")),
         )
     if encoder_type in {"latent_query_v3_micro", "lq_v3_micro"}:
-        if not isinstance(observation_schema, SemanticObservationSchemaV12) or input_dim != 3009:
+        if (
+            not isinstance(observation_schema, SemanticObservationSchemaV12)
+            or input_dim != SemanticObservationSchemaV12.flat_dim
+        ):
             raise ValueError(
-                "LatentQueryEncoderV3Micro requires semantic v1.2 observation schema and D=3009."
+                "LatentQueryEncoderV3Micro requires semantic v1.2 observation schema and D=3011."
             )
         return LatentQueryEncoderV3Micro(
             schema=observation_schema,

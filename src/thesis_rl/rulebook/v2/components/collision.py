@@ -6,6 +6,11 @@ from collections import defaultdict
 from math import hypot, isfinite
 from typing import Mapping, NoReturn
 
+from thesis_rl.rulebook.v2.components.collision_fault import (
+    CollisionFault,
+    classify_contact,
+    is_at_fault,
+)
 from thesis_rl.rulebook.v2.components.injury_risk import (
     INJURY_RISK_SOURCE,
     INJURY_SEVERITY,
@@ -52,6 +57,16 @@ def _canonical_footprint_center(
     return center
 
 
+def _fault_report(
+    not_at_fault: list[tuple[str, "CollisionFault"]],
+) -> tuple[dict[str, str], ...]:
+    """The not-at-fault contacts, sorted, as plain data for the info dict."""
+
+    return tuple(
+        {"actor_id": actor_id, "fault": fault.value} for actor_id, fault in sorted(not_at_fault)
+    )
+
+
 def evaluate_collision_impact(
     *,
     scenario_id: str,
@@ -63,6 +78,7 @@ def evaluate_collision_impact(
     previous_contact_ids: frozenset[str],
     post_active_contact_ids: frozenset[str],
     post_actor_ids: frozenset[str] = frozenset(),
+    ego_within_single_lane: bool | None = None,
 ) -> tuple[RuleComponentResult, MemoryDelta, CacheDelta]:
     """Evaluate only new contact onsets and atomically propose contact memory.
 
@@ -92,11 +108,15 @@ def evaluate_collision_impact(
         result = RuleComponentResult(
             name="collision",
             cost=0.0,
-            raw={"new_collision": False, "actors": ()},
+            raw={"new_collision": False, "actors": (), "not_at_fault_contacts": ()},
             applicable=False,
             evaluable=True,
             status=ComponentStatus.NOT_APPLICABLE,
-            diagnostics={"new_collision": False},
+            diagnostics={
+                "new_collision": False,
+                "not_at_fault_contacts": (),
+                "at_fault_collision": False,
+            },
         )
         return (
             result,
@@ -104,7 +124,10 @@ def evaluate_collision_impact(
             CacheDelta(),
         )
 
-    actor_costs: list[tuple[str, ActorSnapshot, float, float, tuple[float, float]]] = []
+    actor_costs: list[
+        tuple[str, ActorSnapshot, float, float, tuple[float, float], CollisionFault]
+    ] = []
+    not_at_fault: list[tuple[str, CollisionFault]] = []
     appeared_ids: list[str] = []
     unobserved_ids: list[str] = []
     for actor_id, records in onset_by_actor.items():
@@ -176,8 +199,12 @@ def evaluate_collision_impact(
             )
         except ValueError as error:
             _fail(scenario_id, step_index, str(error))
+        fault = classify_contact(pre_ego=pre_ego, actor=actor)
+        if not is_at_fault(fault, ego_within_single_lane=ego_within_single_lane):
+            not_at_fault.append((actor_id, fault))
+            continue
         actor_costs.append(
-            (actor_id, actor, raw_speed, max(COLLISION_FLOOR, risk), (normal_x, normal_y))
+            (actor_id, actor, raw_speed, max(COLLISION_FLOOR, risk), (normal_x, normal_y), fault)
         )
     if not actor_costs:
         return (
@@ -192,6 +219,7 @@ def evaluate_collision_impact(
                     # observed in either snapshot is an instrumentation gap.
                     "appeared_onset_actor_ids": tuple(sorted(appeared_ids)),
                     "unobserved_onset_actor_ids": tuple(sorted(unobserved_ids)),
+                    "not_at_fault_contacts": _fault_report(not_at_fault),
                 },
                 applicable=False,
                 evaluable=True,
@@ -200,12 +228,18 @@ def evaluate_collision_impact(
                     "new_collision": False,
                     "appeared_onset_actor_ids": tuple(sorted(appeared_ids)),
                     "unobserved_onset_actor_ids": tuple(sorted(unobserved_ids)),
+                    # ADR-071: reported, never priced. This is also what the
+                    # episode contract reads to truncate instead of terminate.
+                    "not_at_fault_contacts": _fault_report(not_at_fault),
+                    "at_fault_collision": False,
                 },
             ),
             MemoryDelta("collision", (("previous_contact_ids", post_active_contact_ids),)),
             CacheDelta(),
         )
-    worst_actor, _, worst_speed, cost, _ = max(actor_costs, key=lambda item: (item[3], item[0]))
+    worst_actor, _, worst_speed, cost, _, worst_fault = max(
+        actor_costs, key=lambda item: (item[3], item[0])
+    )
     result = RuleComponentResult(
         name="collision",
         cost=cost,
@@ -213,8 +247,10 @@ def evaluate_collision_impact(
             "new_collision": True,
             "worst_actor_id": worst_actor,
             "worst_closing_speed_mps": worst_speed,
+            "worst_fault": worst_fault.value,
             "appeared_onset_actor_ids": tuple(sorted(appeared_ids)),
             "unobserved_onset_actor_ids": tuple(sorted(unobserved_ids)),
+            "not_at_fault_contacts": _fault_report(not_at_fault),
             "actors": tuple(
                 {
                     "actor_id": actor_id,
@@ -224,8 +260,9 @@ def evaluate_collision_impact(
                     "cost": actor_cost,
                     "normal_source": "pre_state_canonical_footprint_centers",
                     "normal_ego_to_other_xy": normal,
+                    "fault": fault.value,
                 }
-                for actor_id, actor, raw_speed, actor_cost, normal in actor_costs
+                for actor_id, actor, raw_speed, actor_cost, normal, fault in actor_costs
             ),
         },
         applicable=True,
@@ -235,6 +272,8 @@ def evaluate_collision_impact(
             "onset_actor_ids": tuple(sorted(onset_by_actor)),
             "appeared_onset_actor_ids": tuple(sorted(appeared_ids)),
             "unobserved_onset_actor_ids": tuple(sorted(unobserved_ids)),
+            "not_at_fault_contacts": _fault_report(not_at_fault),
+            "at_fault_collision": True,
             "normal_source": "pre_state_canonical_footprint_centers",
             "injury_risk_model": {
                 "severity": INJURY_SEVERITY,

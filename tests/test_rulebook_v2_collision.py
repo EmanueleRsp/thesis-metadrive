@@ -9,10 +9,20 @@ from thesis_rl.rulebook.v2.types import ActorClass, ActorSnapshot, ContactOnsetR
 
 
 def _actor(
-    actor_id: str, actor_class: ActorClass, cap: float | None = 20.0, *, x: float = 2.0, y: float = 0.0
+    actor_id: str,
+    actor_class: ActorClass,
+    cap: float | None = 20.0,
+    *,
+    x: float = 2.0,
+    y: float = 0.0,
 ) -> ActorSnapshot:
     return ActorSnapshot(
-        actor_id, actor_class, (x, y), 0.0, 0.0, (0.0, 0.0),
+        actor_id,
+        actor_class,
+        (x, y),
+        0.0,
+        0.0,
+        (0.0, 0.0),
         Polygon(((x - 0.5, y - 0.5), (x + 0.5, y - 0.5), (x + 0.5, y + 0.5), (x - 0.5, y - 0.5))),
         None,
         cap,
@@ -48,11 +58,13 @@ def test_collision_cost_uses_pre_state_normal_speed() -> None:
     """
 
     result, memory_delta, _ = evaluate_collision_impact(
-        scenario_id="scenario", step_index=1,
+        scenario_id="scenario",
+        step_index=1,
         ego_configured_speed_cap_mps=10.0,
         pre_ego=_ego((5.0, 0.0)),
         pre_actors_by_id={"other": _actor("other", ActorClass.VEHICLE, 10.0)},
-        onset_records=(_onset("other"),), previous_contact_ids=frozenset(),
+        onset_records=(_onset("other"),),
+        previous_contact_ids=frozenset(),
         post_active_contact_ids=frozenset({"other"}),
     )
     assert result.raw["worst_closing_speed_mps"] == pytest.approx(5.0)
@@ -63,11 +75,13 @@ def test_collision_cost_uses_pre_state_normal_speed() -> None:
 
 def test_persistent_contact_is_not_a_new_collision_and_static_has_zero_velocity() -> None:
     result, _, _ = evaluate_collision_impact(
-        scenario_id="scenario", step_index=1,
+        scenario_id="scenario",
+        step_index=1,
         ego_configured_speed_cap_mps=10.0,
         pre_ego=_ego(),
         pre_actors_by_id={"wall": _actor("wall", ActorClass.STATIC_COLLIDABLE, None)},
-        onset_records=(_onset("wall"),), previous_contact_ids=frozenset({"wall"}),
+        onset_records=(_onset("wall"),),
+        previous_contact_ids=frozenset({"wall"}),
         post_active_contact_ids=frozenset({"wall"}),
     )
     assert result.cost == 0.0
@@ -76,10 +90,13 @@ def test_persistent_contact_is_not_a_new_collision_and_static_has_zero_velocity(
 
 def test_missing_dynamic_pre_state_is_ignored_for_first_frame() -> None:
     result, memory_delta, _ = evaluate_collision_impact(
-        scenario_id="scenario", step_index=1,
-        ego_configured_speed_cap_mps=10.0, pre_actors_by_id={},
+        scenario_id="scenario",
+        step_index=1,
+        ego_configured_speed_cap_mps=10.0,
+        pre_actors_by_id={},
         pre_ego=_ego((1.0, 0.0)),
-        onset_records=(_onset("other"),), previous_contact_ids=frozenset(),
+        onset_records=(_onset("other"),),
+        previous_contact_ids=frozenset(),
         post_active_contact_ids=frozenset({"other"}),
     )
     assert result.status.value == "not_applicable"
@@ -91,10 +108,14 @@ def test_missing_dynamic_pre_state_is_ignored_for_first_frame() -> None:
     assert memory_delta.writes[0] == ("previous_contact_ids", frozenset({"other"}))
     with pytest.raises(RulebookEvaluationError, match="speed normalization cap"):
         evaluate_collision_impact(
-            scenario_id="scenario", step_index=1,
-            ego_configured_speed_cap_mps=None, pre_actors_by_id={}, onset_records=(),
+            scenario_id="scenario",
+            step_index=1,
+            ego_configured_speed_cap_mps=None,
+            pre_actors_by_id={},
+            onset_records=(),
             pre_ego=_ego((1.0, 0.0)),
-            previous_contact_ids=frozenset(), post_active_contact_ids=frozenset(),
+            previous_contact_ids=frozenset(),
+            post_active_contact_ids=frozenset(),
         )
 
 
@@ -145,6 +166,10 @@ def test_collision_uses_pre_state_centerline_for_front_rear_and_side_impacts(
             "cost": pytest.approx(0.0038685, abs=1e-6),
             "normal_source": "pre_state_canonical_footprint_centers",
             "normal_ego_to_other_xy": expected_normal,
+            # ADR-071: every charged contact now names why it was charged. All
+            # three fixtures hold the other vehicle still, so all three are the
+            # ego driving into a stopped track -- at fault.
+            "fault": "stopped_track_collision",
         },
     )
 

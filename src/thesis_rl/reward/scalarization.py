@@ -38,7 +38,9 @@ _REQUIRED_PRIORITY_BASE_BY_MODE = {
 # The four legacy modes consume v4.7's four-margin vector; only the new mode
 # consumes six. Kept as data rather than as an `if` chain so that adding a mode
 # cannot forget to declare its arity (`DEC-RB51-003` keeps the legacy modes so
-# earlier runs stay reproducible).
+# earlier runs stay reproducible). This table is the *only* place an arity is
+# written: `scalarize_rulebook_margins` reads it instead of restating 4 and 6 at
+# its two call sites, because an arity written twice is an arity that can drift.
 _REQUIRED_MARGIN_COUNT_BY_MODE = {
     "bounded_centered_sigmoid": 4,
     "bounded_satisfaction_rank": 4,
@@ -318,7 +320,7 @@ def _symlog(value: float) -> float:
 
 
 def _canonicalize_bounded(
-    margins: tuple[float, ...], tolerance: float, *, expected: int = 4
+    margins: tuple[float, ...], tolerance: float, *, expected: int
 ) -> tuple[float, ...]:
     """Clamp near-zero margins to exactly zero and range-check every entry.
 
@@ -388,7 +390,11 @@ def scalarize_rulebook_margins(
         # rather than re-argued; L4, L5 and L6 form a finite exchange, because no
         # finite weight can make a continuous increment dominate a bounded cost
         # as the increment tends to zero (§5.2).
-        canonical = _canonicalize_bounded(values, float(cfg.numerical_tolerance), expected=6)
+        canonical = _canonicalize_bounded(
+            values,
+            float(cfg.numerical_tolerance),
+            expected=_REQUIRED_MARGIN_COUNT_BY_MODE[cfg.mode],
+        )
         pattern = tuple(value == 0.0 for value in canonical[:3])
         base = float(cfg.priority_base)
         severity = float(cfg.severity)
@@ -409,7 +415,11 @@ def scalarize_rulebook_margins(
             + float(cfg.progress_rate_weight) * canonical[5] * dt_ratio
         )
     else:
-        canonical = _canonicalize_bounded(values, float(cfg.numerical_tolerance))
+        canonical = _canonicalize_bounded(
+            values,
+            float(cfg.numerical_tolerance),
+            expected=_REQUIRED_MARGIN_COUNT_BY_MODE[cfg.mode],
+        )
         pattern = tuple(value == 0.0 for value in canonical[:3])
         continuous = float(sum(canonical) / 4.0)
         if cfg.mode == "bounded_centered_sigmoid":

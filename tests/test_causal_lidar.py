@@ -69,7 +69,7 @@ class _Vehicle:
         return np.asarray(point) - np.asarray(origin)
 
 
-def test_causal_lidar_frame_builder_produces_exact_308_dimensions() -> None:
+def test_causal_lidar_frame_builder_produces_exact_310_dimensions() -> None:
     route = RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0)))
     builder = CausalLidarFrameBuilder(
         MapRouteNavigationObservation22(
@@ -82,7 +82,7 @@ def test_causal_lidar_frame_builder_produces_exact_308_dimensions() -> None:
 
     frame = builder.build(_Vehicle())
 
-    assert frame.shape == (308,)
+    assert frame.shape == (310,)
     assert np.all(np.isfinite(frame))
 
 
@@ -117,7 +117,7 @@ def test_causal_lidar_builder_accepts_mapping_like_config_not_a_dict_subclass() 
 
     frame = builder.build(vehicle)
 
-    assert frame.shape == (308,)
+    assert frame.shape == (310,)
 
 
 def test_causal_lidar_builder_rejects_non_mapping_config() -> None:

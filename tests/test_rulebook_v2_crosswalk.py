@@ -37,7 +37,11 @@ def test_crosswalk_illegal_entry_persists_until_exit():
         previous_illegal_entries=frozenset(),
         ego_brake_mps2=4.0,
     )
-    assert result.cost == 1.0
+    # ADR-064: detected and recorded, not priced. The second half of this test --
+    # that the entry clears once the ego leaves the zone -- is the part that
+    # still bears on behaviour, and it is unchanged.
+    assert result.cost == 0.0
+    assert result.diagnostics["latched_illegal_entry"] is True
     assert ("ped", "z") in dict(delta.writes)["crosswalk_illegal_entries"]
     result, delta, _ = evaluate_crosswalk_yield(
         zone_id="z",
@@ -71,13 +75,16 @@ def test_crosswalk_missing_interval_fails_fast():
         )
 
 
-def test_crosswalk_active_latch_stays_applicable_and_reaches_r3() -> None:
-    """TEST-EF-15 / REQ-EF-08.
+def test_crosswalk_active_latch_no_longer_reaches_the_channel() -> None:
+    """TEST-EF-15 / REQ-EF-08, superseded by ADR-064.
 
-    Regression: with the illegal-entry latch active and the ego still in the
-    zone, the component reported ``cost=1.0`` but ``applicable=False`` as soon
-    as the VRU left the prediction set. ``aggregate_max_component`` filters on
-    ``applicable``, so the aggregated R3 collapsed to 0.0.
+    REQ-EF-08 existed because a latched cost of 1.0 with ``applicable=False``
+    was silently discarded by ``aggregate_max_component``. With the latch out of
+    the cost the coupling has no subject: there is no latched cost left to
+    discard, so the component is inapplicable when no VRU is predicted and the
+    channel is 0 because nothing is being charged -- not because something is
+    being dropped. The distinction is the whole point of the original
+    regression, so it is asserted rather than deleted.
     """
 
     result, _, _ = evaluate_crosswalk_yield(
@@ -93,15 +100,15 @@ def test_crosswalk_active_latch_stays_applicable_and_reaches_r3() -> None:
         previous_illegal_entries=frozenset({("ped", "z")}),
         ego_brake_mps2=4.0,
     )
-    assert result.cost == pytest.approx(1.0)
-    assert result.applicable is True
-    assert result.status is ComponentStatus.VIOLATED
+    assert result.cost == 0.0
+    assert result.applicable is False
+    assert result.status is ComponentStatus.NOT_APPLICABLE
+    # The entry is still visible, so "not charged" never becomes "not observed".
+    assert result.diagnostics["latched_illegal_entry"] is True
 
-    aggregated = aggregate_max_component(
-        name="road_traffic_compliance", components=(result,)
-    )
-    assert aggregated.applicable is True
-    assert aggregated.cost == pytest.approx(1.0)
+    aggregated = aggregate_max_component(name="non_relaxable_compliance", components=(result,))
+    assert aggregated.applicable is False
+    assert aggregated.cost == 0.0
 
 
 def test_crosswalk_stays_not_applicable_without_vru_and_without_latch() -> None:

@@ -16,6 +16,11 @@ from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.transition import _rss_lateral_candidates
 from thesis_rl.rulebook.v2.types import ActorClass
 
+# ADR-070 gates the L2 interaction sub-rules on a stopped ego. These fixtures
+# are about the rules themselves, so they drive the ego well above the gate; the
+# gate has its own tests below.
+_MOVING_EGO = (5.0, 0.0)
+
 
 def test_lateral_safe_distance_matches_reference_value_at_zero_speed() -> None:
     """AC-R2-03 (rulebook v4.8 §7, §12): two vehicles with zero inward
@@ -26,7 +31,7 @@ def test_lateral_safe_distance_matches_reference_value_at_zero_speed() -> None:
 
 
 def test_evaluate_rss_lateral_not_applicable_without_candidates() -> None:
-    result, _, _ = evaluate_rss_lateral(candidates=())
+    result, _, _ = evaluate_rss_lateral(post_ego_velocity_xy=_MOVING_EGO, candidates=())
     assert result.applicable is False
     assert result.cost == 0.0
     assert result.status.value == "not_applicable"
@@ -37,6 +42,7 @@ def test_evaluate_rss_lateral_ignores_longitudinally_safe_candidates() -> None:
     zero cost even with a tiny lateral gap (stable-but-close, parallel
     lanes)."""
     result, _, _ = evaluate_rss_lateral(
+        post_ego_velocity_xy=_MOVING_EGO,
         candidates=(
             LateralRSSCandidate(
                 actor_id="parallel",
@@ -56,6 +62,7 @@ def test_evaluate_rss_lateral_penalizes_a_gap_below_the_safe_distance() -> None:
     """AC-R2-02: a genuine lateral approach (gate true, gap below
     d_safe^lat) produces a positive bounded cost."""
     result, _, _ = evaluate_rss_lateral(
+        post_ego_velocity_xy=_MOVING_EGO,
         candidates=(
             LateralRSSCandidate(
                 actor_id="closing",
@@ -74,7 +81,9 @@ def test_evaluate_rss_lateral_penalizes_a_gap_below_the_safe_distance() -> None:
 def test_evaluate_rss_lateral_worst_of_multiple_candidates() -> None:
     safe_candidate = LateralRSSCandidate("safe", 5.0, 0.0, 0.0, True)
     unsafe_candidate = LateralRSSCandidate("unsafe", 0.0, 1.0, 1.0, True)
-    result, _, _ = evaluate_rss_lateral(candidates=(safe_candidate, unsafe_candidate))
+    result, _, _ = evaluate_rss_lateral(
+        post_ego_velocity_xy=_MOVING_EGO, candidates=(safe_candidate, unsafe_candidate)
+    )
     assert result.raw["worst_actor_id"] == "unsafe"
     assert result.cost == pytest.approx(1.0)
 
@@ -82,6 +91,7 @@ def test_evaluate_rss_lateral_worst_of_multiple_candidates() -> None:
 def test_evaluate_rss_lateral_rejects_negative_gap() -> None:
     with pytest.raises(ValueError, match="gap"):
         evaluate_rss_lateral(
+            post_ego_velocity_xy=_MOVING_EGO,
             candidates=(LateralRSSCandidate("bad", -0.1, 0.0, 0.0, True),),
         )
 
@@ -149,7 +159,7 @@ def _lateral_cost(ego, actors, route_lanes):
         route_lanes=route_lanes,
         ego_brake_mps2=EGO_BRAKE_MPS2,
     )
-    result, _, _ = evaluate_rss_lateral(candidates=candidates)
+    result, _, _ = evaluate_rss_lateral(post_ego_velocity_xy=_MOVING_EGO, candidates=candidates)
     return candidates, result
 
 

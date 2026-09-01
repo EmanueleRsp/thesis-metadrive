@@ -1,12 +1,25 @@
-"""Causal 308D frame builder for the stacked LiDAR observation."""
+"""Causal 310D frame builder for the stacked LiDAR observation.
+
+310, not the previously frozen 308: `OBS-LIDAR-V2.0.2` adds the posted speed
+limit of the ego's associated route lane and its explicit availability flag,
+required by `RULEBOOK-V5.1`'s `speed_limit` sub-rule. Checkpoint compatibility is
+intentionally broken (`DEC-RB51-001`).
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 
 from thesis_rl.envs.observations.assigned_route import MapRouteNavigationObservation22
 from thesis_rl.envs.observations.ray_noise import RayNoiseWrapper
+from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord, associate_route_lane
+from thesis_rl.rulebook.v2.transition import associated_speed_limit_mps
+
+
+# The scale the ego speed channel already uses, so the agent can compare its own
+# speed with the limit without a change of units.
+LIDAR_SPEED_SCALE_KMH = 120.0
 
 
 @dataclass(slots=True)
@@ -20,8 +33,13 @@ class CausalLidarFrameBuilder:
     num_side_rays: int = 12
     num_lane_rays: int = 12
     num_nearby_vehicles: int = 4
+    # The assigned route's lanes, carrying the posted limit admitted by
+    # provenance. Empty is legitimate and is not an error: it makes the feature
+    # unavailable, which is the correct reading on PG and on any record whose
+    # lanes carry no real-map limit.
+    route_lanes: tuple[RouteLaneRecord, ...] = field(default_factory=tuple)
 
-    FRAME_DIM = 308
+    FRAME_DIM = 310
 
     def __post_init__(self) -> None:
         if self.distance_m <= 0.0:
@@ -47,7 +65,7 @@ class CausalLidarFrameBuilder:
                 for name in ("lidar", "side_detector", "lane_line_detector")
             }
         )
-        ego = self._ego_state(vehicle)
+        ego = np.concatenate((self._ego_state(vehicle), self._speed_limit_block(vehicle)))
         navigation = self.route_navigation.observe(vehicle)
         side = self._ray_block(engine, vehicle, "side_detector", self.num_side_rays, "static_world")
         lane = self._ray_block(
@@ -56,10 +74,43 @@ class CausalLidarFrameBuilder:
         lidar, nearby = self._lidar_blocks(engine, vehicle)
         frame = np.concatenate((ego, navigation, side, lane, nearby, lidar)).astype(np.float32)
         if frame.shape != (self.FRAME_DIM,) or not np.all(np.isfinite(frame)):
-            raise ValueError("Causal LiDAR frame violates the finite 308D contract")
+            raise ValueError("Causal LiDAR frame violates the finite 310D contract")
         if not np.all((-1.0 <= frame) & (frame <= 1.0)):
             raise ValueError("Causal LiDAR frame violates the normalized range contract")
         return frame
+
+    def _speed_limit_block(self, vehicle: object) -> np.ndarray:
+        """The posted limit and its explicit availability flag.
+
+        Two values, not one: a sentinel inside the normalized channel would be
+        indistinguishable from a real limit at that value. The limit is resolved
+        through the **rulebook's own** lookup, because RULEBOOK-V5.0 §7 requires
+        the "unavailable" encoding to fire under exactly the condition that makes
+        the sub-rule inapplicable -- otherwise the observation would assert a norm
+        no cost backs, which is worse than saying nothing.
+
+        MetaDrive's own `lane.speed_limit` is deliberately **not** read here: on
+        PG it is a constructor default written under a `_kmh` key in m/s, and on
+        Waymo it comes through `ScenarioLane`, whose cap ADR-068 also prohibits.
+        """
+
+        if not self.route_lanes:
+            return np.zeros(2, dtype=np.float32)
+        position = getattr(vehicle, "position", None)
+        heading = getattr(vehicle, "heading_theta", None)
+        if position is None or heading is None:
+            return np.zeros(2, dtype=np.float32)
+        association = associate_route_lane(
+            position_xy=(float(position[0]), float(position[1])),
+            position_z=float(position[2]) if len(position) > 2 else 0.0,
+            heading_rad=float(heading),
+            route_lanes=self.route_lanes,
+        )
+        limit_mps = associated_speed_limit_mps(self.route_lanes, association)
+        if limit_mps is None:
+            return np.zeros(2, dtype=np.float32)
+        normalized = float(np.clip(limit_mps * 3.6 / LIDAR_SPEED_SCALE_KMH, 0.0, 1.0))
+        return np.asarray((normalized, 1.0), dtype=np.float32)
 
     @staticmethod
     def _ego_state(vehicle: object) -> np.ndarray:

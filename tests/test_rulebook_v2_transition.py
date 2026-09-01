@@ -192,13 +192,14 @@ def test_transition_invokes_complete_registry_and_keeps_vehicle_yield_not_applic
         config=RulebookTransitionConfig(),
     )
     assert result.complete_evaluation
-    # RULEBOOK-V5.1 §3: the fourteen sub-rules plus the five aggregated cost
-    # levels. `wrongway` is gone (ADR-066) and `progress_rate` is new
-    # (ADR-076); `rss` is still evaluated and published, and only aggregation
-    # ignores it (ADR-063).
+    # RULEBOOK-V5.1 §3: the fifteen sub-rules plus the five aggregated cost
+    # levels. `wrongway` is gone (ADR-066), `progress_rate` is new (ADR-076) and
+    # `speed_limit` is new (ADR-068); `rss` is still evaluated and published, and
+    # only aggregation ignores it (ADR-063).
     assert set(result.components) == {
         "collision",
         "rss",
+        "speed_limit",
         "rss_lateral",
         "ttc",
         "clearance",
@@ -759,8 +760,11 @@ def test_transition_vehicle_yield_latches_illegal_entry_from_pre_state_even_if_a
         config=_yield_config(),
     )
     zone_id = result.components["vehicle_yield"].raw["zone_id"]
-    assert result.components["vehicle_yield"].applicable is True
-    assert result.components["vehicle_yield"].cost == 1.0
+    # ADR-064: the pre-state gap still creates the illegal-entry record even
+    # though the actor left within the same control step -- which is what this
+    # regression is about -- but that record is no longer priced.
+    assert result.components["vehicle_yield"].cost == 0.0
+    assert result.components["vehicle_yield"].diagnostics["latched_illegal_entry"] is True
     assert ("other", zone_id) in next_memory.vehicle_yield_illegal_entries
 
 

@@ -7,7 +7,11 @@ import pytest
 from shapely.geometry import Polygon
 
 from thesis_rl.agent.agent import Agent
-from thesis_rl.reward.scalarization import RulebookScalarizer, ScalarizationConfig
+from thesis_rl.reward.scalarization import (
+    SIX_LEVEL_VECTOR_SCHEMA_ID,
+    RulebookScalarizer,
+    ScalarizationConfig,
+)
 from thesis_rl.rulebook.v2.types import (
     EpisodeCache,
     RulebookMemory,
@@ -45,7 +49,9 @@ def test_wrapper_preserves_native_reward_and_commits_after_transition():
         assert kwargs["pre_state"] == 0 and kwargs["post_state"] == 1
         delta = type("Delta", (), {"new_conflict_zones": ()})()
         return (
-            RulebookResult((0.0, 0.0, 0.0, 0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 1.0, {}, True),
+            RulebookResult(
+                (0.0, 0.0, 0.0, 0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 1.0, {}, True
+            ),
             RulebookMemory(),
             delta,
         )
@@ -92,7 +98,9 @@ def test_wrapper_exposes_native_termination_and_truncation_flags() -> None:
     def evaluate_transition(**kwargs):
         _ = kwargs
         return (
-            RulebookResult((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 0.0, {}, True),
+            RulebookResult(
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 0.0, {}, True
+            ),
             RulebookMemory(),
             CacheDelta(),
         )
@@ -132,7 +140,9 @@ def test_wrapper_preserves_physical_road_diagnostics(tmp_path) -> None:
         ),
         snapshotter=lambda env: env.t,
         transition_evaluator=lambda **_kwargs: (
-            RulebookResult((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 0.0, {}, True),
+            RulebookResult(
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 0.0, {}, True
+            ),
             RulebookMemory(),
             CacheDelta(),
         ),
@@ -159,7 +169,9 @@ def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation(tmp_path):
         return env.t
 
     def evaluate_transition(**kwargs):
-        result = RulebookResult((0.0, 0.0, 0.0, 0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 1.0, {}, True)
+        result = RulebookResult(
+            (0.0, 0.0, 0.0, 0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 1.0, {}, True
+        )
         return result, RulebookMemory(), CacheDelta()
 
     wrapped = RulebookV2MonitorWrapper(
@@ -169,7 +181,15 @@ def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation(tmp_path):
         initial_memory=RulebookMemory(),
         initial_cache=cache,
         scalarizer=RulebookScalarizer(
-            ScalarizationConfig(mode="bounded_satisfaction_rank", priority_base=2.01)
+            # `SCAL-V1.4`. A legacy mode cannot appear here any more: the
+            # rulebook emits six margins after `RB51`/`M1` and the four-level
+            # modes reject that vector by contract rather than silently reading
+            # its first four entries (`DEC-RB51-003`).
+            ScalarizationConfig(
+                mode="six_level_priority_weighted_rank",
+                priority_base=2.2,
+                vector_schema_id=SIX_LEVEL_VECTOR_SCHEMA_ID,
+            )
         ),
         rule_margin_log_path=str(tmp_path / "rule_margins.jsonl"),
         runtime_info_debug_enabled=True,
@@ -177,16 +197,18 @@ def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation(tmp_path):
     )
     wrapped.reset()
     _, reward, _, _, info = wrapped.step(0)
-    assert reward == pytest.approx(0.025)
+    # L1-L3, L5 and L6 are all satisfied at zero cost, so the reward is the
+    # progress term alone: `lambda4 * dq = 2.0 * 0.1`.
+    assert reward == pytest.approx(0.2)
     assert info["env_reward"] == 3.5
-    assert info["scalar_reward"] == pytest.approx(0.025)
-    assert info["raw_scalar_reward"] == pytest.approx(0.025)
-    assert info["scalar_rule_reward"] == pytest.approx(0.025)
-    assert info["scalarization"]["mode"] == "bounded_satisfaction_rank"
+    assert info["scalar_reward"] == pytest.approx(0.2)
+    assert info["raw_scalar_reward"] == pytest.approx(0.2)
+    assert info["scalar_rule_reward"] == pytest.approx(0.2)
+    assert info["scalarization"]["mode"] == "six_level_priority_weighted_rank"
     margin_record = (tmp_path / "rule_margins.jsonl").read_text(encoding="utf-8").strip()
-    assert '"scalar_rule_reward": 0.025' in margin_record
+    assert '"scalar_rule_reward": 0.2' in margin_record
     runtime_record = (tmp_path / "runtime_info_debug.jsonl").read_text(encoding="utf-8").strip()
-    assert '"rulebook_margins": [0.0, 0.0, 0.0, 0.1]' in runtime_record
+    assert '"rulebook_margins": [0.0, 0.0, 0.0, 0.1, 0.0, 0.0]' in runtime_record
 
 
 def test_wrapper_does_not_commit_memory_or_snapshot_when_cache_commit_fails():
@@ -217,7 +239,9 @@ def test_wrapper_does_not_commit_memory_or_snapshot_when_cache_commit_fails():
 
     def evaluate_transition(**kwargs):
         return (
-            RulebookResult((0.0, 0.0, 0.0, 0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 1.0, {}, True),
+            RulebookResult(
+                (0.0, 0.0, 0.0, 0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 1.0, {}, True
+            ),
             RulebookMemory(),
             CacheDelta((bad_zone,)),
         )
@@ -246,7 +270,9 @@ def test_wrapper_instances_keep_memory_and_cache_isolated_per_environment():
 
     def evaluate_transition(**kwargs):
         return (
-            RulebookResult((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 0.0, {}, True),
+            RulebookResult(
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 0.0, {}, True
+            ),
             kwargs["memory"],
             CacheDelta(),
         )
