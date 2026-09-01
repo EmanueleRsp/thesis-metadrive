@@ -7,14 +7,20 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
 
-SCALARIZATION_SPECIFICATION_ID = "SCAL-V1.1"
-SCALARIZATION_VERSION = "1.1"
+SCALARIZATION_SPECIFICATION_ID = "SCAL-V1.4"
+SCALARIZATION_VERSION = "1.4"
 BOUNDED_VECTOR_SCHEMA_ID = "rulebook_v2_macro_v4"
+# RULEBOOK-V5.1 §3.4. A distinct schema id, because a six-level vector is not a
+# four-level one with two entries appended: L5 and L6 sit *below* progress, so a
+# consumer that read the old schema and ignored the tail would be reading a
+# different preference order rather than a truncated one.
+SIX_LEVEL_VECTOR_SCHEMA_ID = "rulebook_v5_1_six_level_v1"
 SCALARIZATION_MODES = (
     "legacy_scaled_sigmoid",
     "bounded_centered_sigmoid",
     "bounded_satisfaction_rank",
     "bounded_priority_weighted_rank",
+    "six_level_priority_weighted_rank",
 )
 REWARD_COMPRESSION_MODES = ("none", "symlog")
 # SCAL-V1.1 REQ-SCAL11-003: each mode requires its own frozen priority_base;
@@ -25,6 +31,19 @@ _REQUIRED_PRIORITY_BASE_BY_MODE = {
     "bounded_centered_sigmoid": 2.01,
     "bounded_satisfaction_rank": 2.01,
     "bounded_priority_weighted_rank": 3.0,
+    # RULEBOOK-V5.1 §5.5: `a = 2.2`, re-derived for the six-level tail.
+    "six_level_priority_weighted_rank": 2.2,
+}
+
+# The four legacy modes consume v4.7's four-margin vector; only the new mode
+# consumes six. Kept as data rather than as an `if` chain so that adding a mode
+# cannot forget to declare its arity (`DEC-RB51-003` keeps the legacy modes so
+# earlier runs stay reproducible).
+_REQUIRED_MARGIN_COUNT_BY_MODE = {
+    "bounded_centered_sigmoid": 4,
+    "bounded_satisfaction_rank": 4,
+    "bounded_priority_weighted_rank": 4,
+    "six_level_priority_weighted_rank": 6,
 }
 
 
@@ -49,6 +68,16 @@ class ScalarizationConfig:
     legacy_rule_scales: tuple[float, ...] | None = None
     native_environment_reward_weight: float = 0.0
     reward_compression_mode: str = "none"
+    # RULEBOOK-V5.1 §5.5, read only by `six_level_priority_weighted_rank`. The
+    # defaults are the selected weights: `sigma = 0`, `phi = 0.25`,
+    # `lambda4 = 2.0`, `eta = 1.0`, `lambda6 = 0.2`.
+    severity: float = 0.0
+    flat_tie_breaker: float = 0.25
+    progress_weight: float = 2.0
+    relaxable_weight: float = 1.0
+    progress_rate_weight: float = 0.2
+    step_dt_s: float = 0.1
+    reference_time_s: float = 1.0
     specification_id: str = SCALARIZATION_SPECIFICATION_ID
     version: str = SCALARIZATION_VERSION
 
@@ -101,6 +130,59 @@ class ScalarizationConfig:
             raise ScalarizationConfigurationError(
                 "Bounded modes reject legacy_vector_schema_id and legacy_rule_scales."
             )
+        if mode == "six_level_priority_weighted_rank":
+            self._validate_six_level_weights()
+
+    def _validate_six_level_weights(self) -> None:
+        """RULEBOOK-V5.1 §5.4, checked at construction rather than at use.
+
+        The rank-preservation condition is what makes the priority weights an
+        *ordering* rather than a set of numbers: below it, one step of progress
+        or of relaxation can overturn a higher-level violation. Inadmissible
+        weights are refused here so that no such reward is ever emitted — the
+        same discipline the offline weight grid uses when it declines to price a
+        non-rank-preserving member instead of pricing it and reporting it.
+        """
+
+        for name in (
+            "severity",
+            "flat_tie_breaker",
+            "progress_weight",
+            "relaxable_weight",
+            "progress_rate_weight",
+        ):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0.0:
+                raise ScalarizationConfigurationError(
+                    f"{name} must be finite and non-negative, got {value!r}."
+                )
+        for name in ("step_dt_s", "reference_time_s"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0.0:
+                raise ScalarizationConfigurationError(
+                    f"{name} must be finite and strictly positive, got {value!r}."
+                )
+
+        base = float(self.priority_base)
+        severity = float(self.severity)
+        flat = float(self.flat_tie_breaker)
+        dt_ratio = float(self.step_dt_s) / float(self.reference_time_s)
+        # The utility tail: one maximal step of progress (`DELTA_Q_MAX = 1`,
+        # §4.1) plus one maximal step of each level below it.
+        tail = (
+            float(self.progress_weight)
+            + float(self.relaxable_weight) * dt_ratio
+            + float(self.progress_rate_weight) * dt_ratio
+        )
+        weights = (base**3, base**2, base)
+        for index, weight in enumerate(weights):
+            lower = weights[index + 1 :]
+            bound = (1.0 + severity) * sum(lower) + flat * len(lower) + tail
+            if weight <= bound:
+                raise ScalarizationConfigurationError(
+                    "Weights violate the rank-preservation condition of "
+                    f"RULEBOOK-V5.1 §5.4 at level {index + 1}: {weight} <= {bound}."
+                )
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any] | None) -> "ScalarizationConfig":
@@ -134,6 +216,13 @@ class ScalarizationConfig:
             "legacy_rule_scales",
             "native_environment_reward_weight",
             "reward_compression_mode",
+            "severity",
+            "flat_tie_breaker",
+            "progress_weight",
+            "relaxable_weight",
+            "progress_rate_weight",
+            "step_dt_s",
+            "reference_time_s",
             "specification_id",
             "version",
         }
@@ -228,10 +317,20 @@ def _symlog(value: float) -> float:
     return math.copysign(math.log1p(abs(value)), value) if value != 0.0 else 0.0
 
 
-def _canonicalize_bounded(margins: tuple[float, ...], tolerance: float) -> tuple[float, ...]:
-    if len(margins) != 4:
+def _canonicalize_bounded(
+    margins: tuple[float, ...], tolerance: float, *, expected: int = 4
+) -> tuple[float, ...]:
+    """Clamp near-zero margins to exactly zero and range-check every entry.
+
+    The progress level is the one entry that may be positive; every other level
+    is a negated cost and therefore lies in ``[-1, 0]``. Its index is 3 in both
+    the four-level and the six-level vector, because ADR-072 added L5 and L6
+    *below* progress rather than around it.
+    """
+
+    if len(margins) != expected:
         raise ScalarizationEvaluationError(
-            f"Bounded scalarization requires four macro margins, got {len(margins)}."
+            f"Scalarization requires {expected} macro margins, got {len(margins)}."
         )
     result: list[float] = []
     for index, value in enumerate(margins):
@@ -280,6 +379,35 @@ def scalarize_rulebook_margins(
         continuous = float(sum(rho) / len(rho))
         pattern = None
         canonical = values
+    elif cfg.mode == "six_level_priority_weighted_rank":
+        # RULEBOOK-V5.1 §5.1:
+        #   r = sum_k a^(4-k) [ (step(m_k) - 1) + sigma * m_k ]
+        #       + phi * sum_k m_k  +  lambda4 * dq
+        #       - eta * c_L5 * (dt / T_REF)  -  lambda6 * c_L6 * (dt / T_REF)
+        # L1-L3 are SCAL-V1.2 verbatim, so their per-step dominance is inherited
+        # rather than re-argued; L4, L5 and L6 form a finite exchange, because no
+        # finite weight can make a continuous increment dominate a bounded cost
+        # as the increment tends to zero (§5.2).
+        canonical = _canonicalize_bounded(values, float(cfg.numerical_tolerance), expected=6)
+        pattern = tuple(value == 0.0 for value in canonical[:3])
+        base = float(cfg.priority_base)
+        severity = float(cfg.severity)
+        flat = float(cfg.flat_tie_breaker)
+        dt_ratio = float(cfg.step_dt_s) / float(cfg.reference_time_s)
+        priority_terms = tuple(
+            float(weight) * ((float(is_satisfied) - 1.0) + severity * margin) + flat * margin
+            for weight, is_satisfied, margin in zip(
+                (base**3, base**2, base), pattern, canonical[:3]
+            )
+        )
+        # `canonical[4]` and `canonical[5]` are negated costs, so adding their
+        # weighted value subtracts the cost. Writing it as an addition keeps the
+        # sign convention of the vector in one place.
+        continuous = (
+            float(cfg.progress_weight) * canonical[3]
+            + float(cfg.relaxable_weight) * canonical[4] * dt_ratio
+            + float(cfg.progress_rate_weight) * canonical[5] * dt_ratio
+        )
     else:
         canonical = _canonicalize_bounded(values, float(cfg.numerical_tolerance))
         pattern = tuple(value == 0.0 for value in canonical[:3])

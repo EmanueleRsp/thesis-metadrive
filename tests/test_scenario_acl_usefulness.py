@@ -33,14 +33,14 @@ def test_rule_criticality_accepts_rulebook_v2_macro_names_without_changing_value
     usefulness = compute_scenario_usefulness(
         {
             "per_rule": [
-                {"rule_name": "route_progress", "min_margin": -0.2},
-                {"rule_name": "dynamic_interaction_safety", "min_margin": -0.1},
+                {"rule_name": "mission_progress", "min_margin": -0.2},
+                {"rule_name": "interaction_risk", "min_margin": -0.1},
             ]
         },
         learning_potential=7.0,
     )
     assert usefulness.rule_criticality == 2
-    assert usefulness.dominant_rule == "dynamic_interaction_safety"
+    assert usefulness.dominant_rule == "interaction_risk"
     assert usefulness.value == 7.0
 
 

@@ -26,11 +26,15 @@ _CRITICALITY_BY_RULE = {
     "allowed_driving_area": 3,
     "lane_marking_compliance": 2,
     "local_route_progress": 1,
-    # Rulebook v2 macro names follow the canonical lexicographic priority.
-    "collision_impact": 3,
-    "dynamic_interaction_safety": 2,
-    "road_traffic_compliance": 2,
-    "route_progress": 1,
+    # RULEBOOK-V5.1 §3's six levels, in the canonical lexicographic priority.
+    # The two levels added by ADR-072 and ADR-076 sit BELOW progress, so they
+    # weigh less than it rather than alongside the compliance levels.
+    "collision_safety": 3,
+    "interaction_risk": 2,
+    "non_relaxable_compliance": 2,
+    "mission_progress": 1,
+    "relaxable_lane_compliance": 1,
+    "progress_rate": 1,
 }
 
 

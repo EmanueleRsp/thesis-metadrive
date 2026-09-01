@@ -9,6 +9,7 @@ from thesis_rl.rulebook.v2.types import CacheDelta, MacroRule, MemoryDelta, Rule
 from thesis_rl.rulebook.v2.components.collision import evaluate_collision_impact
 from thesis_rl.rulebook.v2.components.clearance import evaluate_clearance
 from thesis_rl.rulebook.v2.components.progress import evaluate_progress
+from thesis_rl.rulebook.v2.components.progress_rate import evaluate_progress_rate
 from thesis_rl.rulebook.v2.components.rss import evaluate_rss
 from thesis_rl.rulebook.v2.components.rss_lateral import evaluate_rss_lateral
 from thesis_rl.rulebook.v2.components.road import (
@@ -16,7 +17,6 @@ from thesis_rl.rulebook.v2.components.road import (
     evaluate_offroad,
     evaluate_solid_line,
     evaluate_wrong_carriageway,
-    evaluate_wrongway,
 )
 from thesis_rl.rulebook.v2.components.controls import (
     evaluate_crosswalk_yield,
@@ -32,39 +32,56 @@ ComponentEvaluator = Callable[..., tuple[RuleComponentResult, MemoryDelta, Cache
 
 @dataclass(frozen=True, slots=True)
 class ComponentDefinition:
+    """One registered sub-rule, and the two independent things it may not do.
+
+    ``normative_output`` is *whether it is evaluated at all*: infrastructure
+    entries such as ``motion_history`` own memory fields but produce no cost and
+    have no evaluator.
+
+    ``contributes_to_channel`` is *whether its cost reaches a level*. ADR-063
+    demoted ``rss`` longitudinal to "a reported diagnostic, never in the
+    reward": it is still evaluated and still published, and only aggregation
+    ignores it. Overloading the first flag for that would have silently stopped
+    reporting it, which is the opposite of what the ADR decided.
+    """
+
     name: str
     macro_rule: MacroRule
     evaluator: ComponentEvaluator | None
     owned_memory_fields: frozenset[str] = frozenset()
     normative_output: bool = True
+    contributes_to_channel: bool = True
 
 
+# RULEBOOK-V5.1 §3. Ordered by level, because `validate` requires it and because
+# reading the tuple should read the hierarchy.
 _COMPONENTS: tuple[ComponentDefinition, ...] = (
+    # L1 -- collision safety
     ComponentDefinition(
         "collision",
-        MacroRule.COLLISION_IMPACT,
+        MacroRule.COLLISION_SAFETY,
         evaluate_collision_impact,
         frozenset({"previous_contact_ids"}),
     ),
-    ComponentDefinition("rss", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_rss),
-    ComponentDefinition("rss_lateral", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_rss_lateral),
-    ComponentDefinition("ttc", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_ttc),
-    ComponentDefinition("clearance", MacroRule.DYNAMIC_INTERACTION_SAFETY, evaluate_clearance),
-    ComponentDefinition("offroad", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_offroad),
-    ComponentDefinition("wrong_way", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_wrongway),
+    # L2 -- interaction risk. `rss` longitudinal stays registered but
+    # NON-NORMATIVE (ADR-063): it fires on 18.29 % of applicable expert steps and
+    # failed the controlled-invariance test, so it is reported and never priced.
     ComponentDefinition(
-        "wrong_carriageway", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_wrong_carriageway
+        "rss",
+        MacroRule.INTERACTION_RISK,
+        evaluate_rss,
+        contributes_to_channel=False,
     ),
-    ComponentDefinition("solid_line", MacroRule.ROAD_TRAFFIC_COMPLIANCE, evaluate_solid_line),
-    ComponentDefinition(
-        "dashed_line",
-        MacroRule.ROAD_TRAFFIC_COMPLIANCE,
-        evaluate_dashed_line,
-        frozenset({"active_dashed_boundary_id", "dashed_line_timer_s"}),
-    ),
+    ComponentDefinition("rss_lateral", MacroRule.INTERACTION_RISK, evaluate_rss_lateral),
+    ComponentDefinition("ttc", MacroRule.INTERACTION_RISK, evaluate_ttc),
+    ComponentDefinition("clearance", MacroRule.INTERACTION_RISK, evaluate_clearance),
+    # L3 -- non-relaxable compliance. `wrongway` is deleted, not demoted
+    # (ADR-066): one violated step in 217,189 of expert replay, and
+    # `wrong_carriageway` covers the observable subject.
+    ComponentDefinition("offroad", MacroRule.NON_RELAXABLE_COMPLIANCE, evaluate_offroad),
     ComponentDefinition(
         "signal",
-        MacroRule.ROAD_TRAFFIC_COMPLIANCE,
+        MacroRule.NON_RELAXABLE_COMPLIANCE,
         evaluate_signal_transition,
         frozenset(
             {
@@ -78,7 +95,7 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
     ),
     ComponentDefinition(
         "stop",
-        MacroRule.ROAD_TRAFFIC_COMPLIANCE,
+        MacroRule.NON_RELAXABLE_COMPLIANCE,
         evaluate_stop,
         frozenset(
             {
@@ -91,34 +108,51 @@ _COMPONENTS: tuple[ComponentDefinition, ...] = (
         ),
     ),
     ComponentDefinition(
-        "zone_lifecycle",
-        MacroRule.ROAD_TRAFFIC_COMPLIANCE,
-        None,
-        frozenset({"preexisting_ego_occupancy_zone_ids"}),
-        normative_output=False,
-    ),
-    ComponentDefinition(
         "crosswalk",
-        MacroRule.ROAD_TRAFFIC_COMPLIANCE,
+        MacroRule.NON_RELAXABLE_COMPLIANCE,
         evaluate_crosswalk_yield,
         frozenset({"crosswalk_illegal_entries"}),
     ),
     ComponentDefinition(
         "vehicle_yield",
-        MacroRule.ROAD_TRAFFIC_COMPLIANCE,
+        MacroRule.NON_RELAXABLE_COMPLIANCE,
         evaluate_vehicle_yield,
         frozenset({"vehicle_yield_illegal_entries", "frozen_actor_movement_keys"}),
     ),
     ComponentDefinition(
+        "zone_lifecycle",
+        MacroRule.NON_RELAXABLE_COMPLIANCE,
+        None,
+        frozenset({"preexisting_ego_occupancy_zone_ids"}),
+        normative_output=False,
+    ),
+    ComponentDefinition(
         "motion_history",
-        MacroRule.ROAD_TRAFFIC_COMPLIANCE,
+        MacroRule.NON_RELAXABLE_COMPLIANCE,
         None,
         frozenset({"actor_motion_histories", "previous_sim_time_s"}),
         normative_output=False,
     ),
+    # L4 -- mission progress
+    ComponentDefinition("progress", MacroRule.MISSION_PROGRESS, evaluate_progress),
+    # L5 -- relaxable lane compliance (ADR-072): the rules a competent driver
+    # may relax in order to complete a mission, therefore BELOW progress.
     ComponentDefinition(
-        "progress", MacroRule.ROUTE_PROGRESS, evaluate_progress
+        "solid_line", MacroRule.RELAXABLE_LANE_COMPLIANCE, evaluate_solid_line
     ),
+    ComponentDefinition(
+        "wrong_carriageway",
+        MacroRule.RELAXABLE_LANE_COMPLIANCE,
+        evaluate_wrong_carriageway,
+    ),
+    ComponentDefinition(
+        "dashed_line",
+        MacroRule.RELAXABLE_LANE_COMPLIANCE,
+        evaluate_dashed_line,
+        frozenset({"active_dashed_boundary_id", "dashed_line_timer_s"}),
+    ),
+    # L6 -- progress rate (ADR-076)
+    ComponentDefinition("advance_shortfall", MacroRule.PROGRESS_RATE, evaluate_progress_rate),
 )
 
 

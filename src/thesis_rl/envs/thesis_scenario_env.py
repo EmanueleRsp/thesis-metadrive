@@ -59,7 +59,8 @@ class ThesisScenarioEnv(ScenarioEnv):
                 "reactive_traffic": True,
                 "store_data": False,
                 "store_map": False,
-                "extra_steps_after_scenario": 50,
+                # ADR-058: zero tail; see `conf/env/scenarionet.yaml`.
+                "extra_steps_after_scenario": 0,
                 # ScenarioEnv treats a reference trajectory shorter than two
                 # metres as an immediate success.  That is useful for its
                 # replay use case, but corrupts an RL success metric: some
@@ -920,7 +921,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         if not done and scenario_time_limit_reached(
             episode_steps=int(self.episode_lengths[vehicle_id]),
             scenario_length=self._scenario_length(),
-            extra_steps_after_scenario=int(self.config.get("extra_steps_after_scenario", 50)),
+            extra_steps_after_scenario=int(self.config.get("extra_steps_after_scenario", 0)),
         ):
             done_info[TerminationState.MAX_STEP] = True
             done = False

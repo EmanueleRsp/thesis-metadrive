@@ -32,18 +32,31 @@ def _component(name, cost, applicable=True):
     )
 
 
-def test_aggregation_produces_ordered_four_margins_and_preserves_components():
+def test_aggregation_produces_ordered_six_margins_and_preserves_components():
+    """RULEBOOK-V5.1 §3. One margin per level, in `MACRO_RULE_ORDER`.
+
+    Cost levels are carried negated so that larger is better on every entry and
+    a lexicographic consumer can compare the vector without being told which
+    entries are costs. Levels with no applicable sub-rule contribute `+0.0`, not
+    `-0.0`.
+    """
+
     result = aggregate_rulebook_result(
         components=(
             _component("collision", 1.0),
             _component("ttc", 0.4),
             _component("offroad", 0.2),
+            _component("solid_line", 0.9),
+            _component("advance_shortfall", 0.6),
         ),
         raw_progress_m=0.5,
         progress_margin=0.3,
     )
-    assert result.margins == (-1.0, -0.4, -0.2, 0.3)
-    assert "ttc" in result.components and "road_traffic_compliance" in result.components
+    # L5 divides by a declared three even though one lane sub-rule applied.
+    assert result.margins == (-1.0, -0.4, -0.2, 0.3, pytest.approx(-0.3), -0.6)
+    assert "ttc" in result.components and "non_relaxable_compliance" in result.components
+    # The atomic sub-rule survives alongside its level.
+    assert "advance_shortfall" in result.components and "progress_rate" in result.components
 
 
 def test_monitor_merges_memory_only_after_valid_result():

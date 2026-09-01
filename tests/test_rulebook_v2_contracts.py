@@ -428,7 +428,7 @@ def test_v2_config_rejects_nonconformant_execution_or_order() -> None:
     RulebookV2Config().validate()
     with pytest.raises(ValueError, match="fail-fast"):
         RulebookV2Config(execution=ExecutionConfig(silent_fallbacks=True)).validate()
-    bad = RulebookV2Config(order=(MacroRule.ROUTE_PROGRESS,))
+    bad = RulebookV2Config(order=(MacroRule.MISSION_PROGRESS,))
     with pytest.raises(ValueError, match="order"):
         bad.validate()
     with pytest.raises(ValueError, match="Unsupported"):
@@ -438,7 +438,7 @@ def test_v2_config_rejects_nonconformant_execution_or_order() -> None:
 def test_registry_rejects_memory_double_writer() -> None:
     duplicate = DEFAULT_RULEBOOK_V2_REGISTRY.components + (
         ComponentDefinition(
-            "collision", MacroRule.COLLISION_IMPACT, None, frozenset({"previous_contact_ids"})
+            "collision", MacroRule.COLLISION_SAFETY, None, frozenset({"previous_contact_ids"})
         ),
     )
     with pytest.raises(ValueError, match="duplicate"):
@@ -481,7 +481,11 @@ def test_result_diagnostics_are_json_serializable() -> None:
         {"actors": ()},
     )
     result = RulebookResult(
-        (0.0, 0.0, 0.0, 0.1), (0.0, 0.0, 0.0), 0.2, {"collision": component}, True
+        (0.0, 0.0, 0.0, 0.1, 0.0, 0.0),
+        (0.0, 0.0, 0.0, 0.0, 0.0),
+        0.2,
+        {"collision": component},
+        True,
     )
     payload = result.to_dict()
     assert json.loads(json.dumps(payload))["components"]["collision"]["status"] == "satisfied"
@@ -493,4 +497,4 @@ def test_snapshot_and_result_reject_non_finite_values() -> None:
             "ego", ActorClass.VEHICLE, (inf, 0.0), 0.0, 0.0, (0.0, 0.0), Polygon(), None, 20.0
         )
     with pytest.raises(ValueError, match="finite"):
-        RulebookResult((0.0, 0.0, 0.0, inf), (0.0, 0.0, 0.0), 0.0, {}, True)
+        RulebookResult((0.0, 0.0, 0.0, inf, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 0.0, {}, True)

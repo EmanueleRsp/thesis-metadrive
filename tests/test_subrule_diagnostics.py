@@ -41,8 +41,8 @@ def _macro_step(
     macro_cost = worst["cost"] if applicable else 0.0
     return {
         "rule_components": {
-            "dynamic_interaction_safety": {
-                "name": "dynamic_interaction_safety",
+            "interaction_risk": {
+                "name": "interaction_risk",
                 "cost": macro_cost,
                 "raw": {"worst_component": worst["name"], "subcomponents": subcomponents},
                 "applicable": applicable,
@@ -63,8 +63,8 @@ def test_extract_subrule_step_reads_costs_and_worst_component() -> None:
 
     assert subrules["rss"].cost == 0.3
     assert subrules["ttc"].cost == 0.7
-    assert subrules["rss"].macro_rule == "dynamic_interaction_safety"
-    macro = macros["dynamic_interaction_safety"]
+    assert subrules["rss"].macro_rule == "interaction_risk"
+    macro = macros["interaction_risk"]
     assert macro.applicable is True
     assert macro.violated is True
     assert macro.worst_component == "ttc"
@@ -79,7 +79,7 @@ def test_extract_subrule_step_missing_rule_components_is_empty() -> None:
 def test_extract_subrule_step_not_applicable_macro_has_no_worst_component() -> None:
     step = _macro_step(rss=0.0, ttc=0.0, applicable=False)
     _subrules, macros = extract_subrule_step(step)
-    macro = macros["dynamic_interaction_safety"]
+    macro = macros["interaction_risk"]
     assert macro.applicable is False
     assert macro.violated is False
     assert macro.worst_component is None
@@ -121,7 +121,7 @@ def test_multi_violation_share_fixture() -> None:
 def test_not_applicable_subrule_step_excluded_from_stats() -> None:
     acc = SubruleEpisodeAccumulator()
     step = _macro_step(rss=0.4, ttc=0.6)
-    step["rule_components"]["dynamic_interaction_safety"]["raw"]["subcomponents"][0][
+    step["rule_components"]["interaction_risk"]["raw"]["subcomponents"][0][
         "applicable"
     ] = False
     acc.observe(step)

@@ -18,10 +18,10 @@ def _step_info() -> dict:
         "rule_reward_vector": (0.0, -0.12, -0.063, 0.018),
         "rule_metadata": {
             "rule_names": [
-                "collision_impact",
-                "dynamic_interaction_safety",
-                "road_traffic_compliance",
-                "route_progress",
+                "collision_safety",
+                "interaction_risk",
+                "non_relaxable_compliance",
+                "mission_progress",
             ]
         },
         "rule_components": {
@@ -50,7 +50,9 @@ def test_diagnostic_lines_are_compact_and_show_subrules() -> None:
         "Heading: +1.27 rad   Route: 42.7%",
         "Reward: -0.18   Cumulative: -0.18",
     ]
-    assert any("R2 m=-0.12" in line for line in lines)
+    # RULEBOOK-V5.1 §3: the overlay labels the six levels L1..L6. The former
+    # R1..R4 named v4.7's macro rules, which no longer exist.
+    assert any("L2 m=-0.12" in line for line in lines)
     assert any("rss c=0.12" in line and "ttc c=0.06" in line for line in lines)
     assert not any("collision c=" in line for line in lines)
     assert not any("progress c=" in line for line in lines)

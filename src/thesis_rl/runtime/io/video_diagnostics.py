@@ -10,16 +10,20 @@ import numpy as np
 from thesis_rl.runtime.io.video_utils import to_uint8_rgb
 
 
+# RULEBOOK-V5.1 §3. The overlay labels the six levels L1..L6; the old R1..R4
+# labels named v4.7's macro rules, which no longer exist.
 _MACRO_ALIASES = {
-    "collision_impact": "R1",
-    "dynamic_interaction_safety": "R2",
-    "road_traffic_compliance": "R3",
-    "route_progress": "R4",
+    "collision_safety": "L1",
+    "interaction_risk": "L2",
+    "non_relaxable_compliance": "L3",
+    "mission_progress": "L4",
+    "relaxable_lane_compliance": "L5",
+    "progress_rate": "L6",
 }
 _SUBRULE_ALIASES = {
     "clearance": "CLR",
     "vehicle_yield": "yield",
-    "wrong_way": "wrongway",
+    "advance_shortfall": "rate",
 }
 # REQ-RBCOST-012: without this, NOT_APPLICABLE (e.g. no signal control
 # selected) and SATISFIED (a control selected and currently green) render as

@@ -45,7 +45,7 @@ def test_wrapper_preserves_native_reward_and_commits_after_transition():
         assert kwargs["pre_state"] == 0 and kwargs["post_state"] == 1
         delta = type("Delta", (), {"new_conflict_zones": ()})()
         return (
-            RulebookResult((0.0, 0.0, 0.0, 0.1), (0.0, 0.0, 0.0), 1.0, {}, True),
+            RulebookResult((0.0, 0.0, 0.0, 0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 1.0, {}, True),
             RulebookMemory(),
             delta,
         )
@@ -62,19 +62,23 @@ def test_wrapper_preserves_native_reward_and_commits_after_transition():
     assert reward == 3.5
     assert info["terminated"] is False
     assert info["truncated"] is False
-    assert info["rule_reward_vector"] == (0.0, 0.0, 0.0, 0.1)
+    assert info["rule_reward_vector"] == (0.0, 0.0, 0.0, 0.1, 0.0, 0.0)
     assert info["rule_metadata"]["rule_names"] == [
-        "collision_impact",
-        "dynamic_interaction_safety",
-        "road_traffic_compliance",
-        "route_progress",
+        "collision_safety",
+        "interaction_risk",
+        "non_relaxable_compliance",
+        "mission_progress",
+        "relaxable_lane_compliance",
+        "progress_rate",
     ]
-    assert info["rule_metadata"]["priorities"] == [0, 1, 2, 3]
+    assert info["rule_metadata"]["priorities"] == [0, 1, 2, 3, 4, 5]
     assert Agent._extract_rule_margins(info) == [
-        ("collision_impact", 0, 0.0),
-        ("dynamic_interaction_safety", 1, 0.0),
-        ("road_traffic_compliance", 2, 0.0),
-        ("route_progress", 3, 0.1),
+        ("collision_safety", 0, 0.0),
+        ("interaction_risk", 1, 0.0),
+        ("non_relaxable_compliance", 2, 0.0),
+        ("mission_progress", 3, 0.1),
+        ("relaxable_lane_compliance", 4, 0.0),
+        ("progress_rate", 5, 0.0),
     ]
 
 
@@ -88,7 +92,7 @@ def test_wrapper_exposes_native_termination_and_truncation_flags() -> None:
     def evaluate_transition(**kwargs):
         _ = kwargs
         return (
-            RulebookResult((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0, {}, True),
+            RulebookResult((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 0.0, {}, True),
             RulebookMemory(),
             CacheDelta(),
         )
@@ -128,7 +132,7 @@ def test_wrapper_preserves_physical_road_diagnostics(tmp_path) -> None:
         ),
         snapshotter=lambda env: env.t,
         transition_evaluator=lambda **_kwargs: (
-            RulebookResult((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0, {}, True),
+            RulebookResult((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 0.0, {}, True),
             RulebookMemory(),
             CacheDelta(),
         ),
@@ -155,7 +159,7 @@ def test_wrapper_uses_scalarizer_after_complete_rulebook_evaluation(tmp_path):
         return env.t
 
     def evaluate_transition(**kwargs):
-        result = RulebookResult((0.0, 0.0, 0.0, 0.1), (0.0, 0.0, 0.0), 1.0, {}, True)
+        result = RulebookResult((0.0, 0.0, 0.0, 0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 1.0, {}, True)
         return result, RulebookMemory(), CacheDelta()
 
     wrapped = RulebookV2MonitorWrapper(
@@ -213,7 +217,7 @@ def test_wrapper_does_not_commit_memory_or_snapshot_when_cache_commit_fails():
 
     def evaluate_transition(**kwargs):
         return (
-            RulebookResult((0.0, 0.0, 0.0, 0.1), (0.0, 0.0, 0.0), 1.0, {}, True),
+            RulebookResult((0.0, 0.0, 0.0, 0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 1.0, {}, True),
             RulebookMemory(),
             CacheDelta((bad_zone,)),
         )
@@ -242,7 +246,7 @@ def test_wrapper_instances_keep_memory_and_cache_isolated_per_environment():
 
     def evaluate_transition(**kwargs):
         return (
-            RulebookResult((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0, {}, True),
+            RulebookResult((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), 0.0, {}, True),
             kwargs["memory"],
             CacheDelta(),
         )

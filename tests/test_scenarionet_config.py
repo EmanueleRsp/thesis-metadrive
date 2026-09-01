@@ -22,6 +22,9 @@ def test_scenarionet_env_config_composes_with_required_semantics() -> None:
     assert bool(cfg.env.config.relax_out_of_road_done) is False
     assert bool(cfg.env.config.out_of_route_done) is False
     assert bool(cfg.env.config.truncate_as_terminate) is False
-    assert int(cfg.env.episode_control.extra_steps_after_scenario) == 50
+    # ADR-058 / scenarionet-integration v1.4 §3: the frozen tail is zero. The key
+    # itself is retained, so a non-zero tail stays expressible per-run; only this
+    # default changed.
+    assert int(cfg.env.episode_control.extra_steps_after_scenario) == 0
     assert float(cfg.env.provider.source_probability.waymo) == 0.5
     assert float(cfg.env.provider.source_probability.pg) == 0.5

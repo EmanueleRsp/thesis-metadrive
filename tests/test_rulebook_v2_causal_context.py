@@ -88,8 +88,8 @@ def test_wrapper_publishes_committed_context_without_rulebook_result() -> None:
         memory = kwargs["memory"]
         return (
             RulebookResult(
-                margins=(0.0, 0.0, 0.0, 0.0),
-                costs=(0.0, 0.0, 0.0),
+                margins=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                costs=(0.0, 0.0, 0.0, 0.0, 0.0),
                 raw_progress_m=0.0,
                 components={},
                 complete_evaluation=True,
@@ -121,8 +121,8 @@ def test_wrapper_refreshes_observation_after_memory_context_commit() -> None:
     def evaluate(**kwargs):
         return (
             RulebookResult(
-                margins=(0.0, 0.0, 0.0, 0.0),
-                costs=(0.0, 0.0, 0.0),
+                margins=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                costs=(0.0, 0.0, 0.0, 0.0, 0.0),
                 raw_progress_m=0.0,
                 components={},
                 complete_evaluation=True,

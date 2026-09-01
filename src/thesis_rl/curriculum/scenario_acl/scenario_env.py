@@ -78,7 +78,7 @@ def _build_scenarionet_replay_config(
     env_config["truncate_as_terminate"] = False
 
     episode_control = env_cfg.get("episode_control", {})
-    extra_steps = int(episode_control.get("extra_steps_after_scenario", 50))
+    extra_steps = int(episode_control.get("extra_steps_after_scenario", 0))
     if extra_steps < 0:
         raise ValueError("env.episode_control.extra_steps_after_scenario must be non-negative.")
 

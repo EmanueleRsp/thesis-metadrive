@@ -1515,11 +1515,6 @@ def evaluate_transition(
             "aligned_surface": carriageway_surfaces.aligned,
             "opposing_surface": carriageway_surfaces.opposing,
         },
-        "wrong_way": {
-            "ego": post_state.ego,
-            "route": route,
-            "previous_s_m": None,
-        },
         "solid_line": {
             "ego_footprint": post_state.ego.footprint,
             "solid_boundaries": solid_boundaries,
@@ -1546,6 +1541,13 @@ def evaluate_transition(
             "delta_t_s": delta_t_s,
             "ego_footprint": post_state.ego.footprint,
             "task_corridor": _task_corridor(cache),
+        },
+        # L6 reads the same station delta L4 does (RULEBOOK-V5.1 §4.6), so it
+        # adds no perception and no new input to construct.
+        "advance_shortfall": {
+            "pre_mission": pre_state.mission_snapshot,
+            "post_mission": post_state.mission_snapshot,
+            "delta_t_s": delta_t_s,
         },
     }
     excluded_components = frozenset()

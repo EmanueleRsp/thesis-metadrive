@@ -19,9 +19,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from thesis_rl.rulebook.v2.types import MacroRule
+
+# The levels whose sub-rules carry a per-object cost worth attributing. L1 has a
+# single sub-rule and L4 is a utility, so neither has anything to attribute.
+# Taken from the enum rather than restated as strings: RULEBOOK-V5.1 §3 is the
+# one place the level names live.
 DIAGNOSTIC_MACRO_RULES: tuple[str, ...] = (
-    "dynamic_interaction_safety",
-    "road_traffic_compliance",
+    MacroRule.INTERACTION_RISK.value,
+    MacroRule.NON_RELAXABLE_COMPLIANCE.value,
+    MacroRule.RELAXABLE_LANE_COMPLIANCE.value,
 )
 
 

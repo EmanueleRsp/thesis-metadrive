@@ -225,3 +225,43 @@ def test_smoke_train_preset_composes() -> None:
     assert str(cfg.reward.name) == "monitor_only"
     assert str(cfg.curriculum.name) == "disabled"
     assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
+
+
+def test_every_algorithm_is_undiscounted() -> None:
+    """`AC-RB5.1-16` / ADR-075. One discount, equal to 1, for every arm.
+
+    Discounting erodes the rulebook's geometric priority weights at different
+    rates: at `gamma = 0.99` a collision more than 15.7 s away costs less than
+    one non-relaxable violation now, which is inside a 20 s episode. Episodes
+    terminate at the logged horizon, so the undiscounted return is finite.
+
+    The assertion is over *every* algorithm config rather than the ones in use,
+    because differing discounts across arms would make a difference in results
+    non-attributable to the preference structure under test -- which is the
+    comparison this thesis exists to make. The declared fallback of ADR-075 is
+    0.999 for all arms together; taking it means changing every file here, which
+    is exactly the visibility the fallback was declared for.
+    """
+
+    algorithm_dir = CONF_DIR / "agent" / "planner" / "algorithm"
+    configs = sorted(algorithm_dir.glob("*.yaml"))
+    assert configs, "no algorithm configs found; the guard would pass vacuously"
+
+    for config in configs:
+        text = config.read_text(encoding="utf-8")
+        gammas = [
+            line.split(":", 1)[1].strip()
+            for line in text.splitlines()
+            if line.startswith("gamma:")
+        ]
+        assert gammas == ["1.0"] or not gammas, f"{config.name} is discounted: {gammas}"
+
+        # Ng et al.: potential-based shaping is policy-invariant only when its
+        # discount is the MDP's, so this one tracks `gamma` rather than being
+        # free to differ.
+        shaping = [
+            line.split(":", 1)[1].strip()
+            for line in text.splitlines()
+            if line.startswith("learning_potential_gamma:")
+        ]
+        assert shaping in ([], ["1.0"]), f"{config.name} shaping discount: {shaping}"

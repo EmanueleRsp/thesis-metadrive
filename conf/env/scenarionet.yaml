@@ -54,7 +54,12 @@ config:
   rulebook_v2_disable_vehicle_yield_for_benchmark: false
 
 episode_control:
-  extra_steps_after_scenario: 50
+  # ADR-058 / scenarionet-integration v1.4 §3: zero tail. Upstream removes the
+  # logged replay participants at `episode_step >= scenario_length` and freezes
+  # the traffic lights, so any tail step runs in an empty, signal-frozen world.
+  # The key is retained so a non-zero tail stays expressible; only the frozen
+  # value changed.
+  extra_steps_after_scenario: 0
 
 provider:
   # Supported kinds: uniform, arm_uniform, fixed_sequence.

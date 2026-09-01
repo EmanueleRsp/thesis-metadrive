@@ -97,17 +97,40 @@ class ComponentStatus(str, Enum):
 
 
 class MacroRule(str, Enum):
-    COLLISION_IMPACT = "collision_impact"
-    DYNAMIC_INTERACTION_SAFETY = "dynamic_interaction_safety"
-    ROAD_TRAFFIC_COMPLIANCE = "road_traffic_compliance"
-    ROUTE_PROGRESS = "route_progress"
+    """The six levels of RULEBOOK-V5.1 §3, in priority order.
+
+    These *values* are recorded in CSVs, evaluation artifacts and analysis
+    tables, so they are an output contract rather than an internal name. They
+    were renamed from v4.7's three macro rules under `DEC-RB51-005`, approved
+    2026-08-20: after ADR-072 moved the relaxable road rules below progress, a
+    level still called ``road_traffic_compliance`` would name something it no
+    longer contains.
+    """
+
+    COLLISION_SAFETY = "collision_safety"
+    INTERACTION_RISK = "interaction_risk"
+    NON_RELAXABLE_COMPLIANCE = "non_relaxable_compliance"
+    MISSION_PROGRESS = "mission_progress"
+    RELAXABLE_LANE_COMPLIANCE = "relaxable_lane_compliance"
+    PROGRESS_RATE = "progress_rate"
 
 
+# The single source of truth for the ordering. Nothing else may restate it: a
+# hierarchy whose order is written down twice is a hierarchy with two orders.
 MACRO_RULE_ORDER: tuple[MacroRule, ...] = (
-    MacroRule.COLLISION_IMPACT,
-    MacroRule.DYNAMIC_INTERACTION_SAFETY,
-    MacroRule.ROAD_TRAFFIC_COMPLIANCE,
-    MacroRule.ROUTE_PROGRESS,
+    MacroRule.COLLISION_SAFETY,
+    MacroRule.INTERACTION_RISK,
+    MacroRule.NON_RELAXABLE_COMPLIANCE,
+    MacroRule.MISSION_PROGRESS,
+    MacroRule.RELAXABLE_LANE_COMPLIANCE,
+    MacroRule.PROGRESS_RATE,
+)
+
+# The levels that carry a cost in [0, 1]. L4 is the one level that is a utility
+# rather than a cost, and keeping the two apart is what stops a sign error from
+# turning progress into a penalty.
+COST_MACRO_RULES: tuple[MacroRule, ...] = tuple(
+    rule for rule in MACRO_RULE_ORDER if rule is not MacroRule.MISSION_PROGRESS
 )
 
 
@@ -425,25 +448,51 @@ class RuleComponentResult:
 
 @dataclass(frozen=True, slots=True)
 class RulebookResult:
-    margins: tuple[float, float, float, float]
-    costs: tuple[float, float, float]
+    """One transition's ordered channel vector, RULEBOOK-V5.1 §3.4.
+
+    ``margins`` has one entry per level of ``MACRO_RULE_ORDER``, in that order.
+    Cost levels are carried negated, so that on every entry *larger is better*
+    and a lexicographic consumer can compare the vector without knowing which
+    entries are costs. ``costs`` carries the five cost levels unnegated, in
+    ``COST_MACRO_RULES`` order, for reporting.
+    """
+
+    margins: tuple[float, ...]
+    costs: tuple[float, ...]
     raw_progress_m: float
     components: Mapping[str, RuleComponentResult]
     complete_evaluation: bool
 
     def __post_init__(self) -> None:
+        if len(self.margins) != len(MACRO_RULE_ORDER):
+            raise ValueError(
+                f"RulebookResult needs one margin per level: expected "
+                f"{len(MACRO_RULE_ORDER)}, got {len(self.margins)}"
+            )
+        if len(self.costs) != len(COST_MACRO_RULES):
+            raise ValueError(
+                f"RulebookResult needs one cost per cost level: expected "
+                f"{len(COST_MACRO_RULES)}, got {len(self.costs)}"
+            )
         _require_finite(
             "RulebookResult",
-            margin_1=self.margins[0],
-            margin_2=self.margins[1],
-            margin_3=self.margins[2],
-            margin_4=self.margins[3],
-            cost_1=self.costs[0],
-            cost_2=self.costs[1],
-            cost_3=self.costs[2],
+            **{f"margin_{index + 1}": value for index, value in enumerate(self.margins)},
+            **{f"cost_{index + 1}": value for index, value in enumerate(self.costs)},
             raw_progress_m=self.raw_progress_m,
         )
         object.__setattr__(self, "components", freeze_mapping(self.components))
+
+    def margin_for(self, level: MacroRule) -> float:
+        """The margin of one level, by name rather than by position."""
+
+        return self.margins[MACRO_RULE_ORDER.index(level)]
+
+    def cost_for(self, level: MacroRule) -> float:
+        """The unnegated cost of one cost level; L4 has no cost."""
+
+        if level is MacroRule.MISSION_PROGRESS:
+            raise ValueError("MISSION_PROGRESS is a utility level and carries no cost")
+        return self.costs[COST_MACRO_RULES.index(level)]
 
     def to_dict(self) -> dict[str, JSONValue]:
         return {

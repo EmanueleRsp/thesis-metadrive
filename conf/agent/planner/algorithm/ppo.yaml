@@ -7,9 +7,19 @@ n_steps: 2048
 batch_size: 64
 n_epochs: 10
 learning_rate: 3e-4
-gamma: 0.99
+# ADR-075: undiscounted. Exponential discounting erodes the rulebook's
+# geometric priority weights at different rates, so at 0.99 a collision more
+# than 15.7 s away costs less than one non-relaxable violation now -- inside a
+# 20 s episode. Episodes terminate at the logged horizon, so the return is
+# finite and the task is proper. One gamma for every arm: differing discounts
+# would make results non-attributable to the preference structure under test.
+# Declared fallback if the value-based arms fail to stabilize: 0.999 for ALL
+# arms together, never per-arm, with the O3 degradation reported.
+gamma: 1.0
 gae_lambda: 0.95
-learning_potential_gamma: 0.99
+# Must equal `gamma`: Ng et al.'s policy-invariance theorem for
+# potential-based shaping holds only when the shaping discount is the MDP's.
+learning_potential_gamma: 1.0
 learning_potential_gae_lambda: 0.9
 log_std_init: 0.0
 optimizer_eps: 1e-5

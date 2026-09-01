@@ -176,7 +176,16 @@ def test_descriptors_reset_and_step_in_scenario_online_env(fixture_id: str) -> N
         ("rss_rear_vehicle", "rss_lateral", False, False),
         ("stop_sign", "stop", True, False),
         ("red_light", "progress", True, False),
-        ("wrong_way", "wrongway", True, False),
+        # No row for the `wrong_way` scene. ADR-066 deleted the rule -- one
+        # violated step in 217,189 of expert replay -- so no live transition
+        # produces a component for it. Retargeting the row onto
+        # `wrong_carriageway` was tried and reverted: that scene drives the
+        # wrong way along its own carriageway rather than entering the opposing
+        # one, so the sub-rule is correctly NOT_APPLICABLE there and the row
+        # would have asserted a violation the geometry does not contain. The
+        # pure evaluator keeps its unit tests in `test_rulebook_v2_road.py`;
+        # deregistration is asserted by
+        # `test_rulebook_v51_levels.py::test_wrongway_is_deleted`.
         ("offroad", "offroad", True, True),
         ("solid_line", "solid_line", True, True),
         ("dashed_line", "dashed_line", True, False),

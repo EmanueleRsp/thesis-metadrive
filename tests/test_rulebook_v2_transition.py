@@ -192,6 +192,10 @@ def test_transition_invokes_complete_registry_and_keeps_vehicle_yield_not_applic
         config=RulebookTransitionConfig(),
     )
     assert result.complete_evaluation
+    # RULEBOOK-V5.1 §3: the fourteen sub-rules plus the five aggregated cost
+    # levels. `wrongway` is gone (ADR-066) and `progress_rate` is new
+    # (ADR-076); `rss` is still evaluated and published, and only aggregation
+    # ignores it (ADR-063).
     assert set(result.components) == {
         "collision",
         "rss",
@@ -199,7 +203,6 @@ def test_transition_invokes_complete_registry_and_keeps_vehicle_yield_not_applic
         "ttc",
         "clearance",
         "offroad",
-        "wrongway",
         "wrong_carriageway",
         "solid_line",
         "dashed_line",
@@ -208,9 +211,12 @@ def test_transition_invokes_complete_registry_and_keeps_vehicle_yield_not_applic
         "crosswalk",
         "vehicle_yield",
         "progress",
-        "collision_impact",
-        "dynamic_interaction_safety",
-        "road_traffic_compliance",
+        "advance_shortfall",
+        "collision_safety",
+        "interaction_risk",
+        "non_relaxable_compliance",
+        "relaxable_lane_compliance",
+        "progress_rate",
     }
     assert result.components["vehicle_yield"].applicable is False
     assert next_memory.previous_sim_time_s == post.sim_time_s
