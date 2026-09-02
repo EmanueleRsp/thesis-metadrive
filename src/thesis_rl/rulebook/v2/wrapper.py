@@ -53,8 +53,13 @@ class RulebookV2Adapter:
     mission_route: RoutePolyline
 
 
-def _ego_kinematics_payload(snapshot: Any) -> dict[str, Any] | None:
+def ego_kinematics_payload(snapshot: Any) -> dict[str, Any] | None:
     """EP-COMFORT-DIAG: the snapshot's ego kinematics, or `None` if absent.
+
+    Public because it is the shared contract between this online wrapper and
+    the offline expert instrument (`scripts/measure_expert_rulebook_transition.py`):
+    both read the ego state the same way, so the human reference and the agent
+    measurements are produced by one definition rather than two.
 
     A diagnostic must never be able to fail a step, and the snapshotter is
     injected, so a caller may legitimately supply a stand-in that carries no
@@ -331,7 +336,7 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         # configured timestep so the derivative uses the interval the simulator
         # actually advanced. Diagnostic only: `RULEBOOK-V5.1` §13 excludes
         # comfort and jerk from the rulebook and the reward.
-        ego_kinematics = _ego_kinematics_payload(post_snapshot)
+        ego_kinematics = ego_kinematics_payload(post_snapshot)
         if ego_kinematics is not None:
             info_dict["ego_kinematics"] = ego_kinematics
         info_dict.update(self._level_diagnostics(result))

@@ -39,7 +39,7 @@ from thesis_rl.runtime.comfort_diagnostics import (
     extract_comfort_step,
     segment_statistics,
 )
-from thesis_rl.rulebook.v2.wrapper import _ego_kinematics_payload
+from thesis_rl.rulebook.v2.wrapper import ego_kinematics_payload
 from thesis_rl.runtime.io.csv_recorder import CSVRecorder
 
 DT = 0.1
@@ -392,7 +392,7 @@ def test_monitor_payload_is_exactly_what_the_extractor_consumes() -> None:
     every comfort column came out empty while every unit test passed. Producer
     and consumer are now pinned to each other in one test."""
 
-    payload = _ego_kinematics_payload(_FakeSnapshot())
+    payload = ego_kinematics_payload(_FakeSnapshot())
     assert payload is not None
 
     step = extract_comfort_step({"ego_kinematics": payload})
@@ -408,7 +408,7 @@ def test_monitor_payload_tolerates_a_snapshot_without_ego_state(snapshot: Any) -
     """The snapshotter is injected, so a caller may supply a stand-in. A
     diagnostic must never be able to fail a rulebook step."""
 
-    assert _ego_kinematics_payload(snapshot) is None
+    assert ego_kinematics_payload(snapshot) is None
 
 
 # --- TEST-CMF-06: short episodes leave channels undefined ---

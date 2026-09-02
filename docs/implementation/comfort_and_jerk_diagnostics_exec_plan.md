@@ -101,6 +101,7 @@ failing. No checkpoint, observation, or action space is touched.
 | `REQ-CMF-05` | The serial and the parallel evaluation paths produce identical values for identical episodes | `EVAL-PROTOCOL` v1.2 (multi-panel execution parity) |
 | `REQ-CMF-06` | Analysis reports the diagnostic per condition, separately from the primary comparison tables | `EVAL-PROTOCOL` v1.3 §2.1 (primary metric unchanged) |
 | `REQ-CMF-07` | Episodes whose kinematics are undefined are excluded from the aggregate and their count reported, never silently counted as zero or as comfortable | `EVAL-PROTOCOL` v1.0 REQ-008 applicability convention, followed by analogy |
+| `REQ-CMF-08` | The comfort bounds are subjected to the repository's own admissibility test against the logged Waymo expert, and the result is reported | `RULEBOOK-V5.0` §2.1 (Test A), applied by analogy to a diagnostic |
 
 ## 4. Current Repository Analysis
 
@@ -264,6 +265,7 @@ table, not an error.
 | `REQ-CMF-05` | `AC-CMF-05` | `Agent.evaluate` and `_EpisodeTracker`/`_aggregate_parallel_evaluation` both call the same accumulator and aggregator | `::test_serial_and_parallel_paths_agree_on_identical_episodes` | Implemented |
 | `REQ-CMF-06` | `AC-CMF-06` | `analysis/tables/make_comfort_tables.py`; `run_analysis._build_tables_for_root` | `::test_build_comfort_tables_groups_by_condition`, `::test_build_comfort_tables_tolerates_legacy_runs` | Implemented |
 | `REQ-CMF-07` | `AC-CMF-07` | `aggregate_comfort_episodes` exclusion counting | `::test_undefined_episodes_excluded_and_counted` | Implemented |
+| `REQ-CMF-08` | `AC-CMF-08` | `scripts/measure_expert_rulebook_transition.py` `comfort_test_a`, fed by the shared `ego_kinematics_payload` | Measured against the real Waymo `train` panel; see §14 | Implemented |
 
 Acceptance criteria:
 
@@ -282,9 +284,12 @@ Acceptance criteria:
 - `AC-CMF-06`: `build_comfort_tables` emits per-condition mean/SD/seed-value
   rows with the diagnostic label, and emits a header-only table for a run set
   without comfort columns.
-- `AC-CMF-07`: an episode with fewer than three consecutive valid steps has an
+- `AC-CMF-07`: an episode with fewer than four consecutive valid steps has an
   empty `comfort_is_comfortable`, is absent from `comfort_episode_count`, and
   is counted in `comfort_excluded_episode_count`.
+- `AC-CMF-08`: the expert panel's comfort rate and per-channel violation rates
+  are measured and reported, so a bound the expert cannot satisfy is visible
+  rather than assumed away.
 
 ## 9. Test Strategy Defined Before Implementation
 
@@ -443,6 +448,26 @@ length and is negligible. One observable change follows: a verdict now requires
 **four** consecutive valid steps rather than three, because yaw acceleration is
 the single order-3 channel and `poly_order < window_length` must hold.
 
+**2026-09-01 — `REQ-CMF-08`: Test A on the comfort bounds.** The bounds were
+put through the repository's own admissibility instrument rather than left on
+nuPlan's authority. `scripts/measure_expert_rulebook_transition.py` -- the same
+script that produced `RULEBOOK-V5.1` §5.5 -- now accumulates a comfort summary
+per replayed record and reports per-channel expert violation rates.
+
+To guarantee the human reference and the agent measurements come from one
+definition rather than two, `_ego_kinematics_payload` was made public as
+`ego_kinematics_payload`: the offline instrument and the online wrapper call
+the identical function on the identical `EnvSnapshot`. One detail the offline
+path needs that the online path gets for free: when `build_snapshot` returns
+`None` the replay must call `observe(None)` explicitly, or a filter window
+would span the missing steps and read the jump across them as ordinary motion.
+
+Result on the full panel -- 1100 records, 217,189 transitions, 0 skipped, the
+identical scope §5.5 was calibrated on: **expert comfort rate 0.8973**, every
+channel violated on at most 5.73 % of episodes, three channels at exactly
+0.00 %. The bounds pass, comfortably, against precedents where 18.29 % was
+grounds for rejection and 0.000 % for adoption.
+
 ## 12. Deviations
 
 | ID | Original contract | Actual or proposed change | Reason | Approval | Affected tests/docs |
@@ -464,6 +489,8 @@ the single order-3 channel and `poly_order < window_length` must hold.
 | `src/thesis_rl/curriculum/scenario_acl/driver.py` | Modified | Emit comfort fields at its evaluation writer sites |
 | `src/thesis_rl/analysis/tables/make_comfort_tables.py` | Added | Diagnostic table per condition |
 | `src/thesis_rl/analysis/run_analysis.py` | Modified | Wire the diagnostic table into the pipeline |
+| `scripts/measure_expert_rulebook_transition.py` | Modified | `comfort_test_a` and per-record accumulation, for `REQ-CMF-08` |
+| `docs/audits/comfort_expert_admissibility_2026-09-01/` | Added | Evidence record: instrument validation, Test A result, and explicit thesis-use guidance |
 | `src/thesis_rl/envs/wrappers.py` | Reverted, unchanged in the final diff | Initial `DEC-CMF-005` attempt, withdrawn after `BUG-CMF-002` |
 | `tests/test_comfort_diagnostics.py` | Added | `TEST-CMF-01`..`15` |
 | `pyproject.toml` | Modified | Add `scipy>=1.10,<2` (`DEC-CMF-006`) |
@@ -479,14 +506,15 @@ runs against the unfiltered implementation are superseded, not evidence.
 | Command | Result | Date | Notes and evidence |
 |---|---|---|---|
 | `docker compose run --rm dev uv run --no-sync python -m pytest -q tests/test_comfort_diagnostics.py` | `PASS` | 2026-09-01 | 64 passed |
-| `docker compose run --rm dev uv run --no-sync python -m pytest -q` | `PASS` | 2026-09-01 | 1592 passed, 1 pre-existing warning, 0 failed, in 254 s. Baseline before this plan was 1528 |
+| `docker compose run --rm dev uv run --no-sync python -m pytest -q` | `PASS` | 2026-09-01 | **1598 passed**, 1 pre-existing warning, 0 failed, in 255 s. Baseline before this plan was 1528. Re-run after `ego_kinematics_payload` was made public for `REQ-CMF-08` |
 | `uv lock` | `PASS` | 2026-09-01 | Resolved 92 packages, added `scipy 1.15.3` |
 | `make build` | `PASS` | 2026-09-01 | Image rebuilt so `uv sync --frozen` installs `scipy` |
 | `make lint` | `PASS` | 2026-09-01 | `ruff check src tests scripts`: all checks passed |
 | `make format-check PYTHON_QUALITY_PATHS="src/thesis_rl/runtime/comfort_diagnostics.py src/thesis_rl/analysis/tables/make_comfort_tables.py tests/test_comfort_diagnostics.py"` | `PASS` | 2026-09-01 | Focused scope per the repository formatting policy |
 | `git diff --check` | `PASS` | 2026-09-01 | No whitespace errors |
 | Live-environment probe, filtered vs unfiltered | `PASS` | 2026-09-01 | Same random-action episode: `max_abs_lon_jerk` **2.35** filtered against **63.3** unfiltered, `max_abs_mag_jerk` **1.32** against **30.9**. Filtered channels sit inside the nuPlan bounds; `sim_time_s` advances by exactly `0.1 s` |
-| `make smoke` | `SMOKE_PENDING` | 2026-09-01 | End-to-end training smoke; acceptance is populated comfort columns in the produced CSVs |
+| `python scripts/measure_expert_rulebook_transition.py --split train --source waymo --workers 24` | `PASS` | 2026-09-01 | `REQ-CMF-08`, Test A on the full Waymo `train` panel: **1100 records, 217,189 transitions, 0 skipped** -- the identical scope `RULEBOOK-V5.1` §5.5 was calibrated on. Expert comfort rate **0.8973**; per-channel expert violation rates all at or below **5.73 %**. Output: `outputs/comfort_expert_test_a_waymo_train.json` |
+| `make smoke` | `PASS` | 2026-09-01 | Exit 0. **87/87** episode rows carry a verdict, 53 of them comfortable; `comfort_max_abs_lon_jerk` spans 0.47 to 54.55 with a median of 0.83 against a 4.13 bound. Decisively, `comfort_rate` now **separates the two panels** (0.21 against 1.00) where the unfiltered implementation reported 0.0 on every one of them |
 
 Not run: `make analyze` end-to-end against a real multi-seed run, because no
 such run set exists in this environment. This is a temporary gap that closes on
@@ -507,6 +535,7 @@ inspect `<analysis-root>/<profile>/tables/comfort_diagnostics.md`.
 | `REQ-CMF-05` | `VERIFIED` |
 | `REQ-CMF-06` | `VERIFIED` |
 | `REQ-CMF-07` | `VERIFIED` |
+| `REQ-CMF-08` | `VERIFIED` |
 
 ### Known limitations
 
@@ -517,10 +546,14 @@ inspect `<analysis-root>/<profile>/tables/comfort_diagnostics.md`.
    the series is segmented at unusable steps. Neither changes the filter, the
    window, or the polynomial order. Published-nuPlan comparisons are now
    meaningful but should still be quoted with these two adaptations named.
-2. **No expert calibration.** Unlike every rulebook sub-rule, these thresholds
-   were not falsified against the logged Waymo expert. The published nuPlan
-   values are taken as-is. Running the expert panel through the accumulator
-   would establish what the expert actually scores and is the natural follow-up.
+2. **Expert calibration: measured, and the bounds pass (`REQ-CMF-08`).** No
+   longer a limitation. See "Test A on the comfort bounds" below. What remains
+   is a smaller, named caveat: the channel distributions have a heavy right
+   tail (`max_abs_lon_jerk` p95 4.86 against p99 26.1 and a worst of 62.5),
+   which is far more likely to be logged-track discontinuity in a handful of
+   Waymo records than real human driving. The violation rates are therefore a
+   slight over-estimate, which is the conservative direction for an
+   admissibility test.
 3. **Evaluation only (`DEC-CMF-002`).** Comfort during training is not
    observable; only evaluation checkpoints are measured.
 4. **No backfill.** Runs recorded before this change have empty comfort columns
@@ -529,23 +562,63 @@ inspect `<analysis-root>/<profile>/tables/comfort_diagnostics.md`.
 
 ### Deferred optional work
 
-- Calibrating the bounds against the Waymo expert panel (limitation 2), which
-  would turn `comfort_rate` from an absolute claim into a human-relative one.
+- Investigating the heavy right tail of the jerk channels (limitation 2): a
+  per-record look at the worst handful would confirm whether they are logged
+  tracking artifacts, and if so whether the panel deserves the same validity
+  filtering the rulebook applies elsewhere.
 - A comfort learning curve, which requires lifting `DEC-CMF-002`.
 
 ### Smoke-run reading (untrained policy, 1000 steps)
 
-`comfort_rate = 0.0` on every panel, which is the expected result rather than a
-suspicious one: the checkpoint is a TD3 agent after 1000 steps, and the
-episodes score `mean_comfort_max_abs_mag_jerk` between 46.6 and 173.6 m/s^3
-against a bound of 8.37. Two things are worth carrying into the first real
-runs. First, the channel clearly discriminates between panels -- 46.6 on one,
-173.6 on another -- so it is not saturated at a useless constant. Second, the
-jerk magnitudes are one to two orders above the bound, which means
-`comfort_rate` will likely stay at 0 until the policy is genuinely trained; the
-continuous channel means, not the boolean, will be the informative quantity
-early in training. That is a reporting observation, not a defect: the boolean
-is nuPlan's, and reporting it unchanged is the point of `DEC-CMF-001`.
+`comfort_rate` is **0.21** on one panel and **1.00** on the other, with 53 of
+87 episodes comfortable overall and a median `max_abs_lon_jerk` of 0.83 against
+a 4.13 bound. The channel is neither saturated nor degenerate: it discriminates
+between panels on a policy that has barely trained, which is the property that
+makes it usable as a diagnostic at all.
+
+That is worth contrasting with the pre-filter measurement, which reported
+`comfort_rate = 0.0` on every panel with mean jerks of 46 to 174 m/s^3. The
+filter did not merely rescale the numbers; it turned a saturated constant into
+a discriminating measurement.
+
+### Test A on the comfort bounds (`REQ-CMF-08`)
+
+`RULEBOOK-V5.0` §2.1 admits a rule only if a competent driver can satisfy it:
+"a rule the expert violates on a large fraction of steps is charging the agent
+for driving, not for driving badly". Every rulebook sub-rule was falsified that
+way; the nuPlan comfort bounds had entered on published authority alone. They
+have now been put through the same instrument, on the same panel, by the same
+script that produced §5.5 of the specification.
+
+Measured over 1100 Waymo `train` records, 217,189 transitions, 0 skipped, with
+a verdict on every one of the 1100 episodes:
+
+| Channel | Expert violation rate | p50 | p95 | Bound |
+|---|---|---|---|---|
+| `max_abs_lon_jerk` | 5.73 % | 1.145 | 4.860 | 4.13 |
+| `max_lon_accel` | 5.00 % | 1.104 | 2.399 | 2.40 |
+| `min_lon_accel` | 3.55 % | -1.287 | -0.004 | -4.05 |
+| `max_abs_mag_jerk` | 3.09 % | 1.040 | 3.751 | 8.37 |
+| `max_abs_lat_accel` | 0.00 % | 0.145 | 2.574 | 4.89 |
+| `max_abs_yaw_rate` | 0.00 % | 0.016 | 0.508 | 0.95 |
+| `max_abs_yaw_accel` | 0.00 % | 0.066 | 0.397 | 1.93 |
+
+**Expert comfort rate: 0.8973.** The human satisfies all seven bounds
+simultaneously on 89.7 % of records, and no single bound is violated on more
+than 5.73 %. Read against this repository's own precedents that is a clear
+pass: `rss` longitudinal was rejected at 18.29 % of applicable expert steps,
+while `speed_limit` was adopted at 0.000 %. The bounds are admissible in
+MetaDrive's state representation, not merely in nuPlan's.
+
+Two things this buys beyond the pass itself. First, `comfort_rate` now has a
+**human reference**: an arm scoring 0.4 is not simply "uncomfortable", it is
+less comfortable than the 0.90 a logged human scores on the same instrument.
+Second, it retires the concern that the bounds might be miscalibrated for this
+simulator -- which was a live risk, since the pre-filter implementation would
+have scored the expert near zero.
+
+The measurement is reproducible with the command in §14 and its output is kept
+at `outputs/comfort_expert_test_a_waymo_train.json`.
 
 ### Resulting behaviour
 

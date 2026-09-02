@@ -81,6 +81,12 @@ from thesis_rl.rulebook.v2.transition import (
     evaluate_transition,
     initial_memory_for_snapshot,
 )
+from thesis_rl.rulebook.v2.wrapper import ego_kinematics_payload
+from thesis_rl.runtime.comfort_diagnostics import (
+    COMFORT_STATISTICS,
+    NUPLAN_COMFORT_BOUNDS,
+    ComfortEpisodeAccumulator,
+)
 from thesis_rl.rulebook.v2.types import (
     ActorClass,
     ActorSnapshot,
@@ -1064,6 +1070,59 @@ def mission_snapshot_at(
     return snapshot, s_m
 
 
+def comfort_test_a(summaries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Apply the repository's own admissibility test to the nuPlan comfort bounds.
+
+    `RULEBOOK-V5.0` §2.1: a rule that carries a satisfaction indicator must be
+    satisfiable by a competent driver, so the expert's violation rate is what
+    decides whether a threshold charges for driving badly or merely for driving.
+    Every rulebook sub-rule was falsified this way; the comfort bounds were
+    adopted on nuPlan's published authority alone, and this closes that gap.
+
+    Reported per channel: the share of expert episodes breaching the bound, and
+    the distribution of the channel itself, so a failure can be read as "the
+    bound is slightly tight" or "the instrument is measuring something else".
+    """
+
+    defined = [summary for summary in summaries if isinstance(summary, Mapping)]
+    verdicts = [
+        bool(summary["is_comfortable"])
+        for summary in defined
+        if summary.get("is_comfortable") is not None
+    ]
+    channels: dict[str, Any] = {}
+    for name in COMFORT_STATISTICS:
+        values = sorted(
+            float(summary[name])
+            for summary in defined
+            if summary.get(name) is not None and math.isfinite(float(summary[name]))
+        )
+        if not values:
+            channels[name] = {"episodes": 0}
+            continue
+        bound = float(getattr(NUPLAN_COMFORT_BOUNDS, name))
+        breaching = (
+            sum(1 for value in values if value < bound)
+            if name == "min_lon_accel"
+            else sum(1 for value in values if value > bound)
+        )
+        channels[name] = {
+            "episodes": len(values),
+            "bound": bound,
+            "expert_violation_rate": breaching / len(values),
+            "p50": _percentile(values, 0.50),
+            "p95": _percentile(values, 0.95),
+            "p99": _percentile(values, 0.99),
+            "worst": values[0] if name == "min_lon_accel" else values[-1],
+        }
+    return {
+        "episodes_with_verdict": len(verdicts),
+        "episodes_without_verdict": len(defined) - len(verdicts),
+        "expert_comfort_rate": (sum(verdicts) / len(verdicts)) if verdicts else None,
+        "channels": channels,
+    }
+
+
 @dataclass
 class Measurement:
     """Aggregate over every replayed scenario."""
@@ -1177,6 +1236,13 @@ class Measurement:
     # per-scenario view -- on how many records a sub-rule never applies at all --
     # which is the granularity `C2` needs and the one the method is blind to.
     scenarios_where_applicable: Counter[str] = field(default_factory=Counter)
+    # EP-COMFORT-DIAG Test A for ride comfort. Every rulebook sub-rule is
+    # falsified against the logged expert before it is trusted; the nuPlan
+    # comfort bounds entered this repository unfalsified, on their published
+    # authority alone. One `ComfortEpisodeAccumulator` summary per replayed
+    # record, so the same question can be asked of them: does a competent human
+    # driver satisfy these bounds in *this* simulator's state representation?
+    comfort_summaries: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         for name in (
@@ -1305,6 +1371,7 @@ class Measurement:
             )
         self.final_blame_mass_in_negative.update(other.final_blame_mass_in_negative)
         self.final_blame_mass_at_crawl.update(other.final_blame_mass_at_crawl)
+        self.comfort_summaries.extend(other.comfort_summaries)
 
     def summary(self) -> dict[str, Any]:
         returns = sorted(self.episode_returns)
@@ -1316,6 +1383,8 @@ class Measurement:
         return {
             "scenarios_measured": self.scenarios_measured,
             "scenarios_skipped": dict(self.scenarios_skipped),
+            # EP-COMFORT-DIAG: Test A applied to the nuPlan comfort bounds.
+            "comfort_test_a": comfort_test_a(self.comfort_summaries),
             "error_samples": list(self.error_samples),
             "measured_steps": self.total_steps,
             "r1_status": "NOT_MEASURED: offline replay has no physics contact records",
@@ -1803,6 +1872,11 @@ def replay_scenario(
         measurement.scenarios_skipped["no_valid_sdc_step"] += 1
         return
     pre_state, previous_s_m = initial
+    # EP-COMFORT-DIAG: the same accumulator production runs, fed the same
+    # `ego_kinematics_payload` the online wrapper publishes, so the expert
+    # reference and the agent measurements come from one definition.
+    comfort = ComfortEpisodeAccumulator()
+    comfort.observe({"ego_kinematics": ego_kinematics_payload(pre_state)})
     memory: RulebookMemory = initial_memory_for_snapshot(pre_state, cache)
     # RULEBOOK-V5.1 L4. ``q`` is the running maximum of the completion fraction,
     # so ground already credited earns nothing when re-covered and the episode
@@ -1842,8 +1916,14 @@ def replay_scenario(
     for step in range(1, length):
         built = build_snapshot(step, previous_s_m)
         if built is None:
+            # Signal the gap explicitly. Skipping the observation silently would
+            # let a Savitzky-Golay window span the missing steps and treat the
+            # jump across them as ordinary motion; the online path gets this for
+            # free because an unusable step still reaches `observe`.
+            comfort.observe(None)
             continue
         post_state, previous_s_m = built
+        comfort.observe({"ego_kinematics": ego_kinematics_payload(post_state)})
         result, memory, cache_delta = evaluate_transition(
             pre_state=pre_state,
             post_state=post_state,
@@ -2441,6 +2521,7 @@ def replay_scenario(
         measurement.scenarios_skipped["no_valid_transition"] += 1
         return
     measurement.scenarios_measured += 1
+    measurement.comfort_summaries.append(comfort.finalize())
     for name in episode_applicable_sub_rules:
         measurement.scenarios_where_applicable[name] += 1
     # `M8b`. Static per scenario, so it is read once here rather than per step.

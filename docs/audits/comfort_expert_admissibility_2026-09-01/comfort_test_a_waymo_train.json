@@ -1,0 +1,84 @@
+{
+  "comfort_test_a": {
+    "channels": {
+      "max_abs_lat_accel": {
+        "bound": 4.89,
+        "episodes": 1100,
+        "expert_violation_rate": 0.0,
+        "p50": 0.14538911442588287,
+        "p95": 2.57367193965997,
+        "p99": 2.99118758536807,
+        "worst": 3.688752407996733
+      },
+      "max_abs_lon_jerk": {
+        "bound": 4.13,
+        "episodes": 1100,
+        "expert_violation_rate": 0.057272727272727274,
+        "p50": 1.1447424532139099,
+        "p95": 4.860310325970089,
+        "p99": 26.141649213634892,
+        "worst": 62.54938837699486
+      },
+      "max_abs_mag_jerk": {
+        "bound": 8.37,
+        "episodes": 1100,
+        "expert_violation_rate": 0.03090909090909091,
+        "p50": 1.0399102775994393,
+        "p95": 3.75134530663019,
+        "p99": 26.074988743265532,
+        "worst": 62.55186310637247
+      },
+      "max_abs_yaw_accel": {
+        "bound": 1.93,
+        "episodes": 1100,
+        "expert_violation_rate": 0.0,
+        "p50": 0.06621735436580067,
+        "p95": 0.39675576346267905,
+        "p99": 0.6341253008161694,
+        "worst": 1.0650992393493748
+      },
+      "max_abs_yaw_rate": {
+        "bound": 0.95,
+        "episodes": 1100,
+        "expert_violation_rate": 0.0,
+        "p50": 0.01567173004150213,
+        "p95": 0.5084167122840899,
+        "p99": 0.5583348274231024,
+        "worst": 0.7434887886047399
+      },
+      "max_lon_accel": {
+        "bound": 2.4,
+        "episodes": 1100,
+        "expert_violation_rate": 0.05,
+        "p50": 1.1038375959930502,
+        "p95": 2.3989462590603647,
+        "p99": 2.6671488248003756,
+        "worst": 4.4670159935921046
+      },
+      "min_lon_accel": {
+        "bound": -4.05,
+        "episodes": 1100,
+        "expert_violation_rate": 0.035454545454545454,
+        "p50": -1.2872300037007847,
+        "p95": -0.003756875118337295,
+        "p99": -0.001913424754370318,
+        "worst": -30.81518859748051
+      }
+    },
+    "episodes_with_verdict": 1100,
+    "episodes_without_verdict": 0,
+    "expert_comfort_rate": 0.8972727272727272
+  },
+  "configuration": {
+    "ego_brake_mps2": 8.0,
+    "priority_base": 3.0,
+    "records_selected": 1100,
+    "scalarization_mode": "bounded_priority_weighted_rank",
+    "source": "waymo",
+    "split": "train",
+    "workers": 24
+  },
+  "measured_steps": 217189,
+  "scenarios_measured": 1100,
+  "scenarios_skipped": {}
+}
