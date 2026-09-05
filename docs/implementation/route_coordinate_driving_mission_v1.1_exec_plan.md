@@ -10,7 +10,7 @@
 - Production implementation authorization for the amendment: `YES`, explicit user approval recorded 2026-08-04
 - Project index: v1.1.1 registration authorized
 - Branch: `codex/route-coordinate-mission`
-- Last updated: `2026-08-06`
+- Last updated: `2026-09-05`
 
 This plan is the authorized implementation record for v1.1 and the approved
 v1.1.1 amendment. It does not authorize scientific fallback, source-data
@@ -28,7 +28,7 @@ Out of scope: source changes, future-SDC runtime access, native navigation autho
 |---|---|---|
 | normalized route | immutable ordered oriented 3D occurrences and directly serialized mission-local route, finite and connected, no invented joins | implemented |
 | reset/goal | explicit reset/goal endpoints, `s_start=0`, positive trimmed `s_goal` | implemented |
-| exact cursor | contiguous search, exact unsaturated `s`, no clamp/freeze/recovery | implemented |
+| exact cursor | contiguous search, exact unsaturated `s`, no clamp/freeze/recovery | partially implemented: exact unsaturated `s`, no clamp/freeze/recovery; the search is global-nearest with an `eps_geom` tie-break toward the previous station, not a contiguous-segment search (see §11, 2026-09-05) |
 | R4/completion | exact formulas and separate monotone maximum | implemented |
 | shared snapshot | semantic/LiDAR/reward/Rulebook/metrics consume one snapshot | implemented (M8); Rulebook wrong-way/wrong-carriageway intentionally excluded per v1.1.1 §6 legal-direction independence |
 | final gate | one offline geometric component segment covering the canonical anchor, passive runtime | audit: 3,500 unique |
@@ -219,7 +219,71 @@ The 13 reset and 25 terminal preliminary failures were uniquely repairable offli
 
   Validation: `tests/test_driving_mission_v11.py tests/test_driving_mission_runtime.py tests/test_video_diagnostics.py tests/test_driving_mission_types.py tests/test_causal_semantic_batch.py tests/test_assigned_route_observation.py` -- `54 passed`. Broader sweep `pytest -k "mission or video_diagnostics or rulebook_v2 or scenario_env or scenario_records"` -- `416 passed, 15 failed`; those 15 are the pre-existing `test_rulebook_v2_transition.py` fixture bug plus `test_thesis_scenario_env.py::test_thesis_reward_suppresses_native_short_route_bonus`, i.e. exactly the baseline already recorded in §13, re-confirmed identical via `git stash` on the unmodified sources. Focused Ruff check PASS and format PASS on `mission/runtime.py`, `video_diagnostics.py` and both test files; `git diff --check` PASS. `ruff check src/thesis_rl/envs/thesis_scenario_env.py` reports one `F821 Undefined name 'EnvSnapshot'` (an annotation on a nested function in `_install_rulebook_v2_adapter`), confirmed **pre-existing** via `git stash` and left untouched as unrelated cleanup; it is inert at runtime because the module uses `from __future__ import annotations`.
 
+- 2026-09-05: read-only route-creation review. Full source rebuild of all
+  3,500 frozen missions reproduced every `mission_hash`; 805,649 SDC poses,
+  0 unassigned; 46 occurrences had no station evidence and all were resolved
+  uniquely by connectivity (the FORWARD penalty never decided an assignment);
+  gate anchor/perpendicularity/tangent and occurrence connectivity checks
+  passed 3,500/3,500; no route has near-revisiting portions. Findings recorded
+  in §11.1--§11.2 and ADR-055; no production code changed. Related
+  diagnostic: `driving_mission_eligibility.json` excludes 4,574 records
+  (4,573 Waymo, 1 PG) under three different builder errors ("route trim end
+  precedes start", "at least two distinct XY points", "non-positive
+  mission-local goal station"); a 41-record sample showed every one has an
+  SDC path length of 0.0 m (stationary SDC for the whole window). The
+  exclusion is legitimate; the `MINIMUM_SDC_ROUTE_LENGTH_M` catalog check is a
+  warning only, so the mission builder is the effective gate. Optional
+  follow-up: one explicit "stationary SDC / zero-length mission" error before
+  trimming so the funnel reports the true cause.
+
 ## 11. Deviations
+
+### 11.1 Runtime cursor search is global-nearest, not contiguous (recorded 2026-09-05)
+
+`RouteCoordinateMissionTracker.project` (`src/thesis_rl/mission/tracker.py`)
+calls `RoutePolyline.project(position, position_z, previous_s_m=self._s_m)`.
+That projection evaluates every route segment, keeps the planar-nearest
+vertically compatible candidate, and uses `previous_s_m` only to break ties
+among candidates within `GEOMETRY_EPSILON_M` (0.01 m) of the minimum distance.
+`_current_segment` is stored but never read. DRIVING-MISSION-V1.1 §3 requires a
+stateful cursor that "searches local contiguous route segments, extending only
+through consecutive frozen-route segments", and ADR-054 rejects "global
+nearest" because it permits nonlocal jumps. The previous "implemented" status
+of the `exact cursor` row was therefore inaccurate for the search component.
+
+Demonstrated consequence (synthetic, read-only, 2026-09-05): on a route whose
+outbound and return legs are 3.5 m apart (a U-turn), an ego drifting 1.8 m
+laterally on the outbound leg jumps from `s = 16 m` to `s = 67.47 m`
+(`delta_s = +51.47 m`, R4 saturated at +1, `c_inst` inflated) and back to
+`s = 22 m` two steps later. `AC-RCM-003` (`tests/test_driving_mission_v11.py`)
+exercises a straight route and cannot detect this.
+
+Why it is recorded rather than fixed now: a read-only audit of all 3,500 frozen
+missions (`data/scenarionet/frozen/scenario_selection_index.json`) sampled each
+canonical route every 1 m and found **zero** routes containing two portions
+with `|delta_s| > 15 m` closer than 6 m in the plane (and zero closer than
+3.5 m). On this population the global-nearest search and a contiguous cursor
+are equivalent, so runtime R4, completion, and success are unaffected. A
+contiguous cursor also needs an approved policy for how far the search may
+extend when the ego leaves the route, which the specification does not fix.
+
+Standing constraint: the equivalence above is a property of the frozen
+population, not of the code. Any regenerated or extended frozen index must
+re-run the near-revisit audit (route portions with `|delta_s| > 15 m` within
+one lane width) before the runtime is trusted on it; if any route fails the
+audit, the contiguous cursor must be implemented and `AC-RCM-003` extended
+with a self-intersecting/U-turn case before that index is used.
+
+### 11.2 Builder choices not covered by ADR-055 (recorded 2026-09-05)
+
+See ADR-055 §"Implementation notes recorded 2026-09-05" for the FORWARD
+tie-break penalty in `_resolve_global_orientations` and the final-occurrence
+bypass of the static-tangent concordance test in the anchor gate builder.
+Neither changed any of the 3,500 frozen records (full source rebuild
+2026-09-05: 3,500/3,500 `mission_hash` identical, 0 poses unassigned, all
+3,500 connected orientation assignments unique).
+
+### 11.3 Historical
 
 The v1.1.1 occurrence orientation and mission-local trimming amendment is now
 approved and implemented in the mission builder/runtime path. The legacy v1
