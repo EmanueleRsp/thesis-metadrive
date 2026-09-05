@@ -31,6 +31,9 @@ RULEBOOK_V2_ELIGIBILITY ?= $(RULEBOOK_V2_DATA_ROOT)/rulebook_v2/catalog_eligibil
 RULEBOOK_V2_WORKERS ?= 16
 SCENARIONET_PG_REPLENISH_COUNT ?= 350
 SCENARIONET_PG_REPLENISH_SEED_START ?= 5920000
+# Matches the other PG-generation targets; `scenarionet-pg-replenish` passes this
+# flag unconditionally, so an unset value reaches argparse as an empty string.
+SCENARIONET_PG_WORKERS ?= 64
 SCENARIONET_PG_PROFILE_COUNTS ?=
 SCENARIONET_V12_PG_HOLDOUT_SEED_START ?= 2000000
 SCENARIONET_V12_PG_HOLDOUT_PER_PROFILE ?= auto
