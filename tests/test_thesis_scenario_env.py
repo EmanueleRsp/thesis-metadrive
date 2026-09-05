@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from shapely.geometry import box
 
 from thesis_rl.envs.scene_context import SceneContextAdapter
 from thesis_rl.envs import thesis_scenario_env as thesis_env_module
-from thesis_rl.envs.thesis_scenario_env import scenario_time_limit_reached
+from thesis_rl.envs.thesis_scenario_env import (
+    ThesisScenarioEnv,
+    scenario_time_limit_reached,
+)
 from thesis_rl.mission.types import MissionSnapshot
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.runtime.wiring.builders import collect_scenario_runtime_stats
@@ -727,3 +732,57 @@ def test_collect_scenario_runtime_stats_merges_vector_workers() -> None:
     assert stats["steps_by_source"] == {"waymo": 4, "pg": 3}
     assert stats["episodes_by_arm"] == {"A0": 1, "A1": 1}
     assert stats["steps_by_source_arm"] == {"waymo": {"A0": 4}, "pg": {"A1": 3}}
+
+
+OBS_CONF_DIR = Path(__file__).resolve().parents[1] / "conf" / "obs"
+
+# `BaseEnv.__init__` (third_party/metadrive/metadrive/envs/base_env.py:293) merges
+# the caller's environment configuration with exactly these arguments. Replicating
+# them here means the test exercises MetaDrive's own acceptance rule rather than a
+# reimplementation of it -- which matters, because `Config.update` propagates
+# `allow_add_new_key=False` into nested dictionaries (`_update_dict_item`), so a
+# flat key comparison would miss an unknown key under `vehicle_config.lidar`,
+# where the semantic passthrough actually writes.
+_METADRIVE_MERGE_ARGS = (False, ["agent_configs", "sensors"])
+
+
+@pytest.mark.parametrize(
+    "observation_config_path",
+    sorted(OBS_CONF_DIR.glob("*.yaml")),
+    ids=lambda path: path.stem,
+)
+def test_observation_passthrough_is_accepted_by_environment_config(
+    observation_config_path: Path,
+) -> None:
+    """Every shipped observation must produce an environment config MetaDrive accepts.
+
+    Regression for a defect that made every `obs=semantic_v3` run unstartable
+    between 2026-08-01 (commit 52b8ad4) and 2026-09-02: the observation
+    passthrough injected `semantic_v3_signal_range_m`,
+    `semantic_v3_signal_fov_degrees` and `semantic_v3_signal_camera_height_m`
+    into the environment configuration while `ThesisScenarioEnv.default_config()`
+    declared none of them. MetaDrive rejects undeclared keys, so construction
+    raised `KeyError` before the first reset -- in the canonical `make run-train`
+    composition as much as in a vectorized worker. Nothing caught it for a month
+    because `make smoke` selects `obs=lidar_state`, a different code path.
+
+    The parametrization is driven by `conf/obs/*.yaml` rather than by a fixed
+    list, so a newly added observation configuration is covered without editing
+    this test, and the assertion is the environment-construction merge itself
+    rather than a key-set comparison.
+    """
+
+    from thesis_rl.envs.factory import _configure_agent_observation
+
+    observation_cfg = yaml.safe_load(observation_config_path.read_text(encoding="utf-8"))
+    env_cfg: dict[str, object] = {}
+    _configure_agent_observation(env_cfg, observation_cfg)
+
+    try:
+        ThesisScenarioEnv.default_config().update(env_cfg, *_METADRIVE_MERGE_ARGS)
+    except KeyError as error:
+        pytest.fail(
+            f"observation {observation_config_path.stem!r} injects environment keys that "
+            f"ThesisScenarioEnv.default_config() does not declare, so the environment "
+            f"cannot be constructed: {error}"
+        )

@@ -68,6 +68,16 @@ class ThesisScenarioEnv(ScenarioEnv):
                 "success_route_completion_threshold": 0.95,
                 "minimum_success_route_length_m": 10.0,
                 "rulebook_v2_disable_vehicle_yield_for_benchmark": False,
+                # OBS-V1.2 SS6.2 signal-camera baseline, overridable per ADR-045
+                # through `conf/obs/semantic_v3.yaml`. `envs/factory.py`
+                # unconditionally injects these three keys whenever the semantic
+                # v3 observation is selected, and MetaDrive's `BaseEnv.__init__`
+                # updates its default config with `allow_add_new_key=False`, so
+                # they must be declared here or environment construction raises
+                # `KeyError` before the first reset.
+                "semantic_v3_signal_range_m": 80.0,
+                "semantic_v3_signal_fov_degrees": 65.0,
+                "semantic_v3_signal_camera_height_m": 1.2,
             }
         )
         return config
