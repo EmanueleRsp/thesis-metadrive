@@ -178,24 +178,4 @@ diff contains no unintended changes.
 
 Final reports must be in Italian and include status, behavior, changed files,
 executed checks and results, approved decisions, deviations, unresolved issues,
-known limitations, deferred optional work, and ChatGPT project source sync status.
-
-## ChatGPT Project Source Synchronization
-
-The user keeps these repository documents as sources in a separate ChatGPT
-project:
-
-- `docs/project_index.md`;
-- `docs/engineering_workflow.md`;
-- `docs/templates/specification_template.md`.
-
-At the end of every task, inspect whether any of these files changed during the
-task. In the final response, explicitly state:
-
-- the exact source file or files the user must replace in the ChatGPT project;
-  or
-- that no ChatGPT project source update is required.
-
-Do not ask the user to compare files manually. A change to implementation code,
-an ExecPlan, or other documentation does not require ChatGPT source replacement
-unless one of the three synchronized files also changed.
+known limitations, and deferred optional work.
