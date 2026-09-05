@@ -159,6 +159,44 @@ check_repo_layout() {
   done
 }
 
+prepare_lfs_assets() {
+  local pointers
+
+  if ! git check-attr --all -- . >/dev/null 2>&1 || ! grep -q "filter=lfs" .gitattributes 2>/dev/null; then
+    return
+  fi
+
+  if ! command -v git-lfs >/dev/null 2>&1; then
+    fail "git-lfs is not installed, but tracked assets require it (see .gitattributes). Install it and re-run: https://git-lfs.com"
+    return
+  fi
+
+  # A checkout made without the smudge filter leaves a ~130-byte pointer in
+  # place of the asset. The frozen ScenarioNet selection index is one, and the
+  # runtime parses it as JSON, so the failure surfaces far from its cause.
+  # `git lfs ls-files` marks a materialized object with `*` and a pointer
+  # with `-` in its second field.
+  pointers="$(git lfs ls-files 2>/dev/null | awk '$2 == "-" {print $3}')"
+
+  if [[ -z "$pointers" ]]; then
+    ok "Git LFS assets are materialized"
+    return
+  fi
+
+  if [[ $check_only -eq 1 ]]; then
+    fail "Git LFS assets are unmaterialized pointers; run \`git lfs pull\`"
+    return
+  fi
+
+  info "Materializing Git LFS assets"
+  if git lfs pull; then
+    ok "Git LFS assets pulled"
+    changes=$((changes + 1))
+  else
+    fail "Failed to materialize Git LFS assets with \`git lfs pull\`"
+  fi
+}
+
 prepare_submodules() {
   if ! command -v git >/dev/null 2>&1; then
     fail "git is not installed; cannot manage submodules"
@@ -529,6 +567,7 @@ fi
 
 info "Repository root: $repo_root"
 check_repo_layout
+prepare_lfs_assets
 prepare_submodules
 check_submodules
 
