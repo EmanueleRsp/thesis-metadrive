@@ -52,14 +52,17 @@ ENCODER_CONF_DIR = REPO_ROOT / "conf" / "agent" / "planner" / "encoder"
 # Functional grouping for the parameter breakdown. Order matters: the first
 # matching prefix wins, so the more specific names come first.
 PARAMETER_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("token_projectors", ("_projection", "projection.")),
+    # `output_projection` must precede `token_projectors`: both end in
+    # "projection", and matching the token group first silently folds the
+    # output head into it.
+    ("output_projection", ("output_projection",)),
+    ("token_to_latent", ("token_to_latent",)),
+    ("token_projectors", ("_projection",)),
     ("embeddings", ("_embedding",)),
     ("latent_queries", ("latent_queries",)),
-    ("token_to_latent", ("token_to_latent",)),
     ("attention", ("attention",)),
-    ("layer_norms", ("norm",)),
     ("latent_ffn", ("feed_forward", "ff.")),
-    ("output_projection", ("output_projection",)),
+    ("layer_norms", ("norm",)),
 )
 
 
@@ -103,7 +106,9 @@ def parameter_breakdown(module: torch.nn.Module) -> dict[str, int]:
     for name, parameter in module.named_parameters():
         if not parameter.requires_grad:
             continue
-        counts[classify_parameter(name)] = counts.get(classify_parameter(name), 0) + parameter.numel()
+        counts[classify_parameter(name)] = (
+            counts.get(classify_parameter(name), 0) + parameter.numel()
+        )
     return dict(sorted(counts.items(), key=lambda item: -item[1]))
 
 
@@ -188,10 +193,10 @@ def run_benchmark(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument(
-        "--variants", nargs="+", default=["lq_v3", "lq_v3_lite", "lq_v3_micro"]
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    parser.add_argument("--variants", nargs="+", default=["lq_v3", "lq_v3_lite", "lq_v3_micro"])
     parser.add_argument("--device", default="auto", help="auto | cpu | cuda")
     parser.add_argument(
         "--act-batch", type=int, default=20, help="Action-selection batch (one row per env)."
@@ -200,6 +205,11 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=50)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--params-only",
+        action="store_true",
+        help="Report parameter counts and exit, running no timed region.",
+    )
     parser.add_argument(
         "--encoder-passes-per-step",
         type=float,
@@ -215,11 +225,13 @@ def main() -> None:
     parser.add_argument(
         "--recorded-step-ms",
         type=float,
-        default=149.7,
+        default=None,
         help=(
-            "Measured wall clock per environment step from a previously recorded run, "
-            "used as the denominator of the derived encoder share. The default is the "
-            "2026-07-27 EXP_sac-lite-cmp_RP_medium run (6.68 fps)."
+            "Wall clock per environment step, in milliseconds, MEASURED ON THE SAME "
+            "DEVICE UNDER THE SAME LOAD as this benchmark. Only then is the derived "
+            "share meaningful. Omitted by default on purpose: composing a numerator "
+            "measured here with a denominator recorded elsewhere produces a number "
+            "that looks like a result and is not one."
         ),
     )
     parser.add_argument("--json-out", type=Path, default=None)
@@ -235,8 +247,10 @@ def main() -> None:
     print(f"device: {device}")
     if device.type == "cuda":
         print(f"gpu: {torch.cuda.get_device_name(device)}")
-    print(f"input: D={SemanticObservationSchemaV12.flat_dim}, "
-          f"tokens={SemanticObservationSchemaV12.raw_token_count}")
+    print(
+        f"input: D={SemanticObservationSchemaV12.flat_dim}, "
+        f"tokens={SemanticObservationSchemaV12.raw_token_count}"
+    )
     print()
 
     print("=== trainable parameters ===")
@@ -248,6 +262,9 @@ def main() -> None:
         print(f"\n{name}: {total:,}")
         for group, count in breakdown.items():
             print(f"  {group:<20} {count:>10,}  ({100.0 * count / total:5.1f} %)")
+
+    if args.params_only:
+        return
 
     results = run_benchmark(
         encoders,
@@ -280,24 +297,38 @@ def main() -> None:
         f"composition: {args.encoder_passes_per_step:g} learner passes + 1 action-selection "
         f"forward per environment step"
     )
-    print(f"denominator: {args.recorded_step_ms:.1f} ms/step (recorded run)")
-    print(f"\n{'variant':<14}{'encoder ms/step':>18}{'share of step':>16}")
     derived: dict[str, dict[str, float]] = {}
     for name in encoders:
         per_step_ms = (
             args.encoder_passes_per_step * results[name]["learn_forward_backward"].median_ms
             + results[name]["act_forward"].median_ms
         )
-        share = 100.0 * per_step_ms / args.recorded_step_ms
-        derived[name] = {"encoder_ms_per_step": per_step_ms, "share_percent": share}
-        print(f"{name:<14}{per_step_ms:>18.2f}{share:>15.1f} %")
+        derived[name] = {"encoder_ms_per_step": per_step_ms}
+    if args.recorded_step_ms is None:
+        print(f"\n{'variant':<14}{'encoder ms/step':>18}")
+        for name in encoders:
+            print(f"{name:<14}{derived[name]['encoder_ms_per_step']:>18.2f}")
+        print(
+            "\nNo share reported: --recorded-step-ms was not supplied. Pass it only with a "
+            "step time measured on this device under this load. A denominator taken from "
+            "another run composes a contended numerator with an uncontended denominator and "
+            "yields a meaningless percentage."
+        )
+    else:
+        print(f"denominator: {args.recorded_step_ms:.1f} ms/step (caller-supplied)")
+        print(f"\n{'variant':<14}{'encoder ms/step':>18}{'share of step':>16}")
+        for name in encoders:
+            share = 100.0 * derived[name]["encoder_ms_per_step"] / args.recorded_step_ms
+            derived[name]["share_percent"] = share
+            print(f"{name:<14}{derived[name]['encoder_ms_per_step']:>18.2f}{share:>15.1f} %")
 
     print(
-        "\nLimitation: the denominator is a recorded run on a different day and a "
-        "different device load, and the numerator assumes every learner pass costs a "
-        "full forward+backward, which overstates the forward-only passes. Treat the "
-        "share as an upper bound. A definitive attribution requires a profiled "
-        "training run, which this script deliberately does not perform."
+        "\nLimitations. The numerator assumes every learner pass costs a full "
+        "forward+backward, which overstates the forward-only passes, so it is an upper "
+        "bound. Absolute latencies are only as clean as the device: on a contended GPU "
+        "or CPU the medians inflate and only the round-robin comparison between variants "
+        "survives. A definitive attribution of step time requires two matched training "
+        "runs differing only in the encoder, which this script deliberately does not run."
     )
 
     if args.json_out is not None:
