@@ -60,11 +60,29 @@ def _mission_s_m(context: CausalSceneContext) -> float:
     return mission_snapshot.s_m
 
 
+def _mission_station_is_measured(context: CausalSceneContext) -> bool:
+    """Return whether the committed station is a tracked measurement.
+
+    At ``step_index == 0`` the tracker has not advanced yet: `mission/runtime.py`
+    constructs `RouteCoordinateMissionTracker(mission, route, 0.0)`, so the
+    committed station is a **definition**, not a projection of the ego pose. It
+    therefore carries no information to cross-check a geometric projection
+    against; see `_ego_local_projection`.
+    """
+
+    mission_snapshot = context.snapshot.mission_snapshot
+    return mission_snapshot is not None and int(mission_snapshot.step_index) > 0
+
+
 _MISSION_S_CONSISTENCY_TOLERANCE_M = 1e-6
 
 
 def _ego_local_projection(
-    route: RoutePolyline, ego: ActorSnapshot, mission_s_m: float
+    route: RoutePolyline,
+    ego: ActorSnapshot,
+    mission_s_m: float,
+    *,
+    station_is_measured: bool,
 ) -> RouteProjection:
     """Return route tangent/lateral offset at the ego without reprojecting its `s`.
 
@@ -72,12 +90,31 @@ def _ego_local_projection(
     the same tie-break authority the tracker itself uses, and asserts the
     result agrees with the committed snapshot rather than silently accepting
     an independently derived station (DRIVING-MISSION-V1.1 §3/§5).
+
+    The invariant this guard protects is one of **authority**: the observation
+    must consume the tracker's station instead of deriving its own. That is
+    meaningful only once the tracker has actually tracked something. On the
+    reset observation the committed value is a hard-coded ``0.0``
+    (`mission/runtime.py`), so comparing a projection against it tests nothing
+    and fails on the ordinary centimetre-scale offset between the spawn pose
+    and the route origin -- measured at **0.0229 m** on a 23.17 m route, against
+    a tolerance of 1e-6 m, and consistent with the projection jitter ADR-073
+    measured at up to 0.053 m. The check is therefore enforced from the first
+    tracked step onward and skipped at reset; the tolerance is unchanged, so no
+    mid-episode divergence is newly tolerated.
     """
 
     projection = route.project(ego.position_xy, position_z=ego.position_z, previous_s_m=mission_s_m)
-    if abs(projection.s_m - mission_s_m) > _MISSION_S_CONSISTENCY_TOLERANCE_M:
+    divergence_m = abs(projection.s_m - mission_s_m)
+    if station_is_measured and divergence_m > _MISSION_S_CONSISTENCY_TOLERANCE_M:
+        # Report the magnitude: it is what distinguishes floating-point noise
+        # from a genuine mission/route inconsistency, and the bare message
+        # cannot be acted on without re-instrumenting the run.
         raise CausalSemanticObservationError(
-            "Ego route geometry query diverged from the committed mission route station"
+            "Ego route geometry query diverged from the committed mission route station: "
+            f"projected s={projection.s_m!r} m, committed s={mission_s_m!r} m, "
+            f"divergence={divergence_m!r} m, tolerance={_MISSION_S_CONSISTENCY_TOLERANCE_M!r} m, "
+            f"route length={route.length_m!r} m"
         )
     return projection
 
@@ -451,7 +488,9 @@ class CausalSemanticBatchBuilder:
         context = self._context(context)
         ego = context.snapshot.ego
         mission_s_m = _mission_s_m(context)
-        self._record_ego_frame(vehicle, ego, mission_s_m)
+        self._record_ego_frame(
+            vehicle, ego, mission_s_m, station_is_measured=_mission_station_is_measured(context)
+        )
         ego_speed_cap = self.ego_speed_cap_mps or ego.configured_speed_cap_mps
         if ego_speed_cap is None or ego_speed_cap <= 0.0:
             raise CausalSemanticObservationError(
@@ -496,7 +535,14 @@ class CausalSemanticBatchBuilder:
             temporal=temporal,
         )
 
-    def _record_ego_frame(self, vehicle: object, ego: ActorSnapshot, mission_s_m: float) -> None:
+    def _record_ego_frame(
+        self,
+        vehicle: object,
+        ego: ActorSnapshot,
+        mission_s_m: float,
+        *,
+        station_is_measured: bool,
+    ) -> None:
         if self._ego_frames and self._last_context_step is not None:
             last = self._ego_frames[-1]
             if last.snapshot == ego:
@@ -554,7 +600,9 @@ class CausalSemanticBatchBuilder:
             )
         if yaw_rate_value is None:
             raise CausalSemanticObservationError("Current ego yaw rate is unavailable")
-        projection = _ego_local_projection(self.route, ego, mission_s_m)
+        projection = _ego_local_projection(
+            self.route, ego, mission_s_m, station_is_measured=station_is_measured
+        )
         heading_error = atan2(
             sin(ego.heading_rad - atan2(*reversed(projection.tangent_xy))),
             cos(ego.heading_rad - atan2(*reversed(projection.tangent_xy))),
@@ -1508,7 +1556,9 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         context = self._context_v12(context, vehicle)
         ego = context.snapshot.ego
         mission_s_m = _mission_s_m(context)
-        self._record_ego_frame(vehicle, ego, mission_s_m)
+        self._record_ego_frame(
+            vehicle, ego, mission_s_m, station_is_measured=_mission_station_is_measured(context)
+        )
         ego_speed_cap = self.ego_speed_cap_mps or ego.configured_speed_cap_mps
         if ego_speed_cap is None or ego_speed_cap <= 0.0:
             raise CausalSemanticObservationError(

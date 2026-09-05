@@ -12,6 +12,7 @@ from thesis_rl.envs.observations.causal_semantic import (
     CausalSemanticObservationError,
 )
 from thesis_rl.mission.types import MissionSnapshot
+from thesis_rl.rulebook.v2.geometry.footprint import oriented_bounding_box
 from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.types import (
@@ -482,3 +483,60 @@ def test_ego_route_station_is_bit_identical_to_the_committed_mission_snapshot() 
 
         expected_normalized_s = committed_s_m / max(centerline.length_m, 1.0)
         assert batch.ego_current[2] == pytest.approx(expected_normalized_s), branch_name
+
+
+def _consistency_probe_ego(x_m: float) -> ActorSnapshot:
+    return ActorSnapshot(
+        "ego",
+        ActorClass.VEHICLE,
+        (x_m, 0.0),
+        0.0,
+        0.0,
+        (1.0, 0.0),
+        oriented_bounding_box(center_xy=(x_m, 0.0), heading_rad=0.0, length_m=4.0, width_m=2.0),
+        None,
+        None,
+    )
+
+
+def test_mission_station_consistency_is_not_enforced_before_the_first_tracked_step() -> None:
+    """The reset observation is exempt from the mission-station cross-check.
+
+    Regression for the defect that blocked every `obs=semantic_v3` evaluation on
+    2026-09-02. `mission/runtime.py` constructs the tracker with a hard-coded
+    `initial_s_m=0.0`, so on the reset observation the committed station is a
+    definition rather than a projection of the spawn pose. Cross-checking a
+    geometric projection against it tested nothing and failed on the ordinary
+    offset between spawn pose and route origin -- measured at 0.0229 m on a
+    23.17 m route, against a 1e-6 m tolerance.
+    """
+
+    from thesis_rl.envs.observations.causal_semantic import _ego_local_projection
+
+    route = RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0)))
+    # Far beyond the 1e-6 m tolerance, and the magnitude actually observed.
+    ego = _consistency_probe_ego(0.0229)
+
+    projection = _ego_local_projection(route, ego, 0.0, station_is_measured=False)
+
+    assert projection.s_m == pytest.approx(0.0229, abs=1e-9)
+
+
+def test_mission_station_consistency_still_binds_once_the_tracker_has_advanced() -> None:
+    """The exemption must not weaken the guard mid-episode.
+
+    This is the half that keeps the reset exemption from becoming a silent
+    relaxation: from the first tracked step onward the 1e-6 m tolerance is
+    unchanged, so an observation deriving its own station still fails closed.
+    """
+
+    from thesis_rl.envs.observations.causal_semantic import (
+        CausalSemanticObservationError,
+        _ego_local_projection,
+    )
+
+    route = RoutePolyline(((0.0, 0.0, 0.0), (100.0, 0.0, 0.0)))
+    ego = _consistency_probe_ego(0.0229)
+
+    with pytest.raises(CausalSemanticObservationError, match="diverged"):
+        _ego_local_projection(route, ego, 0.0, station_is_measured=True)
