@@ -295,10 +295,12 @@ No mypy target exists; static checking is not part of this plan.
 - Evidence: `TEST-AB-001` and `TEST-AB-002` executed 2026-09-01, both `PASS` (§14).
 - Dependencies: `DEC-AB-001`, `DEC-AB-002`, `DEC-AB-003` — all approved.
 
-### `M2` — Per-arm smoke — **not started**
+### `M2` — Per-arm smoke — **complete**
 
 - Objective: confirm each preset starts, evaluates and terminates before spending the screening budget.
-- Tests: `TEST-AB-003`.
+- Tests: `TEST-AB-003` -- **PASS**, both arms `exit 0` on 2026-09-02.
+- Evidence: seven CSV artifacts per arm, `final_eval.csv` populated, no NaN or infinity, `reward_behavior` recorded as `monitor_only` and `scalar_reward` respectively.
+- **It took three attempts and uncovered two independent defects**; see the findings log.
 - Dependencies: none.
 
 ### `M3` — Screening runs — **blocked**
@@ -362,7 +364,68 @@ the `Makefile` `ENCODER` default; the repository labels it
 
 *Throughput measured, not guessed.* See §5.
 
-Next step: `DEC-AB-004`, then `M2`.
+**2026-09-01, fourth pass — encoder profiling.** The user clarified that the
+earlier question about "the LQ encoder aligned with the reference paper" meant a
+planned **V-Max-aligned successor** (`lq_v4`), not `lq_v3` against its diagnostic
+reductions. Repository verdict: that successor **does not exist** — no `lq_v4`,
+no `latent_query_v4`, no `ENC-V1.5`, no ReZero, no shared recurrent core. The
+current encoder still carries `token_to_latent` (`lq_encoder.py:152`, `:334`) and
+four **independent** blocks (`nn.ModuleList([_LatentQueryBlock(...) for _ in
+range(depth)])`), which are precisely the two structures such a redesign targets.
+This does not affect `AB-LEARN`: the encoder is held identical across arms, so it
+cannot confound the reward contrast, and `lq_v3` is the authoritative architecture
+today.
+
+`scripts/benchmark_semantic_encoders.py` added to answer whether the encoder
+dominates step time. Exact trainable parameters: `lq_v3` **1,120,000**, `lq_v3_lite`
+**588,544**, `lq_v3_micro` **322,816**. Attention plus the latent feed-forward are
+**94.3 %** of `lq_v3`; the token projectors are 11,072, or 1 %. Latency, measured
+round-robin under contention on both devices: `lq_v3` costs **1.6x** `lq_v3_lite`
+per learner pass (GPU 26.4 vs 16.6 ms, CPU 345.6 vs 215.3 ms at batch 256), a ratio
+stable across devices even though the absolute medians are not usable — the GPU was
+at 98 % from another tenant and the host load average was 14.5.
+
+Two findings recorded against earlier statements in this plan. First, the estimate
+in §5 that the production encoder costs "roughly 15 %" derived from two
+uncontrolled single runs; the microbenchmark makes the encoder look materially more
+expensive than that, and neither figure settles the question. Second, a defect
+found and fixed in the tool itself before reporting: the parameter grouping matched
+`output_projection` against the token-projector prefix and silently folded the
+output head into it, overstating token projectors by 33,536.
+
+The decisive measurement is still missing and needs an idle device: two matched
+short runs differing only in the encoder (`lq_v3` against `mlp` on the same
+`semantic_v3` observation), which yields numerator and denominator under identical
+conditions. It also discharges `TEST-AB-003`, so `M2` and the attribution are one
+action.
+
+**2026-09-02, `M2`.** The smoke passed at the **third** attempt and was worth every
+minute: it uncovered two independent defects, the second invisible until the first
+was cleared, on a code path no automated check had touched since 2026-08-01.
+
+1. **`C5`** -- `KeyError` on three `semantic_v3_signal_*` configuration keys that
+   `envs/factory.py` injects and `ThesisScenarioEnv.default_config()` never
+   declared. It made **every** `obs=semantic_v3` run unstartable, `make run-train`
+   included. Fixed and covered by `SMOKE-COV`.
+2. **`C6`** -- the first asynchronous evaluation died in a vector worker because
+   `_ego_local_projection` required the re-projected ego station to equal the
+   mission tracker's committed station within `1e-6 m`. Measured divergence at
+   reset: **0.0229 m** on a 23.17 m route, caused by `mission/runtime.py`
+   constructing the tracker with a hard-coded `initial_s_m=0.0`, so the guard
+   compared a zero *by definition* against a projection of the actual spawn pose.
+   Resolved by the user as: enforce the check from the first tracked step onward,
+   tolerance unchanged. A two-sided regression test pins both the exemption and
+   the fact that the guard still binds mid-episode.
+
+Method note worth keeping: the magnitude was the whole diagnosis. The original
+error message reported no number, and both plausible readings -- floating-point
+noise and a stale snapshot -- were excluded only once it was printed. Adding the
+measured quantity to a fail-fast message costs nothing and converts an unactionable
+error into a decision.
+
+`M1` and `M2` are complete. Only `DEC-AB-004` stands between here and `M3`.
+
+Next step: `DEC-AB-004`, then `M3`.
 
 ## 12. Deviations
 
@@ -387,6 +450,7 @@ Next step: `DEC-AB-004`, then `M2`.
 | `... --config-name presets/learnability/sac_b_rulebook --cfg job --resolve` | `PASS` | 2026-09-01 | Exit 0; `reward.behavior=scalar_reward`, same budget/curriculum/scalarization, `experiment_group=SCREEN-LEARNABILITY-B-RULEBOOK-01` |
 | Diff of the two resolved configurations | `PASS` | 2026-09-01 | Re-run after `DEC-AB-006` switched both arms to `lq_v3`; invariance preserved. Differences confined to `reward.name/type/behavior`, `lambda_env`/`lambda_rule`, `experiment.name`, `analysis.experiment_group` and the derived paths. Algorithm, encoder, decoder, observation, environment, budget, seed, panels and `scalarization` identical |
 | `make smoke` on each preset (`TEST-AB-003`) | `NOT_RUN` | — | `M2`. **Load-bearing, not a formality**: `conf/presets/test/smoke_train.yaml` selects `obs=lidar_state` and `encoder=none`, so the `semantic_v3` + `lq_v3` path has not been smoke-tested since `RB51` took the observation to `D = 3011` (`factory.py:76`). Risk: a startup failure on the production encoder discovered only at launch. Follow-up: `run_profile=smoke env.vectorized.num_envs=2` with the preset selected |
+| `make smoke` on each preset (`TEST-AB-003`) | `PASS` | 2026-09-02 | Both arms `exit 0` at the third attempt, after `C5` and `C6` were fixed. Artifacts verified, not just the exit code |
 | The four screening runs (`TEST-AB-004`) | `NOT_RUN` | — | `M3`, blocked on `DEC-AB-004` |
 | `make test` (`TEST-AB-005`) | `NOT_RUN` | — | The change is configuration-only and adds no code path; to be run before the plan is marked `VERIFIED` |
 
