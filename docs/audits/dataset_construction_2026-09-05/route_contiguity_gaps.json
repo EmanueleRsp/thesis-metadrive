@@ -1,0 +1,137 @@
+{
+  "geometry_epsilon_m": 0.01,
+  "groups": {
+    "route_rejected:pg": {
+      "max_gap_quantiles_m": {
+        "max": 140.25484953786707,
+        "median": 43.279536172959865,
+        "min": 3.709453049192831,
+        "p10": 29.35286368488781,
+        "p25": 35.09834918705447,
+        "p75": 58.749566026040505,
+        "p90": 73.65563859273115,
+        "p99": 105.31198562982463
+      },
+      "mean_breaks_per_route": 2.26,
+      "mean_seams_per_route": 7.7225,
+      "measured_records": 400,
+      "records_buildable_at_epsilon_m": {
+        "0.01": 0,
+        "0.05": 0,
+        "0.1": 0,
+        "0.25": 0,
+        "0.5": 0,
+        "1": 0,
+        "10": 2,
+        "2": 0,
+        "5": 1
+      },
+      "records_with_vertical_break": 0,
+      "sampled": 400,
+      "skipped": {}
+    },
+    "route_rejected:waymo": {
+      "max_gap_quantiles_m": {
+        "max": 670.461712217879,
+        "median": 36.23167748775508,
+        "min": 3.3137744755022718,
+        "p10": 13.303648346988828,
+        "p25": 22.087061222598365,
+        "p75": 55.29109176766541,
+        "p90": 109.16714156142993,
+        "p99": 279.0396729339752
+      },
+      "mean_breaks_per_route": 4.16,
+      "mean_seams_per_route": 7.565,
+      "measured_records": 400,
+      "records_buildable_at_epsilon_m": {
+        "0.01": 0,
+        "0.05": 0,
+        "0.1": 0,
+        "0.25": 0,
+        "0.5": 0,
+        "1": 0,
+        "10": 19,
+        "2": 0,
+        "5": 3
+      },
+      "records_with_vertical_break": 4,
+      "sampled": 400,
+      "skipped": {}
+    },
+    "rulebook_eligible:pg": {
+      "max_gap_quantiles_m": {
+        "max": 8.987733679556355e-14,
+        "median": 0.0,
+        "min": 0.0,
+        "p10": 0.0,
+        "p25": 0.0,
+        "p75": 5.773159728050814e-15,
+        "p90": 2.0097183471152322e-14,
+        "p99": 4.03048029263198e-14
+      },
+      "mean_breaks_per_route": 0.0,
+      "mean_seams_per_route": 3.89,
+      "measured_records": 400,
+      "records_buildable_at_epsilon_m": {
+        "0.01": 400,
+        "0.05": 400,
+        "0.1": 400,
+        "0.25": 400,
+        "0.5": 400,
+        "1": 400,
+        "10": 400,
+        "2": 400,
+        "5": 400
+      },
+      "records_with_vertical_break": 0,
+      "sampled": 400,
+      "skipped": {}
+    },
+    "rulebook_eligible:waymo": {
+      "max_gap_quantiles_m": {
+        "max": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "p10": 0.0,
+        "p25": 0.0,
+        "p75": 0.0,
+        "p90": 0.0,
+        "p99": 0.0
+      },
+      "mean_breaks_per_route": 0.0,
+      "mean_seams_per_route": 0.75,
+      "measured_records": 400,
+      "records_buildable_at_epsilon_m": {
+        "0.01": 400,
+        "0.05": 400,
+        "0.1": 400,
+        "0.25": 400,
+        "0.5": 400,
+        "1": 400,
+        "10": 400,
+        "2": 400,
+        "5": 400
+      },
+      "records_with_vertical_break": 0,
+      "sampled": 400,
+      "skipped": {}
+    }
+  },
+  "population": {
+    "eligible": {
+      "pg": 4130,
+      "waymo": 16603
+    },
+    "failing": {
+      "pg": 7273,
+      "waymo": 25556
+    }
+  },
+  "sampling": {
+    "per_source": 400,
+    "seed": 0
+  },
+  "schema": "assigned-route-contiguity-gaps-v1",
+  "vertical_tolerance_m": 3.0
+}

@@ -1,0 +1,5 @@
+source,validation_status,signal_reliability,count
+pg,valid,not_applicable,4129
+waymo,valid,complete,1897
+waymo,valid,not_applicable,3389
+waymo,valid,partial,1348

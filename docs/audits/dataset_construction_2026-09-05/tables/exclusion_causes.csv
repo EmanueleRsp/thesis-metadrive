@@ -1,0 +1,12 @@
+stage,cause_category,waymo_records,pg_records,total_records
+S1_rulebook,assigned_route_invalid,25556,7273,32829
+S1_rulebook,traffic_controls_skipped_unbuildable_assigned_route,25556,7273,32829
+S1_rulebook,signal_state_unknown,16445,0,16445
+S1_rulebook,invalid_map_feature_geometry,6872,0,6872
+S1_rulebook,task_route_lane_association_ambiguous_or_unavailable,5443,1347,6790
+S1_rulebook,movement_key_ambiguous,706,0,706
+S1_rulebook,invalid_map_feature,47,0,47
+S2_driving_mission,mission_build_error,4573,1,4574
+S3_offline_quality,too many dynamic objects,3056,0,3056
+S3_offline_quality,degenerate SDC route,2837,0,2837
+S3_offline_quality,possible overpass/elevation artifact,145,0,145

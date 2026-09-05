@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="360" viewBox="0 0 700 360" role="img">
+<title>PG generation mixture</title>
+<rect width="700" height="360" fill="#ffffff"/>
+<text x="24.00" y="30.00" font-family="Helvetica, Arial, sans-serif" font-size="15.0" fill="#333333" text-anchor="start" font-weight="bold">PG generation mixture: declared versus observed</text>
+<text x="24.00" y="50.00" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#666666" text-anchor="start" font-weight="normal">The 20% x 5 contract binds generation batches; the post-filter mixture is an observed consequence.</text>
+<line x1="62.00" y1="264.00" x2="676.00" y2="264.00" stroke="#d8d8d8" stroke-width="1.00"/>
+<text x="54.00" y="268.00" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#777777" text-anchor="end" font-weight="normal">0%</text>
+<line x1="62.00" y1="217.94" x2="676.00" y2="217.94" stroke="#d8d8d8" stroke-width="1.00"/>
+<text x="54.00" y="221.94" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#777777" text-anchor="end" font-weight="normal">10%</text>
+<line x1="62.00" y1="171.87" x2="676.00" y2="171.87" stroke="#d8d8d8" stroke-width="1.00"/>
+<text x="54.00" y="175.87" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#777777" text-anchor="end" font-weight="normal">20%</text>
+<line x1="62.00" y1="125.81" x2="676.00" y2="125.81" stroke="#d8d8d8" stroke-width="1.00"/>
+<text x="54.00" y="129.81" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#777777" text-anchor="end" font-weight="normal">30%</text>
+<line x1="62.00" y1="79.74" x2="676.00" y2="79.74" stroke="#d8d8d8" stroke-width="1.00"/>
+<text x="54.00" y="83.74" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#777777" text-anchor="end" font-weight="normal">40%</text>
+<rect x="84.10" y="171.87" width="36.84" height="92.13" fill="#8a8a8a" fill-opacity="1.00"/>
+<text x="102.52" y="165.87" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">20.0%</text>
+<rect x="124.63" y="102.26" width="36.84" height="161.74" fill="#c9702a" fill-opacity="1.00"/>
+<text x="143.05" y="96.26" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">35.1%</text>
+<text x="123.40" y="282.00" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#333333" text-anchor="middle" font-weight="normal">P0</text>
+<text x="123.40" y="296.00" font-family="Helvetica, Arial, sans-serif" font-size="9.0" fill="#777777" text-anchor="middle" font-weight="normal">simple</text>
+<rect x="206.90" y="171.87" width="36.84" height="92.13" fill="#8a8a8a" fill-opacity="1.00"/>
+<text x="225.32" y="165.87" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">20.0%</text>
+<rect x="247.43" y="127.85" width="36.84" height="136.15" fill="#c9702a" fill-opacity="1.00"/>
+<text x="265.85" y="121.85" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">29.6%</text>
+<text x="246.20" y="282.00" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#333333" text-anchor="middle" font-weight="normal">P1</text>
+<text x="246.20" y="296.00" font-family="Helvetica, Arial, sans-serif" font-size="9.0" fill="#777777" text-anchor="middle" font-weight="normal">vehicle interaction</text>
+<rect x="329.70" y="171.87" width="36.84" height="92.13" fill="#8a8a8a" fill-opacity="1.00"/>
+<text x="348.12" y="165.87" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">20.0%</text>
+<rect x="370.23" y="201.56" width="36.84" height="62.44" fill="#c9702a" fill-opacity="1.00"/>
+<text x="388.65" y="195.56" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">13.6%</text>
+<text x="369.00" y="282.00" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#333333" text-anchor="middle" font-weight="normal">P2</text>
+<text x="369.00" y="296.00" font-family="Helvetica, Arial, sans-serif" font-size="9.0" fill="#777777" text-anchor="middle" font-weight="normal">merge or roundabout</text>
+<rect x="452.50" y="171.87" width="36.84" height="92.13" fill="#8a8a8a" fill-opacity="1.00"/>
+<text x="470.92" y="165.87" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">20.0%</text>
+<rect x="493.03" y="202.58" width="36.84" height="61.42" fill="#c9702a" fill-opacity="1.00"/>
+<text x="511.45" y="196.58" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">13.3%</text>
+<text x="491.80" y="282.00" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#333333" text-anchor="middle" font-weight="normal">P3</text>
+<text x="491.80" y="296.00" font-family="Helvetica, Arial, sans-serif" font-size="9.0" fill="#777777" text-anchor="middle" font-weight="normal">intersection</text>
+<rect x="575.30" y="171.87" width="36.84" height="92.13" fill="#8a8a8a" fill-opacity="1.00"/>
+<text x="593.72" y="165.87" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">20.0%</text>
+<rect x="615.83" y="225.10" width="36.84" height="38.90" fill="#c9702a" fill-opacity="1.00"/>
+<text x="634.25" y="219.10" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">8.4%</text>
+<text x="614.60" y="282.00" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#333333" text-anchor="middle" font-weight="normal">P5</text>
+<text x="614.60" y="296.00" font-family="Helvetica, Arial, sans-serif" font-size="9.0" fill="#777777" text-anchor="middle" font-weight="normal">complex mixed</text>
+<line x1="62.00" y1="264.00" x2="676.00" y2="264.00" stroke="#333333" stroke-width="1.00"/>
+<rect x="62.00" y="334.00" width="11.00" height="11.00" fill="#8a8a8a" fill-opacity="1.00"/>
+<text x="78.00" y="343.00" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#333333" text-anchor="start" font-weight="normal">declared (20% each)</text>
+<rect x="232.00" y="334.00" width="11.00" height="11.00" fill="#c9702a" fill-opacity="1.00"/>
+<text x="248.00" y="343.00" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#333333" text-anchor="start" font-weight="normal">observed after filtering</text>
+</svg>

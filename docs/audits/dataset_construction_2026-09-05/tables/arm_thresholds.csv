@@ -1,0 +1,12 @@
+parameter,value
+balanced_source_count,1100
+balanced_sources,True
+computed_on_split,train
+dense_traffic_quantile,0.75
+feature_version,v2
+low_traffic_quantile,0.4
+relevant_radius_m,50.0
+tau_dense,19
+tau_low,5
+temporal_quantile,0.9
+vertical_tolerance_m,3.0
