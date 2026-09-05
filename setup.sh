@@ -184,7 +184,11 @@ prepare_lfs_assets() {
   fi
 
   if [[ $check_only -eq 1 ]]; then
-    fail "Git LFS assets are unmaterialized pointers; run \`git lfs pull\`"
+    # A warning, not a failure: CI runs this mode on a checkout that leaves LFS
+    # pointers in place on purpose (`actions/checkout` does not fetch them, and
+    # fetching a 196 MB index on every run would exhaust the LFS bandwidth
+    # quota), and none of the checks in that workflow read the asset.
+    warn "Git LFS assets are unmaterialized pointers; run \`git lfs pull\` before training"
     return
   fi
 
