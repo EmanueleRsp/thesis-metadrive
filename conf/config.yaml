@@ -34,7 +34,23 @@ runtime:
   parent_torch_num_threads: null
 
 # Explicit authoritative Rulebook selector used by the final scalar pipeline.
+#
+# All three keys are declared rather than left to a reader's default. They were
+# omitted before, and the two readers of this block disagreed about what an
+# omission meant: `runtime/io/metadata.py` substituted the literal "v1" while
+# `contracts/reward_semantics.py` substituted the version string, so one run's
+# `run_metadata.yaml` and its own checkpoint sidecar recorded different families
+# and neither recorded the family that actually ran (`open_items` C8).
+#
+# `version` names the *implementation family* of the Rulebook v2 machinery, not
+# the specification version: `runtime/wiring/builders.py` accepts it inside a set
+# alongside "v2" and "v4.6" and routes every member to the same v2 adapter. The
+# specification actually in force is `specification_id`. Renaming the family
+# string is deliberately out of scope here because it is also stamped into cached
+# rulebook-catalog provenance, where a change invalidates the cache.
 rulebook:
+  implementation_family: v2
+  specification_id: RULEBOOK-V5.1
   version: 4.7-final-implementation-complete
 
 logging:
