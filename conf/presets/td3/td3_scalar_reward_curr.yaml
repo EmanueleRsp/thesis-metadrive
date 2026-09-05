@@ -3,7 +3,7 @@ defaults:
   - /config
   - override /agent/planner/algorithm: td3
   - override /reward: scalar_reward
-  - override /curriculum: stages
+  - override /curriculum: scenario_acl_scenarionet
   - _self_
 
 # EVAL-PROTOCOL REQ-018: distinct comparison-block ID so this curriculum
