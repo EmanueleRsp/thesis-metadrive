@@ -304,11 +304,71 @@ No mypy target exists; static checking is not part of this plan.
 - **It took three attempts and uncovered two independent defects**; see the findings log.
 - Dependencies: none.
 
-### `M3` — Screening runs — **blocked**
+### `M3` — Screening runs — **authorized for seed 0, not started**
 
 - Objective: four runs — arms A and B × seeds 0 and 1 — at `run_profile=medium`.
 - Tests: `TEST-AB-004`.
-- Dependencies: `DEC-AB-004`, resolved for seed 0 on 2026-09-05.
+- Dependencies: `DEC-AB-004`, resolved for seed 0 on 2026-09-05. The seed-1 pair
+  needs a separate user decision.
+
+**Execution.** Two runs in parallel, **paired by seed**, each in its own named
+`tmux` session teeing to a log, so the job survives an SSH disconnect and the user
+can attach without asking:
+
+```bash
+tmux new-session -d -s ab_a_seed0 \
+  "docker compose -f compose.yaml -f compose.gpu.yaml run --rm dev \
+     uv run --no-sync python -m thesis_rl.cli.train \
+     --config-name presets/learnability/sac_a_native seed=0 \
+   2>&1 | tee /tmp/ab_a_seed0.log"
+```
+
+The `seed=0` override is required: `conf/config.yaml` defaults to `42`. Arm B is
+the same with `presets/learnability/sac_b_rulebook` and session `ab_b_seed0`.
+`scripts/tmux_seed_grid.sh` does not fit: it runs *one* command across many seeds,
+where this needs *two* commands at one seed.
+
+**Monitoring protocol.** At every new `eval_type=intermediate` row in
+`csv/evals.csv` — 14 per run — report a cumulative table with both arms side by
+side (`global_step`, `route_completion`, `success_rate`, `collision_rate`,
+`out_of_road_rate`, `mean_reward`, and `mean_scalar_rule_reward` for arm B only,
+since arm A builds no scalarizer), plus a short prose reading.
+
+Report `validation_waymo_empirical` and `validation_pg` **separately**:
+`open_items` `D5` forbids a score pooled across sources, because five of the six
+L3 sub-rules never apply on PG and the two numbers do not measure the same
+rulebook.
+
+Take metrics from the CSV artifacts, not from the log: they are structured,
+complete and unaffected by `tmux` scrollback. The log is for diagnosing failures,
+which is exactly where a truncated history hurts.
+
+**What the three observations mean**, since they answer different questions:
+
+1. **Slope, not level** (`H1`, the primary criterion). Whether the reward is
+   *optimizable* is a claim about change across evaluations, not about where the
+   metric sits at 350k steps. The 2026-08-08 diagnostic is the precedent: the
+   scalar arm had the better *level* on route (0.259 against 0.193) and a
+   *negative* slope (−0.041), while native had the worse level and the only
+   clearly positive slope (+0.087). Ranking by level would have selected the arm
+   that was getting worse.
+2. **Arm B flat while arm A rises.** This is why the control exists. Both flat
+   means the *setup* cannot learn and nothing has been learned about the rulebook;
+   A rising with B flat isolates the **reward** as the only differing factor and is
+   the one configuration that licenses a conclusion about it.
+3. **`H3`, inverted incentive — report immediately, do not wait for the next
+   evaluation.** `mean_scalar_rule_reward` *is* arm B's objective. If it rises
+   while `route_completion` falls, `collision_rate` rises, `ep_len_mean` collapses
+   or mean speed tends to zero, then the optimizer is working correctly and the
+   **objective is wrong**: the agent has found a way to score well that is not
+   driving well. This is the pathology already falsified once — the pre-v5.1
+   rulebook paid the human expert **-203.35** with 46.55 % of expert episodes below
+   standstill, so standing still beat driving. Offline falsification against expert
+   replay proves the good driver scores well; it cannot prove that no *other*
+   behavior scores better while driving badly, because it holds one trajectory per
+   scenario and no counterfactual. **Only an optimizer can find that, and this run
+   is the first adversarial search ever run against this reward.** If `H3` fires the
+   run is worthless and `RULEBOOK-V5.1` reopens, which is a user decision, not a fix.
 
 ### `M4` — Analysis and verdict — **not started**
 
