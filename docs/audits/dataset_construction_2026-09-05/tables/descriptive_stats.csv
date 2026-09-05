@@ -1,0 +1,19 @@
+feature,label,source,n,min,p05,p50,mean,p95,max
+length,scenario length (control steps),waymo,1805,174.00,197.00,199.00,198.47,200.00,200.00
+length,scenario length (control steps),pg,1695,64.00,82.00,238.00,263.95,501.00,501.00
+route_length_m,assigned route length (m),waymo,1805,10.01,13.64,67.70,93.71,292.88,593.04
+route_length_m,assigned route length (m),pg,1695,40.18,54.57,177.39,186.19,342.61,404.79
+relevant_agents_q90,relevant agents (q90),waymo,1805,1.00,6.00,19.00,19.92,38.00,60.00
+relevant_agents_q90,relevant agents (q90),pg,1695,0.00,0.00,2.00,2.72,8.00,18.00
+relevant_vehicles_q90,relevant vehicles (q90),waymo,1805,1.00,5.00,18.00,18.35,34.00,50.00
+relevant_vehicles_q90,relevant vehicles (q90),pg,1695,0.00,0.00,2.00,2.72,8.00,18.00
+relevant_vrus_q90,relevant VRUs (q90),waymo,1805,0.00,0.00,1.00,1.99,8.00,33.00
+relevant_vrus_q90,relevant VRUs (q90),pg,1695,0.00,0.00,0.00,0.00,0.00,0.00
+vehicle_conflict_count,vehicle conflicts,waymo,1805,0.00,0.00,3.00,3.91,10.00,23.00
+vehicle_conflict_count,vehicle conflicts,pg,1695,0.00,0.00,1.00,1.41,5.00,10.00
+vru_conflict_count,VRU conflicts,waymo,1805,0.00,0.00,0.00,0.23,1.00,38.00
+vru_conflict_count,VRU conflicts,pg,1695,0.00,0.00,0.00,0.00,0.00,0.00
+map_feature_count,map features,waymo,1805,14.00,85.00,230.00,264.87,570.00,1091.00
+map_feature_count,map features,pg,1695,30.00,38.00,84.00,106.08,244.00,296.00
+dynamic_object_count,dynamic objects,waymo,1805,4.00,17.00,60.00,61.76,113.00,120.00
+dynamic_object_count,dynamic objects,pg,1695,1.00,1.00,6.00,9.41,27.00,45.00

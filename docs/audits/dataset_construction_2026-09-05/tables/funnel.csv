@@ -1,0 +1,6 @@
+stage,description,waymo,pg,total,retained_vs_previous_pct,retained_vs_converted_pct,artifact,note
+S0,Converted scenarios in the raw catalog,54104,12750,66854,,100.0,catalog/catalog_report.json,"Waymo training_20s shards converted by ScenarioNet, plus every exported PG seed."
+S1,Rulebook-eligible,16603,4130,20733,31.0,31.0,rulebook_v2/catalog_eligibility.json,Rulebook v4.7 fail-closed eligibility over the frozen ego and calibration hashes.
+S2,Driving-mission buildable,12030,4129,16159,77.9,24.2,rulebook_v2/driving_mission_eligibility.json,"DRIVING-MISSION v1.1.1 offline route build; correction-first, no runtime fallback."
+S3,Split candidate pool,6634,4129,10763,66.6,16.1,catalog/scenario_catalog_rulebook_v2.parquet,"validation_status in {valid, warning} and rulebook_eligible; v1.2 applies no signal-reliability filter, unlike v1.1."
+S4,Frozen selection,1805,1695,3500,32.5,5.2,frozen/scenario_selection_index.json,Holdout-first allocation under split_seed=0; the dataset used by every run.

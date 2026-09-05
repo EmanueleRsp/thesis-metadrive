@@ -1,0 +1,26 @@
+{
+  "calibration_hash_matches": true,
+  "current_calibration_hash": "7ed6b5a0ac48c05d8881d04b334c89691077b7a8a005a6d35c56859e215eee94",
+  "current_geometry_config_hash": "71d5cdb8e9a67c7f8b3b790d21687656b8cd95fe35686b6e5773968e679208d6",
+  "current_rulebook_version": "4.7-final-implementation-complete",
+  "error_divergence_count": 0,
+  "error_divergences": [],
+  "frozen_calibration_hash": "7ed6b5a0ac48c05d8881d04b334c89691077b7a8a005a6d35c56859e215eee94",
+  "frozen_geometry_config_hash": "71d5cdb8e9a67c7f8b3b790d21687656b8cd95fe35686b6e5773968e679208d6",
+  "frozen_rulebook_version": "4.7-final-implementation-complete",
+  "geometry_config_hash_matches": true,
+  "sampling": {
+    "evaluated_records": 4000,
+    "per_stratum": 1000,
+    "seed": 0,
+    "strata": {
+      "pg:False": 8620,
+      "pg:True": 4130,
+      "waymo:False": 37501,
+      "waymo:True": 16603
+    }
+  },
+  "schema": "rulebook-eligibility-stability-v1",
+  "verdict_divergence_count": 0,
+  "verdict_divergences": []
+}

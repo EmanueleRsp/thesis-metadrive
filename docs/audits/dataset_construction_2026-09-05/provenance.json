@@ -1,0 +1,43 @@
+{
+  "converted_shards": 768,
+  "data_root": "/workspace/data/scenarionet",
+  "frozen_created_at": "2026-08-04T21:23:53.200585+00:00",
+  "frozen_selection_hash": "c8e74ed88eb354047ed04402e3fd1c50f45bf2985f39f6d9e999c2a7d53373f3",
+  "generated_at": "2026-09-05T15:11:10.068787+00:00",
+  "generator": "scripts/build_dataset_funnel_report.py",
+  "inputs": {
+    "arm_report": {
+      "path": "/workspace/data/scenarionet/catalog/arm_report.json",
+      "sha256": "b8fcaaad2794609884446616e007b26563e1446745e75490e51cb359962ace2b"
+    },
+    "arm_thresholds": {
+      "path": "/workspace/data/scenarionet/splits/arm_thresholds.json",
+      "sha256": "f6a3416e225635f4869c5b134964430a80443545ff2964d8d697d3f64b033722"
+    },
+    "catalog_eligibility": {
+      "path": "/workspace/data/scenarionet/rulebook_v2/catalog_eligibility.json",
+      "sha256": "2190a7281e71d4e6075d76dd3fa6dd812f3d4d73cdf32c9048e2658ac6c3a4b9"
+    },
+    "catalog_report": {
+      "path": "/workspace/data/scenarionet/catalog/catalog_report.json",
+      "sha256": "6cbdbbc983074c65bf18869cb0ed5aacc5bfddaf75e14b914409172982fba596"
+    },
+    "driving_mission_eligibility": {
+      "path": "/workspace/data/scenarionet/rulebook_v2/driving_mission_eligibility.json",
+      "sha256": "86580a9671916e53ef16967af0f01b9626dfb7a53f06f6b22c7d85588e50b2a0"
+    },
+    "filtered_catalog": {
+      "path": "/workspace/data/scenarionet/catalog/scenario_catalog_rulebook_v2.parquet",
+      "sha256": "3874e9818e32593ab0f19564ae00921de847bd07932c66a2e7b7cc6bbf44382d"
+    },
+    "frozen_index": {
+      "path": "/workspace/data/scenarionet/frozen/scenario_selection_index.json",
+      "sha256": "2829a1e26f50d65f4bfda1cb2945691ccad7fee8c81b515631d01898bf499b39"
+    }
+  },
+  "mission_builder_identity": "mission-builder-v1.1.1-anchor-builder",
+  "rulebook_version": "4.7-final-implementation-complete",
+  "split_policy": "holdout_first_empirical_then_stratified_then_balanced_train",
+  "split_seed": 0,
+  "waymo_dataset_version": "training_20s"
+}

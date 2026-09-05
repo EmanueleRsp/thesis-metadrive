@@ -1,0 +1,6 @@
+pg_profile,declared_share,observed_holdout_share,empirical_holdout_records,selected_records
+P0_simple,0.2000,0.3511,158,392
+P1_vehicle_interaction,0.2000,0.2956,133,291
+P2_merge_or_roundabout,0.2000,0.1356,61,165
+P3_intersection,0.2000,0.1333,60,168
+P5_complex_mixed,0.2000,0.0844,38,679

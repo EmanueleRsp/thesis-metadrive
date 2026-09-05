@@ -1,0 +1,80 @@
+{
+  "by_source": {
+    "pg": {
+      "analyzed_records": 300,
+      "median_gap_by_kind_m": {
+        "lateral_neighbour": 52.12331058211373,
+        "predecessor": 28.60857207896758,
+        "successor_1": 3.987411971481805,
+        "successor_k": 26.09800082909196,
+        "unrelated": 31.758603402365775
+      },
+      "records_repairable_by_successor_search": 11,
+      "records_touching_kind": {
+        "lateral_neighbour": 187,
+        "predecessor": 36,
+        "successor_1": 3,
+        "successor_k": 59,
+        "unrelated": 131
+      },
+      "records_with_lane_change": 187,
+      "seams_by_kind": {
+        "lateral_neighbour": 293,
+        "predecessor": 51,
+        "successor_1": 3,
+        "successor_k": 89,
+        "unrelated": 222
+      },
+      "successor_hop_histogram": {
+        "1": 34,
+        "7": 31,
+        "8": 78
+      },
+      "total_breaks": 658
+    },
+    "waymo": {
+      "analyzed_records": 300,
+      "median_gap_by_kind_m": {
+        "lateral_neighbour": 31.154774972641807,
+        "predecessor": 29.041408324364397,
+        "successor_k": 23.223170830462465,
+        "unrelated": 26.819649443415553
+      },
+      "records_repairable_by_successor_search": 0,
+      "records_touching_kind": {
+        "lateral_neighbour": 279,
+        "predecessor": 3,
+        "successor_k": 4,
+        "unrelated": 116
+      },
+      "records_with_lane_change": 279,
+      "seams_by_kind": {
+        "lateral_neighbour": 863,
+        "predecessor": 3,
+        "successor_k": 4,
+        "unrelated": 353
+      },
+      "successor_hop_histogram": {
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "6": 1,
+        "7": 1,
+        "8": 1
+      },
+      "total_breaks": 1223
+    }
+  },
+  "geometry_epsilon_m": 0.01,
+  "max_hops": 8,
+  "population": {
+    "pg": 7273,
+    "waymo": 25556
+  },
+  "sampling": {
+    "per_source": 300,
+    "seed": 0
+  },
+  "schema": "assigned-route-break-classification-v1"
+}
