@@ -10,7 +10,7 @@
 | Status | `VERIFIED` for the selected option; the rejected option is recorded as deferred with its rationale |
 | Created | 2026-09-02 |
 | Last updated | 2026-09-02 |
-| Branch | `scenarionet-implementation` |
+| Branch | `main` (work done on `scenarionet-implementation`, merged 2026-09-05) |
 | Related | `AB-LEARN` (the screening whose smoke exposed the defect) |
 
 ## 2. Objective And Scope

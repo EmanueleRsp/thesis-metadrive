@@ -1,5 +1,9 @@
 # Session Handoff — A/B Learnability Screening, 2026-09-02
 
+**Branch note (2026-09-05):** the work described here was done on
+`scenarionet-implementation` and has since been merged; it now lives on **`main`**,
+which is where the follow-up runs should be launched.
+
 Working record of the session that pre-registered the `AB-LEARN` screening,
 cleared the two defects blocking it, and left the four screening runs ready to
 launch. It is a handoff, not a contract: the authoritative documents are
@@ -174,8 +178,10 @@ The exact launch command was validated with `--cfg job --resolve`: it composes t
   the process exits 139 tearing the engine down. **Production is unaffected**: every
   official configuration is vectorized. It bites whoever disables vectorization to
   get a cleaner traceback while debugging.
-- **Commit hygiene**: another session committed `fd4f3a3` with a comfort-diagnostics
-  message containing 16 files from four unrelated workstreams, this work included.
+- ~~**Commit hygiene**: another session committed `fd4f3a3` with a comfort-diagnostics
+  message containing 16 files from four unrelated workstreams, this work included.~~
+  **Resolved 2026-09-05** by the user: the repository was tidied, this handoff got its
+  own scoped commit (`0a229bb`), and everything is merged into `main`.
 
 ## 9. Files touched in this session
 

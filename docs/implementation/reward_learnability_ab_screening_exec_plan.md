@@ -7,10 +7,10 @@
 | Feature | Pre-registered A/B screening of reward learnability: MetaDrive's native reward against the `RULEBOOK-V5.1` + `SCAL-V1.4` scalarized reward |
 | Plan ID | `AB-LEARN` |
 | Authoritative specifications | `EVAL-PROTOCOL` v1.0 (`docs/specifications/evaluation_protocol_v1.0_specification.md`, `AUTHORITATIVE`) with v1.1/v1.2/v1.3/v1.3.1 amendments; `RULEBOOK-V5.1` (`docs/specifications/rulebook_v5.1_specification.md`, `AUTHORITATIVE`); `SCAL-V1.4` (`RULEBOOK-V5.1` §5) |
-| Status | `AWAITING_DECISIONS` — arms, budget and probe algorithm approved 2026-09-01; the launch itself is not yet authorized |
+| Status | `IN_PROGRESS` — `M1` and `M2` complete and verified; the **seed-0 pair is authorized** (user, 2026-09-05), the seed-1 pair is a separate decision |
 | Created | 2026-09-01 |
-| Last updated | 2026-09-01 |
-| Branch | `scenarionet-implementation` |
+| Last updated | 2026-09-05 |
+| Branch | `main` (work done on `scenarionet-implementation`, merged 2026-09-05) |
 | Related ADRs | ADR-063…ADR-076 (the rulebook under test), ADR-077 (ACL v2.0, which gates arms C/D), ADR-026 (`D4` sequencing) |
 
 This plan pre-registers an experiment. It changes no production behavior: its
@@ -124,10 +124,11 @@ All statements below are `VERIFIED` on 2026-09-01 unless labeled otherwise.
 | `DEC-AB-002` | Specification clarification | What budget licenses the freeze decision? | `thesis` 1.5M × 3 seeds (conclusion-grade under `REQ-018`) / `medium` 350k × 2 seeds (diagnostic) / staged | `medium` first, then escalate | A `medium` result is descriptive only and cannot by itself close the freeze; it de-risks before committing 6 × 1.5M runs | **Approved** (user, 2026-09-01): `medium`, seeds `[0, 1]` |
 | `DEC-AB-003` | Implementation detail | Probe algorithm | SAC only / TD3 only / both | SAC only | The question is about the reward, not the learner; algorithm selection is a separate, later step | **Approved** (user, 2026-09-01) |
 | `DEC-AB-006` | Implementation detail | Which encoder? | `lq_v3` (ENC-V1.3 production, 16 latents, depth 4) / `lq_v3_lite` (`architecture_version: diagnostic-only`) | `lq_v3` | A screening that licenses a freeze must not be able to fail for lack of encoder capacity, which is indistinguishable from an unlearnable reward. Measured: micro (4, 1) 7.71 fps against lite (8, 2) 6.68 fps on `medium`, so the simulator dominates and the production encoder costs roughly 15 %, not a multiple | **Corrected 2026-09-01**; the first draft inherited `lq_v3_lite` from the `Makefile` `ENCODER` default |
-| `DEC-AB-004` | Blocking technical issue | Authorization to consume GPU time for four runs | Launch now / wait for the GPU to free / stage sequentially | Confirm before launch | GPU 0 was at 98 % utilization and 89/98 GB on 2026-09-01 with another container training | **Awaiting approval** |
+| `DEC-AB-004` | Blocking technical issue | Authorization to consume GPU time for four runs | Launch now / wait for the GPU to free / stage sequentially | Two at a time, **paired by seed** | GPU 0 is shared with other tenants and was at ~12 GB free with `learner_update` measured as the largest component of the loop, so four concurrent runs time-slice one contended device for no aggregate gain and risk OOM. Pairing by seed also makes the first complete (A, B) comparison available at ~17-20 h | **Resolved 2026-09-05**: the seed-0 pair is authorized; the seed-1 pair is a separate decision the user has not taken |
 | `DEC-AB-005` | Specification clarification | What exactly does a passing screening license freezing? | Rulebook + scalarization jointly / scalarization only / nothing without the `thesis` budget | Freeze both on a passing screening; the `thesis`-budget confirmation arrives as a by-product of the core runs that follow | Determines whether `D1`'s `τ₄` and the algorithm-selection phase can start | **Approved** (user, 2026-09-01). See §7.5 |
 
-`DEC-AB-004` is the only open gate. No run is launched while it is unresolved.
+`DEC-AB-004` is resolved for the seed-0 pair. **No open gate remains for `M3` at
+seed 0**; launching the seed-1 pair requires a separate user decision.
 
 ## 7. Proposed Design
 
@@ -307,7 +308,7 @@ No mypy target exists; static checking is not part of this plan.
 
 - Objective: four runs — arms A and B × seeds 0 and 1 — at `run_profile=medium`.
 - Tests: `TEST-AB-004`.
-- Dependencies: `DEC-AB-004` (GPU authorization).
+- Dependencies: `DEC-AB-004`, resolved for seed 0 on 2026-09-05.
 
 ### `M4` — Analysis and verdict — **not started**
 
@@ -423,9 +424,15 @@ noise and a stale snapshot -- were excluded only once it was printed. Adding the
 measured quantity to a fail-fast message costs nothing and converts an unactionable
 error into a decision.
 
-`M1` and `M2` are complete. Only `DEC-AB-004` stands between here and `M3`.
+`M1` and `M2` are complete.
 
-Next step: `DEC-AB-004`, then `M3`.
+**2026-09-05.** Repository tidied by the user and merged to `main`; the branch
+fields above were corrected because a session starting from the handoff would
+otherwise have looked for this work on a stale branch. `DEC-AB-004` resolved for
+the seed-0 pair, which is handed to a dedicated session together with
+`ab_screening_session_handoff_2026-09-02.md`.
+
+Next step: `M3` at seed 0, two runs in parallel.
 
 ## 12. Deviations
 
@@ -451,7 +458,7 @@ Next step: `DEC-AB-004`, then `M3`.
 | Diff of the two resolved configurations | `PASS` | 2026-09-01 | Re-run after `DEC-AB-006` switched both arms to `lq_v3`; invariance preserved. Differences confined to `reward.name/type/behavior`, `lambda_env`/`lambda_rule`, `experiment.name`, `analysis.experiment_group` and the derived paths. Algorithm, encoder, decoder, observation, environment, budget, seed, panels and `scalarization` identical |
 | `make smoke` on each preset (`TEST-AB-003`) | `NOT_RUN` | — | `M2`. **Load-bearing, not a formality**: `conf/presets/test/smoke_train.yaml` selects `obs=lidar_state` and `encoder=none`, so the `semantic_v3` + `lq_v3` path has not been smoke-tested since `RB51` took the observation to `D = 3011` (`factory.py:76`). Risk: a startup failure on the production encoder discovered only at launch. Follow-up: `run_profile=smoke env.vectorized.num_envs=2` with the preset selected |
 | `make smoke` on each preset (`TEST-AB-003`) | `PASS` | 2026-09-02 | Both arms `exit 0` at the third attempt, after `C5` and `C6` were fixed. Artifacts verified, not just the exit code |
-| The four screening runs (`TEST-AB-004`) | `NOT_RUN` | — | `M3`, blocked on `DEC-AB-004` |
+| The four screening runs (`TEST-AB-004`) | `NOT_RUN` | — | `M3`. The seed-0 pair is authorized and handed to a dedicated session; the seed-1 pair awaits a separate decision |
 | `make test` (`TEST-AB-005`) | `NOT_RUN` | — | The change is configuration-only and adds no code path; to be run before the plan is marked `VERIFIED` |
 
 ## 15. Final Reconciliation
