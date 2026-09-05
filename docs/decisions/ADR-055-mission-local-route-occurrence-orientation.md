@@ -78,6 +78,37 @@ samples, final-gate tangent, and tests use the sequence-constrained offline
 association. Runtime behavior remains unchanged: it consumes only the frozen
 mission-local route and never performs this association.
 
+## Implementation notes recorded 2026-09-05
+
+Two builder behaviours in `src/thesis_rl/mission/builder.py` go beyond the
+letter of DRIVING-MISSION-V1.1.1 and are recorded here so they are explicit.
+Neither altered any frozen record: a full source rebuild on 2026-09-05
+reproduced all 3,500 `mission_hash` values.
+
+1. **FORWARD tie-break penalty.** `_resolve_global_orientations` gives an
+   occurrence with no station evidence (fewer than two associated poses, or
+   net displacement within `GEOMETRY_EPSILON_M`) both orientation options and
+   resolves them by oriented connectivity with a penalty of 1 per `REVERSED`
+   choice, failing only when two connected assignments share the best score.
+   §3 of the amendment requires failure whenever orientation "is not uniquely
+   determined". On the frozen population 46 occurrences lacked evidence and all
+   3,500 records had exactly one connected assignment, so the penalty never
+   decided an orientation and the behaviour is equivalent to the specification.
+   If a future population yields more than one connected assignment, the
+   penalty must not be relied upon; the record must fail the audit.
+
+2. **Final-occurrence bypass of the static-tangent test.** In the anchor gate
+   builder the final route lane is admitted with the mission tangent in place
+   of its static centerline tangent, so a `REVERSED` final occurrence is not
+   excluded by DRIVING-MISSION-V1.1 §6 step 5 (`t_lane^T t_route > 0`). Without
+   this the single `REVERSED` record (`waymo:training_20s:5e7bbc00b872c2ba`)
+   would fail the final-occurrence consistency check. Consequence for that
+   record: adjacent lanes are admitted by concordance with the *mission*
+   direction, i.e. lanes whose declared direction is opposite to lane `89`'s,
+   and the frozen gate is 8.34 m wide on a one-lane route. This is accepted as
+   the terminal drivable surface for that record and is diagnostic evidence
+   only; it does not change Rulebook legal-direction semantics (§6).
+
 ## Approval record
 
 Approved by explicit user approval on `2026-08-04`. This ADR authorizes the
