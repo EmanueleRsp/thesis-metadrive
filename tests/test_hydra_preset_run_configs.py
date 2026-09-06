@@ -132,14 +132,16 @@ def test_td3_run_profiles_use_budget_appropriate_warmup_and_batch() -> None:
 
 
 def test_sb3_sac_run_profiles_use_budget_appropriate_warmup_and_batch() -> None:
+    # ADR-078 (2026-09-06): SAC replay minibatch 256 -> 512 on every
+    # non-smoke profile, paired with `update_to_data_ratio: 0.5`.
     expected = {
-        "default": (600000, 10000, 256),
+        "default": (600000, 10000, 512),
         "smoke": (2000, 100, 64),
-        "fast": (120000, 1000, 256),
-        "medium": (350000, 5000, 256),
-        "long": (700000, 10000, 256),
-        "tune": (500000, 5000, 256),
-        "thesis": (1500000, 10000, 256),
+        "fast": (120000, 1000, 512),
+        "medium": (350000, 5000, 512),
+        "long": (700000, 10000, 512),
+        "tune": (500000, 5000, 512),
+        "thesis": (1500000, 10000, 512),
     }
 
     for profile, (timesteps, learning_starts, batch_size) in expected.items():

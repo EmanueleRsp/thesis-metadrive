@@ -8,6 +8,9 @@ batch_size: 256
 buffer_size: 300000
 train_freq: 1
 gradient_steps: auto
+# ADR-078: diagnostic-only post-update learning potential (ACL v2.0 REQ-013),
+# switched off for throughput. TD3 batch size and gradient steps are unchanged.
+update_learning_potential_diagnostic: false
 learning_rate: 3e-4
 # ADR-075: undiscounted. Exponential discounting erodes the rulebook's
 # geometric priority weights at different rates, so at 0.99 a collision more

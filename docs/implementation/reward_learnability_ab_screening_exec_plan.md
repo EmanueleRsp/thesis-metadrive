@@ -494,11 +494,36 @@ the seed-0 pair, which is handed to a dedicated session together with
 
 Next step: `M3` at seed 0, two runs in parallel.
 
+**2026-09-06, learner throughput (ADR-078).** The `step_timing.csv` attribution
+recorded above (learner 179 ms/step, worker 173–184 ms/step, overlapping; wall
+clock ~220 ms, ~3.9 fps, ~25 h per `medium` run and ~107 h projected per
+`thesis` run) led the user to ask which change could accelerate *every* run
+without a further test campaign. Decision, approved the same day and recorded
+as ADR-078: SAC minibatch `256 -> 512` with `update_to_data_ratio 0.5`, so the
+learner consumes the same 5 120 replay samples per update call in half the
+optimizer steps; and the post-update learning-potential batch — diagnostic-only
+under ACL v2.0 `REQ-013` — switched off. Projection, not measurement: ~5.2 fps,
+`medium` ~19 h, `thesis` ~80 h. Anything below `update_to_data_ratio 0.5`
+buys nothing more, because the worker's Rulebook cost (70–75 ms) then becomes
+the binding component and has no tunable knob.
+
+Consequence for this plan: the setting is global and must be shared by both
+arms of a pair (`AC-AB-002`). It is **not** applied to a run in progress. If the
+user relaunches arm A together with arm B, the screening also becomes the first
+measurement of the new learner setting and the core `thesis` runs inherit a
+configuration the screening exercised; if arm A is kept, arm B must be relaunched
+on the pre-ADR-078 configuration (`planner.sac.batch_size=256
+agent.planner.algorithm.update_to_data_ratio=1.0`) and the new setting starts
+with the core runs. That choice is the user's and is open at the time of writing.
+`DEV-AB-002` records the deviation from `RL-BASELINES` v1 for whichever runs
+adopt it.
+
 ## 12. Deviations
 
 | ID | Original contract | Actual or proposed change | Reason | Approval | Affected tests/docs |
 |---|---|---|---|---|---|
 | `DEV-AB-001` | `EVAL-PROTOCOL` v1.0 `REQ-002`/`REQ-003`: `thesis` profile, 1,500,000 steps, three seeds `[0, 1, 2]` | `medium` profile, 350,000 steps, two seeds `[0, 1]` | Screening before committing six full-budget runs under a reward that has never been trained on | User, 2026-09-01 (`DEC-AB-002`) | The result is a descriptive diagnostic under `REQ-018` and is not a core result; it cannot by itself close the freeze |
+| `DEV-AB-002` | `RL-BASELINES` v1 §3.4 / `REQ-RLB-007` / §9.4: SAC `batch_size=256`, `gradient_steps=auto` resolved to `n_envs` | SAC `batch_size=512`, `update_to_data_ratio=0.5` (so `auto` resolves to `0.5 * n_envs`), post-update learning-potential diagnostic off, for every screening or core run launched after 2026-09-06 | Measured learner cost of 179 ms/step on the live screening; same replay samples per update call in half the optimizer steps, the one throughput change defensible without a test campaign | User, 2026-09-06 (ADR-078) | `tests/test_learner_update_throughput_adr078.py`; `tests/test_hydra_preset_run_configs.py` expected SAC batch; applies only to runs launched after that date, and a pair must be homogeneous (`AC-AB-002`) |
 
 ## 13. Files
 

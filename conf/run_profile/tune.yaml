@@ -17,7 +17,7 @@ planner:
     batch_size: 256
   sac:
     learning_starts: 5000
-    batch_size: 256
+    batch_size: 512
 
 checkpoint:
   periodic_interval_steps: 125000
