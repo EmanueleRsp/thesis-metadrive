@@ -7,7 +7,7 @@
 | Feature | Pre-registered A/B screening of reward learnability: MetaDrive's native reward against the `RULEBOOK-V5.1` + `SCAL-V1.4` scalarized reward |
 | Plan ID | `AB-LEARN` |
 | Authoritative specifications | `EVAL-PROTOCOL` v1.0 (`docs/specifications/evaluation_protocol_v1.0_specification.md`, `AUTHORITATIVE`) with v1.1/v1.2/v1.3/v1.3.1 amendments; `RULEBOOK-V5.1` (`docs/specifications/rulebook_v5.1_specification.md`, `AUTHORITATIVE`); `SCAL-V1.4` (`RULEBOOK-V5.1` §5) |
-| Status | `IN_PROGRESS` — `M1` and `M2` complete and verified; the **seed-0 pair is authorized** (user, 2026-09-05), the seed-1 pair is a separate decision |
+| Status | `IN_PROGRESS` — `M1` and `M2` complete and verified; `M3` **running at seed 0** since 2026-09-05 21:47 UTC, both arms in parallel; the seed-1 pair is a separate decision |
 | Created | 2026-09-01 |
 | Last updated | 2026-09-05 |
 | Branch | `main` (work done on `scenarionet-implementation`, merged 2026-09-05) |
@@ -304,7 +304,7 @@ No mypy target exists; static checking is not part of this plan.
 - **It took three attempts and uncovered two independent defects**; see the findings log.
 - Dependencies: none.
 
-### `M3` — Screening runs — **authorized for seed 0, not started**
+### `M3` — Screening runs — **running at seed 0**
 
 - Objective: four runs — arms A and B × seeds 0 and 1 — at `run_profile=medium`.
 - Tests: `TEST-AB-004`.
@@ -327,6 +327,27 @@ The `seed=0` override is required: `conf/config.yaml` defaults to `42`. Arm B is
 the same with `presets/learnability/sac_b_rulebook` and session `ab_b_seed0`.
 `scripts/tmux_seed_grid.sh` does not fit: it runs *one* command across many seeds,
 where this needs *two* commands at one seed.
+
+**Operational finding, 2026-09-05: `| tee` silences the live monitor.** Piping the
+command makes stdout a pipe, so `docker compose run` allocates no TTY
+(`docker inspect --format '{{.Config.Tty}}'` returns `false` on both containers),
+`rich` reports a non-terminal console, and the `rich.Live` training monitor at
+`agent/agent.py:1127` renders nothing for the whole run. The pane is not dead --
+`print_evaluation_summary` uses `Console.print`, which writes plain text and flushes,
+so the per-evaluation table still reaches pane and log -- but the between-evaluation
+step counter, fps, EMA rewards and critic loss are lost, and they exist nowhere else:
+`_LiveEventLogHandler` buffers into an in-memory `deque(maxlen=8)`, not a file. There
+is therefore **no intra-chunk step counter in any artifact**; the first exact step
+figure is the chunk boundary at 25,000.
+
+Accepted for the seed-0 pair (user, 2026-09-05): the runs continue as launched, because
+recovering the TTY costs a relaunch and `Tty` is fixed at container creation. For the
+seed-1 pair, launch **without** the pipe so the pane keeps its TTY. Do not then capture
+the pane wholesale: the monitor refreshes 8 times a second
+(`TRAINING-MONITOR-REFRESH-V1`), so `tmux pipe-pane` or `script` would record every
+redraw and produce tens of gigabytes of ANSI over a 17-hour run. The durable record is
+already the run's own `logs/train.log`, `logs/events.jsonl`, `logs/errors.log` and the
+CSV artifacts; the stdout log adds little beyond a crash traceback.
 
 **Monitoring protocol.** At every new `eval_type=intermediate` row in
 `csv/evals.csv` — 14 per run — report a cumulative table with both arms side by
@@ -492,7 +513,96 @@ otherwise have looked for this work on a stale branch. `DEC-AB-004` resolved for
 the seed-0 pair, which is handed to a dedicated session together with
 `ab_screening_session_handoff_2026-09-02.md`.
 
-Next step: `M3` at seed 0, two runs in parallel.
+**2026-09-05, `M3` launched at seed 0.** Both arms started in parallel at 21:47 UTC in
+their own named `tmux` sessions, `ab_a_seed0` and `ab_b_seed0`, teeing to
+`/tmp/ab_a_seed0.log` and `/tmp/ab_b_seed0.log`. Run directories:
+`SCREEN-LEARNABILITY-A-NATIVE-01/sac_sb3/seed_0/20260905_214425/` and
+`SCREEN-LEARNABILITY-B-RULEBOOK-01/sac_sb3/seed_0/20260905_214430/`.
+
+Pre-launch re-verification on `main`, because `TEST-AB-002` had last been run on the
+pre-merge branch: both configurations recomposed with `--cfg job --resolve` and diffed.
+Single-factor invariance **holds** -- the only differences are `reward.name/type/behavior`,
+the dependent `lambda_env`/`lambda_rule` (1.0/0.0 against 0.0/1.0) and the derived run
+identity. Budget confirmed as `seed: 0` (the override bit; `conf/config.yaml` defaults to
+`42`), 350,000 steps, `eval_interval` 25,000, `eval_episodes` 50, `final_eval_episodes` 100,
+20 vectorized environments, `curriculum.enabled: false`, `scalarization` equal to
+`conf/scalarization/default.yaml`. The runtime banner corroborates it: arm A reports
+`Scalarization function: off`, arm B `six_level_priority_weighted_rank`, both on encoder
+`latent_query_v3`.
+
+Resource state at launch: GPU **23.7 GB free** of 97.9 GB against three other tenants at
+100 % utilization -- roughly double the ~12 GB that `DEC-AB-004` reasoned about, so the OOM
+margin is wider than the decision assumed. Host load average 4.0 over 72 cores, 410 GB RAM
+available. Each arm settled at ~1.8 GB of GPU memory and ~25 GB of RSS.
+
+Finding, provenance, **not behavioral**: the runtime banner names the rulebook
+`4.7-final-implementation-complete` on a run whose object is `RULEBOOK-V5.1`, and the run's
+own artifacts contradict each other -- `artifacts/run_metadata.yaml` records
+`implementation_family: v1` while the checkpoint reward-semantics sidecar records the version
+string, and neither says `v2`, which is what actually runs. Traced to `conf/config.yaml`
+declaring only `rulebook.version`, with `runtime/io/metadata.py:207` and
+`contracts/reward_semantics.py:47` applying **different defaults** to the same missing key
+while `runtime/wiring/builders.py:349-358` treats that version string as a family selector
+for the v2 machinery. The instrument under test is unaffected and was verified independently:
+`MACRO_RULE_ORDER` carries six levels and the scalarizer runs
+`six_level_priority_weighted_rank` on `vector_schema_id: rulebook_v5_1_six_level_v1`.
+Recorded as `open_items` `C8` and **not fixed mid-run**, because the same string is stamped
+into the fail-closed checkpoint-compatibility identity and into cached rulebook-catalog
+provenance; that is a provenance-contract decision for the user, not an implementation
+detail. It reproduces on the `M2` smoke of 2026-09-02, so it predates the screening.
+
+**2026-09-06, `M3`: arm B died at 100 000 steps and was relaunched on the same seed.**
+
+Measured throughput, replacing the `INFERRED` 6.68 fps anchor of §5: chunk 1 ran at
+**4.55 fps** in both arms, chunk 2 at **3.97/3.94** once the learner updated on every
+step (chunk 1 carries 5 000 `learning_starts` steps that skip the update), and chunk 3
+at 3.93/3.90. The projection for 350 000 steps is therefore **~25 h per run**, not the
+17-20 h §5 estimated -- that anchor came from a run with the `lite` encoder, and
+`lq_v3` costs 1.6x per learner pass. Step-time attribution on these runs, not on the
+smoke: `learner_update` 179 ms/step at 81 % of elapsed, `worker_wrapped_env_step`
+173-184 ms/step at 79-84 %, the two overlapping because the workers step while the
+learner updates. Inside the worker step, `rulebook_evaluator` costs 70-75 ms against
+bare `env_step` at 35 ms, so **the rulebook costs 2x MetaDrive**, not the 3x the smoke
+suggested. `rulebook_scalarization` costs **0.04 ms/step**: the scalarizer is free, and
+arm A pays the full rulebook cost too, by `DEC-AB-001`'s design. Corroboration that
+the GPU is the binding resource: with arm B dead, arm A rose from 3.93 to **4.7 fps**.
+
+**The crash was `open_items` `C9`**, a dimensional error in the rulebook geometry:
+`_constrained_components_after_ear_exhaustion` budgeted the *aggregate* area of the
+triangulation slivers it discards against the *per-piece* constant that licensed
+discarding each one. It fired inside `vehicle_yield` conflict-zone occupancy
+prediction after 7 hours, on a shortfall of **0.13 mm2 on a 261 m2 polygon** -- a
+relative error of 5e-7. Fixed by budgeting the shortfall relatively, at one part in
+100 000 of the polygon's area; overshoot stays fatal at any magnitude. Both messages
+now carry the measured magnitude, which the original did not -- the `C6` lesson,
+applied before hypothesising.
+
+**The fix was applied to the live tree under the running arm A** (user decision), which
+is defensible only because it is inert: the per-triangle filter is untouched, so every
+input the pre-fix code could decompose returns a bit-identical decomposition. Verified
+over **1107 generated polygons, 1107 identical, zero differences**. It converts crashes
+into results and cannot alter a number the previous code was able to produce, so arm
+A's completed evaluations stand and its future ones are unchanged except that it can no
+longer die this way. Both arms therefore run identical code from 2026-09-06 08:39 CEST.
+
+**Arm B relaunched on `seed=0`** as `REQ-AB-003` requires, into
+`SCREEN-LEARNABILITY-B-RULEBOOK-01/sac_sb3/seed_0/20260906_063938/`. The crashed run's
+artifacts are retained at `20260905_214430/` and its log at
+`/tmp/ab_b_seed0_crashed_run1.log`; its three completed evaluations (25k, 50k, 75k) are
+**not** carried into the analysis, because the relaunched run re-measures them under the
+same seed and mixing the two would pair evaluations from different processes.
+
+Results through 75 000 steps, before the crash, descriptive only. On
+`validation_waymo_empirical` arm A's `route_completion` rose 0.1372 -> 0.2381 -> 0.2743
+while arm B went 0.1598 -> 0.0923 -> 0.1268: A has the clearly larger slope, and B's
+50k dip proved to be a dip rather than a trend, which is exactly why §10 pre-registers
+slope across many evaluations rather than a two-point line. `H3` held at both
+transitions: `mean_scalar_rule_reward` and `route_completion` moved **together** in both
+directions (-7.14/-0.068, then +12.21/+0.035), a positive association, which is the
+opposite of the inverted incentive. On `validation_pg` at 25 000 arm A was **stationary**
+-- `route_completion` 1.37e-05, zero collisions, zero off-road, `comfort_rate` 1.0 across
+all 150 episodes -- the standstill degeneracy the rulebook exists to prevent, appearing
+in the control arm.
 
 ## 12. Deviations
 
@@ -518,7 +628,8 @@ Next step: `M3` at seed 0, two runs in parallel.
 | Diff of the two resolved configurations | `PASS` | 2026-09-01 | Re-run after `DEC-AB-006` switched both arms to `lq_v3`; invariance preserved. Differences confined to `reward.name/type/behavior`, `lambda_env`/`lambda_rule`, `experiment.name`, `analysis.experiment_group` and the derived paths. Algorithm, encoder, decoder, observation, environment, budget, seed, panels and `scalarization` identical |
 | `make smoke` on each preset (`TEST-AB-003`) | `NOT_RUN` | — | `M2`. **Load-bearing, not a formality**: `conf/presets/test/smoke_train.yaml` selects `obs=lidar_state` and `encoder=none`, so the `semantic_v3` + `lq_v3` path has not been smoke-tested since `RB51` took the observation to `D = 3011` (`factory.py:76`). Risk: a startup failure on the production encoder discovered only at launch. Follow-up: `run_profile=smoke env.vectorized.num_envs=2` with the preset selected |
 | `make smoke` on each preset (`TEST-AB-003`) | `PASS` | 2026-09-02 | Both arms `exit 0` at the third attempt, after `C5` and `C6` were fixed. Artifacts verified, not just the exit code |
-| The four screening runs (`TEST-AB-004`) | `NOT_RUN` | — | `M3`. The seed-0 pair is authorized and handed to a dedicated session; the seed-1 pair awaits a separate decision |
+| Diff of the two resolved configurations, re-run on `main` | `PASS` | 2026-09-05 | Re-verified after the merge, immediately before launch. Differences confined to `reward.name/type/behavior`, `lambda_env`/`lambda_rule` and the derived run identity; budget, seed, encoder, panels and `scalarization` identical |
+| The four screening runs (`TEST-AB-004`) | `IN_PROGRESS` | 2026-09-05 | `M3`. The seed-0 pair is **running** in `tmux` sessions `ab_a_seed0` / `ab_b_seed0` since 21:47 UTC; the seed-1 pair awaits a separate decision |
 | `make test` (`TEST-AB-005`) | `NOT_RUN` | — | The change is configuration-only and adds no code path; to be run before the plan is marked `VERIFIED` |
 
 ## 15. Final Reconciliation
