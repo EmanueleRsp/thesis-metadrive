@@ -4,10 +4,22 @@ name: sac_sb3
 policy: MlpPolicy
 verbose: 0
 learning_starts: 100
-batch_size: 256
+# ADR-078: 512 x 0.5 replaces RL-BASELINES v1's 256 x 1.0. The learner sees the
+# same number of replay samples per collected transition (256 * 20 = 512 * 10
+# with 20 workers) in half the optimizer steps, which is where the measured
+# 179 ms/step learner cost lived (A/B screening, 2026-09-06). Run profiles
+# override `batch_size`; keep them consistent with this value.
+batch_size: 512
 buffer_size: 300000
 train_freq: 1
+# `auto` resolves to `train_freq * n_envs * update_to_data_ratio` gradient steps
+# per update call (ADR-078); 1.0 is the RL-BASELINES v1 resolution `n_envs`.
 gradient_steps: auto
+update_to_data_ratio: 0.5
+# ADR-078: the post-update TD-residual learning potential is diagnostic-only
+# under ACL v2.0 REQ-013 and costs one extra replay batch plus four network
+# forward passes per update call. Off until a run needs the channel.
+update_learning_potential_diagnostic: false
 learning_rate: 3e-4
 # ADR-075: undiscounted. Exponential discounting erodes the rulebook's
 # geometric priority weights at different rates, so at 0.99 a collision more

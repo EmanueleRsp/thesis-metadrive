@@ -57,6 +57,13 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
         self._policy: Any | None = None
         self._action_noise: Any | None = None
         self._last_buffer_actions: np.ndarray | None = None
+        # ADR-078: the post-update TD-residual learning potential is a
+        # diagnostic channel only (ACL v2.0 REQ-013). It costs one extra
+        # replay batch and four network forward passes per update call, so
+        # it is switched off by configuration until a run needs the channel.
+        self._update_learning_potential_diagnostic = bool(
+            self.cfg_planner.get("update_learning_potential_diagnostic", True)
+        )
 
     def _sync_action_noise(self) -> None:
         self.model.action_noise = self._build_action_noise(self.env, self.cfg_planner)
@@ -102,7 +109,17 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
         if isinstance(gradient_steps_cfg, str) and gradient_steps_cfg.strip().lower() == "auto":
             train_freq = int(cfg_planner.get("train_freq", 1))
             n_envs = int(env.num_envs) if isinstance(env, VecEnv) else 1
-            return max(train_freq * n_envs, 1)
+            # ADR-078: `auto` resolves to `train_freq * n_envs * update_to_data_ratio`
+            # gradient steps per update call, i.e. `update_to_data_ratio` gradient
+            # steps per collected transition. The default 1.0 is the RL-BASELINES
+            # v1 resolution (`gradient_steps = n_envs`).
+            utd_ratio = float(cfg_planner.get("update_to_data_ratio", 1.0))
+            if not np.isfinite(utd_ratio) or utd_ratio <= 0.0:
+                raise ValueError(
+                    "SAC `update_to_data_ratio` must be a finite positive number; "
+                    f"got {cfg_planner.get('update_to_data_ratio')!r}."
+                )
+            return max(int(round(train_freq * n_envs * utd_ratio)), 1)
         return int(gradient_steps_cfg)
 
     def _validate_sb3_components(self) -> None:
@@ -420,7 +437,8 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
         self.collected_transitions += collected
 
     def close_previous_transition_as_data_abort(
-        self, *, env_index: int, final_observation: np.ndarray) -> None:
+        self, *, env_index: int, final_observation: np.ndarray
+    ) -> None:
         close = getattr(self.replay_buffer, "close_previous_transition_as_data_abort", None)
         if not callable(close):
             raise RuntimeError("Replay buffer does not support runtime data-abort boundaries.")
@@ -446,14 +464,14 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
         dones_tensor = torch.as_tensor(
             dones, dtype=torch.float32, device=self.model.device
         ).reshape(-1, 1)
-        next_obs = torch.as_tensor(
-            next_observations, dtype=torch.float32, device=self.model.device
-        )
+        next_obs = torch.as_tensor(next_observations, dtype=torch.float32, device=self.model.device)
         with torch.no_grad():
             next_actions, next_log_prob = self.model.actor.action_log_prob(next_obs)
-            target_q = torch.cat(self.model.critic_target(next_obs, next_actions), dim=1).min(
-                dim=1, keepdim=True
-            ).values
+            target_q = (
+                torch.cat(self.model.critic_target(next_obs, next_actions), dim=1)
+                .min(dim=1, keepdim=True)
+                .values
+            )
             if self.model.ent_coef_optimizer is not None and self.model.log_ent_coef is not None:
                 entropy_temperature = torch.exp(self.model.log_ent_coef.detach())
             else:
@@ -461,9 +479,9 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
             target = rewards_tensor + (1.0 - dones_tensor) * self.model.gamma * (
                 target_q - entropy_temperature * next_log_prob.reshape(-1, 1)
             )
-            current_q = torch.cat(self.model.critic(obs, actions), dim=1).min(
-                dim=1, keepdim=True
-            ).values
+            current_q = (
+                torch.cat(self.model.critic(obs, actions), dim=1).min(dim=1, keepdim=True).values
+            )
             residuals = target - current_q
         return residuals.detach().cpu().numpy().reshape(-1)
 
@@ -502,42 +520,51 @@ class Sb3SacPlannerBackend(BasePlannerBackend):
             batch_size=int(self.model.batch_size),
         )
 
-        replay_data = self.replay_buffer.sample(
-            int(self.model.batch_size), env=self.model._vec_normalize_env
-        )
-        with torch.no_grad():
-            next_actions, next_log_prob = self.model.actor.action_log_prob(
-                replay_data.next_observations
+        learning_potential: float | None = None
+        if self._update_learning_potential_diagnostic:
+            replay_data = self.replay_buffer.sample(
+                int(self.model.batch_size), env=self.model._vec_normalize_env
             )
-            next_q_values = (
-                torch.cat(
-                    self.model.critic_target(replay_data.next_observations, next_actions), dim=1
+            with torch.no_grad():
+                next_actions, next_log_prob = self.model.actor.action_log_prob(
+                    replay_data.next_observations
                 )
-                .min(dim=1, keepdim=True)
-                .values
-            )
-            if self.model.ent_coef_optimizer is not None and self.model.log_ent_coef is not None:
-                entropy_temperature = torch.exp(self.model.log_ent_coef.detach())
-            else:
-                entropy_temperature = self.model.ent_coef_tensor
-            entropy_target = next_q_values - entropy_temperature * next_log_prob.reshape(-1, 1)
-            discounts = (
-                replay_data.discounts
-                if replay_data.discounts is not None
-                else float(self.model.gamma)
-            )
-            target_q_values = (
-                replay_data.rewards + (1 - replay_data.dones) * discounts * entropy_target
-            )
-            current_q_values = (
-                torch.cat(self.model.critic(replay_data.observations, replay_data.actions), dim=1)
-                .min(dim=1, keepdim=True)
-                .values
-            )
-            td_residuals = (target_q_values - current_q_values).detach().cpu().numpy().reshape(-1)
-        from thesis_rl.curriculum.scenario_acl.usefulness import compute_sac_learning_potential
+                next_q_values = (
+                    torch.cat(
+                        self.model.critic_target(replay_data.next_observations, next_actions), dim=1
+                    )
+                    .min(dim=1, keepdim=True)
+                    .values
+                )
+                if (
+                    self.model.ent_coef_optimizer is not None
+                    and self.model.log_ent_coef is not None
+                ):
+                    entropy_temperature = torch.exp(self.model.log_ent_coef.detach())
+                else:
+                    entropy_temperature = self.model.ent_coef_tensor
+                entropy_target = next_q_values - entropy_temperature * next_log_prob.reshape(-1, 1)
+                discounts = (
+                    replay_data.discounts
+                    if replay_data.discounts is not None
+                    else float(self.model.gamma)
+                )
+                target_q_values = (
+                    replay_data.rewards + (1 - replay_data.dones) * discounts * entropy_target
+                )
+                current_q_values = (
+                    torch.cat(
+                        self.model.critic(replay_data.observations, replay_data.actions), dim=1
+                    )
+                    .min(dim=1, keepdim=True)
+                    .values
+                )
+                td_residuals = (
+                    (target_q_values - current_q_values).detach().cpu().numpy().reshape(-1)
+                )
+            from thesis_rl.curriculum.scenario_acl.usefulness import compute_sac_learning_potential
 
-        learning_potential = compute_sac_learning_potential(td_residuals)
+            learning_potential = compute_sac_learning_potential(td_residuals)
 
         logger_values = self.model.logger.name_to_value
         self.last_actor_loss = float(logger_values.get("train/actor_loss", float("nan")))

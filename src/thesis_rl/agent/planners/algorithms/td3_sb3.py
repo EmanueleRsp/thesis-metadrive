@@ -61,6 +61,11 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         self._diagnostic_mixed_precision = bool(
             self.cfg_planner.get("diagnostic_mixed_precision", False)
         )
+        # ADR-078: see the SAC backend; the post-update learning potential is
+        # a diagnostic-only channel and is switched off by configuration.
+        self._update_learning_potential_diagnostic = bool(
+            self.cfg_planner.get("update_learning_potential_diagnostic", True)
+        )
 
     def _sync_action_noise(self) -> None:
         self.model.action_noise = self._build_action_noise(self.env, self.cfg_planner)
@@ -106,7 +111,16 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         if isinstance(gradient_steps_cfg, str) and gradient_steps_cfg.strip().lower() == "auto":
             train_freq = int(cfg_planner.get("train_freq", 1))
             n_envs = int(env.num_envs) if isinstance(env, VecEnv) else 1
-            return max(train_freq * n_envs, 1)
+            # ADR-078: `auto` resolves to `train_freq * n_envs * update_to_data_ratio`
+            # gradient steps per update call; the default 1.0 is the RL-BASELINES
+            # v1 resolution (`gradient_steps = n_envs`). Mirrors the SAC backend.
+            utd_ratio = float(cfg_planner.get("update_to_data_ratio", 1.0))
+            if not np.isfinite(utd_ratio) or utd_ratio <= 0.0:
+                raise ValueError(
+                    "TD3 `update_to_data_ratio` must be a finite positive number; "
+                    f"got {cfg_planner.get('update_to_data_ratio')!r}."
+                )
+            return max(int(round(train_freq * n_envs * utd_ratio)), 1)
         return int(gradient_steps_cfg)
 
     def _validate_sb3_components(self) -> None:
@@ -435,7 +449,8 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         self.collected_transitions += collected
 
     def close_previous_transition_as_data_abort(
-        self, *, env_index: int, final_observation: np.ndarray) -> None:
+        self, *, env_index: int, final_observation: np.ndarray
+    ) -> None:
         close = getattr(self.replay_buffer, "close_previous_transition_as_data_abort", None)
         if not callable(close):
             raise RuntimeError("Replay buffer does not support runtime data-abort boundaries.")
@@ -554,41 +569,48 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
                 self.replay_buffer.update_priorities = update_priorities
         train_seconds = time.perf_counter() - train_started
 
-        learning_potential_started = time.perf_counter()
-        replay_data = self.replay_buffer.sample(
-            int(self.model.batch_size), env=self.model._vec_normalize_env
-        )
-        with torch.no_grad():
-            noise = replay_data.actions.clone().data.normal_(0, self.model.target_policy_noise)
-            noise = noise.clamp(-self.model.target_noise_clip, self.model.target_noise_clip)
-            next_actions = (self.model.actor_target(replay_data.next_observations) + noise).clamp(
-                -1, 1
+        learning_potential: float | None = None
+        learning_potential_seconds = 0.0
+        if self._update_learning_potential_diagnostic:
+            learning_potential_started = time.perf_counter()
+            replay_data = self.replay_buffer.sample(
+                int(self.model.batch_size), env=self.model._vec_normalize_env
             )
-            next_q_values = (
-                torch.cat(
-                    self.model.critic_target(replay_data.next_observations, next_actions), dim=1
+            with torch.no_grad():
+                noise = replay_data.actions.clone().data.normal_(0, self.model.target_policy_noise)
+                noise = noise.clamp(-self.model.target_noise_clip, self.model.target_noise_clip)
+                next_actions = (
+                    self.model.actor_target(replay_data.next_observations) + noise
+                ).clamp(-1, 1)
+                next_q_values = (
+                    torch.cat(
+                        self.model.critic_target(replay_data.next_observations, next_actions), dim=1
+                    )
+                    .min(dim=1, keepdim=True)
+                    .values
                 )
-                .min(dim=1, keepdim=True)
-                .values
-            )
-            discounts = (
-                replay_data.discounts
-                if replay_data.discounts is not None
-                else float(self.model.gamma)
-            )
-            target_q_values = (
-                replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
-            )
-            current_q_values = (
-                torch.cat(self.model.critic(replay_data.observations, replay_data.actions), dim=1)
-                .min(dim=1, keepdim=True)
-                .values
-            )
-            td_residuals = (target_q_values - current_q_values).detach().cpu().numpy().reshape(-1)
-        from thesis_rl.curriculum.scenario_acl.usefulness import compute_td3_learning_potential
+                discounts = (
+                    replay_data.discounts
+                    if replay_data.discounts is not None
+                    else float(self.model.gamma)
+                )
+                target_q_values = (
+                    replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
+                )
+                current_q_values = (
+                    torch.cat(
+                        self.model.critic(replay_data.observations, replay_data.actions), dim=1
+                    )
+                    .min(dim=1, keepdim=True)
+                    .values
+                )
+                td_residuals = (
+                    (target_q_values - current_q_values).detach().cpu().numpy().reshape(-1)
+                )
+            from thesis_rl.curriculum.scenario_acl.usefulness import compute_td3_learning_potential
 
-        learning_potential = compute_td3_learning_potential(td_residuals)
-        learning_potential_seconds = time.perf_counter() - learning_potential_started
+            learning_potential = compute_td3_learning_potential(td_residuals)
+            learning_potential_seconds = time.perf_counter() - learning_potential_started
 
         logger_values = self.model.logger.name_to_value
         self.last_actor_loss = float(logger_values.get("train/actor_loss", float("nan")))
