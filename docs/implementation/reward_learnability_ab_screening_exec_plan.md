@@ -669,7 +669,9 @@ baseline and against the constant-action floors of `C11`, not as a
 comparability test; arm A's own trajectory is reported but licenses nothing.
 The relaunch uses `main` at or after `b730742` (C9, GEOM-ABORT, ADR-078
 included), both arms on ADR-078 as `AC-AB-002` requires, arm B first while the
-GPU is contended, arm A as soon as memory allows.
+GPU is contended, arm A as soon as memory allows. The relaunch is handed to a
+dedicated session through `ab_screening_session_handoff_2026-09-06.md`, which
+carries the launch protocol, the monitoring rules and the session prompt.
 
 ## 12. Deviations
 
