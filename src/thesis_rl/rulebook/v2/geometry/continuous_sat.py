@@ -15,6 +15,16 @@ from shapely.prepared import prep
 
 
 AREA_EPSILON_M2 = 1.0e-4
+# `AREA_EPSILON_M2` bounds *one* piece. The coverage check below bounds the
+# *sum* of the pieces the per-triangle filter discarded, which is a different
+# quantity: N slivers each individually under the per-piece bound sum to as much
+# as N times it. Budgeting the sum against the per-piece constant made the check
+# fail on ordinary geometry -- measured at 1.2x to 1.3x the bound, from two to
+# four discarded slivers on polygons of 111 to 261 m2. The aggregate is
+# therefore budgeted relatively: a decomposition may lose at most one part in
+# 100 000 of the polygon's own area, which is scale-free and stays meaningful on
+# both a 1 m2 and a 1000 m2 conflict zone.
+RELATIVE_COVERAGE_EPSILON = 1.0e-5
 INTERVAL_EPSILON_S = 1.0e-6
 # Lexicographic ear clipping is retained for ordinary small geometries because
 # it is simple and stable.  Its repeated all-vertex ear search is cubic,
@@ -87,18 +97,41 @@ def _constrained_components_after_ear_exhaustion(polygon: Polygon) -> tuple[Poly
     recovery, not a simplification or approximation.
     """
 
-    triangles = tuple(
+    candidates = tuple(
         triangle
         for triangle in shapely.constrained_delaunay_triangles(polygon).geoms
         if triangle.geom_type == "Polygon"
-        and triangle.area > AREA_EPSILON_M2
-        and polygon.covers(triangle)
+    )
+    triangles = tuple(
+        triangle
+        for triangle in candidates
+        if triangle.area > AREA_EPSILON_M2 and polygon.covers(triangle)
     )
     if not triangles:
         raise ValueError("Constrained decomposition produced no non-degenerate triangles")
     covered = shapely.union_all(triangles)
-    if not polygon.covers(covered) or polygon.symmetric_difference(covered).area > AREA_EPSILON_M2:
-        raise ValueError("Constrained decomposition does not cover the input polygon")
+    # Escaping the polygon stays a hard failure at any magnitude: it would mean
+    # the decomposition claims area the polygon does not have, which no
+    # tolerance can excuse. Only the *shortfall* is budgeted.
+    if not polygon.covers(covered):
+        raise ValueError(
+            "Constrained decomposition escapes the input polygon: "
+            f"overshoot {covered.difference(polygon).area:.6e} m2 on a polygon of "
+            f"{polygon.area:.6f} m2"
+        )
+    residual_area = polygon.symmetric_difference(covered).area
+    coverage_allowance = max(AREA_EPSILON_M2, polygon.area * RELATIVE_COVERAGE_EPSILON)
+    if residual_area > coverage_allowance:
+        dropped = tuple(triangle for triangle in candidates if triangle not in triangles)
+        raise ValueError(
+            "Constrained decomposition does not cover the input polygon: "
+            f"residual {residual_area:.6e} m2 against allowance "
+            f"{coverage_allowance:.6e} m2 ({residual_area / coverage_allowance:.1f}x) "
+            f"on a polygon of {polygon.area:.6f} m2 with "
+            f"{len(polygon.exterior.coords) - 1} exterior vertices and "
+            f"{len(polygon.interiors)} holes; {len(dropped)} of {len(candidates)} "
+            "triangles discarded"
+        )
     return tuple(sorted(triangles, key=lambda tri: (tri.centroid.x, tri.centroid.y, tri.area)))
 
 
