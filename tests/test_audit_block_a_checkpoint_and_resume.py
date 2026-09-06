@@ -11,10 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from thesis_rl.runtime.loops.train_loop import (
-    _copy_checkpoint_snapshot,
-    _require_replay_buffer_for_resume,
-)
+from thesis_rl.runtime.loops.train_loop import _copy_checkpoint_snapshot
+from thesis_rl.sb3_extensions.replay import require_replay_buffer_for_resume
 
 
 def test_copy_checkpoint_snapshot_copies_zip_and_sidecars_but_not_the_job_payload(
@@ -62,21 +60,36 @@ class _OnPolicyPlanner:
 
 def test_resume_of_a_replay_learner_without_persisted_buffer_fails_fast() -> None:
     with pytest.raises(RuntimeError, match="persisted replay buffer"):
-        _require_replay_buffer_for_resume(
+        require_replay_buffer_for_resume(
             _ReplayPlanner(), resumed_global_steps=125_000, replay_persistence_enabled=False
         )
 
 
 def test_resume_is_allowed_with_a_persisted_buffer_or_from_step_zero() -> None:
-    _require_replay_buffer_for_resume(
+    require_replay_buffer_for_resume(
         _ReplayPlanner(), resumed_global_steps=125_000, replay_persistence_enabled=True
     )
-    _require_replay_buffer_for_resume(
+    require_replay_buffer_for_resume(
         _ReplayPlanner(), resumed_global_steps=0, replay_persistence_enabled=False
     )
 
 
 def test_on_policy_learners_are_not_subject_to_the_replay_guard() -> None:
-    _require_replay_buffer_for_resume(
+    require_replay_buffer_for_resume(
         _OnPolicyPlanner(), resumed_global_steps=125_000, replay_persistence_enabled=False
     )
+
+
+def test_both_resume_paths_use_the_same_guard() -> None:
+    """The ACL driver resumes through its own code path, not the training loop.
+
+    A copy of the guard in one of them would drift, and the ACL path is the one
+    that can actually resume from a periodic checkpoint (it writes its own
+    checkpoint pair), so it is the path where the defect bites.
+    """
+
+    from thesis_rl.curriculum.scenario_acl import driver as acl_driver
+    from thesis_rl.runtime.loops import train_loop
+
+    assert acl_driver.require_replay_buffer_for_resume is require_replay_buffer_for_resume
+    assert train_loop.require_replay_buffer_for_resume is require_replay_buffer_for_resume

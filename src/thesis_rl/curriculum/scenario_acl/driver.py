@@ -64,7 +64,10 @@ from thesis_rl.runtime.io.run_logging import log_event
 from thesis_rl.runtime.async_evaluation import AsyncEvaluationManager, EvaluationJob
 from thesis_rl.runtime.evaluation_plan import resolve_scenarionet_evaluation_panels
 from thesis_rl.runtime.final_panels import run_scenarionet_final_panels
-from thesis_rl.sb3_extensions.replay import resolve_transition_replay_config
+from thesis_rl.sb3_extensions.replay import (
+    require_replay_buffer_for_resume,
+    resolve_transition_replay_config,
+)
 from thesis_rl.runtime.wiring.builders import (
     adapter_space_kwargs,
     build_adapter,
@@ -1648,6 +1651,15 @@ def run_scenario_acl_training(
     agent.set_checkpoint_identity(build_reward_semantics_identity(cfg))
     if resume_enabled:
         agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
+        # The ACL driver has its own resume path, so it needs the same guard as the
+        # baseline loop: without a persisted buffer the learner restarts full-size
+        # updates on ~`n_envs` transitions with the warm-up already spent
+        # (audit 2026-09-06, A8).
+        require_replay_buffer_for_resume(
+            planner,
+            resumed_global_steps=int(current_global_step),
+            replay_persistence_enabled=bool(transition_replay_config.persistence_enabled),
+        )
         if transition_replay_config.persistence_enabled:
             resume_replay_path = (
                 resume_run_dir

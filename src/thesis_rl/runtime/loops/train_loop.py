@@ -84,7 +84,10 @@ from thesis_rl.runtime.execution.seeding import (
     set_global_seed,
     train_episode_seed_from_env_overrides,
 )
-from thesis_rl.sb3_extensions.replay import resolve_transition_replay_config
+from thesis_rl.sb3_extensions.replay import (
+    require_replay_buffer_for_resume,
+    resolve_transition_replay_config,
+)
 
 
 CHECKPOINT_INDEX_FIELDS = [
@@ -341,35 +344,6 @@ def _copy_checkpoint_snapshot(source_stem: Path, target_stem: Path) -> None:
             continue
         suffix = path.name[len(source_stem.name) :]
         shutil.copyfile(path, target_stem.parent / f"{target_stem.name}{suffix}")
-
-
-def _require_replay_buffer_for_resume(
-    planner: Any,
-    *,
-    resumed_global_steps: int,
-    replay_persistence_enabled: bool,
-) -> None:
-    """Refuse to resume an off-policy learner whose replay buffer was not persisted.
-
-    A resumed replay learner restores ``num_timesteps`` from its checkpoint, so the
-    ``learning_starts`` warm-up is already spent: it starts full-size gradient
-    updates on a buffer holding only the first ``n_envs`` transitions, and every
-    batch is drawn from those few rows until the buffer refills. Nothing raises, and
-    the resumed policy silently overfits and collapses (audit 2026-09-06, A8).
-    Failing here makes the loss of the buffer an explicit decision instead.
-    """
-
-    if not hasattr(planner, "load_replay_buffer"):
-        return  # on-policy learners keep no replay buffer
-    if int(resumed_global_steps) <= 0 or replay_persistence_enabled:
-        return
-    raise RuntimeError(
-        "Resuming an off-policy learner requires its persisted replay buffer: "
-        f"the checkpoint records {int(resumed_global_steps)} training steps but "
-        "`transition_replay.persistence.enabled` is false, so no buffer can be "
-        "restored and the learner would update on a near-empty buffer without a "
-        "warm-up. Enable replay persistence for the run being resumed, or restart it."
-    )
 
 
 def _load_replay_buffer_if_available(planner: Any, path: Path) -> bool:
@@ -1240,7 +1214,7 @@ def run_training(cfg: DictConfig) -> None:
                 resume_eval_id = int(resume_state.get("eval_id", 0))
                 if transition_replay_config.persistence_enabled:
                     beta_progress_env_steps = int(resume_state.get("beta_progress_env_steps", 0))
-            _require_replay_buffer_for_resume(
+            require_replay_buffer_for_resume(
                 planner,
                 resumed_global_steps=int(resume_global_steps_done),
                 replay_persistence_enabled=bool(transition_replay_config.persistence_enabled),

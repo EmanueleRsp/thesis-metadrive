@@ -19,6 +19,39 @@ class TransitionReplayConfig:
     persistence_enabled: bool = False
 
 
+def require_replay_buffer_for_resume(
+    planner: Any,
+    *,
+    resumed_global_steps: int,
+    replay_persistence_enabled: bool,
+) -> None:
+    """Refuse to resume an off-policy learner whose replay buffer was not persisted.
+
+    A resumed replay learner restores ``num_timesteps`` from its checkpoint, so the
+    ``learning_starts`` warm-up is already spent: it starts full-size gradient
+    updates on a buffer holding only the first ``n_envs`` transitions, and every
+    batch is drawn from those few rows until the buffer refills. Nothing raises, and
+    the resumed policy silently overfits and collapses (audit 2026-09-06, A8).
+    Failing here makes the loss of the buffer an explicit decision instead.
+
+    On-policy learners keep no replay buffer and are exempt. Both the baseline
+    training loop and the scenario-ACL driver call this, because both resume the
+    same learners through their own separate resume paths.
+    """
+
+    if not hasattr(planner, "load_replay_buffer"):
+        return
+    if int(resumed_global_steps) <= 0 or replay_persistence_enabled:
+        return
+    raise RuntimeError(
+        "Resuming an off-policy learner requires its persisted replay buffer: "
+        f"the checkpoint records {int(resumed_global_steps)} training steps but "
+        "`transition_replay.persistence.enabled` is false, so no buffer can be "
+        "restored and the learner would update on a near-empty buffer without a "
+        "warm-up. Enable replay persistence for the run being resumed, or restart it."
+    )
+
+
 def _mapping(value: Any) -> Mapping[str, Any]:
     if value is None:
         return {}
