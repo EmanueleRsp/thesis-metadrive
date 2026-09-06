@@ -274,21 +274,6 @@ def _restore_best_key(payload: Any, name: str) -> tuple[float, ...] | None:
     return tuple(float(v) for v in values)
 
 
-def _save_json_atomically(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = path.with_name(f".{path.name}.tmp")
-    try:
-        temporary_path.write_text(
-            json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8"
-        )
-        with temporary_path.open("rb") as handle:
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_path, path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-
-
 def _validate_checkpoint_pair(
     pair_path: Path,
     *,
