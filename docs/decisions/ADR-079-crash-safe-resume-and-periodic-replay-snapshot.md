@@ -14,7 +14,7 @@
   `docs/specifications/transition_replay_v1.1_amendment.md`
   (`TRANSITION-REPLAY-V1.1`: REQ-023/024/024a/025/025a/033, §8.9, §9.1).
 - Related: issue [#3](https://github.com/EmanueleRsp/thesis-metadrive/issues/3),
-  `open_items` `C12`/`V2`/`D4`, ADR-016 (ACL resume restart policy, unchanged),
+  `open_items` `C13`/`V2`/`D4`, ADR-016 (ACL resume restart policy, unchanged),
   ADR-024 (quarantine as resume state, unchanged),
   `implementation/resumable_training_after_abrupt_interruption_v1_exec_plan.md`.
 
