@@ -522,10 +522,11 @@ explicit informed authorization because source files are pickle artifacts.
   map connector lanes between ordered gate frontiers and initializes a terminal
   `mission_unreachable` snapshot when reset association has no legal pending-gate
   path. Focused M4 regression tests pass (45 tests); focused Ruff and
-  `git diff --check` pass. `make smoke-gpu` completed successfully at
-  `/scratch/e.respino/thesis-metadrive/outputs/EXP_smoke_RP_smoke_CUR_disabled_REW_monitor_only/td3_sb3/seed_42/20260802_211432`,
+  `git diff --check` pass. `make smoke-gpu` completed successfully on
+  2026-08-02 (run `EXP_smoke_RP_smoke_CUR_disabled_REW_monitor_only/td3_sb3/seed_42/20260802_211432`),
   including both validation evaluations and the final Waymo empirical, PG, and
-  arm-stratified panels.
+  arm-stratified panels. The run directory is no longer retained on disk
+  (verified absent 2026-09-06); the result stands as a historical record.
 
 ### M5 — R4 and Rulebook migration
 
@@ -834,10 +835,11 @@ explicit informed authorization because source files are pickle artifacts.
   native navigation.
 - Focused mission/environment tests passed (45 tests), targeted Ruff format and
   lint checks passed, and `git diff --check` passed. The required GPU smoke
-  (`make smoke-gpu`) completed successfully at
-  `/scratch/e.respino/thesis-metadrive/outputs/EXP_smoke_RP_smoke_CUR_disabled_REW_monitor_only/td3_sb3/seed_42/20260802_211432`;
-  its two validation evaluations and final Waymo empirical, PG, and
-  arm-stratified panels all completed without entries in `logs/errors.log`.
+  (`make smoke-gpu`) completed successfully on 2026-08-02 (run
+  `EXP_smoke_RP_smoke_CUR_disabled_REW_monitor_only/td3_sb3/seed_42/20260802_211432`,
+  directory no longer retained on disk as of 2026-09-06); its two validation
+  evaluations and final Waymo empirical, PG, and arm-stratified panels all
+  completed without entries in `logs/errors.log`.
 
 ## 12. Deviations
 
