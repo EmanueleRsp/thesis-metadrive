@@ -111,7 +111,16 @@ class Sb3Td3PlannerBackend(BasePlannerBackend):
         if isinstance(gradient_steps_cfg, str) and gradient_steps_cfg.strip().lower() == "auto":
             train_freq = int(cfg_planner.get("train_freq", 1))
             n_envs = int(env.num_envs) if isinstance(env, VecEnv) else 1
-            return max(train_freq * n_envs, 1)
+            # ADR-078: `auto` resolves to `train_freq * n_envs * update_to_data_ratio`
+            # gradient steps per update call; the default 1.0 is the RL-BASELINES
+            # v1 resolution (`gradient_steps = n_envs`). Mirrors the SAC backend.
+            utd_ratio = float(cfg_planner.get("update_to_data_ratio", 1.0))
+            if not np.isfinite(utd_ratio) or utd_ratio <= 0.0:
+                raise ValueError(
+                    "TD3 `update_to_data_ratio` must be a finite positive number; "
+                    f"got {cfg_planner.get('update_to_data_ratio')!r}."
+                )
+            return max(int(round(train_freq * n_envs * utd_ratio)), 1)
         return int(gradient_steps_cfg)
 
     def _validate_sb3_components(self) -> None:

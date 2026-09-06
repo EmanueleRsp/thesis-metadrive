@@ -136,17 +136,18 @@ def _collect_one_and_update(planner, env: gym.Env) -> dict:
 # --- REQ-078-01: `gradient_steps: auto` honours `update_to_data_ratio` -------
 
 
+@pytest.mark.parametrize("backend", [Sb3SacPlannerBackend, Sb3Td3PlannerBackend])
 @pytest.mark.parametrize(
     ("ratio", "expected"),
     [(None, 20), (1.0, 20), (0.5, 10), (0.25, 5), (0.01, 1)],
 )
-def test_sac_auto_gradient_steps_scale_with_update_to_data_ratio(ratio, expected) -> None:
+def test_auto_gradient_steps_scale_with_update_to_data_ratio(backend, ratio, expected) -> None:
     vec_env = DummyVecEnv([lambda: gym.make("Pendulum-v1") for _ in range(20)])
     try:
         cfg = {"gradient_steps": "auto", "train_freq": 1}
         if ratio is not None:
             cfg["update_to_data_ratio"] = ratio
-        assert Sb3SacPlannerBackend._resolve_gradient_steps(vec_env, cfg) == expected
+        assert backend._resolve_gradient_steps(vec_env, cfg) == expected
     finally:
         vec_env.close()
 
@@ -160,12 +161,13 @@ def test_sac_explicit_gradient_steps_ignore_update_to_data_ratio() -> None:
         vec_env.close()
 
 
+@pytest.mark.parametrize("backend", [Sb3SacPlannerBackend, Sb3Td3PlannerBackend])
 @pytest.mark.parametrize("ratio", [0.0, -1.0, float("nan"), float("inf")])
-def test_sac_rejects_non_positive_update_to_data_ratio(ratio) -> None:
+def test_rejects_non_positive_update_to_data_ratio(backend, ratio) -> None:
     vec_env = DummyVecEnv([lambda: gym.make("Pendulum-v1")])
     try:
         with pytest.raises(ValueError, match="update_to_data_ratio"):
-            Sb3SacPlannerBackend._resolve_gradient_steps(
+            backend._resolve_gradient_steps(
                 vec_env, {"gradient_steps": "auto", "update_to_data_ratio": ratio}
             )
     finally:
@@ -175,10 +177,13 @@ def test_sac_rejects_non_positive_update_to_data_ratio(ratio) -> None:
 # --- REQ-078-02: run profiles resolve the approved SAC learner setting -------
 
 
+@pytest.mark.parametrize("algorithm", ["sac_sb3", "td3_sb3"])
 @pytest.mark.parametrize("profile", ["fast", "default", "medium", "long", "tune", "thesis"])
-def test_sac_run_profiles_resolve_batch_512_and_half_utd(profile: str) -> None:
+def test_off_policy_run_profiles_resolve_batch_512_and_half_utd(
+    algorithm: str, profile: str
+) -> None:
     cfg = _compose(
-        "agent/planner/algorithm=sac_sb3",
+        f"agent/planner/algorithm={algorithm}",
         "curriculum=disabled",
         f"run_profile={profile}",
     )
@@ -189,20 +194,21 @@ def test_sac_run_profiles_resolve_batch_512_and_half_utd(profile: str) -> None:
     assert bool(planner_cfg.update_learning_potential_diagnostic) is False
 
 
-def test_sac_smoke_profile_keeps_its_diagnostic_batch() -> None:
-    cfg = _compose("agent/planner/algorithm=sac_sb3", "curriculum=disabled", "run_profile=smoke")
+@pytest.mark.parametrize("algorithm", ["sac_sb3", "td3_sb3"])
+def test_off_policy_smoke_profile_keeps_its_diagnostic_batch(algorithm: str) -> None:
+    cfg = _compose(
+        f"agent/planner/algorithm={algorithm}", "curriculum=disabled", "run_profile=smoke"
+    )
     planner_cfg = _resolve_planner_cfg(cfg)
     assert int(planner_cfg.batch_size) == 64
     assert float(planner_cfg.update_to_data_ratio) == pytest.approx(0.5)
 
 
-def test_td3_run_profile_batch_and_gradient_steps_are_unchanged() -> None:
-    cfg = _compose("agent/planner/algorithm=td3_sb3", "curriculum=disabled", "run_profile=thesis")
+def test_ppo_run_profile_is_untouched_by_adr078() -> None:
+    cfg = _compose("agent/planner/algorithm=ppo_sb3", "curriculum=disabled", "run_profile=thesis")
     planner_cfg = _resolve_planner_cfg(cfg)
-    assert int(planner_cfg.batch_size) == 256
-    assert str(planner_cfg.gradient_steps) == "auto"
     assert "update_to_data_ratio" not in planner_cfg
-    assert bool(planner_cfg.update_learning_potential_diagnostic) is False
+    assert "update_learning_potential_diagnostic" not in planner_cfg
 
 
 # --- REQ-078-03: the post-update learning potential is switchable ------------

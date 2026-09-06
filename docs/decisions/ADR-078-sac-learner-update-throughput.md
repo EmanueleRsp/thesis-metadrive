@@ -1,4 +1,4 @@
-# ADR-078: SAC learner update throughput — batch 512 at half update-to-data ratio, diagnostic learning potential off
+# ADR-078: Off-policy learner update throughput — batch 512 at half update-to-data ratio, diagnostic learning potential off
 
 - Status: **Approved**
 - Date: 2026-09-06
@@ -9,11 +9,14 @@
   explained what the post-update learning-potential batch computes and that it
   is diagnostic-only under ACL `v2.0`, the user asked to switch it off as well
   ("disattiviamo anche quel learning potential per ora così comunque un minimo
-  si guadagna").
+  si guadagna"). Third step, same day: asked whether TD3 and PPO should follow,
+  the assistant recommended extending the setting to TD3 and leaving PPO until
+  its cost is measured; the user replied "procedi".
 - Affected specifications:
   `docs/specifications/rl_baselines_v1_specification.md` (`RL-BASELINES` v1.0,
-  §3.4 profile matrix, `REQ-RLB-007` SAC learning, §9.4 SAC configuration —
-  the `batch_size = 256` and `gradient_steps = auto -> n_envs` rows for SAC);
+  §3.4 profile matrix, `REQ-RLB-006` TD3 learning, `REQ-RLB-007` SAC learning,
+  §9.3 TD3 configuration, §9.4 SAC configuration — the `batch_size = 256` and
+  `gradient_steps = auto -> n_envs` rows for both off-policy learners);
   `docs/specifications/evaluation_protocol_v1.0_specification.md`
   (`EVAL-PROTOCOL` v1.0, `DEC-015`, the parenthetical "`train_freq=1`,
   `gradient_steps=auto`" for TD3/SAC — the atomic unit is unchanged, the
@@ -65,9 +68,10 @@ Two learner-side facts were established by code reading:
 
 ## Decision
 
-1. **SAC replay minibatch `256 -> 512` and `update_to_data_ratio 1.0 -> 0.5`**,
-   for every non-smoke run profile (`fast`, `default`, `medium`, `long`,
-   `tune`, `thesis`) and for `conf/agent/planner/algorithm/sac_sb3.yaml`.
+1. **SAC and TD3 replay minibatch `256 -> 512` and `update_to_data_ratio
+   1.0 -> 0.5`**, for every non-smoke run profile (`fast`, `default`,
+   `medium`, `long`, `tune`, `thesis`) and for
+   `conf/agent/planner/algorithm/sac_sb3.yaml` and `td3_sb3.yaml`.
    `gradient_steps: auto` now resolves to
    `round(train_freq * n_envs * update_to_data_ratio)`, floored at 1; the
    default ratio `1.0` reproduces the `RL-BASELINES` v1 resolution
@@ -75,7 +79,8 @@ Two learner-side facts were established by code reading:
    With 20 workers: 10 gradient steps of batch 512 per 20 transitions —
    **the same 5 120 replay samples per update call as before, in half the
    optimizer steps**, same learning rate, same target-update cadence per
-   gradient step. `smoke` keeps its diagnostic batch 64.
+   gradient step; TD3's `policy_delay = 2` still updates the actor every
+   second gradient step. `smoke` keeps its diagnostic batch 64.
 2. **The post-update learning-potential batch is switched off** by the new
    planner key `update_learning_potential_diagnostic: false` in both
    `sac_sb3.yaml` and `td3_sb3.yaml`. The code default is `true` (the previous
@@ -83,11 +88,18 @@ Two learner-side facts were established by code reading:
    `maybe_update` reports `learning_potential: None`, which the lifecycle and
    `compute_learning_potential` already handle, and the TD3 timing field
    `timing_acl_replay_learning_potential_seconds` is `0.0`.
-3. **TD3's batch size and gradient steps are unchanged.** The measurement
-   that motivates this decision was taken on SAC, the screening's probe
-   algorithm. Whether TD3 should receive the symmetric setting before the
-   `EVAL-PROTOCOL` algorithm comparison is a separate decision, recorded in
-   `docs/open_items.md` (`D8`).
+3. **TD3 receives the same setting as SAC** (decided in the third approval
+   step, closing `open_items` `D8`). The measurement was taken on SAC, but
+   the TD3 backend has the same update structure — `auto -> n_envs` gradient
+   steps of batch 256, four `lq_v3`-backed networks, update overlapped with
+   the workers — and a different update-to-data ratio between the two
+   off-policy arms would be a second varied factor in the `EVAL-PROTOCOL`
+   algorithm comparison. **PPO is unchanged.** Its analogue would be
+   minibatch `64 -> 128` (same samples, 320 -> 160 optimizer steps per
+   2 048-transition rollout), but its update is synchronous rather than
+   overlapped, it runs on CPU by the builder's choice, and no PPO
+   `step_timing.csv` exists under `lq_v3`; the decision waits for the first
+   measured PPO run (`open_items` `D9`).
 4. The setting is **global**: it applies identically to every reward setting
    and every curriculum setting, so no comparison inside `EVAL-PROTOCOL`
    varies it. It is **not** applied to a run already in progress; a screening
@@ -137,8 +149,10 @@ Two learner-side facts were established by code reading:
   collection-time chain it names is untouched and still runs. When a run needs
   the post-update channel again, set `update_learning_potential_diagnostic:
   true` — it is one key, not a code change.
-- Mandatory test `test_sb3_sac_run_profiles_use_budget_appropriate_warmup_and_batch`
-  changes its expected SAC batch from 256 to 512 on the non-smoke profiles, as a
-  direct consequence of the approved decision. Regression tests:
-  `tests/test_learner_update_throughput_adr078.py` (9 of its 22 cases fail on
-  the pre-change backends, verified 2026-09-06).
+- Mandatory tests `test_sb3_sac_run_profiles_use_budget_appropriate_warmup_and_batch`
+  and `test_td3_run_profiles_use_budget_appropriate_warmup_and_batch` change
+  their expected batch from 256 to 512 on the non-smoke profiles, as a direct
+  consequence of the approved decision. Regression tests:
+  `tests/test_learner_update_throughput_adr078.py` (the SAC half was verified
+  to fail on the pre-change backends on 2026-09-06: 9 of 22 cases; the TD3
+  resolver cases were verified the same way after the extension).
