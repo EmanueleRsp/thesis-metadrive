@@ -75,6 +75,16 @@ For every non-trivial feature, integration, refactor, or behavioral change:
 10. reconcile every requirement and acceptance criterion with code and tests,
     update `docs/project_index.md`, and review the final diff.
 
+**Proportionality.** Step 3 binds when a change alters observable or scientific
+behavior, a specification contract, an experimental design, or a public interface,
+or when it spans more than one milestone. A bounded defect fix that changes no
+approved behavior gets **no ExecPlan**: record it once in `docs/open_items.md` —
+cause, fix, the evidence that the test failed before the fix, and any residual
+risk — and add the regression test. Documentation weight is not evidence of care;
+the same cause restated in three registers is redundancy, and it costs the review
+attention the code deserves instead. `docs/project_index.md` is the register of
+ExecPlans, so a change that needs no plan adds no row to it.
+
 Do not perform unrelated cleanup. Do not add a dependency without approval. Stop
 only the portion blocked by a decision; safe independent work may continue.
 
