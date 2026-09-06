@@ -33,9 +33,16 @@ def _resolve_agent_policy(policy_name: str):
 
         return IDMPolicy
 
+    if name in {"replayegostoppolicy", "replay_ego_policy", "replay_ego"}:
+        # Diagnostic only: logged-ego replay with an optional mid-episode stop,
+        # used by the reward-ordering check. Never a training policy.
+        from thesis_rl.envs.policies.replay_ego import ReplayEgoStopPolicy
+
+        return ReplayEgoStopPolicy
+
     raise ValueError(
         f"Unsupported env policy '{policy_name}'. "
-        "Supported values: env_input_policy, expert_policy, idm_policy"
+        "Supported values: env_input_policy, expert_policy, idm_policy, replay_ego_policy"
     )
 
 

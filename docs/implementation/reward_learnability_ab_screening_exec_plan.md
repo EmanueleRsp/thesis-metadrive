@@ -7,7 +7,7 @@
 | Feature | Pre-registered A/B screening of reward learnability: MetaDrive's native reward against the `RULEBOOK-V5.1` + `SCAL-V1.4` scalarized reward |
 | Plan ID | `AB-LEARN` |
 | Authoritative specifications | `EVAL-PROTOCOL` v1.0 (`docs/specifications/evaluation_protocol_v1.0_specification.md`, `AUTHORITATIVE`) with v1.1/v1.2/v1.3/v1.3.1 amendments; `RULEBOOK-V5.1` (`docs/specifications/rulebook_v5.1_specification.md`, `AUTHORITATIVE`); `SCAL-V1.4` (`RULEBOOK-V5.1` §5) |
-| Status | `IN_PROGRESS` — `M1` and `M2` complete and verified; `M3` **running at seed 0** since 2026-09-05 21:47 UTC, both arms in parallel; the seed-1 pair is a separate decision |
+| Status | `IN_PROGRESS` — `M1` and `M2` complete and verified; `M3` seed-0 pair launched 2026-09-05 21:47 UTC and **both runs died 2026-09-06** (`C9`, CUDA OOM); relaunch blocked on the arm-A control-validity decision (`open_items` `C11`) and on ADR-078; the seed-1 pair is a separate decision |
 | Created | 2026-09-01 |
 | Last updated | 2026-09-05 |
 | Branch | `main` (work done on `scenarionet-implementation`, merged 2026-09-05) |
@@ -628,6 +628,35 @@ with the core runs. That choice is the user's and is open at the time of writing
 `DEV-AB-002` records the deviation from `RL-BASELINES` v1 for whichever runs
 adopt it.
 
+**2026-09-06, `M3` seed-0 readout: arm A is not a valid control (`open_items`
+`C11`).** Both runs are dead -- A at 10:42:31 UTC in a training worker on the
+`C9` decomposition defect (chunk 8, 7 of 14 evaluations complete), B at 09:47:44
+UTC on a CUDA out-of-memory while the 50k evaluation worker loaded its checkpoint
+on the shared GPU (1 of 14 evaluations complete). Reading A's seven evaluations
+per panel before deciding anything about a relaunch: on `validation_pg` the
+policy is stationary at five of six points, and on both panels stationary
+episodes score about 0 while moving episodes score -9 to -40 under the native
+reward. The mechanism is MetaDrive's per-step `on_lane_line_penalty` (-1)
+surviving the `no_negative_reward` clamp and accumulating without bound because
+ADR-058's physical-exit termination never ends a line- or boundary-contact
+episode (-198.9 over 200 steps in the worst Waymo episode; -452.8 over 465 on
+PG). A's Waymo `route_completion` is mostly the logged initial speed (5.1 m/s
+mean; 0 on PG) being braked away. The critic loss growing 22 -> 506 between 150k
+and 175k is the expected consequence of returns spanning 0 to -450.
+
+Consequence for §7.3: the pre-registered reading "arm A also flat => learner
+problem" is not available, because arm A is flat for a reward reason of its own.
+Arm B's single point at 25k is consistent with the Rulebook not sharing the
+optimum (PG: 59 of 150 episodes below 0.01 completion, and the scalar reward
+ranks the moving episodes above the stationary ones, +3.6 against -4.3), but one
+point decides nothing. Two instruments were added and are recorded under `C11`:
+the runtime return-ordering test (`still < partial < full` via logged-expert
+replay, both arm rewards, both validation panels) and the constant-action
+baseline (`brake`, `random`) evaluated through the panels with the run CSV
+schemas, so the relaunched pair is read against its floors. Making arm A a valid
+control is a user decision that changes observable behaviour and is **open**;
+no relaunch is made until it is taken (user instruction of 2026-09-06).
+
 ## 12. Deviations
 
 | ID | Original contract | Actual or proposed change | Reason | Approval | Affected tests/docs |
@@ -654,8 +683,11 @@ adopt it.
 | `make smoke` on each preset (`TEST-AB-003`) | `NOT_RUN` | — | `M2`. **Load-bearing, not a formality**: `conf/presets/test/smoke_train.yaml` selects `obs=lidar_state` and `encoder=none`, so the `semantic_v3` + `lq_v3` path has not been smoke-tested since `RB51` took the observation to `D = 3011` (`factory.py:76`). Risk: a startup failure on the production encoder discovered only at launch. Follow-up: `run_profile=smoke env.vectorized.num_envs=2` with the preset selected |
 | `make smoke` on each preset (`TEST-AB-003`) | `PASS` | 2026-09-02 | Both arms `exit 0` at the third attempt, after `C5` and `C6` were fixed. Artifacts verified, not just the exit code |
 | Diff of the two resolved configurations, re-run on `main` | `PASS` | 2026-09-05 | Re-verified after the merge, immediately before launch. Differences confined to `reward.name/type/behavior`, `lambda_env`/`lambda_rule` and the derived run identity; budget, seed, encoder, panels and `scalarization` identical |
-| The four screening runs (`TEST-AB-004`) | `IN_PROGRESS` | 2026-09-05 | `M3`. The seed-0 pair is **running** in `tmux` sessions `ab_a_seed0` / `ab_b_seed0` since 21:47 UTC; the seed-1 pair awaits a separate decision |
+| The four screening runs (`TEST-AB-004`) | `FAILED`, stopped | 2026-09-06 | `M3`. The seed-0 pair launched 2026-09-05 21:47 UTC; **both runs died on 2026-09-06** (A at 10:42 UTC, `C9`, 175k reached; B at 09:47 UTC, CUDA OOM, 50k reached). Arm A's seven evaluations are retained as descriptive evidence only (`C11`). Relaunch awaits the user's decision on arm A's control validity and on ADR-078; the seed-1 pair awaits a separate decision |
 | `make test` (`TEST-AB-005`) | `NOT_RUN` | — | The change is configuration-only and adds no code path; to be run before the plan is marked `VERIFIED` |
+| `pytest -m integration tests/test_reward_return_ordering_runtime.py` | `PASS` | 2026-09-06 | Both arms, first scenario of each validation panel, live runtime. Native: Waymo 9.52 < 198.71 < 386.40, PG 0.01 < 43.99 < 97.95; scalarized Rulebook: Waymo 4.60 < 176.67 < 347.36, PG -2.72 < 37.29 < 86.43. 2 passed in 20 min 55 s |
+| `scripts/evaluate_constant_action_baseline.py` (`brake`, `random`), preset `sac_b_rulebook`, `seed=0`, full validation panels | `PASS` | 2026-09-06 | `outputs/BASELINE-CONSTANT-ACTION-01/sac_sb3/seed_0/20260906_1128{34,36}`. Floors, native / scalar mean return: **brake** Waymo 3.33 / -1.06 (route 0.041, collision 0.080 -- hit while stopped), PG 0.006 / -4.90 (route 0.00002); **random** Waymo -36.37 / -37.00 (route 0.201, collision 0.135, off-road 0.035, worst episode -420.8), PG 1.18 / -3.16 (route 0.011). Read against arm A's 25k-175k evaluations: A's Waymo route completion (0.125-0.274) sits between the two floors and its PG completion equals the brake floor |
+| Full suite `python -m pytest -q` on the rebased branch (`adr078-on-main` + this change) | `PASS` | 2026-09-06 | 1677 passed, 1 pre-existing warning, 28 min 05 s under a machine load of ~20 |
 
 ## 15. Final Reconciliation
 

@@ -68,6 +68,11 @@ class ThesisScenarioEnv(ScenarioEnv):
                 "success_route_completion_threshold": 0.95,
                 "minimum_success_route_length_m": 10.0,
                 "rulebook_v2_disable_vehicle_yield_for_benchmark": False,
+                # Diagnostic only, read by `envs/policies/replay_ego.py` when
+                # `agent_policy` is `replay_ego_policy`: fraction of the logged
+                # ego trajectory replayed before the ego is held still. 1.0
+                # replays the whole log. Ignored by every other agent policy.
+                "replay_ego_stop_fraction": 1.0,
                 # OBS-V1.2 SS6.2 signal-camera baseline, overridable per ADR-045
                 # through `conf/obs/semantic_v3.yaml`. `envs/factory.py`
                 # unconditionally injects these three keys whenever the semantic
