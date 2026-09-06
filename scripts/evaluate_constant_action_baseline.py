@@ -16,6 +16,10 @@ Run inside the dev container, with the same preset as the arm to compare with:
 
 `baseline.action` is one of `brake` (steer 0, throttle -1: standstill),
 `coast` (steer 0, throttle 0) or `random` (uniform in the action space, seeded).
+`+baseline.report_every_s=<seconds>` (default 60) sets how often a progress line
+with steps done, episodes done, step rate and an ETA is printed; steps are the
+unit because their cost is stable while episode lengths and completion bursts
+are not.
 The reward configuration of the preset decides which reward the rows report as
 `reward`: the native environment reward under `monitor_only`, the scalarized
 Rulebook reward under `scalar_reward`.
@@ -24,6 +28,7 @@ Rulebook reward under `scalar_reward`.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +111,74 @@ class ConstantActionPlanner:
         del env
 
 
+class StepProgress:
+    """Count environment steps through the evaluator and print a periodic ETA.
+
+    Steps are the right unit for a time estimate: their cost is stable while
+    episodes vary from tens to hundreds of steps and, with parallel workers,
+    finish in bursts. The wrapper forwards every attribute to the wrapped
+    environment; only the stepping methods are intercepted. ``num_envs`` is
+    copied as a real attribute because the evaluator reads it without going
+    through ``__getattr__``.
+    """
+
+    def __init__(self, env: Any, *, label: str, episode_total: int, report_every_s: float) -> None:
+        self._env = env
+        if hasattr(env, "num_envs"):
+            self.num_envs = int(env.num_envs)
+        self.label = label
+        self.episode_total = int(episode_total)
+        self.report_every_s = float(report_every_s)
+        self.steps = 0
+        self.episodes_done = 0
+        self._started = time.monotonic()
+        self._last_report = self._started
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._env, name)
+
+    def step(self, action: Any):
+        result = self._env.step(action)
+        self._count(1)
+        return result
+
+    def step_slots(self, actions: Any):
+        result = self._env.step_slots(actions)
+        self._count(len(actions))
+        return result
+
+    def on_episode_progress(self, completed: int, total: int) -> None:
+        self.episodes_done = int(completed)
+        self.episode_total = int(total)
+
+    def _count(self, n: int) -> None:
+        self.steps += int(n)
+        now = time.monotonic()
+        if now - self._last_report >= self.report_every_s:
+            self._last_report = now
+            self.report()
+
+    def report(self, *, final: bool = False) -> None:
+        elapsed = max(time.monotonic() - self._started, 1e-9)
+        rate = self.steps / elapsed
+        eta = "n/a"
+        if not final and self.episodes_done > 0 and rate > 0:
+            # Steps counted so far also belong to the episodes still in flight,
+            # roughly one per worker and about half done on average; dividing by
+            # completed episodes alone would inflate the mean length and make
+            # the estimate grow with the elapsed time.
+            in_flight = min(getattr(self, "num_envs", 1), self.episode_total - self.episodes_done)
+            mean_len = self.steps / (self.episodes_done + 0.5 * max(in_flight, 0))
+            remaining = max(self.episode_total * mean_len - self.steps, 0.0)
+            eta = f"{remaining / rate / 60:.1f} min"
+        print(
+            f"[baseline] {self.label}: steps={self.steps} episodes={self.episodes_done}/"
+            f"{self.episode_total} elapsed={elapsed / 60:.1f} min rate={rate:.2f} steps/s "
+            f"eta={eta}",
+            flush=True,
+        )
+
+
 def _base_csv_fields(cfg: DictConfig, *, mode: str, run_id: str) -> dict[str, Any]:
     return {
         "algorithm": f"constant_action_{mode}",
@@ -121,7 +194,9 @@ def _base_csv_fields(cfg: DictConfig, *, mode: str, run_id: str) -> dict[str, An
 
 @hydra.main(version_base=None, config_path="../conf", config_name="config")
 def main(cfg: DictConfig) -> None:
-    mode = str(cfg.get("baseline", {}).get("action", "brake")).lower()
+    baseline_cfg = cfg.get("baseline", {})
+    mode = str(baseline_cfg.get("action", "brake")).lower()
+    report_every_s = float(baseline_cfg.get("report_every_s", 60.0))
     if bool(cfg.env.get("vectorized", {}).get("enabled", False)):
         raise ValueError("Set env.vectorized.enabled=false: evaluation builds its own workers.")
     set_global_seed(int(cfg.seed))
@@ -145,7 +220,15 @@ def main(cfg: DictConfig) -> None:
 
     for offset, panel in enumerate(panels, start=1):
         overrides = panel.env_overrides()
-        env = build_eval_env(cfg, overrides, n_eval_episodes=panel.episode_count, workers=workers)
+        inner_env = build_eval_env(
+            cfg, overrides, n_eval_episodes=panel.episode_count, workers=workers
+        )
+        env = StepProgress(
+            inner_env,
+            label=f"{mode} {panel.name}",
+            episode_total=panel.episode_count,
+            report_every_s=report_every_s,
+        )
         try:
             seed_env_spaces(env, int(cfg.seed) + 100_000 + offset)
             planner = ConstantActionPlanner(env.action_space, mode, int(cfg.seed) + offset)
@@ -161,11 +244,13 @@ def main(cfg: DictConfig) -> None:
                 base_seed=None,
                 return_episode_metrics=True,
                 error_priority_base=float(cfg.reward.get("a", 2.01)),
-                show_progress=True,
+                show_progress=False,
+                progress_callback=env.on_episode_progress,
                 progress_description=f"Baseline {mode} {panel.name}",
             )
+            env.report(final=True)
         finally:
-            env.close()
+            inner_env.close()
         if not isinstance(metrics, dict) or not metrics.get("per_episode"):
             raise RuntimeError(f"panel {panel.name} produced no complete per-episode metrics")
         common = {
