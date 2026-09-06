@@ -5,20 +5,25 @@
 - Feature: crash-safe training snapshots and a validated resume path after an
   abrupt process termination.
 - Plan ID: `RESUME-ABRUPT-001`
-- Status: `AWAITING_DECISIONS` (proposal; no production code changed yet)
+- Status: `IMPLEMENTED` (M1–M4 complete; kill-and-resume smoke `PASS`, full
+  suite `1704 passed` — evidence in §11; `VERIFIED` withheld pending the two
+  §12 limitations)
 - Created: 2026-09-06. Last update: 2026-09-06.
 - Tracking issue:
   [#3](https://github.com/EmanueleRsp/thesis-metadrive/issues/3).
-- Authoritative specifications touched:
+- Authoritative specifications:
   - `docs/specifications/transition_replay_v1_specification.md`
-    (`TRANSITION-REPLAY` v1.0, `AUTHORITATIVE`): REQ-023, REQ-024, REQ-025,
-    REQ-033, §8.9, §9.1. **M3 requires an amendment (v1.1)**; M1 and M2 do not
-    change it.
+    (`TRANSITION-REPLAY` v1.0) as amended by
+    `docs/specifications/transition_replay_v1.1_amendment.md`
+    (`TRANSITION-REPLAY-V1.1`, `APPROVED` 2026-09-06): REQ-023, REQ-024,
+    REQ-024a, REQ-025, REQ-025a, REQ-033, §8.9, §9.1.
   - `docs/specifications/rl_baselines_v1_specification.md` (checkpoint policy,
     unchanged).
-- Related ADRs: ADR-016 (ACL resume restart policy), ADR-017 (smoke-only replay
-  persistence, **to be revised by M3**), ADR-024 (quarantine as resume state).
-- Related open items: `V2` (parked 2026-09-01), `D4`, `F5`; new `C12`.
+- Related ADRs: ADR-079 (this plan's decisions; supersedes ADR-017), ADR-016
+  (ACL resume restart policy, unchanged), ADR-024 (quarantine as resume state,
+  unchanged).
+- Related open items: `C12` (this defect), `V2` (parked 2026-09-01, now
+  resolved by `DEC-RES-003`), `D4`, `F5`.
 - Branch: `worktree-resume-after-abrupt-interruption`.
 
 ## 2. Objective And Scope
@@ -31,302 +36,301 @@ snapshot interval of work, and never resumes from a torn or mismatched set of
 files. When the replay buffer cannot be continued, the run says so explicitly
 (REQ-025 `replay_reset=true`) instead of continuing silently.
 
-**Why.** Every production profile today loses the whole run on a crash: the
-periodic `latest` checkpoint carries no replay buffer, is written in place, and
-no signal other than SIGINT reaches the save handler. `open_items` `D4`
-records two production runs lost this way; `V2` records the diagnosis and the
-2026-09-01 decision to park mid-run replay continuation. This plan re-opens
-that decision with the cost quantified (§4.6) and splits the work so that the
-zero-cost correctness fixes (M1) do not wait for the storage decision (M3).
-
-**Success.** `TEST-RES-010` (kill -9 at a random point of a smoke run, resume,
-finish with the same total budget and a consistent `checkpoint_index.csv`)
-passes, and the M1 unit matrix passes.
+**Why.** Every production profile lost the whole run on a crash: the periodic
+`latest` checkpoint carried no replay buffer, was written in place, and no
+signal other than SIGINT reached the save handler. `open_items` `D4` records
+two production runs lost this way; `V2` records the diagnosis and the
+2026-09-01 decision to park mid-run replay continuation, reopened here with
+the cost quantified (§4.6).
 
 **In scope.** Both training loops (`runtime/loops/train_loop.py` and
-`curriculum/scenario_acl/driver.py`), TD3/SAC/PPO SB3 backends' save path,
-Hydra keys under `checkpoint.*` and `transition_replay.persistence.*`, the
-`smoke` profile's resume coverage.
+`curriculum/scenario_acl/driver.py`), the TD3/SAC/PPO SB3 backends' save path,
+Hydra keys under `checkpoint.*` and `transition_replay.persistence.*`, the run
+profiles, `compose.yaml`, the spec amendment and ADR-079.
 
-**Out of scope.** Bitwise-identical continuation (REQ-025 already disclaims
-it); stitching two `run_dir`s into one logical run in the analysis layer;
+**Out of scope.** Bitwise-identical continuation (REQ-025 disclaims it);
+stitching two `run_dir`s into one logical run in the analysis layer;
 persisting the in-flight asynchronous-evaluation queue; the geometry-abort
 ledger (`geometry_abort_quarantine_v1_exec_plan.md` owns it); the non-ACL
-scenario-provider draw position (recorded as `DEC-RES-005`, deferred).
+scenario-provider draw position (`DEC-RES-005`, deferred).
 
-**Compatibility.** Checkpoint file names and directory layout are preserved.
-Old runs remain loadable for evaluation. A snapshot written by the new code is
-resumable by the new code only (it adds a consistency check that old snapshots
-cannot satisfy; the check is skipped with a warning when the new fields are
-absent).
+**Compatibility.** Checkpoint file names and directory layout are preserved;
+the periodic snapshot adds companion files next to `periodic/step_X.zip`. Old
+runs remain loadable for evaluation and resumable: a snapshot without
+`model_num_timesteps` is accepted with a warning. `persistence.trigger=final_or_manual`
+(v1.0) is still accepted.
 
 ## 3. Authoritative Requirements
 
 | ID | Requirement | Source |
 |---|---|---|
-| `REQ-RES-001` | Every artifact a resume reads is either the previous complete version or the new complete version; never a partial one. | Derived from `TRANSITION-REPLAY` REQ-024 ("replay replacement shall be atomic") and REQ-033 ("partially committed pairs fail before resume"), extended to the model, training state and RNG files. |
-| `REQ-RES-002` | A model-only resume starts a new empty replay segment, logs `replay_reset=true`, resets `beta_progress_env_steps` to 0, and is never reported as replay-equivalent continuation. | `TRANSITION-REPLAY` REQ-025 (already authoritative, currently not implemented). |
-| `REQ-RES-003` | Model, replay artifact and pair manifest share `checkpoint_id`, `training_timestep`, `replay_segment_id`; mismatch fails before resume. | `TRANSITION-REPLAY` REQ-033 (implemented; extended to also compare the model's own `num_timesteps`). |
-| `REQ-RES-004` | The step counter recorded in a snapshot equals the number of environment steps the saved model was trained on. | Derived from RL Baselines v1 checkpoint policy and REQ-025 (β progress is defined on that counter). |
-| `REQ-RES-005` | SIGTERM produces the same graceful snapshot as SIGINT. | New convention, `DEC-RES-002`. |
-| `REQ-RES-006` | A periodic replay snapshot paired with `latest` may be written at a configured cadence; `keep_last=1`. | **Amendment** to REQ-023/REQ-024/§8.9 (`TRANSITION-REPLAY` v1.1), `DEC-RES-003`. |
-| `REQ-RES-007` | Best-checkpoint comparison keys survive a resume. | Derived from `checkpoint.save_best_*` semantics (a resumed run must not demote the true best). |
+| `REQ-RES-001` | Every artifact a resume reads is either the previous complete version or the new complete version; never a partial one. | v1.1 REQ-024 (atomic publication, state file last). |
+| `REQ-RES-002` | A model-only resume of an off-policy learner fails closed unless explicitly allowed; when allowed it starts a new empty replay segment, logs `replay_reset=true`, resets `beta_progress_env_steps`. | v1.1 REQ-025. |
+| `REQ-RES-003` | Model, replay artifact, pair manifest and training/curriculum state come from one save: `model_num_timesteps` must match the loaded model; `seed` must match. | v1.1 REQ-033 (extended). |
+| `REQ-RES-004` | The step counter recorded in a snapshot equals the number of environment steps the saved model was trained on. | v1.1 §8.9 (snapshots only at chunk boundaries, `DEC-RES-007`). |
+| `REQ-RES-005` | SIGTERM produces the same graceful end as SIGINT. | `DEC-RES-002`. |
+| `REQ-RES-006` | The replay buffer is paired with every periodic model checkpoint (crossing semantics, `keep_last=1`), and `periodic` resolves to the newest complete pair. | v1.1 REQ-024, REQ-025a. |
+| `REQ-RES-007` | Best-checkpoint comparison keys survive a resume. | `checkpoint.save_best_*` semantics. |
+| `REQ-RES-008` | Intermediate replay artifacts are removed once `final` carries the pair. | v1.1 REQ-024a (`DEC-RES-006`). |
 
-## 4. Current Repository Analysis
+## 4. Current Repository Analysis (as found on 2026-09-06, before the change)
 
-All statements below are `VERIFIED` by reading the code on 2026-09-06 unless
-labelled otherwise.
+All statements `VERIFIED` by reading the code unless labelled otherwise.
 
 ### 4.1 Save path
 
-- `save_intermediate_checkpoints` (`train_loop.py:1251-1496`) runs at every
-  chunk boundary (chunk = `experiment.eval_interval`, 10k–50k steps by profile)
-  and, under `checkpoint.save_latest_each_chunk`, writes `latest.zip`
-  (`agent.save`, `:1410`), `latest_training_state.yaml` (`:1435`),
-  `latest_rng_state.pkl` (`:1437`), `latest_quarantine_state.json` (`:1438`),
-  and appends to `checkpoint_index.csv`. **No replay buffer and no pair
-  manifest** are written here.
-- The ACL loop writes the same set plus, when
-  `transition_replay.persistence_enabled`, `latest_replay_buffer.pkl` and
-  `latest_checkpoint_pair.json` every chunk (`driver.py:1254-1266`).
-- Replay + pair on the standard loop are written only at `final`
-  (`train_loop.py:2451-2466`) and in the `KeyboardInterrupt` handler
-  (`:3031-3043`).
-- `Agent.save` (`agent/agent.py:2929-2941`) calls `planner.save`, which is a
-  plain `self.model.save(path)` (`sac_sb3.py:613-616`, `td3_sb3.py:663-666`,
-  `ppo_sb3.py:587-590`): **in-place write, not atomic**. The two sidecars
-  (`.reward_semantics.json`, `.manifest.json`) are atomic.
-- `_save_training_state` (`train_loop.py:232-234`) and `_save_rng_state`
-  (`:342-353`) are **not atomic**. `_save_json_atomically` (`:237-249`) and
-  `_save_replay_buffer_atomically` (`:307-318`) are.
-- ACL state files `scenario_acl_state.json` (`driver.py:1240-1253`),
-  `scenario_buffer.json`, `scenario_coverage_state.json` (`:452-476`) use bare
-  `write_text`. `scenario_acl_vector_state.json` is atomic
-  (`vectorized.py:361-374`).
-- `sb3_extensions/checkpointing.py` provides an atomic generation + pointer
-  mechanism, unused by training (`DEC-EP-002`,
-  `evaluation_protocol_v1.0_exec_plan.md:312`). This plan does **not** adopt it
-  (`DEC-RES-001`): the file layout is a public contract used by the evaluation
-  protocol, videos and analysis, and tmp+rename on the existing names is
-  sufficient.
+- `save_intermediate_checkpoints` (`train_loop.py`) ran at every chunk
+  boundary **and** from the asynchronous-evaluation completion callback, which
+  `AsyncEvaluationManager.poll()` invokes from `drain_event_messages()` inside
+  a training chunk: on the non-curriculum path `latest` was therefore written
+  **mid-chunk** with the live model and the evaluated job's (stale)
+  `global_step`. Under `save_latest_each_chunk` it wrote `latest.zip`,
+  `latest_training_state.yaml`, `latest_rng_state.pkl`,
+  `latest_quarantine_state.json`; no replay buffer, no pair manifest.
+- The ACL loops wrote the same set plus, when persistence was enabled,
+  `latest_replay_buffer.pkl` and `latest_checkpoint_pair.json` every chunk;
+  they wrote **no periodic checkpoints**.
+- `Agent.save` → `planner.save` → plain `self.model.save(path)`: in-place,
+  not atomic. `_save_training_state` (`OmegaConf.save`) and `_save_rng_state`
+  (`pickle.dump`) were not atomic; ACL `scenario_acl_state.json`,
+  `scenario_buffer.json`, `scenario_coverage_state.json` used bare
+  `write_text`. `_save_json_atomically`, `_save_replay_buffer_atomically` and
+  `save_acl_vector_state` were atomic.
+- The periodic checkpoint fired only when `current_global_step % interval == 0`
+  exactly; with `eval_interval=50000` and `periodic_interval_steps=125000`
+  (`thesis`, `long`, `tune`) that skipped every other periodic checkpoint.
+- `sb3_extensions/checkpointing.py` (atomic generations + pointer) was unused
+  by training (`DEC-EP-002`); not adopted here (`DEC-RES-001`).
 
 ### 4.2 Interrupt handlers
 
-- Only `except KeyboardInterrupt` exists (`train_loop.py:3008`,
-  `driver.py:2613`). No `signal` module usage anywhere in `src/`.
-- `current_global_step` is updated only at chunk end (`train_loop.py:1596`),
-  so the handler records a counter up to one chunk stale (`:3058`) for a model
-  that has already been trained past it. The planner's own counter is exact:
-  `self.model.num_timesteps += collected` per collected batch
-  (`sac_sb3.py:435-436`, `td3_sb3.py:447-448`, `ppo_sb3.py:406`).
-- The handler's training-state payload omits `beta_progress_env_steps`
-  (`:3055-3068` vs `:1433`).
-- The ACL handler nests the RNG save under `persistence_enabled`
-  (`driver.py:2614-2623`) and re-writes none of the ACL state files.
+- Only `except KeyboardInterrupt` existed; no `signal` usage in `src/`.
+- The standard handler saved `latest` with `current_global_step` up to one
+  chunk stale, dropped `beta_progress_env_steps`; the ACL handler saved the
+  RNG only under `persistence_enabled` and re-wrote none of the ACL state
+  files; the vectorized ACL path had no handler at all (dispatch outside the
+  `try`).
 
 ### 4.3 Resume path
 
-- `train_loop.py:820-935`, `1159-1182`: loads training state, planner
-  (`load_planner`, reward-semantics and manifest checks), adapter, then **only
-  if `persistence_enabled`** validates the pair and loads the replay buffer;
-  restores RNG, quarantine and counters. When persistence is disabled the
-  replay block is skipped and training continues on an empty buffer with no
-  log line (`grep -rn replay_reset src/` is empty).
-- `_validate_checkpoint_pair` (`:252-293`) fails closed on a missing pair.
-- Best keys are initialised to `None` (`:721-726`) and never restored.
-- `seed` is written (`:1431`) but not compared with `cfg.seed`.
-- ACL resume (`driver.py:478-547`, `590-730`) restores buffer, bandit,
-  coverage, vector state and RNG; missing coverage file is fatal (`:517-525`).
+- Replay validation ran only under `persistence_enabled`; otherwise the replay
+  block was skipped and training silently continued on an empty buffer
+  (`grep -rn replay_reset src/` was empty).
+- `_validate_checkpoint_pair` failed closed on a missing pair; best keys were
+  never restored; `seed` was written but never compared.
 
 ### 4.4 Configuration
 
-- `conf/config.yaml:96-110`: `checkpoint.save_latest_each_chunk`,
-  `save_periodic`, `periodic_interval_steps`, `keep_last_periodic`,
-  `save_rng_state`, `resume.{enabled,run_dir,checkpoint_name,restore_rng_state}`.
-- `run_profile.replay_persistence` is `true` only in `smoke`;
-  `periodic_interval_steps` is 125k (`thesis`, `long`, `tune`), 100k
-  (`medium`), 250k (`default`), 50k (`fast`), 10k (`smoke`).
-- `sb3_extensions/replay/config.py:72-78` rejects any
-  `persistence.trigger != final_or_manual` and any
-  `periodic_frequency_steps`.
+`checkpoint.resume.{enabled,run_dir,checkpoint_name,restore_rng_state}`;
+`run_profile.replay_persistence` `true` only in `smoke` (ADR-017);
+`replay/config.py` rejected any trigger but `final_or_manual`.
 
 ### 4.5 Tests
 
-Unit coverage exists for the pair validator, sidecars, quarantine and ACL
-vector state round-trips (`tests/test_transition_replay_persistence.py`,
-`test_checkpoint_manifest_sidecar.py`, `test_runtime_quarantine_checkpoint.py`,
-`test_scenario_acl_vectorized_state.py`). **Nothing** covers
-`_save_rng_state`/`_load_rng_state`, `_save_training_state`,
-`save_intermediate_checkpoints`, either interrupt handler, best-key
-restoration, or a kill-and-resume flow.
+Unit coverage for the pair validator, sidecars, quarantine and ACL vector
+state; nothing for the RNG/state writers, the interrupt handlers, best-key
+restoration or a kill-and-resume flow.
 
 ### 4.6 Cost of persisting the replay buffer (`VERIFIED` from config and code)
 
-`buffer_size = 300 000`, `semantic_v3` flat dim 3011, float32 observations and
-next observations, `optimize_memory_usage` forbidden, float64 raw priorities,
-bool validity mask:
-
 | Quantity | Value |
 |---|---|
-| Bytes per stored transition | ≈ 24.1 kB |
-| Full-buffer artifact | ≈ 7.2 GB |
+| Bytes per stored transition (`semantic_v3`, dim 3011, float32 obs + next obs, float64 priority, bool mask) | ≈ 24.1 kB |
+| Full-buffer artifact (`buffer_size = 300 000`) | ≈ 7.2 GB |
 | Peak disk during atomic replace (`keep_last=1`) | ≈ 14.4 GB |
-| Writes per 1.5 M-step `thesis` run at `eval_interval` cadence (50k) | 30 |
-| Writes per run at `periodic_interval_steps` cadence (125k) | 12 |
-
-`PrioritizedNStepReplayBuffer.__getstate__` truncates to the active rows and
-drops the sum-tree (`replay/prioritized.py:284-303`), so artifacts before step
-300k are proportionally smaller. Wall-clock per write on local disk is
-`INFERRED` at 10–60 s; to be measured in M3 (`TEST-RES-012`).
+| Writes per 1.5 M-step `thesis` run at `periodic_interval_steps` (125k) cadence | 12 |
+| Smoke measurement (§11): 1 000 transitions of `lidar_state` obs | 1.32 MB, < 1 s |
 
 ## 5. Assumptions And Invariants
 
-- Snapshot commit order: model zip and sidecars, replay artifact (if any),
-  RNG, quarantine, ACL state, pair manifest, and **last** the training state
-  file, which acts as the commit marker. A resume that finds a training state
-  whose `global_steps_done` differs from the model's `num_timesteps` (or from
-  the pair's `training_timestep`) fails before training (`REQ-RES-003`).
-- `os.replace` on the same filesystem is atomic; the temporary file lives next
-  to the target (`.<name>.tmp`), as `_save_json_atomically` already does.
-- Signal handlers are installed only in the main process of the training CLI,
-  after the subprocess vector environment has been created, so workers keep
-  the default disposition and are torn down by the parent's normal cleanup.
-- Units: steps are environment steps summed over vectorized workers, as
-  everywhere else in the loops.
-- The RNG state file covers python, numpy and torch (CPU + all CUDA devices).
-  Environment RNG is re-derived from `run_seed` and the restored counters,
-  unchanged.
+- Snapshot commit order: model zip and sidecars, replay artifact (if due),
+  pair manifest, RNG, quarantine, (ACL: buffer, coverage, vector state), and
+  **last** the training/curriculum state file as commit marker. A resume
+  whose state `model_num_timesteps` differs from the loaded model's counter
+  fails before training.
+- `os.replace` on the same filesystem is atomic; temporaries are siblings
+  named `.<name>.<pid>.tmp` (suffix kept so SB3 does not append `.zip`).
+- The SIGTERM handler is installed in the main thread of the training process
+  only; worker subprocesses keep the default disposition.
+- Snapshots are written only at chunk boundaries; mid-chunk the model is
+  ahead of every chunk-level counter (`DEC-RES-007`).
+- Steps are environment steps summed over vectorized workers, as elsewhere.
 
 ## 6. Decisions And Approval Gates
 
-| ID | Category | Issue | Alternatives | Recommendation | Impact | Status |
-|---|---|---|---|---|---|---|
-| `DEC-RES-001` | Implementation detail | How to make model/state/RNG writes atomic. | (a) tmp + `os.replace` on the existing file names; (b) adopt `checkpointing.py` generations + `latest.json` pointer. | **(a)**: no layout change, evaluation/video/analysis consumers untouched, ~40 lines. | None observable except crash safety. | Recorded, no approval needed (`DEC-EP-002` already chose the layout). |
-| `DEC-RES-002` | New convention | Handle SIGTERM. | (a) install a SIGTERM handler raising `KeyboardInterrupt` in the training CLI main process; (b) leave SIGTERM fatal. | **(a)**. `docker stop` and schedulers send SIGTERM, then SIGKILL after a grace period (Docker default 10 s; raise `stop_grace_period` in `compose.yaml` to cover a replay write). Exit code stays 130 as for Ctrl+C. | Graceful snapshot on the most common non-crash termination. | **Awaiting approval.** |
-| `DEC-RES-003` | Specification amendment | Allow a periodic replay snapshot paired with `latest`. | (a) `TRANSITION-REPLAY` v1.1: `persistence.trigger` gains `periodic_and_final`; `periodic_frequency_steps` accepts a positive multiple of `eval_interval`; ACL and standard loops share one save helper; ADR-017 revised so production profiles enable persistence with `periodic_frequency_steps = ${checkpoint.periodic_interval_steps}`. (b) Keep v1; rely on `DEC-RES-004` only (resume with empty buffer). (c) Persist every chunk. | **(a)** with cadence tied to `periodic_interval_steps` (12 writes per `thesis` run, ≤125k steps lost on crash). (c) triples the writes for a small gain; (b) is not a continuation. | Storage ≈ 7.2 GB steady per off-policy run, 14.4 GB peak; a pause of the measured write time every 125k steps. | **Awaiting approval.** Reverses the 2026-09-01 "park it" decision on `V2`. |
-| `DEC-RES-004` | Specification clarification | REQ-025 empty-segment resume is currently silent. | (a) new key `checkpoint.resume.allow_replay_reset` (default `false`): when the pair is missing or persistence is disabled, fail closed unless the key is `true`, in which case log `replay_reset=true`, write it to `run_metadata.yaml` and `events.jsonl`, reset β progress; (b) always allow with a warning. | **(a)**: fail closed by default is consistent with the current behaviour for persistence-on runs and with ADR-017's "must not be claimed". | Persistence-off runs that resume today silently would now require the flag. | **Awaiting approval.** |
-| `DEC-RES-005` | Scope | Non-ACL scenario-provider draw position is not persisted. | (a) persist per-worker generator state + `FixedSequenceScenarioProvider._position` in the snapshot; (b) defer. | **(b)**: the default configuration uses the ACL loop, whose selection state is persisted; the non-ACL path is used by the learnability screening arms, whose comparability across a crash is already compromised by the lost buffer. Reopen if a non-ACL production run is planned. | A resumed non-ACL run re-draws scenarios from the start of the sequence. | **Awaiting approval** (deferral). |
+| ID | Category | Decision | Status |
+|---|---|---|---|
+| `DEC-RES-001` | Implementation detail | tmp + `os.replace` on the existing file names instead of adopting `checkpointing.py` generations. | Recorded. |
+| `DEC-RES-002` | New convention | SIGTERM raises `KeyboardInterrupt`; `compose.yaml` `stop_grace_period: 120s`. | **Approved 2026-09-06** (ADR-079). |
+| `DEC-RES-003` | Specification amendment | `TRANSITION-REPLAY` v1.1 `periodic_and_final`: replay paired with every periodic checkpoint, cadence `checkpoint.periodic_interval_steps` (crossing semantics), `keep_last=1`; `replay_persistence=true` on every profile; supersedes ADR-017. Cost §4.6. | **Approved 2026-09-06** (ADR-079). |
+| `DEC-RES-004` | Specification clarification | `checkpoint.resume.allow_replay_reset` (default `false`); REQ-025 event `replay_reset=true` in `events.jsonl` and `run_metadata.yaml`. | **Approved 2026-09-06** (ADR-079). |
+| `DEC-RES-005` | Scope | Non-ACL scenario-provider draw position not persisted (deferred). | **Approved 2026-09-06** (ADR-079). |
+| `DEC-RES-006` | Data policy | After the `final` pair is committed, intermediate replay artifacts are deleted. | **Approved 2026-09-06** (user addition, ADR-079). |
+| `DEC-RES-007` | Implementation decision (observable, recorded for review) | Interrupt handlers no longer write a mid-chunk snapshot; the chunk-boundary snapshot is the resumable one. Replaces the plan's earlier idea of recording `planner.num_timesteps` in the handler, which would have fixed the step counter but not the chunk-level curriculum/ACL state; the async-callback finding (§4.1) showed that any mid-chunk write is unsafe. Ctrl+C/SIGTERM lose at most one chunk, like a kill. | Implemented; reversible if the user prefers mid-chunk Ctrl+C snapshots. |
+| `DEC-RES-008` | Implementation detail | The periodic replay snapshot rides the existing `periodic/step_X` checkpoint (`checkpoint_name=periodic` alias) instead of a new artifact family; no `periodic_frequency_steps` knob. Periodic "due" uses crossing semantics, which also fixes the pre-existing skip in §4.1. | Recorded. |
 
-Dependent work: M1 depends on none of the gates. M2 depends on
-`DEC-RES-002`. M3 depends on `DEC-RES-003` and `DEC-RES-004`.
+## 7. Design As Implemented
 
-## 7. Proposed Design
-
-### 7.1 M1: crash-safe snapshot, consistent counters (no contract change)
-
-- `runtime/io/atomic.py` (new, ~40 lines): `atomic_write_bytes`,
-  `atomic_write_text`, `atomic_pickle_dump`, `atomic_omegaconf_save`, and
-  `atomic_call(path, writer)` that hands the writer a `.tmp` sibling and
-  `os.replace`s on success, unlinking the temporary on failure. fsync of file
-  and directory as in `checkpointing._write_json` / `_fsync_directory`.
-- Planner backends: `save()` writes through `atomic_call` (SB3 `model.save`
-  accepts any path; the `.zip` suffix is appended by SB3 only when absent, so
-  the temporary is named `.<stem>.zip.tmp`). Adapter `.pt` likewise.
-- `train_loop._save_training_state`, `_save_rng_state`, and the three ACL
-  `write_text` sites move to the atomic helpers. Commit order as in §5.
-- Interrupt handlers: `global_steps_done = int(planner.num_timesteps)` (new
-  read-only property on the backend protocol, already an attribute on all
-  three SB3 backends); `beta_progress_env_steps` carried; ACL RNG save moved
-  out of the persistence branch; the ACL handler re-writes its state files
-  through the same helper used at chunk boundaries (extract
-  `_write_acl_snapshot`).
-- Resume: after `load_planner`, assert
-  `planner.num_timesteps == training_state.global_steps_done` and, when a pair
-  is loaded, `== pair.training_timestep`; assert
-  `training_state.seed == cfg.seed`. Snapshots lacking the new
-  `model_num_timesteps` field log a warning and skip the first check
-  (backward compatibility with runs produced before this plan).
-- Best keys: `best_checkpoints.yaml` already stores the metrics that produced
-  each best; on resume rebuild the three keys from it through the existing
-  `_lexicographic_key` / `_rulebook_*_key` helpers.
-
-### 7.2 M2: SIGTERM (`DEC-RES-002`)
-
-`cli/train.py`: `signal.signal(SIGTERM, _raise_keyboard_interrupt)` installed
-inside `run_training` after environment construction; `compose.yaml`
-`stop_grace_period` raised to cover one snapshot. Handler logs
-`run_interrupted` with `signal=SIGTERM`.
-
-### 7.3 M3: periodic paired replay snapshot (`DEC-RES-003`, `DEC-RES-004`)
-
-- `replay/config.py`: accept `trigger ∈ {final_or_manual, periodic_and_final}`
-  and `periodic_frequency_steps` (positive int, must be a multiple of
-  `experiment.eval_interval`; validated at resolution time). `keep_last` stays 1.
-- One helper `write_latest_snapshot(...)` used by both loops at chunk
-  boundaries: when `global_step % periodic_frequency_steps == 0` it writes
-  replay + pair before the training state; otherwise it **removes** the stale
-  `latest_checkpoint_pair.json` so that `latest` is honestly model-only (REQ-033
-  identity would otherwise mismatch by `training_timestep`, which already fails
-  closed; removing it makes the `DEC-RES-004` path reachable instead).
-- Resume classification: pair present and consistent → continuation; pair
-  absent → `allow_replay_reset` gate → `replay_reset=true` event, β reset
-  (REQ-025).
-- Profiles: `replay_persistence: true` with
-  `periodic_frequency_steps: ${checkpoint.periodic_interval_steps}` on every
-  profile; `smoke` keeps 10k. ADR-017 superseded by a new ADR.
+- `src/thesis_rl/runtime/io/atomic.py` (new): `atomic_publish(path, writer)`,
+  `atomic_write_text/bytes`, `atomic_pickle_dump`, `atomic_omegaconf_save`,
+  `temporary_sibling`.
+- `src/thesis_rl/runtime/io/resume_snapshot.py` (new): snapshot layout
+  (`resume_artifact_paths`), `periodic` alias resolution, crossing test
+  (`periodic_snapshot_due`), `planner_trained_timesteps`, torn-snapshot and
+  seed checks, REQ-025 classification (`classify_replay_resume`),
+  `write_checkpoint_pair` (adds `model_num_timesteps`, `beta_progress_env_steps`),
+  pruning (`prune_replay_snapshots`, `prune_old_periodic_checkpoints`,
+  `prune_periodic_companions`) and `remove_replay_snapshots_after_final`.
+- `src/thesis_rl/runtime/signals.py` (new): `install_sigterm_as_keyboard_interrupt`.
+- Backends `sac_sb3.py`, `td3_sb3.py`, `ppo_sb3.py`: `save()` through
+  `atomic_publish`.
+- `replay/config.py`: `persistence_trigger`, `periodic_replay_persistence`,
+  triggers `{final_or_manual, periodic_and_final}`.
+- `train_loop.py`: SIGTERM install; startup validation (periodic trigger needs
+  `save_periodic` and a positive interval); resume setup through
+  `resume_artifact_paths` with the `periodic` alias; resume block with
+  torn-snapshot/seed checks, REQ-025 classification, `replay_reset` event,
+  best-key restoration; `save_intermediate_checkpoints(write_resume_snapshot=...)`
+  keeps only the best checkpoints when called from the async callback;
+  `write_resume_snapshot_files` writes `latest` and, when due, the paired
+  periodic snapshot with its own training/RNG/quarantine state, prunes and
+  logs `replay_snapshot_written`; the non-curriculum chunk end calls it with
+  live counters; `final` pair carries `model_num_timesteps`, then
+  `remove_replay_snapshots_after_final`; interrupt handler no longer saves.
+- `driver.py` (ACL): atomic state files; `_write_acl_resume_snapshot` shared by
+  both loops (latest, RNG independent of persistence, live curriculum state
+  with state file last, paired periodic snapshot with frozen curriculum copy
+  under `periodic/step_X_acl/`, pruning); resume root chosen by checkpoint
+  name (`_acl_state_dir_for_checkpoint`); consistency checks, REQ-025
+  classification, RNG restore independent of persistence; finals carry
+  `model_num_timesteps` and clean up; interrupt handlers no longer save; the
+  vectorized loop gained a `KeyboardInterrupt` handler.
+- Configuration: `checkpoint.resume.allow_replay_reset: false`;
+  `trigger: periodic_and_final` in `td3_sb3.yaml`/`sac_sb3.yaml`;
+  `replay_persistence: true` in `default`, `fast`, `medium`, `long`, `thesis`,
+  `tune`; `compose.yaml` `stop_grace_period: 120s`.
 
 ## 8. Traceability
 
-| Requirement | Acceptance criteria | Implementation (planned) | Tests | Status |
+| Requirement | Acceptance criteria | Implementation | Tests | Status |
 |---|---|---|---|---|
-| `REQ-RES-001` | `AC-RES-001`: after a kill injected during any write of a snapshot, the previous snapshot is intact and resumable. | `runtime/io/atomic.py`; backends `save`; `train_loop.py`; `driver.py` | `TEST-RES-001`, `TEST-RES-002`, `TEST-RES-010` | Planned |
-| `REQ-RES-002` | `AC-RES-002`: model-only resume emits `replay_reset=true` in `events.jsonl` and `run_metadata.yaml`, β progress 0; without the flag it fails before training. | `train_loop.py` resume block | `TEST-RES-007`, `TEST-RES-008` | Planned (M3) |
-| `REQ-RES-003` | `AC-RES-003`: `num_timesteps` ≠ `global_steps_done` fails before training with a message naming both. | `train_loop.py` resume block | `TEST-RES-005` | Planned |
-| `REQ-RES-004` | `AC-RES-004`: after Ctrl+C mid-chunk, `latest_training_state.yaml.global_steps_done == planner.num_timesteps`, and `beta_progress_env_steps` is present. | interrupt handlers | `TEST-RES-003`, `TEST-RES-004` | Planned |
-| `REQ-RES-005` | `AC-RES-005`: SIGTERM to the training process yields `run_interrupted` and a complete snapshot, exit 130. | `cli/train.py` | `TEST-RES-009` | Planned (M2) |
-| `REQ-RES-006` | `AC-RES-006`: with `periodic_frequency_steps=N`, a pair exists exactly at multiples of N and is absent otherwise; resume from a paired `latest` continues the buffer (same length and priorities). | `replay/config.py`, snapshot helper | `TEST-RES-006`, `TEST-RES-011`, `TEST-RES-012` | Planned (M3) |
-| `REQ-RES-007` | `AC-RES-007`: after resume, a worse evaluation does not overwrite `best_*.zip`. | `train_loop.py` | `TEST-RES-013` | Planned |
+| `REQ-RES-001` | `AC-RES-001`: after a failed/killed write the previous snapshot is intact, no temporary left | `runtime/io/atomic.py`; backends `save`; `train_loop.py` `_save_training_state`/`_save_rng_state`; `driver.py` state writers | `tests/test_resume_snapshot.py::test_atomic_publish_*` (`TEST-RES-001`, `002`), `test_acl_state_files_are_written_with_state_last`; `TEST-RES-010` smoke | Done |
+| `REQ-RES-002` | `AC-RES-002`: model-only resume fails closed without the flag; with it emits `replay_reset=true`, β=0 | `classify_replay_resume`; resume blocks in both loops | `test_model_only_resume_fails_closed_without_flag` (`TEST-RES-007`), `test_model_only_resume_with_flag_is_classified_as_reset` (`TEST-RES-008`), `test_partially_committed_pair_is_rejected_even_with_flag` | Done (event emission verified by code reading; no loop-level harness) |
+| `REQ-RES-003` | `AC-RES-003`: `model_num_timesteps` mismatch or seed mismatch fails before training | `assert_snapshot_model_consistent`, `assert_snapshot_seed_consistent`; resume blocks | `test_model_consistency_check_*` (`TEST-RES-005`), `test_seed_consistency_check`, `test_checkpoint_pair_carries_identity_fields` | Done |
+| `REQ-RES-004` | `AC-RES-004`: snapshot counters equal the model's trained steps | chunk-boundary-only snapshots (`DEC-RES-007`), `write_resume_snapshot_files` with live counters | `TEST-RES-010` smoke: `latest_training_state.yaml` `global_steps_done == model_num_timesteps == 1000` | Done |
+| `REQ-RES-005` | `AC-RES-005`: SIGTERM → `KeyboardInterrupt` path | `runtime/signals.py`, `run_training`, `compose.yaml` | `test_sigterm_is_raised_as_keyboard_interrupt` (`TEST-RES-009`, unit form) | Done (process-level SIGTERM not exercised end to end; see §12) |
+| `REQ-RES-006` | `AC-RES-006`: pair exactly at crossings, `periodic` alias picks newest complete pair, previous pair pruned | `periodic_snapshot_due`, `write_resume_snapshot_files`, `_write_acl_resume_snapshot`, `resolve_resume_checkpoint_name`, `prune_replay_snapshots` | `test_periodic_snapshot_due_uses_crossing_semantics` (`TEST-RES-011`), `test_periodic_alias_*`, `test_prune_replay_snapshots_keeps_only_the_newest_pair`, `test_acl_resume_snapshot_writes_latest_and_paired_periodic_when_due`, `test_transition_replay_config.py::test_periodic_and_final_trigger_is_accepted` (`TEST-RES-006`); `TEST-RES-010` smoke | Done |
+| `REQ-RES-007` | `AC-RES-007`: best keys restored on resume | `_best_keys_payload`, `_restore_best_key`, resume block | `test_best_keys_round_trip_through_training_state` (`TEST-RES-013`) | Done (restoration wiring verified by code reading) |
+| `REQ-RES-008` | `AC-RES-008`: intermediate replay copies removed after `final` | `remove_replay_snapshots_after_final` in both loops | `test_remove_replay_snapshots_after_final_drops_intermediate_copies`; `TEST-RES-010` smoke event `replay_snapshots_removed_after_final` | Done |
 
-## 9. Test Strategy Defined Before Implementation
+Regression added for a defect found by `TEST-RES-010`:
+`tests/test_transition_replay_persistence.py::test_checkpoint_pair_validation_accepts_periodic_checkpoint_name`
+(the validator compared `periodic/step_X.zip` with the recorded basename).
 
-| ID | Level | Behavior | Fixture/input | Expected result | Requirement |
-|---|---|---|---|---|---|
-| `TEST-RES-001` | Unit | `atomic_call` leaves the old file when the writer raises | writer that writes half then raises | old bytes unchanged, no `.tmp` left | `REQ-RES-001` |
-| `TEST-RES-002` | Unit | backend `save` never exposes a partial zip | monkeypatched `model.save` raising after partial write | target absent or previous version | `REQ-RES-001` |
-| `TEST-RES-003` | Unit | interrupt payload uses `planner.num_timesteps` | fake planner with `num_timesteps=1234`, `current_global_step=1000` | `global_steps_done == 1234` | `REQ-RES-004` |
-| `TEST-RES-004` | Unit | interrupt payload carries `beta_progress_env_steps` | as above | key present and equal to loop value | `REQ-RES-004` |
-| `TEST-RES-005` | Unit | resume rejects model/state mismatch | state 1000, model 1500 | `ValueError` naming both values before `begin_training` | `REQ-RES-003` |
-| `TEST-RES-006` | Unit | `resolve_transition_replay_config` accepts `periodic_and_final` with a multiple of `eval_interval`, rejects a non-multiple | config mappings | accepted / `ValueError` | `REQ-RES-006` |
-| `TEST-RES-007` | Unit | model-only resume without flag fails closed | pair absent, `allow_replay_reset=false` | `ValueError` | `REQ-RES-002` |
-| `TEST-RES-008` | Unit | model-only resume with flag logs `replay_reset=true`, β=0 | pair absent, flag true | event row and metadata field present | `REQ-RES-002` |
-| `TEST-RES-009` | Integration | SIGTERM handled as graceful | `smoke` run, `os.kill(pid, SIGTERM)` after first chunk | exit 130, `run_interrupted` event, snapshot consistent | `REQ-RES-005` |
-| `TEST-RES-010` | Integration | kill -9 mid-run then resume | `smoke` TD3 run killed by SIGKILL at a random time after the first snapshot, relaunched with `checkpoint.resume.enabled=true run_dir=<same>` | resumed run finishes; `checkpoint_index.csv` steps monotone; final `global_steps_done == total_timesteps` | `REQ-RES-001`, `REQ-RES-003` |
-| `TEST-RES-011` | Unit | pair present exactly at snapshot cadence | fake loop at steps N, 2N, N+eval | pair file exists / removed | `REQ-RES-006` |
-| `TEST-RES-012` | Measurement | replay write duration and size at full buffer | 300k synthetic transitions | recorded in this plan's log (no threshold) | `REQ-RES-006` |
-| `TEST-RES-013` | Unit | best keys restored from `best_checkpoints.yaml` | yaml with three bests, worse metrics on first eval | no `best_*.zip` rewrite | `REQ-RES-007` |
+## 9. Test Strategy
 
-Commands (all existing): focused tests
-`uv run --no-sync python -m pytest -q tests/test_resume_snapshot.py`
-(new file); lint/format on touched files
-`make lint`, `make format-check PYTHON_QUALITY_PATHS="<touched files>"`;
-smoke `make smoke`; compose `make config`. `TEST-RES-009`/`010` run through
-the compose environment as `make smoke` does; no CI target exists for them
-yet, so they are recorded as manual evidence in §11 until one is added.
+Mandatory matrix as in §8; commands (all existing):
+
+```bash
+docker compose -p thesis-metadrive run --rm -T dev uv run --no-sync python -m pytest -q \
+  tests/test_resume_snapshot.py tests/test_transition_replay_config.py \
+  tests/test_transition_replay_persistence.py tests/test_scenario_acl_buffer.py \
+  tests/test_hydra_preset_run_configs.py tests/test_run_metadata.py
+docker compose -p thesis-metadrive run --rm -T dev uv run --no-sync python -m pytest -q tests
+make lint
+make format-check PYTHON_QUALITY_PATHS="src/thesis_rl/runtime/io/atomic.py src/thesis_rl/runtime/io/resume_snapshot.py src/thesis_rl/runtime/signals.py src/thesis_rl/sb3_extensions/replay/config.py tests/test_resume_snapshot.py"
+make config
+```
+
+Tests changed under ADR-079 (contract change, approved):
+`test_replay_persistence_is_enabled_only_for_smoke_by_default` →
+`test_replay_persistence_is_enabled_on_every_profile_by_default`;
+`test_periodic_replay_persistence_is_rejected` →
+`test_periodic_frequency_steps_is_not_a_setting`; the `final_or_manual`
+assertion in `test_final_scalar_pipeline_defaults_compose` → `periodic_and_final`.
 
 ## 10. Milestones
 
-- [ ] **M1 — crash-safe snapshot and consistent counters.** No gate. Files:
-  `src/thesis_rl/runtime/io/atomic.py`, `runtime/loops/train_loop.py`,
-  `curriculum/scenario_acl/driver.py`,
-  `agent/planners/algorithms/{sac,td3,ppo}_sb3.py`,
-  `agent/planners/interfaces/backend.py`, `tests/test_resume_snapshot.py`.
-  Tests `TEST-RES-001..005`, `013`. Evidence: focused suite, `make lint`,
-  focused `make format-check`.
-- [ ] **M2 — SIGTERM.** Gate `DEC-RES-002`. Files: `src/thesis_rl/cli/train.py`,
-  `compose.yaml`. Test `TEST-RES-009`.
-- [ ] **M3 — periodic paired replay snapshot.** Gates `DEC-RES-003`,
-  `DEC-RES-004`. Files: spec amendment `transition_replay_v1.1_specification.md`
-  (through `incoming/` → review → approval), new ADR superseding ADR-017,
-  `sb3_extensions/replay/config.py`, snapshot helper, `conf/run_profile/*.yaml`,
-  `conf/config.yaml` (`checkpoint.resume.allow_replay_reset`). Tests
-  `TEST-RES-006..008`, `011`, `012`, then `TEST-RES-010` and `make smoke`.
-- [ ] **M4 — reconciliation.** `open_items` `C12`/`V2`/`D4` updated,
-  `project_index.md` row, `docs/setup/validation_commands.md` resume section
-  updated with the in-place resume override set
-  (`checkpoint.resume.enabled=true checkpoint.resume.run_dir=<dir> paths.run_dir=<dir>`).
+- [x] **M1 — crash-safe snapshot and consistent counters.** Atomic writers,
+  chunk-boundary-only snapshots, torn-snapshot/seed checks, best keys,
+  `model_num_timesteps` in pair and state.
+- [x] **M2 — SIGTERM.** `runtime/signals.py`, `run_training`, `compose.yaml`.
+- [x] **M3 — periodic paired replay snapshot.** Spec amendment v1.1, ADR-079,
+  `replay/config.py`, both loops, profiles, `allow_replay_reset`, cleanup after
+  `final`.
+- [x] **M4 — reconciliation.** `open_items` `C12`/`V2`, `project_index.md`,
+  `validation_commands.md` §8, ADR-017 marked superseded.
 
 ## 11. Progress And Findings Log
 
-- **2026-09-06** — Analysis only. Findings recorded in issue #3 and §4.
-  Decision gates `DEC-RES-002..005` await the user. No production code
-  changed. Next step: user decision on the gates; M1 can start independently.
+- **2026-09-06 (analysis)** — Findings recorded in issue #3 and §4; plan
+  written with gates `DEC-RES-002..005`.
+- **2026-09-06 (approval)** — User approved all gates and added `DEC-RES-006`;
+  instructed full implementation.
+- **2026-09-06 (finding, during implementation)** — On the non-curriculum
+  path the asynchronous-evaluation completion callback wrote `latest` mid-chunk
+  with the evaluated job's step (§4.1). Resolved by `DEC-RES-007`/`DEC-RES-008`:
+  the resume snapshot is written only at chunk boundaries with live counters;
+  the callback keeps only the best-checkpoint logic.
+- **2026-09-06 (finding)** — The ACL loops wrote no periodic checkpoints and
+  the vectorized ACL path had no `KeyboardInterrupt` handler; both added.
+- **2026-09-06 (finding)** — Periodic checkpoints were skipped when
+  `periodic_interval_steps` was not a multiple of `eval_interval` (`thesis`,
+  `long`, `tune`: 125k vs 50k). Fixed by crossing semantics.
+- **2026-09-06 (tests)** — Focused suite: `74 passed` (`test_resume_snapshot.py`
+  27 tests, `test_transition_replay_config.py`, `test_transition_replay_persistence.py`,
+  `test_scenario_acl_buffer.py`, `test_hydra_preset_run_configs.py`,
+  `test_run_metadata.py`); ruff lint clean on all touched files; ruff format
+  clean on the new modules and the new test file (the pre-existing formatting
+  debt in `train_loop.py`/`driver.py` was not touched, per `AGENTS.md`).
+- **2026-09-06 (`TEST-RES-010`, kill -9 and resume)** — Smoke preset
+  (`presets/test/smoke_train`, TD3, MetaDrive `lidar_state`, non-curriculum →
+  asynchronous validation) with `total_timesteps=3000 eval_interval=500
+  periodic_interval_steps=1000`, fixed `paths.run_dir`
+  `outputs/RESUME-ABRUPT-SMOKE/td3_sb3/seed_0/run_a`. At step 1000 the periodic
+  snapshot was written (`step_00001000.zip` 5.2 MB, `_replay_buffer.pkl`
+  1.32 MB, pair, RNG, training state with `global_steps_done == model_num_timesteps == 1000`,
+  `best_keys` populated). The container was killed with `docker kill -s KILL`
+  during chunk 3 (`run_metadata.yaml` still `status: running`). First relaunch
+  with `checkpoint.resume.checkpoint_name=periodic` **failed** before training:
+  `Checkpoint pair model identity mismatch: manifest='step_00001000.zip',
+  expected='periodic/step_00001000.zip'` — a defect in `_validate_checkpoint_pair`
+  (fixed, regression test added, `3 passed`). Second relaunch: `run_resumed`
+  from `periodic/step_00001000.zip`, chunks 3 and 4 completed, the paired
+  snapshot at step 2000 was written and pruned the step-1000 pair
+  (`removed_previous`), and the run then died on the **unrelated** issue #2 /
+  `C7` defect (`Signal transition requires valid, known pre/post states`) during
+  its evaluation, which is not part of this plan. Third relaunch resumed from
+  `periodic/step_00002000.zip`, ran chunks 5 and 6 to the full
+  `total_timesteps=3000`, wrote the paired snapshot at 3000 and then `final`.
+- **2026-09-06 (`TEST-RES-010` result, PASS)** — Final state of the run
+  directory after one SIGKILL and two resumes:
+
+  | evidence | observed |
+  |---|---|
+  | `checkpoint_index.csv` `global_step` | 500, 1000, 1000 (periodic), 1500, 2000, 2000 (periodic), 2500, 3000, 3000 (periodic), 3000 (final) — strictly monotone across both resume points |
+  | `latest_training_state.yaml` | `global_steps_done = model_num_timesteps = beta_progress_env_steps = 3000`, `chunk_id = 6`, `seed = 42` |
+  | `final` artifacts | `final.zip`, `final_replay_buffer.pkl`, `final_checkpoint_pair.json` present |
+  | `DEC-RES-006` cleanup | `replay_snapshots_removed_after_final` event; `periodic/` retains only the three model zips with their manifest, RNG and training-state companions — no `_replay_buffer.pkl`, no `_checkpoint_pair.json` |
+  | replay snapshot sizes | 1.32 MB (1 000 transitions), 2.64 MB (2 000), 3.95 MB (3 000) — linear in stored transitions, as `__getstate__` truncation predicts |
+
+  `AC-RES-001`, `AC-RES-003`, `AC-RES-004`, `AC-RES-006` and `AC-RES-008`
+  observed end to end.
+- **2026-09-06 (full suite)** — `1704 passed in 1680.40s` (`python -m pytest -q
+  tests` in the compose `dev` service), zero failures.
+
+## 12. Known Limitations
+
+- Process-level SIGTERM (`docker stop`) is covered by the unit test of the
+  handler and by code reading, not by an end-to-end run.
+- The REQ-025 `replay_reset` event emission and the best-key restoration are
+  wired in the loops and verified by code reading; no loop-level harness exists
+  for them (the loops need a live environment).
+- The ACL companion files (buffer, coverage, vector state) are each atomic but
+  not jointly atomic with `scenario_acl_state.json`; the write window is
+  sub-second and they are now written contiguously.
+- `checkpoint_index.csv` is append-only and not deduplicated: a resumed run
+  appends rows after the crash point; rows of the lost chunk are absent, not
+  duplicated.
+- Replay write duration at full buffer (≈ 7.2 GB) is not measured; the smoke
+  measured 1.32 MB in under a second.

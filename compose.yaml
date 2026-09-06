@@ -43,6 +43,10 @@ services:
     working_dir: /workspace/thesis-metadrive
     stdin_open: true
     tty: true
+    # `DEC-RES-002`: `docker stop` sends SIGTERM, which the training loop
+    # handles like Ctrl+C; give it time to close workers and flush metadata
+    # before SIGKILL. Docker's default is 10 s.
+    stop_grace_period: 120s
     ulimits:
       memlock: -1
       stack: 67108864

@@ -106,8 +106,9 @@ checkpoint:
   resume:
     enabled: false                                    # Enable resume from an existing run directory.
     run_dir: null                                     # Null => resume in current `paths.run_dir`.
-    checkpoint_name: latest                           # latest | final | <checkpoint stem under checkpoints/>
+    checkpoint_name: latest                           # latest | final | periodic (newest paired snapshot) | <checkpoint stem under checkpoints/>
     restore_rng_state: true                           # Restore python/numpy/torch RNG state if available.
+    allow_replay_reset: false                         # TRANSITION-REPLAY REQ-025: allow a model-only resume that starts an empty replay segment (logged as replay_reset=true).
 
 # Hydra runtime outputs.
 hydra:

@@ -11,6 +11,7 @@ from thesis_rl.agent.transition_boundary import normalize_vector_transition_boun
 from thesis_rl.agent.planners.core.backend_base import BasePlannerBackend
 from thesis_rl.agent.planners.core.lifecycle import PpoLifecycle
 from thesis_rl.agent.planners.core.utils import normalize_checkpoint_path, to_plain_dict
+from thesis_rl.runtime.io.atomic import atomic_publish
 from thesis_rl.sb3_extensions import (
     build_sb3_specs_from_configs,
     resolve_transition_replay_config,
@@ -586,5 +587,5 @@ class Sb3PpoPlannerBackend(BasePlannerBackend):
 
     def save(self, checkpoint_path: str | Path) -> None:
         checkpoint = normalize_checkpoint_path(checkpoint_path)
-        checkpoint.parent.mkdir(parents=True, exist_ok=True)
-        self.model.save(str(checkpoint))
+        # `RESUME-ABRUPT-001` REQ-RES-001: never expose a partially written zip.
+        atomic_publish(checkpoint, lambda tmp: self.model.save(str(tmp)))
