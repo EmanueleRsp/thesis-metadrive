@@ -40,6 +40,12 @@ from thesis_rl.runtime.execution.deterministic_subproc_vec_env import (
     RuntimeGeometryAbort,
     RuntimeScenarioDataAbort,
 )
+from thesis_rl.runtime.training_progress import (
+    TRAINING_PROGRESS_EVENT_INTERVAL_STEPS,
+    format_training_progress_line,
+    progress_bucket,
+    progress_due,
+)
 from thesis_rl.runtime.data_abort import (
     GeometryAbortLedger,
     append_data_abort_record,
@@ -940,6 +946,8 @@ class Agent:
         data_abort_log_path: str | Path | None = None,
         geometry_abort_log_path: str | Path | None = None,
         run_id: str | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        progress_interval: int = TRAINING_PROGRESS_EVENT_INTERVAL_STEPS,
     ) -> dict[str, Any]:
         """Train with a vectorized env, counting total collected transitions.
 
@@ -948,6 +956,11 @@ class Agent:
         transition is stored and must commit the ACL outcome, configure the next
         selections, reset only those slots, and return ``slot -> observation``.
         Generic vector environments retain their existing worker auto-reset.
+
+        ``progress_callback`` receives a TTY-independent progress snapshot every
+        ``progress_interval`` collected steps and at the end of the chunk (C12);
+        when the console is not a terminal the same snapshot is also printed as one
+        plain line, because the Rich ``Live`` monitor renders nothing there.
         """
         n_envs = count_envs(env)
         if n_envs <= 1:
@@ -1123,6 +1136,30 @@ class Agent:
         def _logs_panel() -> Panel:
             content = "\n".join(event_logs) if event_logs else "No events yet"
             return Panel(content, title="Events", expand=True)
+
+        def _progress_snapshot() -> dict[str, Any]:
+            elapsed = max(time.time() - start_time, 1e-9)
+            return {
+                "chunk_env_steps": int(min(collected_steps, chunk_timesteps)),
+                "chunk_timesteps": int(chunk_timesteps),
+                "run_env_steps": int(global_steps_done + collected_steps),
+                "global_total_timesteps": int(global_total_timesteps),
+                "fps": float(collected_steps / elapsed),
+                "elapsed_seconds": float(elapsed),
+                "episodes": int(episodes),
+                "ep_len_mean": (
+                    float(np.mean(recent_episode_lens)) if recent_episode_lens else 0.0
+                ),
+                "ep_rew_mean": (
+                    float(np.mean(recent_episode_rewards)) if recent_episode_rewards else 0.0
+                ),
+                "ema_actor_loss": float(ema_actor_loss),
+                "ema_critic_loss": float(ema_critic_loss),
+                "update_calls": int(getattr(lifecycle, "update_count", 0)),
+                "gradient_steps": int(getattr(lifecycle, "gradient_step_count", 0)),
+            }
+
+        last_progress_bucket = progress_bucket(0, progress_interval)
 
         # `GEOM-ABORT`: the ledger is run-local and outlives the chunk, because
         # the per-UID repeat count and the rate ceiling are both cumulative.
@@ -1667,6 +1704,20 @@ class Agent:
                             else []
                         )
                         live.update(Group(progress, _table(), *extra_renderables, _logs_panel()))
+                    if progress_due(
+                        collected_steps, chunk_timesteps, progress_interval, last_progress_bucket
+                    ):
+                        last_progress_bucket = progress_bucket(collected_steps, progress_interval)
+                        snapshot = _progress_snapshot()
+                        if progress_callback is not None:
+                            progress_callback(snapshot)
+                        if not live.console.is_terminal:
+                            live.console.print(
+                                format_training_progress_line(snapshot),
+                                markup=False,
+                                highlight=False,
+                                soft_wrap=True,
+                            )
                     obs = next_obs
                     phase_seconds["logging_callback"] += max(
                         0.0,

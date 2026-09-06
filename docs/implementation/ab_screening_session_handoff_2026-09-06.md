@@ -163,6 +163,14 @@ group (`AC-AB-002`).
 8. `runtime_scenario_data_abort.jsonl` grows on ordinary data conditions (unknown
    signal states) and is not a failure; GEOM-ABORT quarantines geometry failures
    the same way and counts them toward a cap; a rising count is worth reporting.
+9. **Intra-chunk progress (`C12`, runs launched from `main` after it landed).**
+   `"event": "training_progress"` in `logs/events.jsonl` every 1 000 collected
+   steps carries `run_env_steps`, `fps`, `ep_rew_mean` and the EMA losses; the
+   same line reaches the `tee` log and the pane as plain text. The exact current
+   step is the last such event; a chunk whose events stop arriving for more than
+   a few times the interval is the "possibly dead" case of rule 1. A failed run
+   now also ends on its own: `run_failed`, teardown, and `run_forced_exit` if the
+   teardown hangs past 120 s.
 
 ## 8. Open
 

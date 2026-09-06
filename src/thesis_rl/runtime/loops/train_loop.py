@@ -68,6 +68,7 @@ from thesis_rl.runtime.io.run_logging import (
     setup_file_logger,
 )
 from thesis_rl.runtime.async_evaluation import AsyncEvaluationManager, EvaluationJob
+from thesis_rl.runtime.failfast import fail_fast_after_run_failure
 from thesis_rl.runtime.evaluation_plan import (
     EvaluationPanel,
     is_scenarionet,
@@ -808,6 +809,10 @@ def run_training(cfg: DictConfig) -> None:
     current_stage_name = "baseline"
     current_stage_index = 0
     beta_progress_env_steps = 0
+    # Bound to the live resources as soon as they exist, so the fail-fast teardown
+    # in the failure handler can close whatever was built before the failure.
+    env: Any = None
+    async_evaluation_manager: AsyncEvaluationManager | None = None
 
     try:
         run_seed = int(cfg.seed)
@@ -951,7 +956,7 @@ def run_training(cfg: DictConfig) -> None:
         agent.set_checkpoint_identity(build_reward_semantics_identity(cfg))
         agent.set_checkpoint_manifest(build_current_checkpoint_manifest(cfg, env))
 
-        async_evaluation_manager: AsyncEvaluationManager | None = None
+        async_evaluation_manager = None
 
         def _make_eval_agent(checkpoint_stem: Path, eval_env: Any) -> tuple[Agent, str]:
             checkpoint_zip = f"{checkpoint_stem}.zip"
@@ -1562,6 +1567,20 @@ def run_training(cfg: DictConfig) -> None:
                 extra_train_kwargs["data_abort_log_path"] = data_abort_log_path
                 extra_train_kwargs["geometry_abort_log_path"] = geometry_abort_log_path
                 extra_train_kwargs["run_id"] = run_id
+
+                def _log_training_progress(snapshot: dict[str, Any]) -> None:
+                    # C12: the durable, TTY-independent step counter. `chunk_id` and the
+                    # stage are read at call time so the overshoot collection below
+                    # reports under the chunk it belongs to.
+                    log_event(
+                        events_log_path,
+                        "training_progress",
+                        chunk_id=int(chunk_id),
+                        stage=str(current_stage_name),
+                        **snapshot,
+                    )
+
+                extra_train_kwargs["progress_callback"] = _log_training_progress
             provider_driven_scenarionet = str(
                 cfg.env.get("name", "")
             ).lower() == "scenarionet" and str(
@@ -3120,5 +3139,17 @@ def run_training(cfg: DictConfig) -> None:
                 "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "duration_seconds": duration_seconds,
             },
+        )
+        # C10/C12: a failed run must end in bounded time. Close the workers and the
+        # engine, flush the logs, and force the exit if teardown hangs anyway.
+        fail_fast_after_run_failure(
+            env=env,
+            async_evaluation_manager=async_evaluation_manager,
+            logger=errors_logger,
+            on_forced_exit=lambda: log_event(
+                events_log_path,
+                "run_forced_exit",
+                reason="teardown did not complete within the grace period",
+            ),
         )
         raise

@@ -673,6 +673,28 @@ GPU is contended, arm A as soon as memory allows. The relaunch is handed to a
 dedicated session through `ab_screening_session_handoff_2026-09-06.md`, which
 carries the launch protocol, the monitoring rules and the session prompt.
 
+**2026-09-06, relaunch session: arm B started, then observability fixed first
+(`open_items` `C12`).** Pre-launch checks on `main` at `d079762` (pushed): both
+presets recomposed with `--cfg job --resolve`; ADR-078 confirmed in both
+(`planner.sac.batch_size 512`, `update_to_data_ratio 0.5`, learning-potential
+batch off); the diff confined to `reward.name/type/behavior`, the dependent
+`lambda_env/lambda_rule`, and the derived run identity (`AC-AB-002` holds). GPU
+at launch 9.8 GB free with three external tenants at 26.1, 17.9 and 8.7 GB. Arm B
+launched 15:29 UTC into `SCREEN-LEARNABILITY-B-RULEBOOK-01/sac_sb3/seed_0/20260906_152937/`
+(`run_started` 15:32:51); arm A held back for the 25 GB threshold of the handoff.
+
+The user then asked whether the two operational gaps of §10 M3 -- no intra-chunk
+step counter under `| tee`, and the post-`run_failed` hang of `C10` -- could be
+closed without drawbacks, and decided to **relaunch both arms from the fixed
+tree** so the pair stays on one commit and can be followed live. Recorded as
+`open_items` `C12`: a `training_progress` event every 1 000 steps plus a plain
+progress line on non-terminal consoles, and a bounded fail-fast teardown after
+`run_failed`. Neither touches training semantics, so `AC-AB-002` and the
+single-factor design are unaffected; the run directory of the 15:29 arm-B
+launch is retained and its data are not used (stopped by decision, not by
+failure; `REQ-AB-003` relaunch on the same seed). Launch and monitoring rules
+are unchanged except for handoff §7 rule 9.
+
 ## 12. Deviations
 
 | ID | Original contract | Actual or proposed change | Reason | Approval | Affected tests/docs |
