@@ -302,7 +302,12 @@ assertion in `test_final_scalar_pipeline_defaults_compose` → `periodic_and_fin
   `C7` defect (`Signal transition requires valid, known pre/post states`) during
   its evaluation, which is not part of this plan. Third relaunch resumed from
   `periodic/step_00002000.zip`, ran chunks 5 and 6 to the full
-  `total_timesteps=3000`, wrote the paired snapshot at 3000 and then `final`.
+  `total_timesteps=3000`, wrote the paired snapshot at 3000 and then `final`,
+  and went on to finish the three final evaluation panels
+  (`test_waymo_empirical`, `test_pg`, `test_arm_stratified` at step 3000);
+  `run_metadata.yaml` ends at `status: completed`, `finished_at 22:20:17`,
+  `duration_seconds 848.02`. So the resumed run terminated normally, evaluation
+  included, not merely up to the last training chunk.
 - **2026-09-06 (`TEST-RES-010` result, PASS)** — Final state of the run
   directory after one SIGKILL and two resumes:
 
@@ -313,6 +318,7 @@ assertion in `test_final_scalar_pipeline_defaults_compose` → `periodic_and_fin
   | `final` artifacts | `final.zip`, `final_replay_buffer.pkl`, `final_checkpoint_pair.json` present |
   | `DEC-RES-006` cleanup | `replay_snapshots_removed_after_final` event; `periodic/` retains only the three model zips with their manifest, RNG and training-state companions — no `_replay_buffer.pkl`, no `_checkpoint_pair.json` |
   | replay snapshot sizes | 1.32 MB (1 000 transitions), 2.64 MB (2 000), 3.95 MB (3 000) — linear in stored transitions, as `__getstate__` truncation predicts |
+  | run outcome | `status: completed`; final panels `test_waymo_empirical`, `test_pg`, `test_arm_stratified` recorded in `evals.csv` at step 3000 |
 
   `AC-RES-001`, `AC-RES-003`, `AC-RES-004`, `AC-RES-006` and `AC-RES-008`
   observed end to end.
