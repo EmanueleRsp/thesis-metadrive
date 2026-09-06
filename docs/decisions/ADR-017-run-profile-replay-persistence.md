@@ -1,6 +1,8 @@
 # ADR-017: Smoke-Only Replay Buffer Persistence
 
-- Status: `Approved`
+- Status: `Superseded` by ADR-079 (2026-09-06): replay persistence is now
+  enabled on every standard profile as a periodic snapshot paired with the
+  periodic checkpoint (`TRANSITION-REPLAY` v1.1). Kept for traceability.
 - Date: `2026-07-21`
 - Decision owner: thesis repository maintainer
 - Approval evidence: explicit user approval to disable default TD3/SAC replay persistence and retain it only for `smoke` on 2026-07-21

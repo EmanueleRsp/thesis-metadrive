@@ -17,6 +17,16 @@ class TransitionReplayConfig:
     store_reward_vector: bool
     beta_anneal_steps: int | None
     persistence_enabled: bool = False
+    persistence_trigger: str = "final_or_manual"
+
+    @property
+    def periodic_replay_persistence(self) -> bool:
+        """`TRANSITION-REPLAY` v1.1: pair the replay with each periodic checkpoint."""
+
+        return bool(self.persistence_enabled) and self.persistence_trigger == "periodic_and_final"
+
+
+PERSISTENCE_TRIGGERS = ("final_or_manual", "periodic_and_final")
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -70,10 +80,20 @@ def resolve_transition_replay_config(
             "`transition_replay.persistence.enabled=true` with trigger=final_or_manual."
         )
     trigger = str(persistence.get("trigger", "final_or_manual")).strip().lower()
-    if trigger != "final_or_manual":
-        raise ValueError("transition_replay.persistence.trigger must be `final_or_manual` in v1.")
+    if trigger not in PERSISTENCE_TRIGGERS:
+        raise ValueError(
+            "transition_replay.persistence.trigger must be one of "
+            f"{list(PERSISTENCE_TRIGGERS)} (TRANSITION-REPLAY v1.1), got {trigger!r}."
+        )
+    # v1.1 `REQ-024`: the periodic replay snapshot rides the periodic model
+    # checkpoint, so its cadence is `checkpoint.periodic_interval_steps` by
+    # construction and no second frequency knob exists.
     if persistence.get("periodic_frequency_steps") is not None:
-        raise ValueError("Periodic replay persistence is not supported in transition replay v1.")
+        raise ValueError(
+            "transition_replay.persistence.periodic_frequency_steps is not a setting: the "
+            "periodic replay snapshot follows checkpoint.periodic_interval_steps "
+            "(trigger=periodic_and_final)."
+        )
     if int(persistence.get("keep_last", 1)) != 1:
         raise ValueError("transition_replay.persistence.keep_last must equal 1 in v1.")
     custom_replay = raw.get("replay_buffer_class") is not None
@@ -121,4 +141,5 @@ def resolve_transition_replay_config(
         store_reward_vector=store_reward_vector,
         beta_anneal_steps=beta_anneal_steps,
         persistence_enabled=persistence_enabled,
+        persistence_trigger=trigger,
     )
