@@ -43,6 +43,10 @@ VecEnvObs = Union[np.ndarray, dict[str, np.ndarray], tuple[np.ndarray, ...]]
 VecEnvStepReturn = tuple[VecEnvObs, np.ndarray, np.ndarray, tuple[dict[str, Any], ...]]
 _WORKER_ERROR_MARKER = "__thesis_rl_worker_error__"
 _RUNTIME_DATA_ABORT_MARKER = "__thesis_rl_runtime_data_abort__"
+# A distinct marker by `REQ-GA-004`: a geometry abort and a data abort are
+# different conditions with different remedies, and one must never be counted
+# as the other.
+_RUNTIME_GEOMETRY_ABORT_MARKER = "__thesis_rl_runtime_geometry_abort__"
 _CHILD_JOIN_TIMEOUT_S = 1.0
 
 
@@ -52,6 +56,19 @@ class SubprocessWorkerError(RuntimeError):
 
 class RuntimeScenarioDataAbort:
     """Non-fatal worker response for an explicitly typed scenario data defect."""
+
+    def __init__(self, *, slot: int, payload: Mapping[str, Any]) -> None:
+        self.slot = int(slot)
+        self.payload = dict(payload)
+
+
+class RuntimeGeometryAbort:
+    """Non-fatal worker response for an explicitly typed live geometry failure.
+
+    Transported separately from :class:`RuntimeScenarioDataAbort` so the parent
+    can charge it against the geometry ceiling and its own forensic log. The two
+    share the episode-boundary machinery and nothing else.
+    """
 
     def __init__(self, *, slot: int, payload: Mapping[str, Any]) -> None:
         self.slot = int(slot)
@@ -142,8 +159,32 @@ def _worker(
                 try:
                     observation, reward, terminated, truncated, info = env.step(data)
                 except Exception as exc:
-                    from thesis_rl.rulebook.v2.errors import RuntimeScenarioNotEvaluableError
+                    from thesis_rl.rulebook.v2.errors import (
+                        RuntimeGeometryNotEvaluableError,
+                        RuntimeScenarioNotEvaluableError,
+                    )
 
+                    if isinstance(exc, RuntimeGeometryNotEvaluableError):
+                        remote.send(
+                            (
+                                _RUNTIME_GEOMETRY_ABORT_MARKER,
+                                {
+                                    "pid": os.getpid(),
+                                    "reason_code": exc.reason.value,
+                                    "exception_message": str(exc),
+                                    "traceback": traceback.format_exc(),
+                                    "diagnostics": dict(exc.diagnostics),
+                                    # The geometry itself, so the failure can be
+                                    # rebuilt as a fixture rather than guessed at.
+                                    "geometry_wkt": exc.geometry_wkt,
+                                    "final_observation": getattr(exc, "final_observation", None),
+                                    "failed_action": data,
+                                    "worker_step_index": worker_step_index,
+                                },
+                            )
+                        )
+                        worker_step_index += 1
+                        continue
                     if not isinstance(exc, RuntimeScenarioNotEvaluableError):
                         raise
                     remote.send(
@@ -624,9 +665,11 @@ class DeterministicSubprocVecEnv(Sb3VecEnv):
             command == "step"
             and isinstance(result, tuple)
             and len(result) == 2
-            and result[0] == _RUNTIME_DATA_ABORT_MARKER
+            and result[0] in (_RUNTIME_DATA_ABORT_MARKER, _RUNTIME_GEOMETRY_ABORT_MARKER)
             and isinstance(result[1], Mapping)
         ):
+            if result[0] == _RUNTIME_GEOMETRY_ABORT_MARKER:
+                return RuntimeGeometryAbort(slot=index, payload=result[1])
             return RuntimeScenarioDataAbort(slot=index, payload=result[1])
         return result
 

@@ -741,6 +741,10 @@ def run_training(cfg: DictConfig) -> None:
     errors_log_path = logs_dir / "errors.log"
     events_log_path = logs_dir / "events.jsonl"
     data_abort_log_path = logs_dir / "runtime_scenario_data_abort.jsonl"
+    # `GEOM-ABORT` `REQ-GA-004`: its own file. Folding geometry failures into
+    # the data-abort log would let them hide inside a rate that is expected to
+    # be non-zero.
+    geometry_abort_log_path = logs_dir / "runtime_geometry_abort.jsonl"
 
     logging_cfg = cfg.get("logging", {})
     global_log_level = parse_log_level(logging_cfg.get("level"), default=logging.INFO)
@@ -1556,6 +1560,7 @@ def run_training(cfg: DictConfig) -> None:
             extra_train_kwargs: dict[str, Any] = {}
             if vectorized_training:
                 extra_train_kwargs["data_abort_log_path"] = data_abort_log_path
+                extra_train_kwargs["geometry_abort_log_path"] = geometry_abort_log_path
                 extra_train_kwargs["run_id"] = run_id
             provider_driven_scenarionet = str(
                 cfg.env.get("name", "")

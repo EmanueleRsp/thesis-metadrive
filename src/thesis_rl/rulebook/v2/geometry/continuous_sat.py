@@ -13,8 +13,23 @@ from shapely.geometry import Point, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.prepared import prep
 
+from thesis_rl.rulebook.v2.errors import (
+    RuntimeGeometryNotEvaluableError,
+    RuntimeGeometryNotEvaluableReason,
+)
+
 
 AREA_EPSILON_M2 = 1.0e-4
+# `AREA_EPSILON_M2` bounds *one* piece. The coverage check below bounds the
+# *sum* of the pieces the per-triangle filter discarded, which is a different
+# quantity: N slivers each individually under the per-piece bound sum to as much
+# as N times it. Budgeting the sum against the per-piece constant made the check
+# fail on ordinary geometry -- measured at 1.2x to 1.3x the bound, from two to
+# four discarded slivers on polygons of 111 to 261 m2. The aggregate is
+# therefore budgeted relatively: a decomposition may lose at most one part in
+# 100 000 of the polygon's own area, which is scale-free and stays meaningful on
+# both a 1 m2 and a 1000 m2 conflict zone.
+RELATIVE_COVERAGE_EPSILON = 1.0e-5
 INTERVAL_EPSILON_S = 1.0e-6
 # Lexicographic ear clipping is retained for ordinary small geometries because
 # it is simple and stable.  Its repeated all-vertex ear search is cubic,
@@ -50,8 +65,18 @@ def _normalized_ring(
     ring = [(float(x), float(y)) for x, y, *_ in coordinates]
     if ring[0] == ring[-1]:
         ring.pop()
-    if len(ring) < 3 or abs(_signed_area(ring)) <= AREA_EPSILON_M2:
-        raise ValueError("Polygon ring is degenerate")
+    signed_area = _signed_area(ring)
+    if len(ring) < 3 or abs(signed_area) <= AREA_EPSILON_M2:
+        raise RuntimeGeometryNotEvaluableError(
+            RuntimeGeometryNotEvaluableReason.DEGENERATE_RING,
+            f"Polygon ring is degenerate: {len(ring)} vertices, signed area "
+            f"{signed_area:.6e} m2 against tolerance {AREA_EPSILON_M2:.1e} m2.",
+            diagnostics={
+                "vertex_count": len(ring),
+                "signed_area_m2": float(signed_area),
+                "tolerance_m2": AREA_EPSILON_M2,
+            },
+        )
     if (_signed_area(ring) > 0.0) != ccw:
         ring.reverse()
     return ring
@@ -73,7 +98,18 @@ def _bridge_hole(
         if polygon.covers(bridge):
             hole_cycle = hole[hole_index:] + hole[:hole_index] + [hole[hole_index]]
             return outer[: outer_index + 1] + hole_cycle + outer[outer_index:]
-    raise ValueError("Polygon hole has no visible deterministic bridge")
+    raise RuntimeGeometryNotEvaluableError(
+        RuntimeGeometryNotEvaluableReason.DECOMPOSITION_NO_VISIBLE_BRIDGE,
+        f"Polygon hole has no visible deterministic bridge: {len(outer)} outer and "
+        f"{len(hole)} hole vertices, {len(pairs)} candidate bridges all blocked.",
+        diagnostics={
+            "outer_vertex_count": len(outer),
+            "hole_vertex_count": len(hole),
+            "candidate_bridge_count": len(pairs),
+            "polygon_area_m2": float(polygon.area),
+        },
+        geometry_wkt=polygon.wkt,
+    )
 
 
 def _constrained_components_after_ear_exhaustion(polygon: Polygon) -> tuple[Polygon, ...]:
@@ -87,18 +123,57 @@ def _constrained_components_after_ear_exhaustion(polygon: Polygon) -> tuple[Poly
     recovery, not a simplification or approximation.
     """
 
-    triangles = tuple(
+    candidates = tuple(
         triangle
         for triangle in shapely.constrained_delaunay_triangles(polygon).geoms
         if triangle.geom_type == "Polygon"
-        and triangle.area > AREA_EPSILON_M2
-        and polygon.covers(triangle)
+    )
+    triangles = tuple(
+        triangle
+        for triangle in candidates
+        if triangle.area > AREA_EPSILON_M2 and polygon.covers(triangle)
     )
     if not triangles:
         raise ValueError("Constrained decomposition produced no non-degenerate triangles")
     covered = shapely.union_all(triangles)
-    if not polygon.covers(covered) or polygon.symmetric_difference(covered).area > AREA_EPSILON_M2:
-        raise ValueError("Constrained decomposition does not cover the input polygon")
+    # Escaping the polygon stays a hard failure at any magnitude: it would mean
+    # the decomposition claims area the polygon does not have, which no
+    # tolerance can excuse. Only the *shortfall* is budgeted.
+    # Defensive, and deliberately fatal rather than recoverable: every retained
+    # triangle already passed `polygon.covers`, so their union cannot escape the
+    # polygon. If this fires, a GEOS invariant is broken, which is a
+    # contradiction rather than a tolerance question and must not be absorbed.
+    if not polygon.covers(covered):
+        raise ValueError(
+            "Constrained decomposition escapes the input polygon: overshoot "
+            f"{covered.difference(polygon).area:.6e} m2 on a polygon of "
+            f"{polygon.area:.6f} m2, although every retained triangle is covered."
+        )
+    residual_area = polygon.symmetric_difference(covered).area
+    coverage_allowance = max(AREA_EPSILON_M2, polygon.area * RELATIVE_COVERAGE_EPSILON)
+    if residual_area > coverage_allowance:
+        dropped = tuple(triangle for triangle in candidates if triangle not in triangles)
+        raise RuntimeGeometryNotEvaluableError(
+            RuntimeGeometryNotEvaluableReason.DECOMPOSITION_COVERAGE_SHORTFALL,
+            "Constrained decomposition does not cover the input polygon: "
+            f"residual {residual_area:.6e} m2 against allowance "
+            f"{coverage_allowance:.6e} m2 ({residual_area / coverage_allowance:.1f}x) "
+            f"on a polygon of {polygon.area:.6f} m2 with "
+            f"{len(polygon.exterior.coords) - 1} exterior vertices and "
+            f"{len(polygon.interiors)} holes; {len(dropped)} of {len(candidates)} "
+            "triangles discarded.",
+            diagnostics={
+                "residual_m2": float(residual_area),
+                "allowance_m2": float(coverage_allowance),
+                "ratio": float(residual_area / coverage_allowance),
+                "polygon_area_m2": float(polygon.area),
+                "exterior_vertex_count": len(polygon.exterior.coords) - 1,
+                "hole_count": len(polygon.interiors),
+                "discarded_triangle_count": len(dropped),
+                "candidate_triangle_count": len(candidates),
+            },
+            geometry_wkt=polygon.wkt,
+        )
     return tuple(sorted(triangles, key=lambda tri: (tri.centroid.x, tri.centroid.y, tri.area)))
 
 
