@@ -12,6 +12,11 @@ import yaml
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from thesis_rl.contracts.reward_semantics import (
+    RULEBOOK_PROVENANCE_FIELDS,
+    rulebook_provenance,
+)
+
 # Specification identities that are currently frozen repository-wide rather
 # than per-run configurable (EVAL-PROTOCOL REQ-015 / DEC-EP metadata gap).
 OBSERVATION_SPECIFICATION_ID = "OBS-V1.2"
@@ -203,13 +208,12 @@ def save_run_metadata(cfg: DictConfig, artifacts_dir: str | Path) -> Path:
         "reward_type": _cfg_get(cfg, "reward.type", default="unknown"),
         "reward_behavior": _cfg_get(cfg, "reward.behavior", default="unknown"),
         "rulebook_config": _cfg_get(cfg, "reward.rulebook_config", default="none"),
-        "rulebook": {
-            "implementation_family": _cfg_get(cfg, "rulebook.implementation_family", default="v1"),
-            "specification_id": _cfg_get(
-                cfg, "rulebook.specification_id", default="not-applicable"
-            ),
-            "version": _cfg_get(cfg, "rulebook.version", default="not-applicable"),
-        },
+        # Resolved through the shared contract helper so the run metadata and the
+        # checkpoint reward-semantics sidecar cannot disagree about which rulebook
+        # produced the run, as they did before `open_items` C8.
+        "rulebook": rulebook_provenance(
+            {field: _cfg_get(cfg, f"rulebook.{field}") for field in RULEBOOK_PROVENANCE_FIELDS}
+        ),
         "scalarization": {
             "specification_id": scalarization_cfg.get("specification_id", "not-applicable"),
             "version": scalarization_cfg.get("version", "not-applicable"),

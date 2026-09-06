@@ -10,6 +10,18 @@ from typing import Any, Mapping
 
 REWARD_SEMANTICS_VERSION = "1"
 
+# Recorded when a configuration declares no value for a rulebook provenance
+# field. It is a visible sentinel rather than a substantive guess: the defect
+# this replaces (`open_items` C8) was a missing key silently becoming a *wrong*
+# family in the run's own provenance, which is worse than an absent one.
+UNDECLARED_RULEBOOK_PROVENANCE = "not-declared"
+
+RULEBOOK_PROVENANCE_FIELDS: tuple[str, ...] = (
+    "implementation_family",
+    "specification_id",
+    "version",
+)
+
 
 class RewardSemanticsCompatibilityError(ValueError):
     """Raised before learner loading when reward semantics are incompatible."""
@@ -17,6 +29,25 @@ class RewardSemanticsCompatibilityError(ValueError):
 
 def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def rulebook_provenance(rulebook: Mapping[str, Any] | None) -> dict[str, str]:
+    """Resolve the three rulebook provenance fields under one default.
+
+    Both the run metadata writer and the checkpoint reward-semantics identity
+    call this, because the same fact defaulted in two places is a fact that can
+    drift -- and did.
+    """
+
+    declared = _mapping(rulebook)
+    return {
+        field: (
+            UNDECLARED_RULEBOOK_PROVENANCE
+            if declared.get(field) is None
+            else str(declared.get(field))
+        )
+        for field in RULEBOOK_PROVENANCE_FIELDS
+    }
 
 
 def build_reward_semantics_identity(config: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -39,15 +70,10 @@ def build_reward_semantics_identity(config: Mapping[str, Any]) -> dict[str, Any]
     sigmoid = _mapping(scalarization.get("sigmoid"))
     legacy = _mapping(scalarization.get("legacy"))
     reward_compression = _mapping(scalarization.get("reward_compression"))
-    rulebook_version = str(rulebook.get("version", "v1"))
     identity = {
         "sidecar_version": REWARD_SEMANTICS_VERSION,
         "reward_behavior": behavior,
-        "rulebook": {
-            "implementation_family": str(rulebook.get("implementation_family", rulebook_version)),
-            "specification_id": str(rulebook.get("specification_id", "not-applicable")),
-            "version": rulebook_version,
-        },
+        "rulebook": rulebook_provenance(rulebook),
         "scalarization": {
             "specification_id": str(scalarization.get("specification_id", "not-applicable")),
             "version": str(scalarization.get("version", "not-applicable")),
