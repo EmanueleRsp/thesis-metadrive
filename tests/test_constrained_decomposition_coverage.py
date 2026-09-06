@@ -38,8 +38,7 @@ def shortfall_zone() -> Polygon:
     # Guard the fixture itself: it only exercises the defect if it is routed
     # into constrained triangulation rather than ear clipping.
     assert (
-        len(polygon.exterior.coords) - 1
-        > continuous_sat.CONSTRAINED_DECOMPOSITION_VERTEX_THRESHOLD
+        len(polygon.exterior.coords) - 1 > continuous_sat.CONSTRAINED_DECOMPOSITION_VERTEX_THRESHOLD
     )
     return polygon
 
