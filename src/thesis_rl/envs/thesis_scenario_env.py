@@ -711,6 +711,14 @@ class ThesisScenarioEnv(ScenarioEnv):
             initial_cache=cache,
             mission_route=self._mission_runtime.route,
         )
+        # `done_function` must read the same actor-complete snapshot the Rulebook
+        # reads. `_install_mission_runtime` installs an actor-less snapshotter so
+        # the mission tracker can run without the Rulebook; leaving it in place
+        # here made `contact_onset_records` and `actors` permanently empty in
+        # `done_function`, so `_collision_is_not_at_fault` returned False on every
+        # step and ADR-071's truncation never fired (audit 2026-09-06, A1).
+        self._mission_snapshotter = snapshot_with_mission
+        self._mission_pre_snapshot = initial_snapshot
 
     def make_rulebook_v2_adapter(self) -> Any:
         """Return the adapter prepared by the immediately preceding reset."""
@@ -892,6 +900,10 @@ class ThesisScenarioEnv(ScenarioEnv):
         if runtime is None or not callable(snapshotter) or self._mission_pre_snapshot is None:
             raise RuntimeError("Driving mission runtime is unavailable before done evaluation")
         post_snapshot = snapshotter(self)
+        # The causal pre-state of this transition, captured before the commit
+        # below replaces it. The at-fault classification must read it, exactly
+        # as `evaluate_collision_impact` does (audit 2026-09-06, A6).
+        pre_snapshot = self._mission_pre_snapshot
         episode_length = int(self.episode_lengths[vehicle_id])
         if (
             episode_length <= 0
@@ -974,7 +986,7 @@ class ThesisScenarioEnv(ScenarioEnv):
         # impact buys nothing. This is partial-episode bootstrapping (Pardo,
         # Tavakoli, Levdik & Kormushev, ICML 2018) and it is the
         # termination/truncation distinction this repository already commits to.
-        not_at_fault_only = self._collision_is_not_at_fault(post_snapshot)
+        not_at_fault_only = self._collision_is_not_at_fault(post_snapshot, pre_snapshot)
         done_info["not_at_fault_collision"] = bool(not_at_fault_only)
         if not_at_fault_only:
             for key in (
@@ -1001,15 +1013,27 @@ class ThesisScenarioEnv(ScenarioEnv):
         self._last_done_info = dict(done_info)
         return done, done_info
 
-    def _collision_is_not_at_fault(self, post_snapshot: Any) -> bool:
+    def _collision_is_not_at_fault(self, post_snapshot: Any, pre_snapshot: Any) -> bool:
         """Whether this step's contacts exist and are all not the ego's fault.
 
-        Uses the Rulebook's own classifier, never a second implementation: the
-        reward and the episode contract read the same function, so "charged" and
-        "terminated" cannot drift apart. Returns ``False`` when there is no
-        contact at all, when any contact is at fault, and when the inputs are not
-        resolvable -- the conservative direction in every case, because an
-        undeterminable state must not earn the softer ending.
+        Uses the Rulebook's own classifier, never a second implementation, on the
+        Rulebook's own inputs: the **pre**-transition ego and the **pre**-transition
+        actor records, exactly as `evaluate_collision_impact` reads them. The
+        reward and the episode contract therefore classify the same state, so
+        "charged" and "terminated" cannot drift apart. Reading the post-state
+        actors here (as an earlier revision did) let the two disagree whenever the
+        other agent crossed the stopped threshold or the ego's rear half-plane
+        within the control step.
+
+        An actor that has no pre-state record but is present in the post-state
+        appeared during this control step; R1 charges nothing for it (REQ-EF-13),
+        so it does not make the contact at fault here either. An actor present in
+        neither snapshot is an instrumentation gap and resolves to ``False``.
+
+        Returns ``False`` when there is no contact at all, when any contact is at
+        fault, and when the inputs are not resolvable -- the conservative
+        direction in every case, because an undeterminable state must not earn
+        the softer ending.
         """
 
         from thesis_rl.rulebook.v2.components.collision_fault import (
@@ -1021,17 +1045,20 @@ class ThesisScenarioEnv(ScenarioEnv):
         onsets = getattr(post_snapshot, "contact_onset_records", ())
         if not onsets:
             return False
-        pre_snapshot = self._mission_pre_snapshot
         if pre_snapshot is None:
             return False
-        actors_by_id = {actor.actor_id: actor for actor in post_snapshot.actors}
+        pre_actors_by_id = {actor.actor_id: actor for actor in getattr(pre_snapshot, "actors", ())}
+        post_actor_ids = {actor.actor_id for actor in getattr(post_snapshot, "actors", ())}
         adapter = getattr(self, "rulebook_v2_adapter", None)
         cache = getattr(adapter, "initial_cache", None)
         route_lanes = getattr(cache, "route_lanes", ()) if cache is not None else ()
         within_single_lane = ego_within_single_lane(pre_snapshot.ego.footprint, route_lanes)
         for record in onsets:
-            actor = actors_by_id.get(record.actor_id)
+            actor = pre_actors_by_id.get(record.actor_id)
             if actor is None:
+                if record.actor_id in post_actor_ids:
+                    # Appeared during the step: R1 = 0 by causal attribution.
+                    continue
                 return False
             fault = classify_contact(pre_ego=pre_snapshot.ego, actor=actor)
             if is_at_fault(fault, ego_within_single_lane=within_single_lane):

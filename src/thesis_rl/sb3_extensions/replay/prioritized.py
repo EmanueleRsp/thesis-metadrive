@@ -255,12 +255,35 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         masses = self.rng.uniform(bounds[:-1], bounds[1:])
         flat_indices = self._tree.find_prefix_batch(masses)
         flat_indices %= active_count
+        probabilities = self._tree.tree[flat_indices + self._tree.capacity] / total
+        # A prefix search can land on a zero-priority leaf (a masked data-abort
+        # slot, or float drift in the incrementally maintained sums), and the
+        # active-range wrap above can move an index onto one. Such a leaf has
+        # probability 0, so its importance weight is `inf`, the max-normalisation
+        # turns the batch into `NaN`/0 and the critic parameters become NaN with
+        # no exception. Re-sample those addresses from the positive mass instead
+        # (audit 2026-09-06, A7).
+        invalid = ~(probabilities > 0.0)
+        attempts = 0
+        while np.any(invalid):
+            attempts += 1
+            if attempts > 16:
+                raise ValueError(
+                    "PER sampling repeatedly landed on zero-priority leaves; "
+                    "the sum tree is inconsistent with its leaves."
+                )
+            redraw = self.rng.uniform(0.0, total, size=int(np.count_nonzero(invalid)))
+            redrawn = self._tree.find_prefix_batch(redraw) % active_count
+            flat_indices[invalid] = redrawn
+            probabilities = self._tree.tree[flat_indices + self._tree.capacity] / total
+            invalid = ~(probabilities > 0.0)
         storage_indices = flat_indices // self.n_envs
         env_indices = flat_indices % self.n_envs
-        probabilities = self._tree.tree[flat_indices + self._tree.capacity] / total
         beta = self.current_beta()
         weights = (active_count * probabilities) ** (-beta)
         weights /= max(float(np.max(weights)), 1.0e-12)
+        if not np.all(np.isfinite(weights)):
+            raise ValueError("PER importance-sampling weights must be finite.")
         return storage_indices, env_indices, weights.astype(np.float32)
 
     def current_beta(self) -> float:

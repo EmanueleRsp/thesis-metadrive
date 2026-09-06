@@ -81,6 +81,29 @@ from thesis_rl.runtime.wiring.builders import (
 )
 
 
+def aborted_acl_slots(payloads: Sequence[dict[str, Any]]) -> set[int]:
+    """Slots whose episode ended by a typed abort rather than a real outcome.
+
+    Both typed aborts (scenario data, `RSA-1`; geometry, `GEOM-ABORT`) end the
+    slot's episode without an ``acl_episode_id``: the collector rebuilds their
+    info from scratch. Treating only the data abort as such made the first
+    geometry abort of an ACL run fatal on ``int(payload["episode_id"])``
+    (audit 2026-09-06, A2). A payload with no ``episode_id`` at all is classified
+    the same way, so an abort kind added later cannot reintroduce the crash.
+    """
+
+    aborted: set[int] = set()
+    for payload in payloads:
+        info = dict(payload.get("info", {}))
+        if (
+            bool(info.get("runtime_scenario_data_abort", False))
+            or bool(info.get("runtime_geometry_abort", False))
+            or payload.get("episode_id") is None
+        ):
+            aborted.add(int(payload["worker_id"]))
+    return aborted
+
+
 @dataclass(frozen=True)
 class ScenarioAclDriverPaths:
     artifacts_dir: Path
@@ -742,11 +765,12 @@ def _run_scenario_acl_vectorized_training(
     def vector_episode_end_callback(
         vector_env: Any, done_indices: list[int], payloads: list[dict[str, Any]]
     ) -> dict[int, Any]:
-        aborted_slots = {
-            int(payload["worker_id"])
-            for payload in payloads
-            if bool(dict(payload.get("info", {})).get("runtime_scenario_data_abort", False))
-        }
+        # Both typed aborts (scenario data, `RSA-1`; geometry, `GEOM-ABORT`) end
+        # the slot's episode without an `acl_episode_id`: the collector rebuilds
+        # their info from scratch. Treating only the data abort here made the
+        # first geometry abort of an ACL run fatal on `int(payload["episode_id"])`
+        # (audit 2026-09-06, A2).
+        aborted_slots = aborted_acl_slots(payloads)
         # An aborted scenario must still be replaced in its slot, but cannot
         # produce completion, LP, MAB, or scenario-buffer effects.
         payloads = [
