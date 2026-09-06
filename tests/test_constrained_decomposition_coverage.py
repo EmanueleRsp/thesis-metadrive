@@ -20,6 +20,7 @@ import pytest
 import shapely
 from shapely.geometry import Polygon
 
+from thesis_rl.rulebook.v2.errors import RuntimeGeometryNotEvaluableError
 from thesis_rl.rulebook.v2.geometry import continuous_sat
 from thesis_rl.rulebook.v2.geometry.continuous_sat import (
     AREA_EPSILON_M2,
@@ -86,7 +87,9 @@ def test_relative_allowance_still_rejects_a_material_shortfall(
         lambda polygon: starved,
     )
 
-    with pytest.raises(ValueError, match="does not cover the input polygon") as excinfo:
+    with pytest.raises(
+        RuntimeGeometryNotEvaluableError, match="does not cover the input polygon"
+    ) as excinfo:
         deterministic_convex_decomposition(shortfall_zone)
     message = str(excinfo.value)
     # The magnitude is the diagnosis: a fail-fast message that reports no number
@@ -94,10 +97,18 @@ def test_relative_allowance_still_rejects_a_material_shortfall(
     assert "residual" in message and "allowance" in message
 
 
-def test_decomposition_escaping_the_polygon_is_always_rejected(
+def test_a_triangulation_entirely_outside_the_polygon_is_fatal(
     shortfall_zone: Polygon, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Overshoot has no tolerance at any magnitude, unlike shortfall."""
+    """A triangulation that shares nothing with its input is not a tolerance case.
+
+    It exercises the no-triangles path rather than the overshoot branch: every
+    candidate is rejected by `polygon.covers`, so none is retained. The overshoot
+    branch below it is unreachable by construction for exactly that reason -- the
+    union of covered triangles cannot escape the polygon -- and is kept as a
+    deliberately fatal assertion on a GEOS invariant, not as a recoverable
+    condition.
+    """
 
     outside = shapely.affinity.translate(shortfall_zone, xoff=1000.0, yoff=1000.0)
     monkeypatch.setattr(
@@ -106,5 +117,7 @@ def test_decomposition_escaping_the_polygon_is_always_rejected(
         lambda polygon: shapely.geometrycollections([outside]),
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as excinfo:
         deterministic_convex_decomposition(shortfall_zone)
+    # Fatal, not a geometry abort: nothing here is recoverable.
+    assert not isinstance(excinfo.value, RuntimeGeometryNotEvaluableError)

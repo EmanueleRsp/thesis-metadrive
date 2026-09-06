@@ -36,8 +36,15 @@ from thesis_rl.sb3_extensions.checkpointing import (
     CheckpointGeneration,
     publish_checkpoint_generation,
 )
-from thesis_rl.runtime.execution.deterministic_subproc_vec_env import RuntimeScenarioDataAbort
-from thesis_rl.runtime.data_abort import append_data_abort_record
+from thesis_rl.runtime.execution.deterministic_subproc_vec_env import (
+    RuntimeGeometryAbort,
+    RuntimeScenarioDataAbort,
+)
+from thesis_rl.runtime.data_abort import (
+    GeometryAbortLedger,
+    append_data_abort_record,
+    append_geometry_abort_record,
+)
 from thesis_rl.rulebook.v2.subrule_diagnostics import (
     SubruleEpisodeAccumulator,
     aggregate_subrule_episodes,
@@ -931,6 +938,7 @@ class Agent:
         live_extra_renderables_callback: Callable[[], list[Any]] | None = None,
         slow_step_callback: Callable[[int, Mapping[str, Any]], None] | None = None,
         data_abort_log_path: str | Path | None = None,
+        geometry_abort_log_path: str | Path | None = None,
         run_id: str | None = None,
     ) -> dict[str, Any]:
         """Train with a vectorized env, counting total collected transitions.
@@ -1116,6 +1124,11 @@ class Agent:
             content = "\n".join(event_logs) if event_logs else "No events yet"
             return Panel(content, title="Events", expand=True)
 
+        # `GEOM-ABORT`: the ledger is run-local and outlives the chunk, because
+        # the per-UID repeat count and the rate ceiling are both cumulative.
+        geometry_ledger = self._geometry_abort_ledger()
+        geometry_quarantine_uids: set[str] = set()
+
         for logger_name in monitor_logger_names:
             logger = logging.getLogger(logger_name)
             monitor_logger_restore_state.append((logger, logger.level, logger.propagate))
@@ -1149,6 +1162,7 @@ class Agent:
                     iteration_accounted_seconds += phase_elapsed
                     phase_started = time.perf_counter()
                     data_aborts: dict[int, RuntimeScenarioDataAbort] = {}
+                    geometry_aborts: dict[int, RuntimeGeometryAbort] = {}
                     if hasattr(env, "step_slots"):
                         slot_results = env.step_slots(
                             {index: actions[index] for index in range(n_envs)}
@@ -1156,7 +1170,68 @@ class Agent:
                         normal_results: list[tuple[Any, Any, Any, Any, Any]] = []
                         for index in range(n_envs):
                             result = slot_results[index]
-                            if isinstance(result, RuntimeScenarioDataAbort):
+                            if isinstance(result, RuntimeGeometryAbort):
+                                geometry_aborts[index] = result
+                                final_observation = result.payload.get("final_observation")
+                                if final_observation is None:
+                                    raise RuntimeError(
+                                        "Typed geometry abort omitted its valid final observation."
+                                    )
+                                diagnostics = dict(result.payload.get("diagnostics", {}))
+                                reason_code = str(result.payload.get("reason_code", "UNKNOWN"))
+                                scenario_uid = str(
+                                    diagnostics.get("scenario_uid") or f"slot-{index}"
+                                )
+                                if geometry_ledger.record(scenario_uid, reason_code):
+                                    geometry_quarantine_uids.add(scenario_uid)
+                                logging.getLogger(__name__).error(
+                                    "Geometry abort: reason=%s scenario_uid=%s slot=%s "
+                                    "diagnostics=%s",
+                                    reason_code,
+                                    diagnostics.get("scenario_uid"),
+                                    index,
+                                    diagnostics,
+                                )
+                                if geometry_abort_log_path is not None:
+                                    append_geometry_abort_record(
+                                        geometry_abort_log_path,
+                                        {
+                                            "run_id": run_id,
+                                            "worker_slot": index,
+                                            "scenario_uid": diagnostics.get("scenario_uid"),
+                                            "reason_code": reason_code,
+                                            "environment_step": diagnostics.get(
+                                                "environment_step"
+                                            ),
+                                            "worker_step_index": result.payload.get(
+                                                "worker_step_index"
+                                            ),
+                                            "exception_message": result.payload.get(
+                                                "exception_message"
+                                            ),
+                                            "full_traceback": result.payload.get("traceback"),
+                                            "diagnostics": diagnostics,
+                                            "geometry_wkt": result.payload.get("geometry_wkt"),
+                                        },
+                                    )
+                                normal_results.append(
+                                    (
+                                        final_observation,
+                                        0.0,
+                                        True,
+                                        {
+                                            "runtime_geometry_abort": True,
+                                            "geometry_abort": dict(result.payload),
+                                            "final_observation": final_observation,
+                                            "terminal_observation": final_observation,
+                                            "terminated": False,
+                                            "truncated": True,
+                                            "TimeLimit.truncated": True,
+                                        },
+                                        {},
+                                    )
+                                )
+                            elif isinstance(result, RuntimeScenarioDataAbort):
                                 data_aborts[index] = result
                                 final_observation = result.payload.get("final_observation")
                                 if final_observation is None:
@@ -1315,10 +1390,14 @@ class Agent:
                             info["final_observation"] = self.preprocessor(final_observations[idx])
                             info["terminal_observation"] = info["final_observation"]
                             next_processed_obs[idx] = info["final_observation"]
+                    # `REQ-GA-007`: one boundary for both abort kinds. They differ in
+                    # accounting and quarantine policy, not in how a truncated
+                    # trajectory prefix is preserved.
+                    aborted_indices = set(data_aborts) | set(geometry_aborts)
                     valid_mask = np.asarray(
-                        [index not in data_aborts for index in range(n_envs)], dtype=bool
+                        [index not in aborted_indices for index in range(n_envs)], dtype=bool
                     )
-                    for index, abort in data_aborts.items():
+                    for index in sorted(aborted_indices):
                         if int(episode_len[index]) > 1:
                             lifecycle.close_previous_transition_as_data_abort(
                                 env_index=index,
@@ -1335,16 +1414,27 @@ class Agent:
                         truncated=truncated,
                         valid_mask=valid_mask,
                     )
-                    if data_aborts:
+                    # `REQ-GA-006`: charge the ceiling before any episode that finished
+                    # cleanly in this same iteration can reset the consecutive counter,
+                    # so a burst across several slots at once still registers as one.
+                    geometry_breach = geometry_ledger.ceiling_breach() if geometry_aborts else None
+                    if geometry_breach is not None:
+                        raise RuntimeError(geometry_breach)
+                    if aborted_indices:
                         for abort in data_aborts.values():
                             diagnostics = dict(abort.payload.get("diagnostics", {}))
                             scenario_uid = diagnostics.get("scenario_uid")
                             if scenario_uid is not None and hasattr(env, "env_method"):
                                 call_env_method(env, "quarantine_scenario_uid", str(scenario_uid))
-                        if not bool(getattr(env, "acl_mode", False)):
-                            reset_results = env.reset_slots(
-                                sorted(data_aborts), force=True
+                        # `DEC-GA-002`: only UIDs that have repeated, and only once each.
+                        while geometry_quarantine_uids and hasattr(env, "env_method"):
+                            call_env_method(
+                                env,
+                                "quarantine_scenario_uid",
+                                geometry_quarantine_uids.pop(),
                             )
+                        if not bool(getattr(env, "acl_mode", False)):
+                            reset_results = env.reset_slots(sorted(aborted_indices), force=True)
                             next_obs = np.asarray(next_obs).copy()
                             for index, (reset_observation, _reset_info) in reset_results.items():
                                 next_obs[int(index)] = reset_observation
@@ -2249,6 +2339,13 @@ class Agent:
         observations: dict[int, Any] = {}
         states: dict[int, _ParallelEvaluationEpisode] = {}
         invalid_records: dict[int, dict[str, Any]] = {}
+        # `GEOM-ABORT` `REQ-GA-004`: geometry aborts are counted apart from
+        # data aborts, because a non-zero data-abort rate is expected and a
+        # geometry-abort rate is not. Folding them would let the second hide
+        # inside the first.
+        geometry_invalid_records: dict[int, dict[str, Any]] = {}
+        geometry_ledger = self._geometry_abort_ledger()
+        geometry_ledger.begin_batch()
 
         def _install_episode(slot: int, episode_idx: int) -> None:
             proxy = env.get_slot_proxy(slot)
@@ -2329,6 +2426,60 @@ class Agent:
                 completed_slots: list[int] = []
                 for slot in sorted(active):
                     result = step_results[slot]
+                    if isinstance(result, RuntimeGeometryAbort):
+                        episode_idx = active[slot]
+                        diagnostics = dict(result.payload.get("diagnostics", {}))
+                        scenario_uid = str(diagnostics.get("scenario_uid") or f"slot-{slot}")
+                        reason_code = str(result.payload.get("reason_code", "UNKNOWN"))
+                        newly_quarantined = geometry_ledger.record(scenario_uid, reason_code)
+                        geometry_invalid_records[episode_idx] = {
+                            "episode_idx": episode_idx,
+                            "scenario_uid": diagnostics.get("scenario_uid"),
+                            "reason_code": reason_code,
+                            "diagnostics": diagnostics,
+                        }
+                        # `REQ-GA-005`: loud, and carrying the geometry needed to
+                        # rebuild the failure as a fixture.
+                        logging.getLogger(__name__).error(
+                            "Geometry abort: reason=%s scenario_uid=%s slot=%s diagnostics=%s",
+                            reason_code,
+                            diagnostics.get("scenario_uid"),
+                            slot,
+                            diagnostics,
+                        )
+                        geometry_log_path = getattr(self, "geometry_abort_log_path", None)
+                        if geometry_log_path is not None:
+                            append_geometry_abort_record(
+                                geometry_log_path,
+                                {
+                                    "run_id": getattr(self, "run_id", None),
+                                    "worker_slot": slot,
+                                    "episode_idx": episode_idx,
+                                    "scenario_uid": diagnostics.get("scenario_uid"),
+                                    "reason_code": reason_code,
+                                    "environment_step": diagnostics.get("environment_step"),
+                                    "exception_message": result.payload.get("exception_message"),
+                                    "full_traceback": result.payload.get("traceback"),
+                                    "diagnostics": diagnostics,
+                                    "geometry_wkt": result.payload.get("geometry_wkt"),
+                                },
+                            )
+                        # `DEC-GA-002`: repeats on one UID, not one occurrence.
+                        if newly_quarantined and hasattr(env, "env_method"):
+                            call_env_method(env, "quarantine_scenario_uid", scenario_uid)
+                        # `REQ-GA-006`: the ceiling is what keeps this from being
+                        # silent absorption with extra steps.
+                        breach = geometry_ledger.ceiling_breach()
+                        if breach is not None:
+                            raise RuntimeError(breach)
+                        completed_slots.append(slot)
+                        del active[slot]
+                        del states[slot]
+                        observations.pop(slot, None)
+                        if next_episode < n_eval_episodes:
+                            _install_episode(slot, next_episode)
+                            next_episode += 1
+                        continue
                     if isinstance(result, RuntimeScenarioDataAbort):
                         episode_idx = active[slot]
                         diagnostics = dict(result.payload.get("diagnostics", {}))
@@ -2420,7 +2571,7 @@ class Agent:
         unaccounted = [
             idx
             for idx, record in enumerate(records)
-            if record is None and idx not in invalid_records
+            if record is None and idx not in invalid_records and idx not in geometry_invalid_records
         ]
         if unaccounted:
             raise RuntimeError("Parallel evaluation ended without one result per episode.")
@@ -2431,11 +2582,35 @@ class Agent:
         )
         metrics["data_abort_coverage"] = {
             "attempted": int(n_eval_episodes),
-            "valid": int(n_eval_episodes - len(invalid_records)),
+            "valid": int(n_eval_episodes - len(invalid_records) - len(geometry_invalid_records)),
             "invalid": len(invalid_records),
             "invalid_episodes": [invalid_records[idx] for idx in sorted(invalid_records)],
         }
+        metrics["geometry_abort_coverage"] = {
+            "attempted": int(n_eval_episodes),
+            "invalid": len(geometry_invalid_records),
+            "invalid_episodes": [
+                geometry_invalid_records[idx] for idx in sorted(geometry_invalid_records)
+            ],
+            "reason_counts": dict(geometry_ledger.reason_counts),
+            "quarantined_scenario_uids": sorted(geometry_ledger.quarantined_uids),
+        }
         return metrics
+
+    def _geometry_abort_ledger(self) -> GeometryAbortLedger:
+        """Return the run-local geometry-abort ledger, creating it on first use.
+
+        It must outlive a single evaluation batch: the per-UID repeat count that
+        gates quarantine (`DEC-GA-002`) and the run-rate ceiling
+        (`DEC-GA-001`) are both cumulative over the run, while only the
+        consecutive-failure count is per batch.
+        """
+
+        ledger = getattr(self, "_geometry_ledger", None)
+        if ledger is None:
+            ledger = GeometryAbortLedger()
+            self._geometry_ledger = ledger
+        return ledger
 
     def _aggregate_parallel_evaluation(
         self,

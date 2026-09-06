@@ -21,7 +21,10 @@ from thesis_rl.contracts.causal_scene_context import CausalSceneContext
 from thesis_rl.reward.scalarization import RulebookScalarizer, ScalarizationResult
 from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.memory import apply_cache_delta
-from thesis_rl.rulebook.v2.errors import RuntimeScenarioNotEvaluableError
+from thesis_rl.rulebook.v2.errors import (
+    RuntimeGeometryNotEvaluableError,
+    RuntimeScenarioNotEvaluableError,
+)
 from thesis_rl.rulebook.v2.transition import control_line_diagnostics
 from thesis_rl.rulebook.v2.types import (
     MACRO_RULE_ORDER,
@@ -274,6 +277,19 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
                 memory=self._memory,
                 cache=self._cache,
             )
+        except RuntimeGeometryNotEvaluableError as exc:
+            # `GEOM-ABORT`. Identical bootstrap to the data abort below: the
+            # simulator advanced and its observation is valid, only the rulebook
+            # geometry failed. Carried separately so the parent charges it
+            # against the geometry ceiling rather than the data-abort rate.
+            exc.diagnostics.update(
+                {
+                    "scenario_uid": getattr(post_snapshot, "scenario_id", None),
+                    "environment_step": getattr(post_snapshot, "step_index", None),
+                }
+            )
+            exc.final_observation = observation
+            raise
         except RuntimeScenarioNotEvaluableError as exc:
             # The simulator has advanced and its observation is valid, but the
             # Rulebook reward is not. Keep this data exclusively for the
