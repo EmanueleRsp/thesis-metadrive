@@ -22,7 +22,10 @@
 - Related ADRs: ADR-079 (this plan's decisions; supersedes ADR-017), ADR-016
   (ACL resume restart policy, unchanged), ADR-024 (quarantine as resume state,
   unchanged).
-- Related open items: `C12` (this defect), `V2` (parked 2026-09-01, now
+- Related open items: `C13` (this defect; numbered `C12` while the branch was
+  open, renumbered after the merge because `C12` had meanwhile been taken on
+  `main` by the intra-chunk progress and fail-fast defect, whose identifier is
+  referenced from source code), `V2` (parked 2026-09-01, now
   resolved by `DEC-RES-003`), `D4`, `F5`.
 - Branch: `worktree-resume-after-abrupt-interruption`.
 
@@ -258,7 +261,7 @@ assertion in `test_final_scalar_pipeline_defaults_compose` → `periodic_and_fin
 - [x] **M3 — periodic paired replay snapshot.** Spec amendment v1.1, ADR-079,
   `replay/config.py`, both loops, profiles, `allow_replay_reset`, cleanup after
   `final`.
-- [x] **M4 — reconciliation.** `open_items` `C12`/`V2`, `project_index.md`,
+- [x] **M4 — reconciliation.** `open_items` `C13`/`V2`, `project_index.md`,
   `validation_commands.md` §8, ADR-017 marked superseded.
 
 ## 11. Progress And Findings Log
