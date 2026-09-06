@@ -126,6 +126,7 @@ All statements below are `VERIFIED` on 2026-09-01 unless labeled otherwise.
 | `DEC-AB-006` | Implementation detail | Which encoder? | `lq_v3` (ENC-V1.3 production, 16 latents, depth 4) / `lq_v3_lite` (`architecture_version: diagnostic-only`) | `lq_v3` | A screening that licenses a freeze must not be able to fail for lack of encoder capacity, which is indistinguishable from an unlearnable reward. Measured: micro (4, 1) 7.71 fps against lite (8, 2) 6.68 fps on `medium`, so the simulator dominates and the production encoder costs roughly 15 %, not a multiple | **Corrected 2026-09-01**; the first draft inherited `lq_v3_lite` from the `Makefile` `ENCODER` default |
 | `DEC-AB-004` | Blocking technical issue | Authorization to consume GPU time for four runs | Launch now / wait for the GPU to free / stage sequentially | Two at a time, **paired by seed** | GPU 0 is shared with other tenants and was at ~12 GB free with `learner_update` measured as the largest component of the loop, so four concurrent runs time-slice one contended device for no aggregate gain and risk OOM. Pairing by seed also makes the first complete (A, B) comparison available at ~17-20 h | **Resolved 2026-09-05**: the seed-0 pair is authorized; the seed-1 pair is a separate decision the user has not taken |
 | `DEC-AB-005` | Specification clarification | What exactly does a passing screening license freezing? | Rulebook + scalarization jointly / scalarization only / nothing without the `thesis` budget | Freeze both on a passing screening; the `thesis`-budget confirmation arrives as a by-product of the core runs that follow | Determines whether `D1`'s `τ₄` and the algorithm-selection phase can start | **Approved** (user, 2026-09-01). See §7.5 |
+| `DEC-AB-007` | Specification clarification | What is arm A, given `open_items` `C11`? | Fix the native reward for arm A (`on_lane_line_penalty: 0`) / terminate arm A on line or boundary contact / relaunch arm A unchanged as a **descriptive baseline** | Relaunch unchanged, relabelled | Arm A is not a control: under the thesis episode contract MetaDrive's native reward drives the learner to a standstill, so the §7.3 reading "A also flat => learner problem" and `H2` as a comparability test are unavailable. Relabelled, A becomes the reference "MetaDrive native reward under the thesis episode contract": a motivating result for the rule-based reward, not a comparator. `H1` and `H3` are unaffected (they read arm B alone). Arm B's reward is **not** revisited on this evidence: it is the frozen contract under test. | **Approved** (user, 2026-09-06) |
 
 `DEC-AB-004` is resolved for the seed-0 pair. **No open gate remains for `M3` at
 seed 0**; launching the seed-1 pair requires a separate user decision.
@@ -656,6 +657,19 @@ baseline (`brake`, `random`) evaluated through the panels with the run CSV
 schemas, so the relaunched pair is read against its floors. Making arm A a valid
 control is a user decision that changes observable behaviour and is **open**;
 no relaunch is made until it is taken (user instruction of 2026-09-06).
+
+**2026-09-06, later. `DEC-AB-007` taken: arm A is relaunched unchanged as a
+descriptive baseline.** Chosen over fixing the native reward or the
+termination for one arm because it keeps the single-factor design intact, costs
+nothing, and turns arm A's failure into what it is: evidence that a standard
+reward inherited without revalidation under a different episode contract does
+not train. Reading rules for the relaunched pair: `H1` and `H3` on arm B as
+pre-registered; `H2` is reported as a descriptive comparison against the arm-A
+baseline and against the constant-action floors of `C11`, not as a
+comparability test; arm A's own trajectory is reported but licenses nothing.
+The relaunch uses `main` at or after `b730742` (C9, GEOM-ABORT, ADR-078
+included), both arms on ADR-078 as `AC-AB-002` requires, arm B first while the
+GPU is contended, arm A as soon as memory allows.
 
 ## 12. Deviations
 
