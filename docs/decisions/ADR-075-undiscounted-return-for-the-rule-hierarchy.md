@@ -1,6 +1,6 @@
 # ADR-075: `γ = 1` for every arm, because discounting erodes the rule hierarchy
 
-> **Amended by ADR-079 (2026-09-07, DRAFT pending user confirmation):
+> **Amended by ADR-079 (2026-09-07, approved):
 > `γ = 0.996`.** The erosion argument is upheld; two things are corrected. The
 > break-even table below is computed one level too far apart (a future collision
 > `a³` against a present **L3** violation `a¹`, ratio `a²`), and the binding

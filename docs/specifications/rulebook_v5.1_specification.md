@@ -401,7 +401,7 @@ is the standard separation between a training signal and a score.
 
 ### 4.4 The discount, resolved: `γ = 1` (ADR-075)
 
-> **Amended by ADR-079 (2026-09-07, DRAFT pending user confirmation): `γ = 0.996`.**
+> **Amended by ADR-079 (2026-09-07, approved): `γ = 0.996`.**
 > Two corrections to what follows, neither of which changes its *reasoning*.
 > First, the break-even table below compares a future collision (`a³`) against a
 > present **L3** violation (`a¹`), a ratio of `a²`. The binding comparison is one
@@ -745,7 +745,7 @@ the exact opposite of this document's purpose. `λ₄` and `η` are fixed togeth
 
 ### 5.5 Selected weights
 
-> **Amended by ADR-079 (2026-09-07, DRAFT pending user confirmation):
+> **Amended by ADR-079 (2026-09-07, approved):
 > `a = 2.5`, `σ = 0.30`.** `λ₄ = 2.0`, `η = 1.0`, `λ₆ = 0.2` and `φ = 0.25` are
 > unchanged, so the measured calibration below stands. Two things this section
 > states that turned out to be load-bearing in the other direction. `σ = 0` is

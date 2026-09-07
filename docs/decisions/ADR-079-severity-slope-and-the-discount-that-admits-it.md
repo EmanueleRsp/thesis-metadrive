@@ -1,10 +1,20 @@
 # ADR-079: a severity slope inside the violated set, and the discount that admits it
 
-- Status: **DRAFT — awaiting the calibration measurement and user approval**
+- Status: **Approved**
 - Date: 2026-09-07
-- Approval evidence: _pending_. User asked on 2026-09-07 for `σ` to be explained
-  and derived rather than asserted ("basta poi emendare e giustificare in modo
-  dettagliato come ci siamo arrivati a quel valore (se c'è un calcolo dietro…)").
+- Approval evidence: explicit user approval on 2026-09-07, after the derivation
+  and the calibration table below were reported: "confermo a=2.5 e γ=0.996, sì
+  non credo sia necessario tutto un execplan, basta annotare bene con
+  motivazioni ed eventuali analisi a supporto le decisioni". The same exchange
+  had delegated `σ` conditionally — "se dici che il valore che mi indichi ora è
+  valido va bene, basta poi emendare e giustificare in modo dettagliato come ci
+  siamo arrivati a quel valore (se c'è un calcolo dietro…)" — and this document
+  is that justification.
+- **No ExecPlan, by explicit approval.** AGENTS.md step 3 would bind for a
+  specification-contract change; the user waived it for this one on the grounds
+  that the decision, its motivation and its supporting measurement are recorded
+  here. `docs/project_index.md` therefore gains no row, per the same clause that
+  makes it the register of ExecPlans rather than of decisions.
 - Affected specifications: `docs/specifications/rulebook_v5.1_specification.md`
   §4.4 (the discount), §5.4 and §5.5 (the weights).
 - Affected configuration: `conf/scalarization/default.yaml`
@@ -265,13 +275,11 @@ more of the expert panel now scores below standing still. Both are the price of
 a reward whose gradient points the right way inside a violation, and neither was
 measurable before this grid existed.
 
-**Not yet confirmed by the user.** The `σ` value was delegated on 2026-09-07
-conditional on a derivation ("se dici che il valore che mi indichi ora è valido
-va bene, basta poi… giustificare in modo dettagliato come ci siamo arrivati");
-raising `a` is inseparable from it but was not itself put to the user, and
-`γ = 0.996` differs from the 0.995 discussed in that exchange because the
-horizon is 199 steps, not the 91 assumed there. Status stays DRAFT until that is
-confirmed.
+**Confirmed by the user on 2026-09-07**, including the two things that went
+beyond the original delegation: raising `a`, which is inseparable from `σ` but
+was not itself put to the user beforehand, and `γ = 0.996` rather than the 0.995
+discussed earlier in that exchange — the horizon is 199 steps (§4.6), not the 91
+assumed there.
 
 ## Consequences
 
