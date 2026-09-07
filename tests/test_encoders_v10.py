@@ -50,6 +50,10 @@ def test_lq_v10_has_122_schema_driven_tokens_and_masks_payload() -> None:
     assert tokens.shape == (2, 122, 64)
     assert mask.shape == (2, 122)
     assert mask[:, 5].all() and mask[:, 104].all() and mask[:, 121].all()
+    # Structural, not data-dependent: those three positions are literal
+    # `torch.ones` blocks. The tokenizer's runtime assertion of this was a
+    # device-to-host synchronisation guarding a branch that cannot be taken.
+    assert mask.any(dim=1).all()
     assert torch.count_nonzero(tokens[~mask]).item() == 0
 
 
