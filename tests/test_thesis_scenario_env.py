@@ -361,7 +361,9 @@ def test_causal_builder_is_built_from_persisted_route_metadata() -> None:
     assert builder.route_navigation.waypoint_adapter.route.length_m == 100.0
 
 
-def test_causal_builder_is_installed_only_on_observations_that_request_it() -> None:
+def _causal_builder_env() -> tuple[SimpleNamespace, SimpleNamespace]:
+    """A minimal env for the causal-observation installer, plus its observation."""
+
     observation = SimpleNamespace(builder=None)
     observation.set_frame_builder = lambda builder: setattr(observation, "builder", builder)
     env = SimpleNamespace(
@@ -390,16 +392,48 @@ def test_causal_builder_is_installed_only_on_observations_that_request_it() -> N
     env._build_causal_frame_builder = (
         thesis_env_module.ThesisScenarioEnv._build_causal_frame_builder.__get__(env)
     )
-    # OBS-LIDAR-V2.0.2: the frame builder now needs the route lanes for the
-    # posted-limit feature, so the installer resolves them from the live Rulebook
-    # cache or, as here, from the static adapter result.
     env._build_static_adapter_result = (
         thesis_env_module.ThesisScenarioEnv._build_static_adapter_result
     )
+    # `_install_mission_runtime` always runs first in `_get_reset_return` and
+    # leaves the raw static adapter result here.
+    env._mission_static_result = thesis_env_module.ThesisScenarioEnv._build_static_adapter_result(
+        env.engine.data_manager.current_scenario, env.current_scenario_record
+    )
+    return env, observation
+
+
+def test_causal_builder_is_installed_only_on_observations_that_request_it() -> None:
+    env, observation = _causal_builder_env()
 
     thesis_env_module.ThesisScenarioEnv._install_causal_observation_builder(env)
 
     assert observation.builder is not None
+
+
+def test_causal_builder_reuses_the_mission_static_adapter_result() -> None:
+    """The installer must not rebuild what the mission runtime already built.
+
+    `_install_mission_runtime` builds the static adapter result from the same
+    scenario and record and keeps it, so the second construction here was 61 ms
+    per reset thrown away: the live Rulebook cache is installed before this
+    builder and wins both `route_lanes` choices, so the value was never even
+    read on the production path.
+    """
+
+    env, observation = _causal_builder_env()
+    builds: list[object] = []
+
+    def counting_build(scenario: object, record: object) -> object:
+        builds.append(record)
+        return thesis_env_module.ThesisScenarioEnv._build_static_adapter_result(scenario, record)
+
+    env._build_static_adapter_result = counting_build
+
+    thesis_env_module.ThesisScenarioEnv._install_causal_observation_builder(env)
+
+    assert observation.builder is not None
+    assert builds == []
 
 
 def test_thesis_reward_suppresses_native_short_route_bonus(

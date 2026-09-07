@@ -446,6 +446,19 @@ class ThesisScenarioEnv(ScenarioEnv):
         scenario = getattr(data_manager, "current_scenario", None)
         if not isinstance(scenario, Mapping):
             raise RuntimeError("Causal observation requires the loaded scenario mapping")
+        # `_get_reset_return` installs the mission runtime before this builder,
+        # and that installer already built the static adapter result from the
+        # same scenario and record and kept it. Rebuilding it here cost 61 ms per
+        # reset on a 234-feature Waymo record and was thrown away every time: the
+        # live Rulebook cache is installed by then and wins both `route_lanes`
+        # choices below. `_mission_static_result` is the raw result, not the
+        # elevation-aligned cache, which is exactly what those fallbacks want.
+        static_result = self._mission_static_result
+        if static_result is None:
+            raise RuntimeError(
+                "Causal observation requires the mission runtime's static adapter result; "
+                "`_install_mission_runtime` must run before `_install_causal_observation_builder`"
+            )
         if frame_setters:
             # OBS-LIDAR-V2.0.2 needs the route lanes for the posted-limit feature,
             # resolved the same way the semantic path below resolves them: the
@@ -457,7 +470,7 @@ class ThesisScenarioEnv(ScenarioEnv):
             frame_route_lanes = (
                 episode_cache.route_lanes
                 if episode_cache is not None
-                else self._build_static_adapter_result(scenario, record).route_lanes
+                else static_result.route_lanes
             )
             builder = self._build_causal_frame_builder(self.config, frame_route_lanes)
             for setter in frame_setters:
@@ -470,7 +483,6 @@ class ThesisScenarioEnv(ScenarioEnv):
             )
             from thesis_rl.envs.observations.semantic_state_v3 import SemanticStateObservationV3
 
-            static_result = self._build_static_adapter_result(scenario, record)
             # The mission's canonical route is the sole ego route-station authority
             # shared with R4/completion, per DRIVING-MISSION-V1.1 §3/§5; it never
             # independently reprojects the ego. Lane geometry lookups (route_lanes)
