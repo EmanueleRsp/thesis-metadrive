@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 from thesis_rl.curriculum.config import ScenarioAclConfig
 from thesis_rl.curriculum.scenario_acl.arms import SCENARIO_ARM_NAMES
@@ -46,7 +46,7 @@ def _write_resume_artifacts(run_dir: Path, state: dict[str, object]) -> None:
     )
 
 
-def _resume_cfg(run_dir: Path):
+def _resume_cfg(run_dir: Path) -> DictConfig:
     return OmegaConf.create({"checkpoint": {"resume": {"enabled": True, "run_dir": str(run_dir)}}})
 
 
@@ -67,7 +67,7 @@ def test_resume_state_round_trips_every_field_the_loader_reads(tmp_path: Path) -
         chunk_id=5,
         eval_id=3,
         episode_id=41,
-        buffer=ScenarioBuffer(capacity=250),
+        buffer_size=len(ScenarioBuffer(capacity=250)),
         bandit=bandit,
         visit_state=ScenarioCatalogVisitState(SCENARIO_ARM_NAMES),
         rng=written_rng,

@@ -62,6 +62,37 @@ def test_overriding_a_hard_coded_setting_fails_instead_of_being_ignored(
         _configure(**{key: override})
 
 
+def test_a_fractional_override_of_an_integer_setting_is_refused() -> None:
+    """`int(5.4)` equals a frozen 5, so an int comparison would accept it.
+
+    The guard exists to refuse silent acceptance, so the one comparison that can
+    silently accept is the one it must not use.
+    """
+
+    with pytest.raises(ValueError, match="history_length"):
+        _configure(history_length=5.4)
+    with pytest.raises(ValueError, match="lidar_beams"):
+        _configure(lidar_beams=240.9)
+
+
+@pytest.mark.parametrize(
+    "key", ["future_ground_truth", "other_agent_navigation", "future_disambiguation"]
+)
+def test_an_absent_causality_declaration_is_refused(key: str) -> None:
+    """Presence, not merely agreement: an omitted declaration is not compliance.
+
+    Nothing reads these keys, so a configuration that drops one would run with
+    the contract silently unstated -- `C8`'s failure, where a missing field is
+    taken for the expected value instead of being reported as absent.
+    """
+
+    config = _shipped_config()
+    del config[key]
+
+    with pytest.raises(ValueError, match=key):
+        _configure_agent_observation({}, config)
+
+
 def test_the_signal_camera_geometry_stays_overridable() -> None:
     """ADR-045's three keys are connected, so the guard must not cover them."""
 

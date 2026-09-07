@@ -88,20 +88,36 @@ _FROZEN_SEMANTIC_V3_SETTINGS: tuple[tuple[str, Any], ...] = (
     ("future_disambiguation", "forbidden"),
 )
 
+# The three causality declarations must be *present*, not merely undivergent: a
+# configuration that omits one would otherwise read as compliant, which is the
+# `C8` failure -- an undeclared field silently taken for the expected value.
+_REQUIRED_SEMANTIC_V3_DECLARATIONS: tuple[str, ...] = (
+    "future_ground_truth",
+    "other_agent_navigation",
+    "future_disambiguation",
+)
+
 
 def _reject_divergent_semantic_v3_settings(observation_cfg: dict[str, Any]) -> None:
     """Refuse any frozen semantic v3 observation setting the configuration changes."""
 
     for key, frozen in _FROZEN_SEMANTIC_V3_SETTINGS:
         if key not in observation_cfg:
+            if key in _REQUIRED_SEMANTIC_V3_DECLARATIONS:
+                raise ValueError(
+                    f"The semantic v3 observation configuration must declare {key}={frozen!r}. "
+                    "`OBS-V1.2`'s causality declarations are not defaulted: an absent one would "
+                    "read as compliant while permitting exactly what it forbids."
+                )
             continue
         value = observation_cfg[key]
         if isinstance(frozen, str):
             matches = str(value).strip().lower() == frozen
-        elif isinstance(frozen, float):
-            matches = float(value) == frozen
         else:
-            matches = int(value) == frozen
+            # `float`, not `int`, even for an integer-valued setting: `int(5.4)`
+            # equals a frozen 5, so a fractional override would slip through the
+            # guard whose whole purpose is to refuse silent acceptance.
+            matches = float(value) == float(frozen)
         if not matches:
             raise ValueError(
                 f"The semantic v3 observation hard-codes {key}={frozen!r}; configuration "

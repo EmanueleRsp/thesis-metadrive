@@ -507,7 +507,7 @@ def _scenario_acl_resume_state(
     chunk_id: int,
     eval_id: int,
     episode_id: int,
-    buffer: ScenarioBuffer,
+    buffer_size: int,
     bandit: ScenarioArmBandit,
     visit_state: ScenarioCatalogVisitState,
     rng: np.random.Generator,
@@ -521,6 +521,10 @@ def _scenario_acl_resume_state(
     an empty window without complaint. A resumed teacher then normalizes the
     first episode against nothing, which `_normalize_learning_potential` scores
     as a maximum by construction.
+
+    `buffer_size` is the one field here the loader does *not* read — the buffer
+    is restored from `scenario_buffer.json` — and is produced because the
+    artifact has always carried it.
     """
 
     return {
@@ -528,7 +532,7 @@ def _scenario_acl_resume_state(
         "chunk_id": int(chunk_id),
         "eval_id": int(eval_id),
         "episode_id": int(episode_id),
-        "buffer_size": len(buffer),
+        "buffer_size": int(buffer_size),
         "recent_usefulness": [float(value) for value in recent_usefulness],
         "mab": bandit.state_dict(),
         "coverage": visit_state.coverage_summary(),
@@ -1312,7 +1316,7 @@ def _run_scenario_acl_vectorized_training(
                         chunk_id=current_chunk_id,
                         eval_id=current_eval_id,
                         episode_id=vector_state.next_episode_id,
-                        buffer=buffer,
+                        buffer_size=len(buffer),
                         bandit=bandit,
                         visit_state=visit_state,
                         rng=rng,
@@ -2424,7 +2428,7 @@ def run_scenario_acl_training(
                             chunk_id=current_chunk_id,
                             eval_id=current_eval_id,
                             episode_id=current_episode_id,
-                            buffer=buffer,
+                            buffer_size=len(buffer),
                             bandit=bandit,
                             visit_state=visit_state,
                             rng=rng,
