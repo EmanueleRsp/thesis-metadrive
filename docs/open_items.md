@@ -20,7 +20,8 @@ closed on 2026-08-20 and **reopened the same day**: the value chosen presumed an
 and the mechanism is not chosen yet.
 
 **Checks executed for `C30`–`C37`** (2026-09-07, branch `worktree-audit-block-a-fixes`): full suite
-**1789 passed, 5 skipped, exit 0** in 27m44s — the 5 skips are the non-v3 observation configs of
+**1789 passed, 5 skipped, exit 0** in 27m52s — re-run **after** `C37`'s revert, so it covers the
+tree as it stands and not an earlier one; the 5 skips are the non-v3 observation configs of
 `C35`'s parametrized causality check, which is their intended behaviour. Ruff lint and format clean
 on every touched file, focused scope. Production-path smoke **exit 0** on the GPU
 (`obs=semantic_v3 agent/planner/encoder=lq_v3 reward=scalar_reward env.vectorized.enabled=true
