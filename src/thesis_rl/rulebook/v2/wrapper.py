@@ -129,8 +129,16 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         self._pre_snapshot: EnvSnapshot | None = None
         self._causal_scene_context: CausalSceneContext | None = None
         self._control_line_diagnostics: dict[str, int] | None = None
-        # RULEBOOK-V5.1 §7 (`REQ-RB51-19`). Episode counters, reported and never
-        # in the reward.
+        self._reset_episode_counters()
+
+    def _reset_episode_counters(self) -> None:
+        """RULEBOOK-V5.1 §7 (`REQ-RB51-19`) counters: reported, never in the reward.
+
+        Called from both `__init__` and `reset` so a counter added to one of them
+        cannot silently survive an episode boundary: one wrapper instance serves
+        every episode of its slot.
+        """
+
         self._l4_clip_binding_steps = 0
         self._l5_reached_steps = 0
         self._ego_speed_sum_mps = 0.0
@@ -254,6 +262,7 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
             self._mission_route = adapter.mission_route
         self._memory = self._initial_memory
         self._cache = self._initial_cache
+        self._reset_episode_counters()
         self._control_line_diagnostics = (
             control_line_diagnostics(self._cache) if self._cache is not None else None
         )
