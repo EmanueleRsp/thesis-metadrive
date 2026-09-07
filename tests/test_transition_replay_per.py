@@ -124,44 +124,47 @@ def test_per_insertion_priority_tracks_exact_maximum_across_updates_and_overwrit
     assert buffer._insertion_priority() == pytest.approx(float(np.max(buffer.raw_priorities)))
 
 
-def test_per_insertion_priority_never_falls_below_the_specified_floor() -> None:
-    """`REQ-013`: the priming priority is `max(1, p_max_current)`, not `p_max_current`.
+def test_per_priming_is_scale_equivariant_and_tracks_the_live_maximum() -> None:
+    """No floor above the current maximum: priming follows the priority scale.
 
-    `AC-016` repeats it and traces it to Schaul et al.'s maximum insertion
-    priority, whose whole point -- REQ-013's own rationale -- is that a new
-    transition can be sampled *before* a TD error has been computed for it. Raw
-    priorities are `|TD error| + epsilon`, so a run whose residuals sit below 1
-    has a buffer maximum below 1, and priming at that maximum puts unseen
-    transitions level with seen ones instead of above them.
+    Replaces a floor test removed by user decision on 2026-09-07. Raw priorities
+    are absolute `|TD error| + epsilon` in reward units, and the sampler is
+    otherwise exactly equivariant to a rescaling of them, so a constant floor
+    would be its only reward-scale-dependent term — and this project recalibrates
+    the reward. Asserted here on the observable instead of on the constant: the
+    priming value rescales with the priorities, and the empty-buffer stand-in of
+    1.0 is used only while nothing is priced.
     """
 
-    buffer = PrioritizedNStepReplayBuffer(
-        buffer_size=4,
-        observation_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
-        action_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
-        device="cpu",
-        n_envs=2,
-        n_steps=1,
-        gamma=0.99,
-        beta_anneal_steps=10,
-    )
-    observation = np.zeros((2, 1), dtype=np.float32)
-    action = np.zeros((2, 1), dtype=np.float32)
-    reward = np.zeros(2, dtype=np.float32)
-    done = np.zeros(2, dtype=bool)
-    infos = [{}, {}]
+    def priced_buffer(scale: float) -> PrioritizedNStepReplayBuffer:
+        buffer = PrioritizedNStepReplayBuffer(
+            buffer_size=4,
+            observation_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+            action_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+            device="cpu",
+            n_envs=2,
+            n_steps=1,
+            gamma=0.99,
+            beta_anneal_steps=10,
+        )
+        observation = np.zeros((2, 1), dtype=np.float32)
+        action = np.zeros((2, 1), dtype=np.float32)
+        # Nothing is priced yet, so the empty-buffer stand-in applies.
+        assert buffer._insertion_priority() == pytest.approx(1.0)
+        buffer.add(observation, observation, action, np.zeros(2), np.zeros(2, dtype=bool), [{}, {}])
+        buffer.update_priorities(
+            np.array([0, 1]), np.array([0.4 * scale, 0.9 * scale], dtype=np.float64)
+        )
+        return buffer
 
-    buffer.add(observation, observation, action, reward, done, infos)
-    buffer.add(observation, observation, action, reward, done, infos)
-    # Every row now holds a TD-error magnitude below the floor, which is the
-    # ordinary case for a critic loss under 1.
-    buffer.update_priorities(np.array([0, 1, 2, 3]), np.array([0.4, 0.4, 0.4, 0.4]))
+    small = priced_buffer(1.0)
+    large = priced_buffer(100.0)
 
-    assert float(np.max(buffer.raw_priorities)) < 1.0
-    assert buffer._insertion_priority() == pytest.approx(1.0)
-
-    buffer.add(observation, observation, action, reward, done, infos)
-    assert np.all(buffer.raw_priorities[0] == pytest.approx(1.0))
+    # The priming value is the live maximum at either scale, not a constant, and
+    # it moves by exactly the rescaling factor.
+    assert small._insertion_priority() == pytest.approx(0.9 + 1.0e-6)
+    assert large._insertion_priority() == pytest.approx(90.0 + 1.0e-6)
+    assert small._insertion_priority() < 1.0
 
 
 def test_per_masked_overwrite_releases_the_maximum_it_evicts() -> None:

@@ -116,9 +116,11 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         # the other slots' chronology; an invalid leaf is never addressable,
         # sampled, prioritized, or interpreted as a replay transition.
         self.valid_transitions = np.zeros((self.buffer_size, self.n_envs), dtype=bool)
-        # The specification assigns an unseen transition the exact current raw
-        # maximum (or 1.0 for an empty buffer).  Tracking its multiplicity avoids
-        # scanning the entire allocation at every vector insertion.
+        # An unseen transition is primed at the exact current raw maximum (or 1.0
+        # for an empty buffer); see `_insertion_priority` for why there is no
+        # floor above it. Tracking the multiplicity avoids scanning the entire
+        # allocation at every vector insertion; `_recompute_current_max` is the
+        # fallback for the one case the counter cannot resolve incrementally.
         self._current_max_raw_priority = 1.0
         self._current_max_count = 0
         self._tree = _SumTree(self.buffer_size * self.n_envs)
@@ -217,19 +219,28 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         self._recompute_current_max()
 
     def _insertion_priority(self) -> float:
-        """`REQ-013`: `p_new = max(1, p_max_current)`, with 1.0 the initial maximum.
+        """The exact current maximum, with 1.0 standing in for an empty buffer.
 
-        The floor is the requirement, not a guard against an empty buffer. Raw
-        priorities are `|TD error| + epsilon`, so any run whose residuals sit
-        below 1 has a buffer maximum below 1, and priming at that maximum would
-        put an unseen transition level with the seen ones rather than above them
-        — losing exactly what `REQ-013`'s rationale asks for, that a transition
-        be samplable before a TD error has been computed for it.
+        Deliberately **not** `max(1.0, current)`. Raw priorities are absolute
+        `|TD error| + epsilon` in reward units, and the sampler is otherwise
+        exactly equivariant to a rescaling of them: leaves hold `p ** alpha`,
+        each address's probability is its leaf over the total, and the
+        importance weights are max-normalised within the batch, so multiplying
+        every priority by a constant changes no address and no weight. A
+        constant floor would be the one reward-scale-dependent term in it, and
+        `conf/scalarization/default.yaml` is a file this project recalibrates.
+
+        A floor also buys nothing it is supposed to buy. The share of draws
+        reaching rows that have never been priced is pinned by arrivals over
+        draws — `n_envs / (gradient_steps * batch_size)` — whatever value they
+        are primed at, so the priming level sets only the latency to a first
+        sample, and that latency is orders of magnitude inside a row's
+        residence. Where a floor does bind it destroys the machinery it sits
+        in: `_current_max_raw_priority` collapses onto the injected constant
+        and stops measuring the critic.
         """
 
-        if self._current_max_count <= 0:
-            return 1.0
-        return max(1.0, self._current_max_raw_priority)
+        return self._current_max_raw_priority if self._current_max_count > 0 else 1.0
 
     def add(self, *args: Any, valid_mask: np.ndarray | None = None, **kwargs: Any) -> None:
         storage_index = int(self.pos)
