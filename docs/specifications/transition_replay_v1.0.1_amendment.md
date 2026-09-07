@@ -5,19 +5,23 @@
 - Feature: `transition_replay_new_transition_priority`
 - Specification ID: `TRANSITION-REPLAY-V1.0.1`
 - Version: `1.0.1`
-- Status: `UNDER_REVIEW`
+- Status: `APPROVED`
 - Date: `2026-09-07`
 - Amends: `docs/specifications/transition_replay_v1_specification.md`, `REQ-013`
   and its acceptance criterion `AC-016` only. `REQ-014`'s proportional
   stratified sampling, the importance-weight contract, the *n*-step target
   construction, the persistence contract and every other requirement are
   unchanged.
-- Approval evidence: the substance was chosen by the user on 2026-09-07 —
-  "remove the floor and amend the specification" — after a five-angle
-  investigation refuted the reasoning that had been used to add it. **This
-  document itself has not yet been stamped `APPROVED`**, and per `AGENTS.md` an
-  `UNDER_REVIEW` specification is not an authoritative implementation contract.
-- Authoritative: `NO` until approved.
+- Approval evidence: explicit user approval on 2026-09-07, recorded by
+  `docs/decisions/ADR-080-the-priming-priority-carries-no-constant.md`. The
+  substance was chosen first — "remove the floor and amend the specification",
+  after a five-angle investigation refuted the reasoning that had been used to
+  add it — and this document was then approved on the question "dici così è
+  meglio? In caso approva l'emendamento", answered yes on the mechanism grounds
+  in §2 rather than on any repository document's authority.
+- Authoritative: `YES` for `REQ-013` and `AC-016` as restated in §4; not
+  authoritative for anything else in `TRANSITION-REPLAY`.
+- Related ADR: `docs/decisions/ADR-080-the-priming-priority-carries-no-constant.md`
 
 ## 1. What is wrong with `REQ-013`
 
