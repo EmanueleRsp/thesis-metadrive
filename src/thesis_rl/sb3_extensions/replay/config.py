@@ -60,6 +60,91 @@ def _mapping(value: Any) -> Mapping[str, Any]:
     return value
 
 
+# The five `per:` keys the planners actually forward to the buffer constructor.
+# `td3_sb3.py` and `sac_sb3.py` select exactly these by a hard-coded whitelist
+# and drop everything else in the block without a word.
+_LIVE_PER_SETTINGS: frozenset[str] = frozenset(
+    {"alpha", "beta_initial", "beta_final", "beta_anneal_steps", "epsilon"}
+)
+
+# The other five. Each one *accurately describes* what the implementation
+# hard-codes, and that is exactly the problem: they read as configuration while
+# being documentation, so an override parses, is logged, reaches the checkpoint's
+# configuration record, and changes nothing — an ablation driven from them would
+# report "no effect" for a knob that was never connected. `C24` (six encoder
+# settings) and `C35` (seventeen observation settings) were the same defect, and
+# this is their remedy: refuse a divergent value rather than delete the
+# declaration, so the block keeps describing the mechanism accurately.
+_FROZEN_PER_SETTINGS: tuple[tuple[str, str], ...] = (
+    # The SB3 fork's `td3.py`/`sac.py`: 0.5 * the sum of the twin critics' |TD|.
+    ("priority_aggregation", "mean_abs_twin_td"),
+    # `PrioritizedNStepReplayBuffer._insertion_priority`, per ADR-080 and
+    # `TRANSITION-REPLAY-V1.0.1`: the buffer's exact current maximum.
+    ("new_transition_priority", "current_max"),
+    # `update_priorities` reduces repeated indices with `np.maximum.at`.
+    ("duplicate_update_reduction", "max"),
+    # `_sample_addresses` draws one address per `np.linspace` stratum.
+    ("sampling", "proportional_stratified"),
+    # `_SumTree.__init__` allocates its nodes as `np.float64`.
+    ("tree_dtype", "float64"),
+)
+
+_KNOWN_PER_KEYS: frozenset[str] = _LIVE_PER_SETTINGS | {key for key, _ in _FROZEN_PER_SETTINGS}
+
+_KNOWN_REPLAY_KEYS: frozenset[str] = frozenset(
+    {
+        "enabled",
+        "n_steps",
+        "prioritized",
+        "optimize_memory_usage",
+        "store_reward_vector",
+        "persistence",
+        "per",
+        "replay_buffer_class",
+    }
+)
+
+_KNOWN_PERSISTENCE_KEYS: frozenset[str] = frozenset(
+    {"enabled", "trigger", "periodic_frequency_steps", "keep_last"}
+)
+
+
+def _reject_unknown_keys(section: Mapping[str, Any], *, known: frozenset[str], path: str) -> None:
+    """Refuse a key this resolver does not read, so a typo cannot pass silently.
+
+    Every value in these sections is read with a defaulting `.get`, which means a
+    misspelled key is indistinguishable from an absent one: `keep_last` mistyped
+    silently restores the default the explicit value was there to override, and a
+    mistyped `periodic_frequency_steps` silently disables the guard that refuses
+    it. Naming the unknown key is the whole fix.
+    """
+
+    unknown = sorted(str(key) for key in section if str(key) not in known)
+    if unknown:
+        raise ValueError(
+            f"Unknown {path} key(s) {unknown}: this resolver reads only "
+            f"{sorted(known)}. Nothing consumes an unrecognised key, so it would be "
+            "logged and recorded in the checkpoint configuration while changing "
+            "nothing. Correct the spelling, or extend the contract deliberately."
+        )
+
+
+def _reject_divergent_per_settings(per: Mapping[str, Any]) -> None:
+    """Refuse a frozen `per:` setting the configuration tries to change."""
+
+    for key, frozen in _FROZEN_PER_SETTINGS:
+        if key not in per:
+            continue
+        value = per[key]
+        if str(value).strip().lower() != frozen:
+            raise ValueError(
+                f"The prioritized replay implementation hard-codes {key}={frozen!r}; "
+                f"configuration requested {value!r}. Nothing reads this key, so the "
+                "override cannot take effect: change the implementation, or drop the "
+                "override."
+            )
+
+
 def resolve_transition_replay_config(
     raw_config: Any,
     *,
@@ -96,6 +181,12 @@ def resolve_transition_replay_config(
 
     persistence = _mapping(raw.get("persistence"))
     per = _mapping(raw.get("per"))
+    _reject_unknown_keys(raw, known=_KNOWN_REPLAY_KEYS, path="transition_replay")
+    _reject_unknown_keys(
+        persistence, known=_KNOWN_PERSISTENCE_KEYS, path="transition_replay.persistence"
+    )
+    _reject_unknown_keys(per, known=_KNOWN_PER_KEYS, path="transition_replay.per")
+    _reject_divergent_per_settings(per)
     persistence_enabled = bool(persistence.get("enabled", False))
     if legacy_save_replay_buffer:
         raise ValueError(
