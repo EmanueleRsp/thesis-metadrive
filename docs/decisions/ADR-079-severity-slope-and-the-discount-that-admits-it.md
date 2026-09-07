@@ -234,8 +234,10 @@ could answer this. A third grid, `v51_calibration_grid`, was added to
 `scripts/measure_expert_rulebook_transition.py` and prices `(a, σ, λ₄)` jointly
 **under the six-level reward**, refusing non-rank-preserving members exactly as
 the other two do. Run on the identical scope §5.5 used — 1100 Waymo `train`
-records, 217 189 transitions, 0 skipped — into
-`outputs/rb51_calibration_a_sigma_l4.json`.
+records, 217 189 transitions, 0 skipped. The output is kept in the repository at
+`docs/audits/reward_calibration_2026-09-07/`, whose README carries the exact
+command and how to read the columns; `outputs/` is a scratch filesystem and an
+approved decision should not depend on one.
 
 The instrument is validated by its own baseline: the shipped point reproduces
 §5.5's row exactly (mean **70.70**, p1 **−61.81**, below standstill **3.36 %**).
