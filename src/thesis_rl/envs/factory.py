@@ -88,27 +88,19 @@ _FROZEN_SEMANTIC_V3_SETTINGS: tuple[tuple[str, Any], ...] = (
     ("future_disambiguation", "forbidden"),
 )
 
-# The three causality declarations must be *present*, not merely undivergent: a
-# configuration that omits one would otherwise read as compliant, which is the
-# `C8` failure -- an undeclared field silently taken for the expected value.
-_REQUIRED_SEMANTIC_V3_DECLARATIONS: tuple[str, ...] = (
-    "future_ground_truth",
-    "other_agent_navigation",
-    "future_disambiguation",
-)
-
 
 def _reject_divergent_semantic_v3_settings(observation_cfg: dict[str, Any]) -> None:
     """Refuse any frozen semantic v3 observation setting the configuration changes."""
 
     for key, frozen in _FROZEN_SEMANTIC_V3_SETTINGS:
+        # An absent key is not this function's business: callers legitimately
+        # pass a partial observation config, and requiring the full contract
+        # here would narrow a precondition every caller already satisfies in
+        # production. That a *shipped* config declares all of them -- the three
+        # `OBS-V1.2` causality declarations in particular, where an omission
+        # would read as compliant -- is pinned across `conf/obs/*.yaml` by
+        # `tests/test_audit_block_b_semantic_v3_frozen_settings.py`.
         if key not in observation_cfg:
-            if key in _REQUIRED_SEMANTIC_V3_DECLARATIONS:
-                raise ValueError(
-                    f"The semantic v3 observation configuration must declare {key}={frozen!r}. "
-                    "`OBS-V1.2`'s causality declarations are not defaulted: an absent one would "
-                    "read as compliant while permitting exactly what it forbids."
-                )
             continue
         value = observation_cfg[key]
         if isinstance(frozen, str):

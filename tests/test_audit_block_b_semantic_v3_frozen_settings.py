@@ -75,22 +75,33 @@ def test_a_fractional_override_of_an_integer_setting_is_refused() -> None:
         _configure(lidar_beams=240.9)
 
 
-@pytest.mark.parametrize(
-    "key", ["future_ground_truth", "other_agent_navigation", "future_disambiguation"]
-)
-def test_an_absent_causality_declaration_is_refused(key: str) -> None:
-    """Presence, not merely agreement: an omitted declaration is not compliance.
+@pytest.mark.parametrize("config_path", sorted((_SHIPPED_CONFIG_PATH.parent).glob("*.yaml")))
+def test_every_v3_observation_config_declares_the_causality_contract(config_path: Path) -> None:
+    """Presence, not merely agreement — but checked over the files, not at runtime.
 
-    Nothing reads these keys, so a configuration that drops one would run with
-    the contract silently unstated -- `C8`'s failure, where a missing field is
-    taken for the expected value instead of being reported as absent.
+    Nothing reads these three keys, so a config that drops one would run with the
+    contract silently unstated: `C8`'s failure, where a missing field is taken
+    for the expected value instead of being reported as absent. The guard itself
+    is the wrong place to demand them — callers legitimately pass a partial
+    observation config, and `tests/test_semantic_state_v3.py` does exactly that
+    — so the risk that actually exists, a shipped or newly added `conf/obs`
+    file omitting a declaration, is pinned here instead, across every v3 config
+    rather than only the one a given run selects.
     """
 
-    config = _shipped_config()
-    del config[key]
+    loaded = OmegaConf.load(config_path)
+    config = OmegaConf.to_container(loaded, resolve=True)
+    if not isinstance(config, dict) or str(config.get("type", "")).strip().lower() not in {
+        "semantic_v3",
+        "semanticstateobservationv3",
+    }:
+        pytest.skip(f"{config_path.name} does not select the semantic v3 observation")
 
-    with pytest.raises(ValueError, match=key):
-        _configure_agent_observation({}, config)
+    for key in ("future_ground_truth", "other_agent_navigation", "future_disambiguation"):
+        assert config.get(key) == "forbidden", (
+            f"{config_path.name} must declare {key}=forbidden; nothing reads it, "
+            "so an omission would read as compliant"
+        )
 
 
 def test_the_signal_camera_geometry_stays_overridable() -> None:
