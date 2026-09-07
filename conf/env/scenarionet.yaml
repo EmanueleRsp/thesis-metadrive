@@ -59,6 +59,13 @@ episode_control:
   # the traffic lights, so any tail step runs in an empty, signal-frozen world.
   # The key is retained so a non-zero tail stays expressible; only the frozen
   # value changed.
+  #
+  # The tail is counted from the end of the logged data, i.e. from
+  # `scenario_length - 1`. Until C21 it was counted from `scenario_length`, so
+  # this zero still spent one step in that empty world -- and, because a
+  # horizon-truncated episode bootstraps from its final observation, that step
+  # was the critic's target for most episodes. See
+  # `envs/thesis_scenario_env.py::scenario_time_limit_reached`.
   extra_steps_after_scenario: 0
 
 provider:

@@ -28,13 +28,18 @@ class _MissionDoneSnapshot:
 @pytest.mark.parametrize(
     ("steps", "length", "extra", "expected"),
     [
-        (9, 10, 0, False),
-        (10, 10, 0, True),
-        (59, 10, 50, False),
-        (60, 10, 50, True),
+        # The last step carrying logged data is `length - 1`: upstream despawns
+        # every replayed actor at `episode_step >= length`, so stopping at
+        # `length` truncated on an emptied world and bootstrapped from it.
+        (8, 10, 0, False),
+        (9, 10, 0, True),
+        # The tail is measured from the end of the data, so `extra` steps really
+        # do run past it rather than `extra + 1`.
+        (58, 10, 50, False),
+        (59, 10, 50, True),
     ],
 )
-def test_scenario_time_limit_supports_zero_and_tail(
+def test_scenario_time_limit_stops_on_the_last_logged_step(
     steps: int, length: int, extra: int, expected: bool
 ) -> None:
     assert (
@@ -45,6 +50,39 @@ def test_scenario_time_limit_supports_zero_and_tail(
         )
         is expected
     )
+
+
+def test_truncation_happens_before_upstream_despawns_the_traffic() -> None:
+    """The bootstrap state of a truncated episode must still contain actors.
+
+    ``ScenarioTrafficManager.after_step`` despawns every replayed participant on
+    the first step with ``episode_step >= current_scenario_length``
+    (`third_party/metadrive/metadrive/manager/scenario_traffic_manager.py:111`),
+    and it runs before ``BaseEnv._get_step_return`` builds the observation. A
+    horizon placed at ``scenario_length`` therefore handed the critic an
+    empty-world state to bootstrap from on the majority of episodes.
+
+    The ordering is pinned rather than the constant: any horizon that truncates
+    no earlier than the despawning step reintroduces the defect, whatever
+    arithmetic produces it.
+    """
+
+    for scenario_length in (2, 10, 91, 199):
+        despawn_step = scenario_length
+        truncating_steps = [
+            step
+            for step in range(1, scenario_length + 1)
+            if scenario_time_limit_reached(
+                episode_steps=step,
+                scenario_length=scenario_length,
+                extra_steps_after_scenario=0,
+            )
+        ]
+        assert truncating_steps, f"the horizon must be reachable for L={scenario_length}"
+        assert min(truncating_steps) < despawn_step, (
+            f"L={scenario_length}: truncation at step {min(truncating_steps)} bootstraps "
+            f"from the emptied world despawned at step {despawn_step}"
+        )
 
 
 def test_scene_context_separates_line_from_physical_boundary() -> None:

@@ -873,7 +873,16 @@ def _run_scenario_acl_vectorized_training(
                     normalized_usefulness=normalized,
                     selection_probability=float(completion.selection.selection_probability),
                 )
-                bandit.update_reward_scale(arm_index, float(metrics.get("reward", 0.0)))
+                episode_length = metrics.get("episode_length")
+                if episode_length is None:
+                    raise ValueError(
+                        "ACL completion metrics must carry `episode_length`: the reward-scale "
+                        "EMA is a per-step magnitude (C26) and cannot be formed from an "
+                        "episode return alone."
+                    )
+                bandit.update_reward_scale(
+                    arm_index, float(metrics.get("reward", 0.0)), int(episode_length)
+                )
             scenario_uid = completion.selection.scenario_uid
             if scenario_uid is None:
                 raise ValueError("ACL completion is missing scenario identity.")
@@ -1981,7 +1990,9 @@ def run_scenario_acl_training(
                             selection_probability=float(spec.arm_probabilities[spec.arm_index]),
                         )
                         bandit.update_reward_scale(
-                            spec.arm_index, float(episode_metrics.get("reward", 0.0))
+                            spec.arm_index,
+                            float(episode_metrics.get("reward", 0.0)),
+                            int(episode_metrics["episode_length"]),
                         )
                     selection["usefulness"] = episode_usefulness
                     selection["usefulness_norm"] = normalized_episode_usefulness
@@ -2466,7 +2477,9 @@ def run_scenario_acl_training(
                 adapter=adapter,
                 ema_alpha=ema_alpha_cfg,
             )
-            evaluator.load_adapter(checkpoint_path=f"{paths.final_checkpoint_stem}.zip", strict=True)
+            evaluator.load_adapter(
+                checkpoint_path=f"{paths.final_checkpoint_stem}.zip", strict=True
+            )
             return evaluator
 
         final_eval_id, final_panel_metrics = run_scenarionet_final_panels(

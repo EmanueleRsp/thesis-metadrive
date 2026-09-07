@@ -16,13 +16,35 @@ from thesis_rl.envs.scene_context import SceneContextAdapter
 def scenario_time_limit_reached(
     *, episode_steps: int, scenario_length: int, extra_steps_after_scenario: int
 ) -> bool:
-    """Return whether the exported scenario horizon (plus the configured tail) is met."""
+    """Return whether the exported scenario horizon (plus the configured tail) is met.
+
+    The last step carrying logged data is ``scenario_length - 1``, not
+    ``scenario_length``. Both counters are 1-based at this point in the step:
+    ``BaseEngine.before_step`` increments ``episode_step`` and
+    ``BaseEnv._get_step_return`` increments ``episode_lengths`` before
+    ``done_function`` runs, and ``ScenarioTrafficManager.after_step`` -- which
+    runs between them -- despawns **every** replayed participant as soon as
+    ``episode_step >= current_scenario_length``.
+
+    Stopping at ``scenario_length`` therefore truncated on the one step whose
+    observation is built from an emptied, signal-frozen world. That observation
+    is the bootstrap state of the truncated transition, so the critic's target
+    for the majority of episodes rested on a state that occurs nowhere else in
+    the training distribution and is systematically the easiest one in it: no
+    actor can violate L1 or L2, and the road ahead is clear. `n`-step replay
+    spreads it over the last `n` transitions rather than one.
+
+    ``extra_steps_after_scenario`` keeps its meaning -- steps taken *after* the
+    logged data ends, in that emptied world -- and now actually delivers it: at
+    the frozen value 0 the episode no longer takes such a step at all, which is
+    what `conf/env/scenarionet.yaml` already documented it as doing.
+    """
 
     if episode_steps < 0 or scenario_length <= 0 or extra_steps_after_scenario < 0:
         raise ValueError(
             "episode_steps >= 0, scenario_length > 0 and extra_steps >= 0 are required"
         )
-    return episode_steps >= scenario_length + extra_steps_after_scenario
+    return episode_steps >= scenario_length - 1 + extra_steps_after_scenario
 
 
 try:  # keep importing the package possible in lightweight tooling environments

@@ -80,6 +80,22 @@ def build_reward_semantics_identity(config: Mapping[str, Any]) -> dict[str, Any]
             "mode": str(scalarization.get("mode", "not-applicable")),
             "vector_schema_id": scalarization.get("vector_schema_id"),
             "priority_base": scalarization.get("priority_base"),
+            # C29. The six-level weights enter the reward formula exactly as
+            # `priority_base` does, and until ADR-079 every one of them was
+            # frozen, so leaving them out of the identity cost nothing. `sigma`
+            # is now a live parameter: without these fields a checkpoint trained
+            # at `sigma = 0` would resume against `sigma = 0.30` without a
+            # complaint, and the run would carry two different rewards in one
+            # set of curves. Absent keys stay `None` rather than defaulting, so
+            # a configuration that does not declare them is recorded as not
+            # having declared them -- the `C8` rule.
+            "severity": scalarization.get("severity"),
+            "flat_tie_breaker": scalarization.get("flat_tie_breaker"),
+            "progress_weight": scalarization.get("progress_weight"),
+            "relaxable_weight": scalarization.get("relaxable_weight"),
+            "progress_rate_weight": scalarization.get("progress_rate_weight"),
+            "step_dt_s": scalarization.get("step_dt_s"),
+            "reference_time_s": scalarization.get("reference_time_s"),
             "sigmoid_sharpness": scalarization.get("sigmoid_sharpness", sigmoid.get("sharpness")),
             "numerical_tolerance": scalarization.get("numerical_tolerance"),
             "native_environment_reward_weight": scalarization.get(

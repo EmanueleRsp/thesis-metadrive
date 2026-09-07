@@ -88,40 +88,74 @@ def test_reward_scale_estimator_initializes_uniformly_and_updates_with_ema() -> 
     assert bandit.reward_scale_estimate(0) == pytest.approx(1.0)
     assert bandit.normalize_learning_potential_by_reward_scale(0, 5.0) == pytest.approx(5.0)
 
-    bandit.update_reward_scale(0, episode_reward=9.0)
+    bandit.update_reward_scale(0, episode_reward=9.0, episode_steps=1)
     # (1 - 0.5) * 1.0 + 0.5 * 9.0 = 5.0
     assert bandit.reward_scale_estimate(0) == pytest.approx(5.0)
     assert bandit.reward_scale_estimate(1) == pytest.approx(1.0)
     assert bandit.normalize_learning_potential_by_reward_scale(0, 5.0) == pytest.approx(1.0)
 
-    bandit.update_reward_scale(0, episode_reward=-9.0)
+    bandit.update_reward_scale(0, episode_reward=-9.0, episode_steps=1)
     # Negative rewards contribute their magnitude: (1-0.5)*5.0 + 0.5*9.0 = 7.0
     assert bandit.reward_scale_estimate(0) == pytest.approx(7.0)
 
 
 def test_reward_scale_estimate_is_clamped_away_from_zero() -> None:
     bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=2, alpha=1.0))
-    bandit.update_reward_scale(0, episode_reward=0.0)
+    bandit.update_reward_scale(0, episode_reward=0.0, episode_steps=1)
     assert bandit.reward_scale_estimate(0) == pytest.approx(1e-3)
     assert bandit.normalize_learning_potential_by_reward_scale(0, 2.0) == pytest.approx(2000.0)
 
 
 def test_reward_scale_state_round_trips_through_checkpoint() -> None:
     bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=3, alpha=0.5))
-    bandit.update_reward_scale(1, episode_reward=12.0)
+    bandit.update_reward_scale(1, episode_reward=12.0, episode_steps=1)
     restored = ScenarioArmBandit.from_state_dict(bandit.config, bandit.state_dict())
     assert np.allclose(restored.reward_scale, bandit.reward_scale)
-    assert restored.state_dict()["schema"] == "acl_ema_v3"
+    assert restored.state_dict()["schema"] == "acl_ema_v4"
 
 
-@pytest.mark.parametrize("legacy_schema", ["acl_ema_v1", "acl_ema_v2"])
+def test_reward_scale_is_a_per_step_magnitude_not_an_episode_return() -> None:
+    """C26: the value it normalizes is a per-step one, so this must be too.
+
+    ``compute_td3_learning_potential`` returns the *mean* positive-part TD
+    residual over an episode's transitions. Dividing that by an accumulated
+    return left the normalized learning potential with units of 1/steps, so two
+    arms with identical per-step learning signal scored differently purely
+    because one arm's episodes ended sooner -- and the arms whose episodes end
+    sooner are the hard ones, which is the direction that looks like a result.
+    """
+
+    long_episode = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=1, alpha=1.0))
+    short_episode = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=1, alpha=1.0))
+
+    # Same per-step reward magnitude, episode lengths differing by 10x.
+    long_episode.update_reward_scale(0, episode_reward=200.0, episode_steps=200)
+    short_episode.update_reward_scale(0, episode_reward=20.0, episode_steps=20)
+
+    assert long_episode.reward_scale_estimate(0) == pytest.approx(1.0)
+    assert short_episode.reward_scale_estimate(0) == pytest.approx(1.0)
+    assert long_episode.normalize_learning_potential_by_reward_scale(0, 3.0) == pytest.approx(
+        short_episode.normalize_learning_potential_by_reward_scale(0, 3.0)
+    )
+
+
+def test_reward_scale_rejects_a_non_positive_step_count() -> None:
+    bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=1, alpha=0.5))
+    with pytest.raises(ValueError, match="positive"):
+        bandit.update_reward_scale(0, episode_reward=5.0, episode_steps=0)
+
+
+@pytest.mark.parametrize("legacy_schema", ["acl_ema_v1", "acl_ema_v2", "acl_ema_v3"])
 def test_legacy_checkpoint_schemas_are_rejected(legacy_schema: str) -> None:
     """`TEST-CAT-008` / ACL v1.3 REQ-005, `AC-005`.
 
     `acl_ema_v1` predates the per-arm reward-scale estimator (`DEC-006`);
     `acl_ema_v2` predates the Generate/catalog decoupling (ADR-032,
     `DEC-008`/`DEC-009`), which changed the selection semantics its scores were
-    estimated under. Neither may be silently reinterpreted as `acl_ema_v3`.
+    estimated under; `acl_ema_v3` stored `reward_scale` as an episode-return
+    magnitude rather than the per-step one C26 introduced, and its field names
+    are identical -- so it is the schema that has to stop it loading, because
+    nothing in the payload would.
     """
 
     bandit = ScenarioArmBandit(ScenarioAclMabConfig(num_arms=6))
@@ -132,7 +166,7 @@ def test_legacy_checkpoint_schemas_are_rejected(legacy_schema: str) -> None:
         "reward_scale": bandit.reward_scale.tolist(),
         "update_count": 0,
     }
-    with pytest.raises(ValueError, match="acl_ema_v3"):
+    with pytest.raises(ValueError, match="acl_ema_v4"):
         ScenarioArmBandit.from_state_dict(bandit.config, legacy_state)
 
 
