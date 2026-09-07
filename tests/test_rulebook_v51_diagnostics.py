@@ -143,6 +143,24 @@ def test_counters_accumulate_across_steps_and_speed_is_published() -> None:
     assert info["mean_ego_speed_mps"] == pytest.approx(_EGO_SPEED_MPS)
 
 
+def test_control_line_diagnostics_are_published_at_reset_not_on_every_step() -> None:
+    """Static per scenario, so it belongs in the reset info and nowhere else.
+
+    The evaluation loop's `metadata_keys` reads this key from **both** the reset
+    info and the last step info, and only the second used to fire: the wrapper
+    returned the inner reset info unmodified, so the route the exec plan
+    intended ("same mechanism as `scenario_uid`") was dead and a payload that
+    cannot change was pickled through the worker pipe on every step instead.
+    """
+
+    wrapped = _wrapper((0.0, 0.0, 0.0, 0.2, 0.0, 0.0))
+    _, reset_info = wrapped.reset()
+    _, _, _, _, step_info = wrapped.step(0)
+
+    assert isinstance(reset_info["rulebook_control_line_diagnostics"], dict)
+    assert "rulebook_control_line_diagnostics" not in step_info
+
+
 def test_reset_clears_the_episode_counters() -> None:
     """The counters are per-episode, and one wrapper serves every episode of a slot.
 

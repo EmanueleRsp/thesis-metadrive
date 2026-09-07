@@ -268,7 +268,15 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         )
         self._pre_snapshot = self._snapshotter(self.env)
         self._publish_causal_context(self._pre_snapshot)
-        return observation, info
+        # Published here rather than on every step: the diagnostics are static
+        # per scenario, computed once above, and the evaluation loop's
+        # `metadata_keys` already reads them from the reset info -- the route the
+        # exec plan intended ("same mechanism as `scenario_uid`") and which never
+        # fired, because this method used to return the inner info unmodified.
+        info_dict = dict(info) if isinstance(info, Mapping) else {}
+        if self._control_line_diagnostics is not None:
+            info_dict["rulebook_control_line_diagnostics"] = dict(self._control_line_diagnostics)
+        return observation, info_dict
 
     def step(self, action: Any):
         if self._pre_snapshot is None:
@@ -351,8 +359,6 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         info_dict["rule_components"] = {
             name: component.to_dict() for name, component in result.components.items()
         }
-        if self._control_line_diagnostics is not None:
-            info_dict["rulebook_control_line_diagnostics"] = dict(self._control_line_diagnostics)
         info_dict["rulebook"] = result.to_dict()
         # EP-COMFORT-DIAG `DEC-CMF-005`: export the ego kinematics of the
         # authoritative post-transition snapshot -- the very state the rulebook
