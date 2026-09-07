@@ -1,6 +1,19 @@
 # ADR-075: `γ = 1` for every arm, because discounting erodes the rule hierarchy
 
-- Status: **Approved**
+> **Amended by ADR-079 (2026-09-07, DRAFT pending user confirmation):
+> `γ = 0.996`.** The erosion argument is upheld; two things are corrected. The
+> break-even table below is computed one level too far apart (a future collision
+> `a³` against a present **L3** violation `a¹`, ratio `a²`), and the binding
+> comparison is L1 against L2 with ratio `a`, so every figure here is 2× too
+> generous — 0.99 breaks at 78 steps, not 157. And the undiscounted case carries
+> a cost this document does not weigh: roughly two thirds of episodes end in a
+> bootstrapped truncation rather than a true terminal, so at `γ = 1` the value
+> level is pinned only by the terminating minority and approximation bias walks
+> it, which is the mechanism behind the observed critic-loss growth. The
+> declared 0.999 fallback would have restored the contraction on paper while
+> damping 18 % of that drift over a 199-step episode, against 55 % at 0.996.
+
+- Status: **Approved, amended by ADR-079**
 - Date: 2026-08-20
 - Approval evidence: explicit user approval on 2026-08-20 ("approvo entrambe,
   procedi con ADR-075 e ADR-076"), after the three measurements below and the

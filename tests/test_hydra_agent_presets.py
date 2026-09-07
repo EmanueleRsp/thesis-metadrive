@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from hydra import compose, initialize_config_dir
+from omegaconf import OmegaConf
 
 
 CONF_DIR = Path(__file__).resolve().parents[1] / "conf"
@@ -227,34 +229,45 @@ def test_smoke_train_preset_composes() -> None:
     assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
 
 
-def test_every_algorithm_is_undiscounted() -> None:
-    """`AC-RB5.1-16` / ADR-075. One discount, equal to 1, for every arm.
+def test_every_algorithm_shares_one_hierarchy_preserving_discount() -> None:
+    """`AC-RB5.1-16` / ADR-079, amending ADR-075.
 
-    Discounting erodes the rulebook's geometric priority weights at different
-    rates: at `gamma = 0.99` a collision more than 15.7 s away costs less than
-    one non-relaxable violation now, which is inside a 20 s episode. Episodes
-    terminate at the logged horizon, so the undiscounted return is finite.
+    Two properties, and the second is pinned as a *derivation* rather than as a
+    literal, so that changing `priority_base` without revisiting `gamma` fails
+    here instead of silently inverting the hierarchy mid-episode.
 
-    The assertion is over *every* algorithm config rather than the ones in use,
-    because differing discounts across arms would make a difference in results
-    non-attributable to the preference structure under test -- which is the
-    comparison this thesis exists to make. The declared fallback of ADR-075 is
-    0.999 for all arms together; taking it means changing every file here, which
-    is exactly the visibility the fallback was declared for.
+    1. **One discount for every arm.** Differing discounts across arms would make
+       a difference in results non-attributable to the preference structure under
+       test, which is the comparison this thesis exists to make.
+
+    2. **The discount must not invert the hierarchy inside an episode.** A future
+       violation at level `k` still outranks a present one at `k+1` while
+       `Delta < ln(a) / -ln(gamma)`. The binding case is one level apart -- L1
+       against L2, and identically L2 against L3 -- not the two-level case
+       ADR-075 tabulated, whose figures are 2x too generous. The horizon is
+       measured, not assumed: RULEBOOK-V5.1 §4.6 reports p5/p50/p95 =
+       197/199/200 steps.
+
+    `gamma = 1` satisfied (2) trivially and failed something ADR-075 did not
+    weigh: with two thirds of episodes ending in a bootstrapped truncation there
+    is no contraction and the value level is pinned only by the terminating
+    minority. See ADR-079.
     """
+
+    horizon_steps = 199
+    priority_base = float(OmegaConf.load(CONF_DIR / "scalarization" / "default.yaml").priority_base)
 
     algorithm_dir = CONF_DIR / "agent" / "planner" / "algorithm"
     configs = sorted(algorithm_dir.glob("*.yaml"))
     assert configs, "no algorithm configs found; the guard would pass vacuously"
 
+    observed: set[str] = set()
     for config in configs:
         text = config.read_text(encoding="utf-8")
         gammas = [
-            line.split(":", 1)[1].strip()
-            for line in text.splitlines()
-            if line.startswith("gamma:")
+            line.split(":", 1)[1].strip() for line in text.splitlines() if line.startswith("gamma:")
         ]
-        assert gammas == ["1.0"] or not gammas, f"{config.name} is discounted: {gammas}"
+        observed.update(gammas)
 
         # Ng et al.: potential-based shaping is policy-invariant only when its
         # discount is the MDP's, so this one tracks `gamma` rather than being
@@ -264,4 +277,18 @@ def test_every_algorithm_is_undiscounted() -> None:
             for line in text.splitlines()
             if line.startswith("learning_potential_gamma:")
         ]
-        assert shaping in ([], ["1.0"]), f"{config.name} shaping discount: {shaping}"
+        assert shaping in ([], gammas), f"{config.name} shaping discount: {shaping} vs {gammas}"
+
+    assert len(observed) == 1, f"arms do not share one discount: {sorted(observed)}"
+    gamma = float(observed.pop())
+    assert 0.0 < gamma <= 1.0, f"gamma must lie in (0, 1], got {gamma}"
+
+    if gamma == 1.0:  # pragma: no cover - the undiscounted case needs no bound
+        return
+    break_even_steps = math.log(priority_base) / -math.log(gamma)
+    assert break_even_steps > horizon_steps, (
+        f"gamma={gamma} inverts the hierarchy after {break_even_steps:.0f} steps, inside the "
+        f"{horizon_steps}-step episode: a violation one level down becomes preferable to a "
+        f"higher-level one further away. Raise gamma above "
+        f"{math.exp(-math.log(priority_base) / horizon_steps):.5f} or raise priority_base."
+    )

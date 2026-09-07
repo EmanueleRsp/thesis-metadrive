@@ -23,6 +23,15 @@ SCALARIZATION_MODES = (
     "six_level_priority_weighted_rank",
 )
 REWARD_COMPRESSION_MODES = ("none", "symlog")
+# ADR-079: `a = 2.5`, raised from RULEBOOK-V5.1 §5.5's 2.2. §5.4 caps `sigma` at
+# 0.1227 when `a = 2.2`, and no admissible `sigma` at that base makes the
+# reward's local gradient point the right way in a conflict a real vehicle could
+# still brake out of. §5.5's 2.2 was the first round value above §5.4's lower
+# bound of 2.12, not an optimum, and that document sets no upper bound.
+#
+# Public, and read by the tests instead of being restated there: a required
+# value written down twice is a required value that can drift.
+SIX_LEVEL_PRIORITY_BASE = 2.5
 # SCAL-V1.1 REQ-SCAL11-003: each mode requires its own frozen priority_base;
 # legacy/centered-sigmoid/satisfaction-rank keep SCAL-V1.0's 2.01, while the
 # priority-weighted-rank mode requires the re-derived bound a'=3 (SCAL-V1.1 §7.6).
@@ -31,8 +40,7 @@ _REQUIRED_PRIORITY_BASE_BY_MODE = {
     "bounded_centered_sigmoid": 2.01,
     "bounded_satisfaction_rank": 2.01,
     "bounded_priority_weighted_rank": 3.0,
-    # RULEBOOK-V5.1 §5.5: `a = 2.2`, re-derived for the six-level tail.
-    "six_level_priority_weighted_rank": 2.2,
+    "six_level_priority_weighted_rank": SIX_LEVEL_PRIORITY_BASE,
 }
 
 # The four legacy modes consume v4.7's four-margin vector; only the new mode
@@ -70,10 +78,11 @@ class ScalarizationConfig:
     legacy_rule_scales: tuple[float, ...] | None = None
     native_environment_reward_weight: float = 0.0
     reward_compression_mode: str = "none"
-    # RULEBOOK-V5.1 §5.5, read only by `six_level_priority_weighted_rank`. The
-    # defaults are the selected weights: `sigma = 0`, `phi = 0.25`,
-    # `lambda4 = 2.0`, `eta = 1.0`, `lambda6 = 0.2`.
-    severity: float = 0.0
+    # RULEBOOK-V5.1 §5.5 as amended by ADR-079, read only by
+    # `six_level_priority_weighted_rank`. The defaults are the selected weights:
+    # `sigma = 0.30`, `phi = 0.25`, `lambda4 = 2.0`, `eta = 1.0`,
+    # `lambda6 = 0.2`, at `a = 2.5`.
+    severity: float = 0.30
     flat_tie_breaker: float = 0.25
     progress_weight: float = 2.0
     relaxable_weight: float = 1.0

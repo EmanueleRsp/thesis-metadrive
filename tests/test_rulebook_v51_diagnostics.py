@@ -11,6 +11,7 @@ import pytest
 from shapely.geometry import Polygon
 
 from thesis_rl.reward.scalarization import (
+    SIX_LEVEL_PRIORITY_BASE,
     SIX_LEVEL_VECTOR_SCHEMA_ID,
     RulebookScalarizer,
     ScalarizationConfig,
@@ -80,7 +81,7 @@ def _wrapper(margins: tuple[float, ...]) -> RulebookV2MonitorWrapper:
         scalarizer=RulebookScalarizer(
             ScalarizationConfig(
                 mode="six_level_priority_weighted_rank",
-                priority_base=2.2,
+                priority_base=SIX_LEVEL_PRIORITY_BASE,
                 vector_schema_id=SIX_LEVEL_VECTOR_SCHEMA_ID,
             )
         ),

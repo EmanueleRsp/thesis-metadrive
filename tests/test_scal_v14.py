@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from thesis_rl.reward.scalarization import (
+    SIX_LEVEL_PRIORITY_BASE,
     SIX_LEVEL_VECTOR_SCHEMA_ID,
     ScalarizationConfig,
     ScalarizationConfigurationError,
@@ -19,8 +20,12 @@ from thesis_rl.reward.scalarization import (
 )
 
 
-A = 2.2
-SIGMA = 0.0
+A = SIX_LEVEL_PRIORITY_BASE
+# ADR-079. Derived, not chosen: the reward discourages accelerating into a
+# conflict only while `(w2*sigma + phi) * v_ref / (2*lambda4*tau)` exceeds the
+# braking the conflict demands, and at `sigma = 0` that ceiling was 1.46 m/s^2
+# against a vehicle's ~9. At `a = 2.5, sigma = 0.30` it is 12.43 m/s^2.
+SIGMA = 0.30
 PHI = 0.25
 LAMBDA4 = 2.0
 ETA = 1.0
@@ -71,21 +76,46 @@ def test_scal_v14_matches_the_specified_formula(margins: tuple[float, ...]) -> N
     assert result.mode == "six_level_priority_weighted_rank"
 
 
-def test_a_satisfied_level_contributes_nothing_at_sigma_zero() -> None:
+def test_a_satisfied_level_contributes_nothing_and_a_violated_one_pays_the_step() -> None:
     """`T-RB51-06`. The satisfaction indicator is what makes a level discrete.
 
-    At `sigma = 0` a satisfied level contributes exactly zero and a violated one
-    contributes its full weight regardless of severity. That is §5.2's
-    affordability constraint in one line: a violated L2 step costs `a^2 = 4.84`
-    however mild it is, so an L2 sub-rule has to fire rarely for the rulebook to
-    be affordable at all.
+    A satisfied level contributes exactly zero, and crossing the threshold costs
+    the level's full weight however mild the violation is. That is §5.2's
+    affordability constraint in one line: a violated L2 step costs `a^2` at once,
+    so an L2 sub-rule has to fire *rarely* for the rulebook to be affordable --
+    a constraint on frequency, not on severity.
+
+    `sigma` does not soften that step and is not meant to (ADR-079); it adds a
+    slope *inside* the violated set, which is what a deterministic policy
+    gradient needs in order to know which way out is.
     """
 
     satisfied = scalarize_rulebook_margins((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), config()).reward
     assert satisfied == pytest.approx(0.0)
 
     barely = scalarize_rulebook_margins((0.0, -1e-4, 0.0, 0.0, 0.0, 0.0), config()).reward
-    assert barely == pytest.approx(-(A**2) - PHI * 1e-4)
+    assert barely == pytest.approx(-(A**2) - (A**2 * SIGMA + PHI) * 1e-4)
+    # The step dominates the slope by four orders of magnitude at this severity.
+    assert barely == pytest.approx(-(A**2), rel=1e-3)
+
+
+def test_severity_gives_the_violated_set_a_slope_a_policy_gradient_can_follow() -> None:
+    """ADR-079. Without it the reward is flat inside a violation.
+
+    A deterministic policy gradient moves along `grad_a Q`, so a level that
+    charges the same amount at `cost = 0.01` and at `cost = 1.0` tells the actor
+    that it is in trouble and nothing about which direction leaves.
+    """
+
+    mild = scalarize_rulebook_margins((0.0, -0.1, 0.0, 0.0, 0.0, 0.0), config()).reward
+    severe = scalarize_rulebook_margins((0.0, -1.0, 0.0, 0.0, 0.0, 0.0), config()).reward
+
+    assert severe < mild
+    # The slope across the violated range is `w2*sigma + phi` per unit of cost.
+    assert mild - severe == pytest.approx((A**2 * SIGMA + PHI) * 0.9)
+    # It has to be a usable fraction of the level's own weight, not a rounding
+    # error on it: at `sigma = 0` this ratio was 0.25/4.84 = 5.2 %.
+    assert (A**2 * SIGMA + PHI) / A**2 > 0.25
 
 
 def test_progress_and_the_two_levels_below_it_form_a_finite_exchange() -> None:
@@ -117,18 +147,25 @@ def test_l6_reaches_only_the_last_term() -> None:
 
 
 def test_selected_weights_are_admissible() -> None:
-    """`T-RB51-07` / `REQ-RB51-10`. §5.5: `2.0 + 0.1*(1.0 + 0.2) = 2.12 < 2.2`."""
+    """`T-RB51-07` / `REQ-RB51-10`. §5.5 as amended by ADR-079:
+    `2.0 + 0.1*(1.0 + 0.2) = 2.12 < 2.5`, with `sigma = 0.30` inside the
+    `sigma < 0.486` the base admits."""
 
     assert config().progress_weight == pytest.approx(LAMBDA4)
+    assert config().severity == pytest.approx(SIGMA)
+    assert config().priority_base == pytest.approx(A)
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("progress_weight", 2.2),
+        # Each value sits just past the §5.4 bound at `a = 2.5`: the tail
+        # `lambda4 + 0.1*(eta + lambda6)` must stay under `a`, and `sigma` under
+        # 0.486 (binding at k=1, not k=2).
+        ("progress_weight", 2.5),
         ("progress_weight", 3.0),
         ("relaxable_weight", 5.0),
-        ("progress_rate_weight", 2.0),
+        ("progress_rate_weight", 6.0),
         ("severity", 1.0),
     ],
 )

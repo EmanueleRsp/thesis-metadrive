@@ -13,14 +13,42 @@ mode: six_level_priority_weighted_rank
 # different preference order rather than a truncated one. This value reaches the
 # checkpoint identity, which is part of the intentional break (`DEC-RB51-001`).
 vector_schema_id: rulebook_v5_1_six_level_v1
-# RULEBOOK-V5.1 §5.5: `a = 2.2`, re-derived for the six-level tail.
-priority_base: 2.2
+# ADR-079: `a = 2.5`. RULEBOOK-V5.1 §5.5 had `a = 2.2`, which is the first round
+# value above §5.4's lower bound `lambda4 + 0.1*(eta + lambda6) = 2.12` -- a
+# lower bound, never an optimum, and nothing in that document bounds `a` above.
+# It has to move because §5.4 caps `sigma` at 0.1227 when `a = 2.2`, and no
+# `sigma` in that window makes the reward's local gradient point the right way
+# in a conflict a real vehicle could still brake out of (see `severity` below).
+# Raising it also widens the thinnest margin in the document: one step of
+# maximal progress repaid 96 % of an L3 violation at 2.2 (`2.2 / 2.12 = 1.04`)
+# and repays 85 % at 2.5 (`2.5 / 2.12 = 1.18`).
+priority_base: 2.5
 numerical_tolerance: 1.0e-8
 native_environment_reward_weight: 0.0
-# §5.5 selected weights. Admissible under §5.4: `2.0 + 0.1 * 1.2 = 2.12 < 2.2`.
-# The predicate is re-checked at construction, so an inadmissible edit here
-# fails the run instead of being priced.
-severity: 0.0            # sigma
+# ADR-079. `sigma` is how much worse a violation gets as it deepens, as a
+# fraction of that level's own weight; `phi` is a shared *absolute* slope. At
+# `sigma = 0` the only grading left was `phi = 0.25`, so the range inside a
+# violated level was 2.3 % of the weight at L1 and 11.4 % at L3 -- the most
+# important level was the flattest, and TTC's continuous risk collapsed to a
+# step with a 5 % ramp. A deterministic policy gradient moves along
+# `grad_a Q`, so inside the violated set the agent learned that violating costs
+# `w_k` and learned nothing about how to stop violating.
+#
+# 0.30 is derived, not chosen. The reward discourages accelerating into a
+# conflict only while
+#
+#   a_req_max = (w2*sigma + phi) * v_ref / (2*lambda4*tau)   >   u^2/(2d) = a_req
+#
+# i.e. only in conflicts demanding less braking than `a_req_max`. A vehicle
+# brakes at about 9 m/s^2. At the shipped `sigma = 0` this was **1.46 m/s^2**;
+# at `a = 2.5, sigma = 0.30` it is **12.43 m/s^2**, about 1.4x the physical
+# limit. Measured cost on the 1100-record Waymo `train` panel, in §5.5's own
+# acceptance column: `fraction_below_standstill` 3.36 % -> 4.55 %.
+#
+# `lambda4`, `eta` and `lambda6` are unchanged, so §5.5's measured calibration
+# of the utility tail stands. The §5.4 predicate is re-checked at construction,
+# so an inadmissible edit here fails the run instead of being priced.
+severity: 0.30           # sigma
 flat_tie_breaker: 0.25   # phi
 progress_weight: 2.0     # lambda4
 relaxable_weight: 1.0    # eta
