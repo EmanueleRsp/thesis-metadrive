@@ -32,6 +32,34 @@ def _object_id(value: Any) -> str | None:
     return identifier if isinstance(identifier, str) and identifier else None
 
 
+def _scenario_id_mapping(engine: Any) -> Mapping[str, str] | None:
+    """Return MetaDrive's runtime-object to source-actor id mapping, if any."""
+
+    traffic_manager = getattr(engine, "traffic_manager", None)
+    mapping = getattr(traffic_manager, "obj_id_to_scenario_id", None)
+    return mapping if isinstance(mapping, Mapping) else None
+
+
+def _stable_object_id(mapping: Mapping[str, str] | None, value: Any) -> str | None:
+    """Resolve a MetaDrive object to the identity used by ``ActorSnapshot``.
+
+    ScenarioNet replay spawns every actor under a random MetaDrive object name
+    unless ``force_reuse_object_name`` is set, while the Rulebook's live adapter
+    (`metadrive_live._stable_actor_id`) publishes the *source* actor id from
+    ``traffic_manager.obj_id_to_scenario_id``.  Admission compares the two, so
+    the sweep must apply the same normalization or the sets are disjoint by
+    construction and no actor is ever admitted (OBS-AUDIT-FIX-001, REQ-AF-01).
+    Objects outside the mapping (PG traffic, static props) keep their object id,
+    which is also what the live adapter does.
+    """
+
+    identifier = _object_id(value)
+    if identifier is None or mapping is None:
+        return identifier
+    mapped = mapping.get(identifier)
+    return mapped if isinstance(mapped, str) and mapped else identifier
+
+
 class FirstHitLidarAdapter:
     """Run the approved 240-beam, 50 m, 1.2 m physical LiDAR sweep."""
 
@@ -87,7 +115,10 @@ class FirstHitLidarAdapter:
                 f"OBS-V1.2 LiDAR returned {len(cloud_points)} beams, expected {self.num_beams}"
             )
 
-        ego_id = _object_id(vehicle)
+        # Fetch the mapping once: MetaDrive rebuilds it on every property read.
+        mapping = _scenario_id_mapping(engine)
+        ego_object_id = _object_id(vehicle)
+        ego_id = _stable_object_id(mapping, vehicle)
         actor_ids: set[str] = set()
         hit_count = 0
         for hit in getattr(result, "detected_objects", ()):
@@ -102,7 +133,10 @@ class FirstHitLidarAdapter:
                 continue
             hit_count += 1
             candidate = get_object_from_node(node)
-            candidate_id = _object_id(candidate)
+            candidate_object_id = _object_id(candidate)
+            if candidate_object_id is None or candidate_object_id == ego_object_id:
+                continue
+            candidate_id = _stable_object_id(mapping, candidate)
             if candidate_id is not None and candidate_id != ego_id:
                 actor_ids.add(candidate_id)
         return FirstHitLidarSweep(frozenset(actor_ids), hit_count, self.num_beams)
@@ -187,7 +221,11 @@ class SymbolicSignalVisibilityAdapter:
             raise RuntimeError("OBS-V1.2 signal requires a positioned physical light object")
         from metadrive.component.traffic_light.base_traffic_light import BaseTrafficLight
 
-        return float(position[0]), float(position[1]), float(get_z()) + BaseTrafficLight.TRAFFIC_LIGHT_HEIGHT
+        return (
+            float(position[0]),
+            float(position[1]),
+            float(get_z()) + BaseTrafficLight.TRAFFIC_LIGHT_HEIGHT,
+        )
 
     def _has_blocker(
         self,
@@ -252,5 +290,7 @@ def mapped_signal_visibility(
         range_m=range_m, horizontal_fov_deg=horizontal_fov_deg, camera_height_m=camera_height_m
     )
     if isinstance(physical_ids, str):
-        return SignalVisibility(physical_ids, adapter.visible_ids(vehicle, (physical_ids,))[physical_ids])
+        return SignalVisibility(
+            physical_ids, adapter.visible_ids(vehicle, (physical_ids,))[physical_ids]
+        )
     return adapter.visible_ids(vehicle, physical_ids)

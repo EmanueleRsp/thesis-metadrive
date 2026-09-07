@@ -939,6 +939,7 @@ class Agent:
         ]
         | None = None,
         initial_observations: Any | None = None,
+        initial_episode_lengths: Any | None = None,
         monitor_extra_rows_callback: Callable[[], list[tuple[str, str]]] | None = None,
         monitor_event_poll_callback: Callable[[], list[str]] | None = None,
         live_extra_renderables_callback: Callable[[], list[Any]] | None = None,
@@ -961,6 +962,14 @@ class Agent:
         ``progress_interval`` collected steps and at the end of the chunk (C12);
         when the console is not a terminal the same snapshot is also printed as one
         plain line, because the Rich ``Live`` monitor renders nothing there.
+
+        ``initial_observations`` / ``initial_episode_lengths`` continue the
+        in-flight episodes of a previous chunk on the same live environment
+        (REQ-AF-05): without them every chunk boundary would ``reset()`` all
+        slots, discarding the running episodes with no truncation flag, so the
+        last stored transition of each slot would be followed by a row from an
+        unrelated episode.  The summary returns both under ``last_observations``
+        and ``last_episode_lengths`` for the caller to forward.
         """
         n_envs = count_envs(env)
         if n_envs <= 1:
@@ -1037,6 +1046,19 @@ class Agent:
         episodes = 0
         collected_steps = 0
         episode_len = np.zeros(n_envs, dtype=np.int64)
+        if initial_episode_lengths is not None:
+            carried_lengths = np.asarray(initial_episode_lengths, dtype=np.int64).reshape(-1)
+            if carried_lengths.shape != (n_envs,):
+                raise ValueError(
+                    "initial_episode_lengths must contain one entry per vector slot: "
+                    f"expected {n_envs}, received {carried_lengths.shape[0]}"
+                )
+            if initial_observations is None:
+                raise ValueError(
+                    "initial_episode_lengths requires initial_observations: a reset "
+                    "starts every slot at length zero"
+                )
+            episode_len[:] = np.maximum(carried_lengths, 0)
         episode_scalar_reward = np.zeros(n_envs, dtype=np.float64)
         episode_env_reward = np.zeros(n_envs, dtype=np.float64)
         episode_scalar_rule_reward = np.zeros(n_envs, dtype=np.float64)
@@ -1806,6 +1828,7 @@ class Agent:
             "train_reset_seed_last": reset_seeds_used[-1] if reset_seeds_used else None,
             "train_reset_seed_unique_count": len(set(reset_seeds_used)),
             "last_observations": obs,
+            "last_episode_lengths": episode_len.copy(),
         }
 
     def predict(self, observation: Any, deterministic: bool = False):

@@ -164,6 +164,86 @@ def test_v12_compliance_trace_preserves_actual_step_gaps(monkeypatch) -> None:
     assert batch.context_history_mask.tolist() == [0.0] * 17 + [1.0, 0.0, 0.0, 1.0]
 
 
+def test_v13_repeated_build_for_the_same_step_does_not_duplicate_the_context_row(
+    monkeypatch,
+) -> None:
+    """REQ-AF-03 (OBS-AUDIT-FIX-001): MetaDrive calls ``observe()`` inside
+    ``step()`` with the previous committed context and the Rulebook wrapper calls
+    it again after the commit.  The second build for one step must return the
+    batch already built for it instead of appending a second history row."""
+
+    route, lanes = _route()
+    ego = _actor("ego", (0.0, 0.0), (5.0, 0.0))
+    monkeypatch.setattr(
+        causal_semantic,
+        "first_hit_lidar_sweep",
+        lambda _vehicle: SimpleNamespace(actor_ids=frozenset()),
+    )
+    builder = PerceptionBoundedSemanticBatchBuilder(route=route, route_lanes=lanes, brake_mps2=4.0)
+
+    context_0 = _context(0, ego, (), route, lanes)
+    first = builder.build(_Vehicle(), context_0)
+    repeated = builder.build(_Vehicle(), context_0)
+    assert repeated is first
+
+    # Reproduce the production call pattern: at every step the previous context
+    # is observed once more before the new one is committed.  Before the fix the
+    # 21-slot deque held two entries per step and the window collapsed to ~11
+    # distinct steps.
+    previous = context_0
+    for step in range(1, 25):
+        builder.build(_Vehicle(), previous)
+        previous = _context(step, ego, (), route, lanes)
+        batch = builder.build(_Vehicle(), previous)
+    assert batch.context_history_mask.tolist() == [1.0] * 21
+    assert builder._last_context_row_step == 24
+
+
+def test_v13_dynamic_station_difference_uses_committed_mission_station(monkeypatch) -> None:
+    """REQ-AF-02 (OBS-AUDIT-FIX-001): on a route that returns next to itself,
+    an un-anchored ego projection snaps to the far branch; the committed mission
+    station is the single station authority for the dynamic block."""
+
+    from shapely.geometry import box as _box
+
+    from thesis_rl.rulebook.v2.geometry.lanes import RouteLaneRecord
+    from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+
+    # Out along y=0 for 100 m, then back along y=3 m.
+    route = RoutePolyline(
+        ((0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 3.0, 0.0), (0.0, 3.0, 0.0))
+    )
+    lane = RouteLaneRecord("lane-0", _box(-2.0, -2.0, 102.0, 5.0), route)
+    lanes = (lane,)
+    # Ego on the outbound branch at s = 50 m, 1.6 m to the left: the return
+    # branch (y = 3) is 1.4 m away, so the nearest-point projection picks it.
+    ego = _actor("ego", (50.0, 1.6), (5.0, 0.0))
+    other = _actor("other", (60.0, 0.0), (0.0, 0.0))
+    monkeypatch.setattr(
+        causal_semantic,
+        "first_hit_lidar_sweep",
+        lambda _vehicle: SimpleNamespace(actor_ids=frozenset({"other"})),
+    )
+    context = _context(0, ego, (other,), route, lanes)
+    committed = replace(
+        context,
+        snapshot=replace(
+            context.snapshot,
+            mission_snapshot=replace(context.snapshot.mission_snapshot, s_m=50.0),
+        ),
+    )
+    naive_ego_s = route.project(ego.position_xy).s_m
+    assert naive_ego_s > 100.0, "fixture must make the un-anchored projection pick the far branch"
+
+    builder = PerceptionBoundedSemanticBatchBuilder(route=route, route_lanes=lanes, brake_mps2=4.0)
+    batch = builder.build(_Vehicle(), committed)
+
+    slot = int(np.flatnonzero(batch.dynamic_mask[:, -1])[0])
+    assert batch.dynamic[slot, -1, causal_semantic.DYNAMIC_ROUTE_STATION_INDEX] == pytest.approx(
+        (60.0 - 50.0) / 50.0
+    )
+
+
 def test_v12_interaction_type_is_unknown_without_source_taxonomy(monkeypatch) -> None:
     route, lanes = _route()
     ego = _actor("ego", (0.0, 0.0), (5.0, 0.0))

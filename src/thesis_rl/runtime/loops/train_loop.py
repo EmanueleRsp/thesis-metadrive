@@ -10,6 +10,7 @@ import pickle
 from dataclasses import asdict
 import random
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -682,6 +683,35 @@ def _write_step_timing_rows(
                 "avg_seconds_per_step": seconds / steps_for_average,
             },
         )
+
+
+def chunk_carry_kwargs(
+    chunk_summary: Mapping[str, Any] | None, *, previous_env: Any, env: Any
+) -> dict[str, Any]:
+    """Continue the previous chunk's in-flight episodes on the same live env.
+
+    REQ-AF-05 (OBS-AUDIT-FIX-001): ``Agent.train_vectorized`` resets every
+    vector slot when it receives no ``initial_observations``.  On the
+    non-curriculum path the environment object survives the chunk boundary, so
+    that reset silently discarded the running episodes without a truncation
+    flag, and the last replay row of each slot was followed by a row of an
+    unrelated episode (n-step windows and PPO advantages crossed the boundary).
+    The ACL driver already forwards ``last_observations``; this helper gives
+    the plain loop the same behaviour.  The carry is valid only while the
+    environment object is the very same one the summary came from: a closed and
+    rebuilt environment starts from ``reset()`` as before.
+    """
+
+    if chunk_summary is None or previous_env is None or previous_env is not env:
+        return {}
+    observations = chunk_summary.get("last_observations")
+    if observations is None:
+        return {}
+    kwargs: dict[str, Any] = {"initial_observations": observations}
+    lengths = chunk_summary.get("last_episode_lengths")
+    if lengths is not None:
+        kwargs["initial_episode_lengths"] = lengths
+    return kwargs
 
 
 def run_training(cfg: DictConfig) -> None:
@@ -1697,6 +1727,9 @@ def run_training(cfg: DictConfig) -> None:
         remaining = max(0, total_timesteps - resume_global_steps_done)
         chunk_id = int(resume_chunk_id)
         eval_id = int(resume_eval_id)
+        # REQ-AF-05: the previous chunk's summary and the environment it ran on.
+        previous_chunk_summary: dict[str, Any] | None = None
+        previous_chunk_env: Any = None
         while remaining > 0:
             chunk_id += 1
 
@@ -1758,6 +1791,11 @@ def run_training(cfg: DictConfig) -> None:
                     )
 
                 extra_train_kwargs["progress_callback"] = _log_training_progress
+                extra_train_kwargs.update(
+                    chunk_carry_kwargs(
+                        previous_chunk_summary, previous_env=previous_chunk_env, env=env
+                    )
+                )
             provider_driven_scenarionet = str(
                 cfg.env.get("name", "")
             ).lower() == "scenarionet" and str(
@@ -1786,6 +1824,8 @@ def run_training(cfg: DictConfig) -> None:
                 ),
                 **extra_train_kwargs,
             )
+            previous_chunk_summary = chunk_summary if vectorized_training else None
+            previous_chunk_env = env if vectorized_training else None
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
             beta_progress_env_steps += actual_chunk_steps
             remaining = max(0, remaining - actual_chunk_steps)
