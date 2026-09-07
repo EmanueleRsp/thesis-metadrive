@@ -124,6 +124,46 @@ def test_per_insertion_priority_tracks_exact_maximum_across_updates_and_overwrit
     assert buffer._insertion_priority() == pytest.approx(float(np.max(buffer.raw_priorities)))
 
 
+def test_per_insertion_priority_never_falls_below_the_specified_floor() -> None:
+    """`REQ-013`: the priming priority is `max(1, p_max_current)`, not `p_max_current`.
+
+    `AC-016` repeats it and traces it to Schaul et al.'s maximum insertion
+    priority, whose whole point -- REQ-013's own rationale -- is that a new
+    transition can be sampled *before* a TD error has been computed for it. Raw
+    priorities are `|TD error| + epsilon`, so a run whose residuals sit below 1
+    has a buffer maximum below 1, and priming at that maximum puts unseen
+    transitions level with seen ones instead of above them.
+    """
+
+    buffer = PrioritizedNStepReplayBuffer(
+        buffer_size=4,
+        observation_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+        action_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+        device="cpu",
+        n_envs=2,
+        n_steps=1,
+        gamma=0.99,
+        beta_anneal_steps=10,
+    )
+    observation = np.zeros((2, 1), dtype=np.float32)
+    action = np.zeros((2, 1), dtype=np.float32)
+    reward = np.zeros(2, dtype=np.float32)
+    done = np.zeros(2, dtype=bool)
+    infos = [{}, {}]
+
+    buffer.add(observation, observation, action, reward, done, infos)
+    buffer.add(observation, observation, action, reward, done, infos)
+    # Every row now holds a TD-error magnitude below the floor, which is the
+    # ordinary case for a critic loss under 1.
+    buffer.update_priorities(np.array([0, 1, 2, 3]), np.array([0.4, 0.4, 0.4, 0.4]))
+
+    assert float(np.max(buffer.raw_priorities)) < 1.0
+    assert buffer._insertion_priority() == pytest.approx(1.0)
+
+    buffer.add(observation, observation, action, reward, done, infos)
+    assert np.all(buffer.raw_priorities[0] == pytest.approx(1.0))
+
+
 def test_per_masked_overwrite_releases_the_maximum_it_evicts() -> None:
     """A masked data-abort slot evicts a priced row, and the maximum must follow.
 

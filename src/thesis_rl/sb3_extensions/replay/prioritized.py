@@ -217,7 +217,19 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         self._recompute_current_max()
 
     def _insertion_priority(self) -> float:
-        return self._current_max_raw_priority if self._current_max_count > 0 else 1.0
+        """`REQ-013`: `p_new = max(1, p_max_current)`, with 1.0 the initial maximum.
+
+        The floor is the requirement, not a guard against an empty buffer. Raw
+        priorities are `|TD error| + epsilon`, so any run whose residuals sit
+        below 1 has a buffer maximum below 1, and priming at that maximum would
+        put an unseen transition level with the seen ones rather than above them
+        — losing exactly what `REQ-013`'s rationale asks for, that a transition
+        be samplable before a TD error has been computed for it.
+        """
+
+        if self._current_max_count <= 0:
+            return 1.0
+        return max(1.0, self._current_max_raw_priority)
 
     def add(self, *args: Any, valid_mask: np.ndarray | None = None, **kwargs: Any) -> None:
         storage_index = int(self.pos)
