@@ -15,9 +15,19 @@ moving it to *Closed* with the date and the change that closed it. **Identifiers
 are never recycled**: a closed `D2` stays `D2`, and the next new decision takes
 the next free number.
 
-Last reviewed: 2026-09-01 (second pass, after `RB51` closed). `D1` was briefly closed on 2026-08-20 and
-**reopened the same day**: the value chosen presumed an episodic threshold, and
-the mechanism is not chosen yet.
+Last reviewed: 2026-09-07 (`C30`–`C37`, the mechanical list of the block-B audit). `D1` was briefly
+closed on 2026-08-20 and **reopened the same day**: the value chosen presumed an episodic threshold,
+and the mechanism is not chosen yet.
+
+**Checks executed for `C30`–`C37`** (2026-09-07, branch `worktree-audit-block-a-fixes`): full suite
+**1789 passed, 5 skipped, exit 0** in 27m44s — the 5 skips are the non-v3 observation configs of
+`C35`'s parametrized causality check, which is their intended behaviour. Ruff lint and format clean
+on every touched file, focused scope. Production-path smoke **exit 0** on the GPU
+(`obs=semantic_v3 agent/planner/encoder=lq_v3 reward=scalar_reward env.vectorized.enabled=true
+curriculum=scenario_acl_scenarionet device=cuda`), two chunks of 1000 steps, driver
+`scenario_acl_vectorized`, 40 MAB updates, 951 gradient steps — so it exercised every path this
+batch touched, including the chunk boundary where `C31`'s state write happens. An earlier full-suite
+run caught a regression introduced by `C35`'s first form; see that entry.
 
 ---
 
