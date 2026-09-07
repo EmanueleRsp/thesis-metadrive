@@ -501,6 +501,41 @@ def _persist_coverage_state(
     )
 
 
+def _scenario_acl_resume_state(
+    *,
+    global_step: int,
+    chunk_id: int,
+    eval_id: int,
+    episode_id: int,
+    buffer: ScenarioBuffer,
+    bandit: ScenarioArmBandit,
+    visit_state: ScenarioCatalogVisitState,
+    rng: np.random.Generator,
+    recent_usefulness: Sequence[float],
+) -> dict[str, Any]:
+    """Every field `_load_scenario_acl_resume_state` reads, produced in one place.
+
+    The two chunk-end writers had diverged: the vectorized one — the production
+    path, since every serious profile runs 20 environments — omitted
+    `recent_usefulness`, and the loader's `.get(..., [])` turned the omission into
+    an empty window without complaint. A resumed teacher then normalizes the
+    first episode against nothing, which `_normalize_learning_potential` scores
+    as a maximum by construction.
+    """
+
+    return {
+        "global_step": int(global_step),
+        "chunk_id": int(chunk_id),
+        "eval_id": int(eval_id),
+        "episode_id": int(episode_id),
+        "buffer_size": len(buffer),
+        "recent_usefulness": [float(value) for value in recent_usefulness],
+        "mab": bandit.state_dict(),
+        "coverage": visit_state.coverage_summary(),
+        "rng_state": rng.bit_generator.state,
+    }
+
+
 def _load_scenario_acl_resume_state(
     *,
     cfg: DictConfig,
@@ -1272,16 +1307,17 @@ def _run_scenario_acl_vectorized_training(
             _append_jsonl(artifact_paths["iterations"], history_payload)
             artifact_paths["state"].write_text(
                 json.dumps(
-                    {
-                        "global_step": current_global_step,
-                        "chunk_id": current_chunk_id,
-                        "eval_id": current_eval_id,
-                        "episode_id": vector_state.next_episode_id,
-                        "buffer_size": len(buffer),
-                        "mab": bandit.state_dict(),
-                        "coverage": visit_state.coverage_summary(),
-                        "rng_state": rng.bit_generator.state,
-                    },
+                    _scenario_acl_resume_state(
+                        global_step=current_global_step,
+                        chunk_id=current_chunk_id,
+                        eval_id=current_eval_id,
+                        episode_id=vector_state.next_episode_id,
+                        buffer=buffer,
+                        bandit=bandit,
+                        visit_state=visit_state,
+                        rng=rng,
+                        recent_usefulness=recent_usefulness,
+                    ),
                     ensure_ascii=True,
                     indent=2,
                 ),
@@ -2383,17 +2419,22 @@ def run_scenario_acl_training(
             artifact_paths["state"].write_text(
                 json.dumps(
                     {
-                        "global_step": int(current_global_step),
-                        "chunk_id": int(current_chunk_id),
-                        "eval_id": int(current_eval_id),
-                        "recent_usefulness": [float(x) for x in recent_usefulness],
+                        **_scenario_acl_resume_state(
+                            global_step=current_global_step,
+                            chunk_id=current_chunk_id,
+                            eval_id=current_eval_id,
+                            episode_id=current_episode_id,
+                            buffer=buffer,
+                            bandit=bandit,
+                            visit_state=visit_state,
+                            rng=rng,
+                            recent_usefulness=recent_usefulness,
+                        ),
                         "last_mode": chunk_mode,
                         "last_arm_name": chunk_stage,
-                        "episode_id": int(current_episode_id),
                         "last_arm_index": -1,
                         "last_scenario_seed": None,
                         "last_replay_scenario_id": None,
-                        "buffer_size": len(buffer),
                         "generate_count": int(generate_count),
                         "replay_count": int(replay_count),
                         "chunk_generate_count": int(chunk_generate_count),
@@ -2411,9 +2452,6 @@ def run_scenario_acl_training(
                             }
                             for record in buffer.top_k(5)
                         ],
-                        "mab": bandit.state_dict(),
-                        "coverage": visit_state.coverage_summary(),
-                        "rng_state": rng.bit_generator.state,
                     },
                     ensure_ascii=True,
                     indent=2,
