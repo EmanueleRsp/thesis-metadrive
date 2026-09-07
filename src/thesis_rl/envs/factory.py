@@ -46,6 +46,71 @@ def _resolve_agent_policy(policy_name: str):
     )
 
 
+# `conf/obs/semantic_v3.yaml` declares twenty keys and exactly three of them
+# have a reader: the signal-camera geometry ADR-045 deliberately allows
+# overriding. Everything below is hard-coded somewhere the configuration cannot
+# reach -- the token counts and history lengths by `SemanticObservationSchemaV12`
+# (`flat_dim = 3011`, frozen by `OBS-V1.3.1`), the radii and the prediction
+# horizon by the builder kwargs in `envs/thesis_scenario_env.py`, and the LiDAR
+# geometry by the literals this very function writes into `vehicle_config`.
+#
+# So `obs.dynamic_radius_m=80` parsed, was logged, reached the checkpoint's
+# configuration record, and changed nothing: an ablation driven from these keys
+# reports "no effect" for a knob that was never connected. That is `C24`'s
+# false-negative-in-a-results-table, and the remedy is `C24`'s: refuse the value
+# rather than delete the declaration, so the YAML keeps documenting the
+# observation accurately and a divergent override fails loudly.
+#
+# `interaction_prediction_horizon_s` is spelled differently from the kwarg it
+# corresponds to (`prediction_horizon_s`), which is part of why the disconnect
+# went unnoticed.
+_FROZEN_SEMANTIC_V3_SETTINGS: tuple[tuple[str, Any], ...] = (
+    ("history_length", 5),
+    ("context_history_length", 21),
+    ("route_tokens", 10),
+    ("dynamic_tokens", 16),
+    ("dynamic_conflict_reserved_slots", 8),
+    ("dynamic_context_reserved_slots", 8),
+    ("static_tokens", 8),
+    ("traffic_control_tokens", 8),
+    ("interaction_tokens", 8),
+    ("lidar_beams", 240),
+    ("lidar_range_m", 50.0),
+    ("lidar_height_m", 1.2),
+    ("dynamic_radius_m", 50.0),
+    ("static_radius_m", 50.0),
+    ("control_radius_m", 80.0),
+    ("interaction_prediction_horizon_s", 3.0),
+    # Causality declarations of `OBS-V1.2`. Nothing reads them, so accepting
+    # anything else would silently permit the leak the contract forbids.
+    ("future_ground_truth", "forbidden"),
+    ("other_agent_navigation", "forbidden"),
+    ("future_disambiguation", "forbidden"),
+)
+
+
+def _reject_divergent_semantic_v3_settings(observation_cfg: dict[str, Any]) -> None:
+    """Refuse any frozen semantic v3 observation setting the configuration changes."""
+
+    for key, frozen in _FROZEN_SEMANTIC_V3_SETTINGS:
+        if key not in observation_cfg:
+            continue
+        value = observation_cfg[key]
+        if isinstance(frozen, str):
+            matches = str(value).strip().lower() == frozen
+        elif isinstance(frozen, float):
+            matches = float(value) == frozen
+        else:
+            matches = int(value) == frozen
+        if not matches:
+            raise ValueError(
+                f"The semantic v3 observation hard-codes {key}={frozen!r}; configuration "
+                f"requested {value!r}. `OBS-V1.3.1` freezes the observation layout at "
+                "D=3011 and nothing reads this key, so the override cannot take effect: "
+                "change the observation module and its schema, or drop the override."
+            )
+
+
 def _configure_agent_observation(
     env_cfg: dict[str, Any],
     observation_cfg: dict[str, Any],
@@ -127,6 +192,7 @@ def _configure_agent_observation(
         from thesis_rl.envs.observations.semantic_state_v3 import SemanticStateObservationV3
 
         env_cfg["agent_observation"] = SemanticStateObservationV3
+        _reject_divergent_semantic_v3_settings(observation_cfg)
         # OBS-V1.2 SS6.2 documents range=80/fov=65/height=1.2 as the signal
         # camera baseline; ADR-045 allows overriding them via
         # `conf/obs/semantic_v3.yaml` for experiments that deliberately study
