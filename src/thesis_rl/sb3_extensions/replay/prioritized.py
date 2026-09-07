@@ -179,11 +179,26 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         elif retained_max_count > 0:
             self._current_max_count = retained_max_count
         else:
-            self._current_max_raw_priority = float(np.max(self.raw_priorities))
-            self._current_max_count = int(
-                np.count_nonzero(self.raw_priorities == self._current_max_raw_priority)
-            )
+            self._recompute_current_max()
         self._tree.set_batch(indices, values**self.alpha)
+
+    def _recompute_current_max(self) -> None:
+        """Rescan for the maximum, treating "no positive priority" as an empty buffer.
+
+        A masked data-abort slot writes 0.0, so a buffer cycle in which every
+        slot aborted leaves no priced row at all. `_insertion_priority` has to
+        prime the next transition at 1.0 there, exactly as it does before the
+        first insertion: recording a maximum of 0.0 would instead make
+        `_set_raw_priority` reject that insertion as non-positive.
+        """
+
+        highest = float(np.max(self.raw_priorities))
+        if highest <= 0.0:
+            self._current_max_raw_priority = 1.0
+            self._current_max_count = 0
+            return
+        self._current_max_raw_priority = highest
+        self._current_max_count = int(np.count_nonzero(self.raw_priorities == highest))
 
     def _update_current_max(self, previous: float, value: float) -> None:
         if value > self._current_max_raw_priority:
@@ -199,10 +214,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         self._current_max_count -= 1
         if self._current_max_count > 0:
             return
-        self._current_max_raw_priority = float(np.max(self.raw_priorities))
-        self._current_max_count = int(
-            np.count_nonzero(self.raw_priorities == self._current_max_raw_priority)
-        )
+        self._recompute_current_max()
 
     def _insertion_priority(self) -> float:
         return self._current_max_raw_priority if self._current_max_count > 0 else 1.0
@@ -223,7 +235,15 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             if mask[env_index]:
                 self._set_raw_priority(flat_index, maximum)
             else:
+                # The overwritten row may have been the one holding the running
+                # maximum. Release it through the same bookkeeping the valid
+                # branch uses: skipping it left `_current_max_count` counting a
+                # row that no longer exists, and that error never self-corrects,
+                # because the decrement fires only on a value equal to the
+                # recorded maximum.
+                previous = float(self.raw_priorities.flat[flat_index])
                 self.raw_priorities.flat[flat_index] = 0.0
+                self._update_current_max(previous, 0.0)
                 self._tree.set(flat_index, 0.0)
 
     def close_previous_transition_as_data_abort(
