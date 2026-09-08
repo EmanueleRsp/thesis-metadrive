@@ -230,7 +230,7 @@ def test_smoke_train_preset_composes() -> None:
 
 
 def test_every_algorithm_shares_one_hierarchy_preserving_discount() -> None:
-    """`AC-RB5.1-16` / ADR-079, amending ADR-075.
+    """`AC-RB5.1-16` / ADR-081, amending ADR-075.
 
     Two properties, and the second is pinned as a *derivation* rather than as a
     literal, so that changing `priority_base` without revisiting `gamma` fails
@@ -251,7 +251,7 @@ def test_every_algorithm_shares_one_hierarchy_preserving_discount() -> None:
     `gamma = 1` satisfied (2) trivially and failed something ADR-075 did not
     weigh: with two thirds of episodes ending in a bootstrapped truncation there
     is no contraction and the value level is pinned only by the terminating
-    minority. See ADR-079.
+    minority. See ADR-081.
     """
 
     horizon_steps = 199

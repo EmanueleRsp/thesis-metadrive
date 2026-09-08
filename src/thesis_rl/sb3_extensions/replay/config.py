@@ -78,8 +78,8 @@ _LIVE_PER_SETTINGS: frozenset[str] = frozenset(
 _FROZEN_PER_SETTINGS: tuple[tuple[str, str], ...] = (
     # The SB3 fork's `td3.py`/`sac.py`: 0.5 * the sum of the twin critics' |TD|.
     ("priority_aggregation", "mean_abs_twin_td"),
-    # `PrioritizedNStepReplayBuffer._insertion_priority`, per ADR-080 and
-    # `TRANSITION-REPLAY-V1.0.1`: the buffer's exact current maximum.
+    # `PrioritizedNStepReplayBuffer._insertion_priority`, per ADR-082 and
+    # `TRANSITION-REPLAY-V1.1.1`: the buffer's exact current maximum.
     ("new_transition_priority", "current_max"),
     # `update_priorities` reduces repeated indices with `np.maximum.at`.
     ("duplicate_update_reduction", "max"),

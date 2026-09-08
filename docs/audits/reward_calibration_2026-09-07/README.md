@@ -1,6 +1,6 @@
-# Reward calibration measurement, 2026-09-07 — the evidence behind ADR-079
+# Reward calibration measurement, 2026-09-07 — the evidence behind ADR-081
 
-`rb51_calibration_a_sigma_l4.json` is the measurement ADR-079 decides from. It is
+`rb51_calibration_a_sigma_l4.json` is the measurement ADR-081 decides from. It is
 kept here rather than only under `outputs/` because an approved decision whose
 supporting analysis lives on a scratch filesystem is an approved decision whose
 supporting analysis will eventually be gone.
@@ -60,7 +60,7 @@ conflict — measured by the constant deceleration it demands — in which the
 reward's local gradient still tells the agent to slow rather than accelerate. A
 real vehicle brakes at about 9 m/s², so a package below that has a reward that
 points the wrong way in every conflict braking could still resolve. The
-derivation is in ADR-079.
+derivation is in ADR-081.
 
 | package | `a_req^max` | `w₃`/tail | below standstill | mean | p1 |
 |---|---:|---:|---:|---:|---:|

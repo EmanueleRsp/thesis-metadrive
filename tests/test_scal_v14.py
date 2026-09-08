@@ -21,7 +21,7 @@ from thesis_rl.reward.scalarization import (
 
 
 A = SIX_LEVEL_PRIORITY_BASE
-# ADR-079. Derived, not chosen: the reward discourages accelerating into a
+# ADR-081. Derived, not chosen: the reward discourages accelerating into a
 # conflict only while `(w2*sigma + phi) * v_ref / (2*lambda4*tau)` exceeds the
 # braking the conflict demands, and at `sigma = 0` that ceiling was 1.46 m/s^2
 # against a vehicle's ~9. At `a = 2.5, sigma = 0.30` it is 12.43 m/s^2.
@@ -85,7 +85,7 @@ def test_a_satisfied_level_contributes_nothing_and_a_violated_one_pays_the_step(
     so an L2 sub-rule has to fire *rarely* for the rulebook to be affordable --
     a constraint on frequency, not on severity.
 
-    `sigma` does not soften that step and is not meant to (ADR-079); it adds a
+    `sigma` does not soften that step and is not meant to (ADR-081); it adds a
     slope *inside* the violated set, which is what a deterministic policy
     gradient needs in order to know which way out is.
     """
@@ -100,7 +100,7 @@ def test_a_satisfied_level_contributes_nothing_and_a_violated_one_pays_the_step(
 
 
 def test_severity_gives_the_violated_set_a_slope_a_policy_gradient_can_follow() -> None:
-    """ADR-079. Without it the reward is flat inside a violation.
+    """ADR-081. Without it the reward is flat inside a violation.
 
     A deterministic policy gradient moves along `grad_a Q`, so a level that
     charges the same amount at `cost = 0.01` and at `cost = 1.0` tells the actor
@@ -147,7 +147,7 @@ def test_l6_reaches_only_the_last_term() -> None:
 
 
 def test_selected_weights_are_admissible() -> None:
-    """`T-RB51-07` / `REQ-RB51-10`. §5.5 as amended by ADR-079:
+    """`T-RB51-07` / `REQ-RB51-10`. §5.5 as amended by ADR-081:
     `2.0 + 0.1*(1.0 + 0.2) = 2.12 < 2.5`, with `sigma = 0.30` inside the
     `sigma < 0.486` the base admits."""
 

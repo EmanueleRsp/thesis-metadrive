@@ -401,7 +401,7 @@ is the standard separation between a training signal and a score.
 
 ### 4.4 The discount, resolved: `γ = 1` (ADR-075)
 
-> **Amended by ADR-079 (2026-09-07, approved): `γ = 0.996`.**
+> **Amended by ADR-081 (2026-09-07, approved): `γ = 0.996`.**
 > Two corrections to what follows, neither of which changes its *reasoning*.
 > First, the break-even table below compares a future collision (`a³`) against a
 > present **L3** violation (`a¹`), a ratio of `a²`. The binding comparison is one
@@ -414,7 +414,7 @@ is the standard separation between a training signal and a score.
 > thirds of episodes ending in a **bootstrapped truncation** rather than a true
 > terminal, `γ = 1` leaves the value level pinned only by the terminating
 > minority, so approximation bias walks it freely. The requirement is
-> `Δ = ln(a) / −ln(γ) > L`, which at `a = 2.5` (ADR-079) and `L = 199` gives
+> `Δ = ln(a) / −ln(γ) > L`, which at `a = 2.5` (ADR-081) and `L = 199` gives
 > `γ > 0.99541`.
 
 An earlier revision left this open and listed three options. Measurement closed
@@ -745,7 +745,7 @@ the exact opposite of this document's purpose. `λ₄` and `η` are fixed togeth
 
 ### 5.5 Selected weights
 
-> **Amended by ADR-079 (2026-09-07, approved):
+> **Amended by ADR-081 (2026-09-07, approved):
 > `a = 2.5`, `σ = 0.30`.** `λ₄ = 2.0`, `η = 1.0`, `λ₆ = 0.2` and `φ = 0.25` are
 > unchanged, so the measured calibration below stands. Two things this section
 > states that turned out to be load-bearing in the other direction. `σ = 0` is
@@ -758,7 +758,7 @@ the exact opposite of this document's purpose. `λ₄` and `η` are fixed togeth
 > the right way in a conflict a real vehicle could still brake out of; the
 > criterion is `a_req^max = (w₂σ + φ)·v_ref / (2·λ₄·τ)`, which the shipped
 > weights put at **1.46 m/s²** against a braking limit of about 9. Measured on
-> this same 1100-record panel by the `(a, σ, λ₄)` grid ADR-079 added:
+> this same 1100-record panel by the `(a, σ, λ₄)` grid ADR-081 added:
 > `fraction_below_standstill` **3.36 % → 4.55 %**, `w₃`/tail **1.04 → 1.18**,
 > `a_req^max` **1.46 → 12.43 m/s²**, expert p1 **−61.8 → −99.4**.
 

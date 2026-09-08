@@ -1,6 +1,6 @@
 # ADR-075: `γ = 1` for every arm, because discounting erodes the rule hierarchy
 
-> **Amended by ADR-079 (2026-09-07, approved):
+> **Amended by ADR-081 (2026-09-07, approved):
 > `γ = 0.996`.** The erosion argument is upheld; two things are corrected. The
 > break-even table below is computed one level too far apart (a future collision
 > `a³` against a present **L3** violation `a¹`, ratio `a²`), and the binding
@@ -13,7 +13,7 @@
 > declared 0.999 fallback would have restored the contraction on paper while
 > damping 18 % of that drift over a 199-step episode, against 55 % at 0.996.
 
-- Status: **Approved, amended by ADR-079**
+- Status: **Approved, amended by ADR-081**
 - Date: 2026-08-20
 - Approval evidence: explicit user approval on 2026-08-20 ("approvo entrambe,
   procedi con ADR-075 e ADR-076"), after the three measurements below and the

@@ -1,4 +1,4 @@
-# ADR-080: the priming priority is the buffer's own maximum, and carries no constant
+# ADR-082: the priming priority is the buffer's own maximum, and carries no constant
 
 - Status: **Approved**
 - Date: 2026-09-07
@@ -16,12 +16,12 @@
 - Affected specifications:
   `docs/specifications/transition_replay_v1_specification.md` `REQ-013` and
   `AC-016`, restated by
-  `docs/specifications/transition_replay_v1.0.1_amendment.md`
-  (`TRANSITION-REPLAY-V1.0.1`).
+  `docs/specifications/transition_replay_v1.1.1_amendment.md`
+  (`TRANSITION-REPLAY-V1.1.1`).
 - Affected code: `src/thesis_rl/sb3_extensions/replay/prioritized.py`
   (`_insertion_priority`).
 - Related: `C37` and `C38` in `docs/open_items.md`; `D13`, withdrawn the same
-  day; ADR-079, which moved the reward scale this constant was expressed in.
+  day; ADR-081, which moved the reward scale this constant was expressed in.
 
 ## Context
 
@@ -53,7 +53,7 @@ constant changes no address and no weight. Verified bit-exactly: under a
 \(|TD|\times 100\) rescaling of one random stream the address sequence is
 **100.000 %** identical without the floor (largest weight difference 4.4e-16)
 and **0.641 %** — chance — with it. Priorities are absolute
-\(0.5\sum_i|\delta_i|\) in reward units, and ADR-079 moved those units on the
+\(0.5\sum_i|\delta_i|\) in reward units, and ADR-081 moved those units on the
 same day (`a` 2.2 → 2.5, so \(w_1\) 10.648 → 15.625); `reward_compression:
 symlog` can compress them further, which would turn the floor into an
 uncalibrated 4–16x multiplier in the 0.01–0.1 band. A constant in reward units

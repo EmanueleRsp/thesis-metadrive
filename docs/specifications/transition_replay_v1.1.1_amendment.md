@@ -3,8 +3,8 @@
 ## Metadata
 
 - Feature: `transition_replay_new_transition_priority`
-- Specification ID: `TRANSITION-REPLAY-V1.0.1`
-- Version: `1.0.1`
+- Specification ID: `TRANSITION-REPLAY-V1.1.1`
+- Version: `1.1.1`
 - Status: `APPROVED`
 - Date: `2026-09-07`
 - Amends: `docs/specifications/transition_replay_v1_specification.md`, `REQ-013`
@@ -13,7 +13,7 @@
   construction, the persistence contract and every other requirement are
   unchanged.
 - Approval evidence: explicit user approval on 2026-09-07, recorded by
-  `docs/decisions/ADR-080-the-priming-priority-carries-no-constant.md`. The
+  `docs/decisions/ADR-082-the-priming-priority-carries-no-constant.md`. The
   substance was chosen first — "remove the floor and amend the specification",
   after a five-angle investigation refuted the reasoning that had been used to
   add it — and this document was then approved on the question "dici così è
@@ -21,7 +21,7 @@
   in §2 rather than on any repository document's authority.
 - Authoritative: `YES` for `REQ-013` and `AC-016` as restated in §4; not
   authoritative for anything else in `TRANSITION-REPLAY`.
-- Related ADR: `docs/decisions/ADR-080-the-priming-priority-carries-no-constant.md`
+- Related ADR: `docs/decisions/ADR-082-the-priming-priority-carries-no-constant.md`
 
 ## 1. What is wrong with `REQ-013`
 
@@ -66,7 +66,7 @@ stream, the address sequence is **100.000 %** identical without the floor
 
 Raw priorities are absolute \(0.5\sum_i |\delta_i|\) over the twin critics
 against an *n*-step target, in reward units. Those units are set by
-`conf/scalarization/default.yaml`, which ADR-079 changed on the same day the
+`conf/scalarization/default.yaml`, which ADR-081 changed on the same day the
 floor was added (`a` from 2.2 to 2.5, so \(w_1\) from 10.648 to 15.625), and
 which `reward_compression: symlog` — approved but off — can compress. In the
 0.01–0.1 band a floor at 1.0 acts as an uncalibrated 4–16x multiplier. A

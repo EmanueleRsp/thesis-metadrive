@@ -23,7 +23,7 @@ SCALARIZATION_MODES = (
     "six_level_priority_weighted_rank",
 )
 REWARD_COMPRESSION_MODES = ("none", "symlog")
-# ADR-079: `a = 2.5`, raised from RULEBOOK-V5.1 §5.5's 2.2. §5.4 caps `sigma` at
+# ADR-081: `a = 2.5`, raised from RULEBOOK-V5.1 §5.5's 2.2. §5.4 caps `sigma` at
 # 0.1227 when `a = 2.2`, and no admissible `sigma` at that base makes the
 # reward's local gradient point the right way in a conflict a real vehicle could
 # still brake out of. §5.5's 2.2 was the first round value above §5.4's lower
@@ -78,7 +78,7 @@ class ScalarizationConfig:
     legacy_rule_scales: tuple[float, ...] | None = None
     native_environment_reward_weight: float = 0.0
     reward_compression_mode: str = "none"
-    # RULEBOOK-V5.1 §5.5 as amended by ADR-079, read only by
+    # RULEBOOK-V5.1 §5.5 as amended by ADR-081, read only by
     # `six_level_priority_weighted_rank`. The defaults are the selected weights:
     # `sigma = 0.30`, `phi = 0.25`, `lambda4 = 2.0`, `eta = 1.0`,
     # `lambda6 = 0.2`, at `a = 2.5`.

@@ -81,7 +81,7 @@ def build_reward_semantics_identity(config: Mapping[str, Any]) -> dict[str, Any]
             "vector_schema_id": scalarization.get("vector_schema_id"),
             "priority_base": scalarization.get("priority_base"),
             # C29. The six-level weights enter the reward formula exactly as
-            # `priority_base` does, and until ADR-079 every one of them was
+            # `priority_base` does, and until ADR-081 every one of them was
             # frozen, so leaving them out of the identity cost nothing. `sigma`
             # is now a live parameter: without these fields a checkpoint trained
             # at `sigma = 0` would resume against `sigma = 0.30` without a

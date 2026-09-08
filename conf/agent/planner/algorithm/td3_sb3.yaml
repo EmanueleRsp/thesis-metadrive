@@ -19,12 +19,12 @@ update_to_data_ratio: 0.5
 # switched off for throughput.
 update_learning_potential_diagnostic: false
 learning_rate: 3e-4
-# ADR-079, amending ADR-075. Discounting does erode the geometric priority
+# ADR-081, amending ADR-075. Discounting does erode the geometric priority
 # weights, but the binding comparison is one level apart -- L1 against L2
 # ("violate the interaction-risk rule now, or collide in Delta steps?"), and
 # identically L2 against L3 -- not the two-level one ADR-075 tabulated, so its
 # break-even figures are 2x too generous. Dominance survives while
-# `Delta < ln(a) / -ln(gamma)`. At `a = 2.5` (ADR-079) and the measured 199-step
+# `Delta < ln(a) / -ln(gamma)`. At `a = 2.5` (ADR-081) and the measured 199-step
 # horizon (RULEBOOK-V5.1 §4.6: p5/p50/p95 = 197/199/200) that requires
 # `gamma > 0.99541`; 0.996 gives 229 steps, a 15 % margin over the whole
 # episode, and 457 steps for the two-level comparison.

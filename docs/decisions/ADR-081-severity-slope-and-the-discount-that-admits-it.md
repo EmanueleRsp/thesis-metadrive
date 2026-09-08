@@ -1,4 +1,4 @@
-# ADR-079: a severity slope inside the violated set, and the discount that admits it
+# ADR-081: a severity slope inside the violated set, and the discount that admits it
 
 - Status: **Approved**
 - Date: 2026-09-07

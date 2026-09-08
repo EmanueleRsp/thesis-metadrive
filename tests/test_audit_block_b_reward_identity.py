@@ -2,7 +2,7 @@
 
 `build_reward_semantics_identity` carried `priority_base` but none of the weights
 that sit beside it in the same formula. That cost nothing while every one of them
-was frozen. ADR-079 makes `severity` a live parameter, and a checkpoint trained
+was frozen. ADR-081 makes `severity` a live parameter, and a checkpoint trained
 at one severity would then resume against another without any complaint -- one
 set of curves carrying two different rewards, which is the failure the sidecar
 exists to prevent.
@@ -75,7 +75,7 @@ def test_changing_any_weight_changes_the_identity(field: str) -> None:
 
 
 def test_severity_is_the_field_that_made_this_urgent() -> None:
-    """ADR-079 turned `sigma` from a frozen 0 into a selected 0.30.
+    """ADR-081 turned `sigma` from a frozen 0 into a selected 0.30.
 
     Called out separately from the parametrized case because the parametrization
     would still pass if someone later removed `severity` and left the other six.

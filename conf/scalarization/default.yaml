@@ -13,7 +13,7 @@ mode: six_level_priority_weighted_rank
 # different preference order rather than a truncated one. This value reaches the
 # checkpoint identity, which is part of the intentional break (`DEC-RB51-001`).
 vector_schema_id: rulebook_v5_1_six_level_v1
-# ADR-079: `a = 2.5`. RULEBOOK-V5.1 §5.5 had `a = 2.2`, which is the first round
+# ADR-081: `a = 2.5`. RULEBOOK-V5.1 §5.5 had `a = 2.2`, which is the first round
 # value above §5.4's lower bound `lambda4 + 0.1*(eta + lambda6) = 2.12` -- a
 # lower bound, never an optimum, and nothing in that document bounds `a` above.
 # It has to move because §5.4 caps `sigma` at 0.1227 when `a = 2.2`, and no
@@ -25,7 +25,7 @@ vector_schema_id: rulebook_v5_1_six_level_v1
 priority_base: 2.5
 numerical_tolerance: 1.0e-8
 native_environment_reward_weight: 0.0
-# ADR-079. `sigma` is how much worse a violation gets as it deepens, as a
+# ADR-081. `sigma` is how much worse a violation gets as it deepens, as a
 # fraction of that level's own weight; `phi` is a shared *absolute* slope. At
 # `sigma = 0` the only grading left was `phi = 0.25`, so the range inside a
 # violated level was 2.3 % of the weight at L1 and 11.4 % at L3 -- the most

@@ -133,7 +133,7 @@ def test_the_frozen_values_match_what_the_module_implements() -> None:
     assert _SumTree(8).tree.dtype == np.float64
 
     # `_insertion_priority` returns the buffer's exact current maximum
-    # (ADR-080 / `TRANSITION-REPLAY-V1.0.1`), not a running or floored one.
+    # (ADR-082 / `TRANSITION-REPLAY-V1.1.1`), not a running or floored one.
     assert frozen["new_transition_priority"] == "current_max"
 
     # `update_priorities` reduces repeated indices with `np.maximum.at`.
