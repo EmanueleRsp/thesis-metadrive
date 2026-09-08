@@ -227,10 +227,14 @@ suite needs this project's architecture (`aarch64`), a CUDA GPU, the MetaDrive
 simulator, and the frozen ScenarioNet panels, none of which a GitHub-hosted
 runner has. The project machine is the only place the suite can run.
 
-A green pull-request check is therefore not evidence that tests pass. `make lint`
-and `make test` on the project machine are the merge gate: run them before every
-merge, not only before pushing, and record the executed result as Completion
-requires.
+A pull request also reports a GitGuardian check, which is a repository integration
+rather than a workflow in this repository; it scans for leaked secrets and does not
+run tests either.
+
+A green pull request is therefore not evidence that tests pass — both of its checks
+can be green on a change that breaks the suite. `make lint` and `make test` on the
+project machine are the merge gate: run them before every merge, not only before
+pushing, and record the executed result as Completion requires.
 
 ## Branching And Pull Requests
 
