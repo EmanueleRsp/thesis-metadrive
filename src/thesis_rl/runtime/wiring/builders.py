@@ -37,6 +37,24 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Every `rulebook.version` string that routes to the v2 adapter. `v2` is what the
+# shipped configuration declares; the rest are historical spellings kept so a run
+# directory or checkpoint written under them still routes when it is re-read.
+# Named rather than inline so the shipped value can be pinned against it — the
+# string used to claim a specification version it did not implement, and nothing
+# tied the three copies of it together (`C8`).
+RULEBOOK_V2_FAMILY_ALIASES: frozenset[str] = frozenset(
+    {
+        "v2",
+        "v4.6",
+        "v4.7",
+        "4.6",
+        "4.7",
+        "4.6-final-implementation-complete",
+        "4.7-final-implementation-complete",
+    }
+)
+
 
 def collect_scenario_runtime_stats(env: Any) -> dict[str, Any] | None:
     """Collect and merge ScenarioNet counters from direct or vectorized envs."""
@@ -347,15 +365,7 @@ def maybe_wrap_env_with_reward_manager(env, cfg: DictConfig):
     # canonical snapshot/cache factories, otherwise silently falling back to
     # v1 would violate the fail-fast contract.
     rulebook_version = str(cfg.get("rulebook", {}).get("version", "v1")).lower()
-    if rulebook_version in {
-        "v2",
-        "v4.6",
-        "v4.7",
-        "4.6",
-        "4.7",
-        "4.6-final-implementation-complete",
-        "4.7-final-implementation-complete",
-    }:
+    if rulebook_version in RULEBOOK_V2_FAMILY_ALIASES:
         adapter = getattr(env, "rulebook_v2_adapter", None)
         if adapter is None:
             adapter = getattr(getattr(env, "unwrapped", None), "rulebook_v2_adapter", None)
