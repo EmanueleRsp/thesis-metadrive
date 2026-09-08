@@ -14,8 +14,8 @@
   index"; §2.9.4 "Uno spatial index può accelerare la selezione, ma il risultato
   deve essere equivalente all'unione di tutte le lane verticalmente
   compatibili").
-- Status: `IMPLEMENTED` (M1, M2 and the adversarial review done; `VERIFIED`
-  after the full `make gate` recorded in §11)
+- Status: `VERIFIED` (M1, M2, adversarial review and the full `make gate`
+  recorded in §11)
 - Created: 2026-09-08. Last updated: 2026-09-08.
 - Branch: `worktree-f8-route-projection-hotspot` (worktree off `main` at
   `7f4ae9c`).
@@ -217,7 +217,7 @@ Fallback/logging: none added. Errors: identical.
 | M0 | Baseline measurement without profiler | `TOTAL` line of `outputs/f8/baseline_a_native_waymo.log`: 593 steps, step loop 673.3 s, **1135 ms/step**, wall 710 s | Done |
 | M1 | z-range pre-classification + per-step memo (commit `7c4500e`) | AC-F8-03/04/05 pass; `make check` PASS (PARTIAL by design, 1881 passed, 6 skipped, 2m37s); re-measured with the reference `project` swapped back in: **929 ms/step** (550.7 s, −18 %) | Done |
 | M2 | NumPy `project` (commit `f78faf6`) | AC-F8-01/02 pass; re-measured: **312 ms/step** (185.0 s, 3.6× over baseline; wall 217 s) | Done |
-| M3 | Gate, adversarial review, docs, PR | adversarial review recorded below; `F8` row and index updated; `make gate` result in §11 | In progress |
+| M3 | Gate, adversarial review, docs, PR | adversarial review recorded below; `F8`/`F9` rows and index updated; `make gate` **PASS, FULL** at `3b3ca66`: 1893 passed, 5 skipped, pytest 4m01s (log `outputs/gate/20260908T172858Z-3b3ca66.log`; the two Waymo return-ordering cases 224 s / 222 s against 588 s / 584 s in `20260908T145526Z`) | Done |
 
 ## 11. Progress Log, Findings, Limitations
 
