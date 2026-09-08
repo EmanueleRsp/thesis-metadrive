@@ -1380,12 +1380,28 @@ def _run_scenario_acl_vectorized_training(
             rulebook_timing=(dict(rulebook_timing) if isinstance(rulebook_timing, dict) else {}),
         )
 
+    def log_training_progress(snapshot: dict[str, Any]) -> None:
+        # `C12`'s durable, TTY-independent step counter, which reached the
+        # baseline loop only: this driver collects through its own loop and never
+        # passed the callback, so an ACL run — every serious run — had no step
+        # figure between chunk boundaries and no fps or EMA losses anywhere
+        # (`C42`). `chunk_id` is read at call time so a record lands under the
+        # chunk it belongs to.
+        log_event(
+            paths.events_log_path,
+            "training_progress",
+            chunk_id=int(current_chunk_id),
+            stage="scenario_acl_vectorized",
+            **snapshot,
+        )
+
     current_observations = initial_observations
     try:
         while current_global_step < total_timesteps:
             current_chunk_id += 1
             chunk_steps = min(eval_interval, total_timesteps - current_global_step)
             summary = agent.train_vectorized(
+                progress_callback=log_training_progress,
                 env=env,
                 chunk_timesteps=chunk_steps,
                 global_total_timesteps=total_timesteps,
@@ -1607,12 +1623,26 @@ def _run_scenario_acl_vectorized_training(
         event=lambda name, **payload: log_event(paths.events_log_path, name, **payload),
         eval_id_start=current_eval_id,
     )
+    duration_seconds = round(time.time() - start_time, 2)
+    # `C42`: this driver returns to `train_loop` before the loop's own
+    # `run_completed`, so a finished ACL run left no terminal event at all —
+    # while it did record `run_interrupted` and, through the loop's exception
+    # handler, `run_failed`. Paired with the metadata update the way the
+    # interrupt path already pairs them, so the event log states every outcome.
+    log_event(
+        paths.events_log_path,
+        "run_completed",
+        global_step=int(current_global_step),
+        eval_id=int(final_eval_id),
+        stage="scenario_acl_vectorized",
+        duration_seconds=duration_seconds,
+    )
     update_run_metadata(
         paths.artifacts_dir,
         {
             "status": "completed",
             "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "duration_seconds": round(time.time() - start_time, 2),
+            "duration_seconds": duration_seconds,
             "global_step": current_global_step,
             "eval_id": final_eval_id,
             "final_panels": sorted(final_panel_metrics),
@@ -1730,12 +1760,24 @@ def _run_scenario_acl_vectorized_training(
             "checkpoint_global_step": current_global_step,
         },
     )
+    duration_seconds = round(time.time() - start_time, 2)
+    # `C42`, second completion branch of the vector path: same reasoning as the
+    # final-panels branch above.
+    log_event(
+        paths.events_log_path,
+        "run_completed",
+        global_step=int(current_global_step),
+        chunk_id=int(current_chunk_id),
+        eval_id=int(current_eval_id + 1),
+        stage="scenario_acl_vectorized",
+        duration_seconds=duration_seconds,
+    )
     update_run_metadata(
         paths.artifacts_dir,
         {
             "status": "completed",
             "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "duration_seconds": round(time.time() - start_time, 2),
+            "duration_seconds": duration_seconds,
             "global_step": current_global_step,
             "chunk_id": current_chunk_id,
             "eval_id": current_eval_id + 1,
@@ -2790,6 +2832,18 @@ def run_scenario_acl_training(
             eval_id_start=current_eval_id,
         )
         duration_seconds = round(time.time() - start_time, 2)
+        # `C42`, non-vectorized path. Its collection loop is `Agent.train`, which
+        # carries no progress channel at all, so this path still has no step
+        # counter between chunks — but it can at least state its own end.
+        log_event(
+            paths.events_log_path,
+            "run_completed",
+            global_step=int(current_global_step),
+            chunk_id=int(current_chunk_id),
+            eval_id=int(final_eval_id),
+            stage="scenario_acl",
+            duration_seconds=duration_seconds,
+        )
         update_run_metadata(
             paths.artifacts_dir,
             {
@@ -2939,6 +2993,16 @@ def run_scenario_acl_training(
         )
 
         duration_seconds = round(time.time() - start_time, 2)
+        # `C42`, non-vectorized path's second completion branch.
+        log_event(
+            paths.events_log_path,
+            "run_completed",
+            global_step=int(current_global_step),
+            chunk_id=int(current_chunk_id),
+            eval_id=int(final_eval_id),
+            stage="scenario_acl",
+            duration_seconds=duration_seconds,
+        )
         update_run_metadata(
             paths.artifacts_dir,
             {
