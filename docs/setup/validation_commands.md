@@ -47,6 +47,11 @@ Visual/manual checks:
 
 ## Code Quality Commands
 
+To run the whitespace check, the lint target and the test suite together as the
+merge gate, with a recorded evidence log, use `make gate` — see
+`docs/workflows/agent_operations.md`. The individual commands below stay useful
+while iterating.
+
 Run the canonical Ruff lint target over project-owned Python code:
 
 ```bash

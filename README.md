@@ -311,10 +311,16 @@ available explicitly with
 Canonical Docker-based commands for project-owned Python code are:
 
 ```bash
+make gate
 make lint
 make format
 make format-check
 ```
+
+`make gate` is the merge gate: it runs the whitespace check, Ruff and the test
+suite on this machine and records the executed evidence under `outputs/gate/`,
+because GitHub CI checks portability only. See
+[docs/workflows/agent_operations.md](docs/workflows/agent_operations.md).
 
 The default scope is `src tests scripts`; vendored projects and runtime data are
 excluded. The lint baseline is clean. Formatting is being adopted gradually, so
@@ -382,6 +388,7 @@ documentation folder.
 Useful follow-up documents:
 
 - [docs/README.md](docs/README.md)
+- [docs/workflows/agent_operations.md](docs/workflows/agent_operations.md)
 - [docs/setup/comparison_run_commands.md](docs/setup/comparison_run_commands.md)
 - [docs/workflows/algorithm_selection_playbook.md](docs/workflows/algorithm_selection_playbook.md)
 - [docs/setup/validation_commands.md](docs/setup/validation_commands.md)

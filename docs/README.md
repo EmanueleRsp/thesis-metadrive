@@ -59,6 +59,7 @@ approval and an authoritative version.
 
 ## Operational Workflows
 
+- [Agent operations](workflows/agent_operations.md)
 - [Algorithm selection](workflows/algorithm_selection_playbook.md)
 - [Analysis pipeline](workflows/analysis_pipeline.md)
 - [Thesis experiment roadmap](workflows/thesis_experiment_roadmap.md)

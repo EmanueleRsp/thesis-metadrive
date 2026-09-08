@@ -24,6 +24,88 @@ If it touched the same area, stop and restate the plan — that is the outcome t
 check exists for, and the one most easily skipped, because integrating and
 pressing on always looks like the shorter path.
 
+## The merge gate
+
+```
+make gate
+```
+
+It runs the whitespace checks, Ruff over `PYTHON_QUALITY_PATHS`, and the test suite
+inside the container, writes an evidence log to
+`outputs/gate/<timestamp>-<commit>.log`, and prints a summary line to cite:
+
+```
+gate: PASS | FULL | 58fc9d0 (branch-name, tree clean) | 20260908T130211Z
+```
+
+The script pins `COMPOSE_PROJECT_NAME`, so it also works from a worktree where a
+bare `make test` does not. When the machine lacks Docker, `.env`, or any of the
+three submodules, it refuses to run and prints the fix — a local gap, not a
+repository defect.
+
+**Scope.** Passing pytest arguments (`make gate GATE_ARGS="tests/test_module.py -k
+case"`) or narrowing `PYTHON_QUALITY_PATHS` marks the run `PARTIAL` in the header
+and the summary line, so a scoped run cannot be cited as a gate.
+
+**A check that read nothing is never `ok`.** It is recorded as
+`NOT APPLICABLE (<reason>)` and named in the verdict, because a `PASS` that
+absorbs an empty check is worse than a missing check: it turns "not inspected"
+into recorded evidence. The whitespace check is in three parts for that reason —
+bare `git diff --check` sees only tracked, unstaged changes, so it is blind to
+untracked files and inspects nothing at all on a clean tree, which is the state a
+merge gate normally runs in. The parts are pending tracked work
+(`git diff --check HEAD`), untracked files, and the committed range against
+`origin/main` (override with `GATE_BASE_REF`). The header states which scope each
+resolved to.
+
+**Test durations are part of the evidence.** The pytest step runs with
+`--durations=25`, so every log answers "which tests make the suite slow" without a
+special run.
+
+The gate deliberately does not run a smoke test: that is a separate,
+change-dependent requirement, covered by the production-path smoke below.
+
+## The working-loop check
+
+```
+make check
+```
+
+The same steps as the gate minus the seven `integration` tests. Measured on
+2026-09-08: **3m55s against the full suite's 27m59s** (1838 passed, 5 skipped, 7
+deselected, against 1845 passed and 5 skipped). The point of the short one is that
+it is cheap enough to run on *every* change, which removes the need to guess which
+subset covers a change; guessing wrong is how defects reach `main`. It is
+`PARTIAL` by construction and never a merge gate.
+
+**Two tests are 74% of the suite.**
+`test_reward_return_ordering_on_validation_panels` costs 628s for `b_rulebook` and
+621s for `a_native` — 1249s of the full run's 1679s. The other five `integration`
+tests come to about 48s together, and the two PG-generator ones do not reach the
+top 25 at all (under 5s each). So "the seven slow tests" is the wrong picture:
+five of the seven are cheap, and the cost is concentrated in one parametrized
+test. Each of its two cases builds a fresh env per behaviour and runs a complete
+episode, over two panels and three behaviours — six env constructions and six full
+episodes per case, twelve in all. The return *is* the episode, so there is nothing
+to shorten inside them.
+
+`pytest-xdist` was measured and rejected: `-n 16` on the residual suite bought
+only 84 seconds (2m30s against 3m55s), because what is left is many small tests
+where starting sixteen processes that import torch and MetaDrive eats most of the
+gain. Not worth a new dependency. The parallel run did surface one order-dependent
+test — it failed under `-n 16` and passed under `--dist loadfile` — which is a
+defect in its own right, tracked in `docs/open_items.md`, not a reason to adopt
+xdist.
+
+**Why the five slowest unmarked tests stay unmarked.** In the short run the top
+five durations are all in `tests/test_scenarionet_vectorized_integration.py`
+(43s, 40s, 20s, 20s, 19s) and carry no `integration` marker, so they account for
+143s of its 235s. Marking them would take the short run to about 1m30s and would
+remove exactly the vectorized-provider and frozen-catalog coverage where two
+defects previously hid for weeks. The 90 seconds are deliberately spent. After
+those five the distribution is flat — 3.5s, then 1-2s — so there is no other
+concentration of cost to remove.
+
 ## Running checks from a git worktree
 
 A fresh worktree lacks three things the main checkout has:
