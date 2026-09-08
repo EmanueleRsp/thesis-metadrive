@@ -62,6 +62,32 @@ class DrivableLaneRecord:
 DRIVABLE_SEAM_CLOSING_M = 0.10
 
 
+# F8. A lane's projected ``z_m`` is a convex combination of two consecutive
+# centerline elevations, so it lies inside the centerline's closed z-range up
+# to one floating-point rounding (about 1e-15 m at these magnitudes). The
+# range therefore decides the vertical gate outright whenever it clears the
+# tolerance by more than this guard band; only a lane whose range straddles
+# the boundary, or comes within the band of it, is projected. Deciding from
+# the range skips every projection on a flat scenario, where all lanes are
+# compatible, without changing which lanes are selected.
+Z_RANGE_GUARD_M = 1.0e-6
+
+
+def _vertical_compatibility_from_range(
+    centerline: RoutePolyline, ego_position_z: float
+) -> bool | None:
+    """Decide the vertical gate from the centerline z-range, or ``None`` if undecidable."""
+
+    low_z, high_z = centerline.z_range_m
+    inner = VERTICAL_COMPATIBILITY_TOLERANCE_M - Z_RANGE_GUARD_M
+    if high_z - ego_position_z < inner and ego_position_z - low_z < inner:
+        return True
+    outer = VERTICAL_COMPATIBILITY_TOLERANCE_M + Z_RANGE_GUARD_M
+    if ego_position_z - high_z > outer or low_z - ego_position_z > outer:
+        return False
+    return None
+
+
 @lru_cache(maxsize=128)
 def _union_selected_surfaces(selected: tuple[BaseGeometry, ...]) -> BaseGeometry:
     """Cache exact unions for a stable lane set within worker processes.
@@ -97,8 +123,11 @@ def drivable_surface_for_ego(
         raise ValueError("Ego pose must be finite")
     selected: list[BaseGeometry] = []
     for lane in lanes:
-        projection = lane.centerline.project(ego_position_xy)
-        if abs(ego_position_z - projection.z_m) > VERTICAL_COMPATIBILITY_TOLERANCE_M:
+        compatible = _vertical_compatibility_from_range(lane.centerline, ego_position_z)
+        if compatible is None:
+            projection = lane.centerline.project(ego_position_xy)
+            compatible = abs(ego_position_z - projection.z_m) <= VERTICAL_COMPATIBILITY_TOLERANCE_M
+        if not compatible:
             continue
         # The normative surface is the union of every vertically compatible
         # drivable lane. Do not prefilter by current footprint intersection:
@@ -154,6 +183,8 @@ def carriageway_surfaces_for_ego(
     aligned: list[BaseGeometry] = []
     opposing: list[BaseGeometry] = []
     for lane in lanes:
+        if _vertical_compatibility_from_range(lane.centerline, ego_position_z) is False:
+            continue
         projection = lane.centerline.project(ego_position_xy)
         if abs(ego_position_z - projection.z_m) > VERTICAL_COMPATIBILITY_TOLERANCE_M:
             continue

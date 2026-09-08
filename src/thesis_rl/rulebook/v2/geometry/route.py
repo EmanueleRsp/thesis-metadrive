@@ -55,6 +55,12 @@ class RoutePolyline:
     lane_start_points_xyz: tuple[tuple[float, float, float], ...] = ()
     _segment_starts_m: tuple[float, ...] = field(init=False, repr=False)
     _segment_lengths_m: tuple[float, ...] = field(init=False, repr=False)
+    # Closed elevation range of the consolidated points. Every projection's
+    # ``z_m`` is a convex combination of two consecutive point elevations, so it
+    # lies inside this range (up to one rounding); callers that only need the
+    # vertical-compatibility verdict can decide most polylines from it without
+    # projecting (F8, `drivable.py`).
+    z_range_m: tuple[float, float] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         consolidated = self._consolidate_points(self.points_xyz)
@@ -73,6 +79,8 @@ class RoutePolyline:
         object.__setattr__(self, "points_xyz", consolidated)
         object.__setattr__(self, "_segment_starts_m", tuple(starts))
         object.__setattr__(self, "_segment_lengths_m", tuple(lengths))
+        elevations = [point[2] for point in consolidated]
+        object.__setattr__(self, "z_range_m", (min(elevations), max(elevations)))
 
     @classmethod
     def from_lane_centerlines(
