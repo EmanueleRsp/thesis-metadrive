@@ -12,6 +12,29 @@ from thesis_rl.rulebook.v2.errors import EvaluationFailure, RulebookEvaluationEr
 from thesis_rl.rulebook.v2.types import MACRO_RULE_ORDER, MacroRule
 
 
+# Names the *implementation family* of this machinery, which is what
+# `runtime/wiring/builders.py` routes on — not the specification in force, which
+# is `rulebook.specification_id` (`RULEBOOK-V5.1`) in `conf/config.yaml`.
+#
+# **The value is misleading and cannot be corrected in isolation.** It reads as a
+# specification version two releases behind the six-level vector implemented
+# since `RB51`. `DEC-C8-004` deferred the rename because the string "is also
+# stamped into cached rulebook-catalog provenance, where a change invalidates the
+# cache"; that stated reason is wrong — `filter_rulebook_v2_catalog.py` decides
+# cache reuse on `relative_path` and `scenario_fingerprint` and only reads this
+# string through — but the deferral was right for a reason it did not name, found
+# 2026-09-08 by changing it and watching a test fail:
+#
+#   `geometry_config_hash()` below hashes a payload containing this string, and
+#   `scripts/verify_rulebook_eligibility_stability.py:152` compares that hash for
+#   equality against the one frozen into the dataset's eligibility provenance
+#   (`docs/audits/dataset_construction_2026-09-05/rulebook_eligibility_stability.json`).
+#
+# So renaming it moves a **dataset provenance identity**, which `AGENTS.md`
+# reserves for explicit user approval. Correcting it means deciding what happens
+# to that frozen hash — re-verify and re-record it, or accept a documented
+# mismatch — and that decision is the user's, not a cleanup. `C8` in
+# `docs/open_items.md` carries the full account.
 RULEBOOK_V2_VERSION = "4.7-final-implementation-complete"
 
 

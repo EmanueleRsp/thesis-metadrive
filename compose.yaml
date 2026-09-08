@@ -16,6 +16,13 @@ x-project-environment: &project-environment
   METADRIVE_DATA_ROOT: "${METADRIVE_DATA_ROOT:-/workspace/data/metadrive}"
   WANDB_MODE: "${WANDB_MODE:-offline}"
   HYDRA_FULL_ERROR: "${HYDRA_FULL_ERROR:-1}"
+  # A run started as `docker compose run ... | tee train.log` has no TTY, so
+  # Python block-buffers stdout and the tail of that log lags minutes behind the
+  # process. `C10` reports the consequence: a run dead for ninety minutes whose
+  # log tail still read as progress. Unbuffered output does not make the tail a
+  # liveness signal -- `scripts/run_liveness.py` is that -- but it stops it being
+  # a misleading one.
+  PYTHONUNBUFFERED: "${PYTHONUNBUFFERED:-1}"
 
 x-project-volumes: &project-volumes
   - .:/workspace/thesis-metadrive

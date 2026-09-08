@@ -1,3 +1,7 @@
 # Rulebook v2 live adapter wiring is available after ScenarioEnv reset; runtime
 # validation remains fail-closed for missing calibration or ambiguous topology.
+# The implementation family, matched for equality against `RULEBOOK_V2_VERSION`.
+# The specification in force is `rulebook.specification_id` in `conf/config.yaml`;
+# this string is misleading but feeds `geometry_config_hash()` and so a frozen
+# dataset provenance hash — see the note on the constant and `C8`.
 version: 4.7-final-implementation-complete
