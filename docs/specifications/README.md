@@ -11,17 +11,12 @@ Before implementation:
 4. create an ExecPlan under `../implementation/`;
 5. define acceptance criteria and minimum validation categories.
 
-Current authoritative documents:
-
-- `rulebook_v4.6_specification.md`, version `4.6-final-implementation-complete`;
-- `automatic_curriculum_learning_v1_specification.md`, version v1;
-- `scenarionet_integration_v1.1_specification.md`, version 1.1;
-- `observation_v1.1_specification.md`, ID `OBS-V1.1`, version
-  `1.1-final-implementation-complete`.
-- `encoder_v1.0_specification.md`, ID `ENC-V1.0`, version
-  `1.0-final-implementation-complete`.
-
-`scenarionet_integration_v1_specification.md` is retained as a superseded
-historical record.
+No list of current documents is maintained here. Authority, selected versions,
+supersession, and retained historical records for every specification in this
+directory are recorded in the Scientific And Functional Documents table of
+`../project_index.md`, which is the single source of truth. Presence in this
+directory does not establish authority: the directory also holds superseded,
+historical, and `UNDER_REVIEW` documents, and only that table says which version
+governs a given implementation path.
 
 Use `../templates/specification_template.md` for new specifications.

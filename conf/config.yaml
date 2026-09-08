@@ -4,7 +4,8 @@ name: PLN_${agent.planner.algorithm.name}_REW_${hydra:runtime.choices.reward}_CU
 # and optionally add CLI overrides (e.g. `run_profile=medium`).
 defaults:
   - env: scenarionet        # Canonical final environment family.
-  - obs: semantic_v3         # OBS-V1.3 perception-bounded observation (D=3009).
+  - obs: semantic_v3         # OBS-V1.3 perception-bounded observation (D=3011
+                             # since OBS-V1.3.1; 3009 before it).
   - experiment: default
   - evaluation: scenarionet_panels
   - reward: scalar_reward   # Final Rulebook scalar reward.
@@ -18,7 +19,7 @@ defaults:
   - agent/planner/algorithm: td3_sb3   # Primary final learner; make run requires an explicit choice.
   - agent/adapter: identity            # Action adapter in `conf/agent/adapter/*`
 
-  - scalarization: default  # SCAL-V1.1 formula and immutable run parameters
+  - scalarization: default  # SCAL-V1.4 formula and immutable run parameters
   - curriculum: scenario_acl_scenarionet
   
   - override hydra/job_logging: disabled

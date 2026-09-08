@@ -76,7 +76,7 @@ specification. Coordinate with `D4`.
 | `REQ-RB51-06` | `Δq_t = clip((s_{t+1} − s_t)/D_REF, −1, +1)`, `D_REF = v_ref·Δt = 2.2222 m`; L4 carries the bare advance | §4.1 |
 | `REQ-RB51-07` | `Σ_t Δq_t = (s_T − s_0)/D_REF` to numerical tolerance below the clip | §4.2 |
 | `REQ-RB51-08` | `c_L6 = 1 − clip(Δq, 0, 1)`; standstill and reverse both cost 1 | §4.6 |
-| `REQ-RB51-09` | `SCAL-V1.4` as written in §5.1, at `a=2.2, σ=0, φ=0.25, λ₄=2.0, η=1.0, λ₆=0.2` | §5.1, §5.5 |
+| `REQ-RB51-09` | `SCAL-V1.4` as written in §5.1, at `a=2.2, σ=0, φ=0.25, λ₄=2.0, η=1.0, λ₆=0.2` at approval; `a=2.5, σ=0.30` since ADR-081 (2026-09-07), the other four unchanged | §5.1, §5.5, ADR-081 |
 | `REQ-RB51-10` | The §5.4 rank-preservation predicate rejects inadmissible weights before use | §5.4 |
 | `REQ-RB51-11` | `rss` longitudinal is a reported diagnostic, never in the reward | §3, ADR-063 |
 | `REQ-RB51-12` | `wrongway` is deleted; `dashed_line` retained at L5 | ADR-066 |
@@ -87,10 +87,12 @@ specification. Coordinate with `D4`.
 | `REQ-RB51-17` | At-fault gate: interaction sub-rules inapplicable at or below the gate speed | ADR-070 |
 | `REQ-RB51-18` | At-fault collision terminates and charges; not-at-fault truncates and charges nothing | ADR-071 |
 | `REQ-RB51-19` | Diagnostics of §7, including `l4_clip_binding_steps`, `l5_reached_steps`, `mean_ego_speed_by_source` | §7 |
-| `REQ-RB51-20` | `γ = 1` in every algorithm configuration, shaping discount tracking it | §4.4, ADR-075 |
+| `REQ-RB51-20` | One shared discount in every algorithm configuration, shaping discount tracking it; `γ = 1` at approval (ADR-075), `γ = 0.996` since 2026-09-07 (ADR-081, together with `a = 2.5`, `σ = 0.30` in `conf/scalarization/default.yaml`) | §4.4, ADR-075, ADR-081 |
 
 `REQ-RB51-20` is **already met** (six configs updated 2026-08-20, guarded by
-`tests/test_hydra_agent_presets.py::test_every_algorithm_is_undiscounted`); it is
+`tests/test_hydra_agent_presets.py::test_every_algorithm_shares_one_hierarchy_preserving_discount`,
+renamed from `test_every_algorithm_is_undiscounted` when ADR-081 replaced `γ = 1`
+with `γ = 0.996`); it is
 listed for traceability, not as work.
 
 ## 4. Current Repository Analysis
@@ -191,7 +193,7 @@ asserts production against it record by record.
 | `REQ-RB51-17` | ADR-070 gate | `components/{ttc,clearance,rss_lateral}.py` | `tests/test_at_fault_gate.py` | Planned |
 | `REQ-RB51-18` | `AC-RB5.1-14` | `rulebook/v2/lifecycle.py`, env done/truncation | `tests/test_rulebook_v51_orderings.py::…-14` | Planned |
 | `REQ-RB51-19` | §7 | `rulebook/v2/wrapper.py`, monitor | `tests/test_rulebook_v51_diagnostics.py` | Planned |
-| `REQ-RB51-20` | `AC-RB5.1-16` | `conf/agent/planner/algorithm/*.yaml` | `test_every_algorithm_is_undiscounted` | **Done** |
+| `REQ-RB51-20` | `AC-RB5.1-16` | `conf/agent/planner/algorithm/*.yaml` | `test_every_algorithm_shares_one_hierarchy_preserving_discount` | **Done** |
 
 ## 9. Test Strategy Defined Before Implementation
 

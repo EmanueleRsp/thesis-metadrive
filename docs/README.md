@@ -24,13 +24,17 @@ run instructions. Start specification-driven work with the
 
 ## Authoritative Specifications
 
-- [Rulebook v2, version 4.6](specifications/rulebook_v4.6_specification.md)
-- [Automatic curriculum learning v1](specifications/automatic_curriculum_learning_v1_specification.md)
-- [ScenarioNet integration v1.1](specifications/scenarionet_integration_v1.1_specification.md)
-- [Semantic observation v1.1](specifications/observation_v1.1_specification.md)
-- [Encoder architecture v1.0](specifications/encoder_v1.0_specification.md)
+No list is kept here. The Scientific And Functional Documents table of
+[project_index.md](project_index.md) is the single source of truth for which
+specification version governs a given implementation path, and for which
+documents are retained as superseded or historical.
 
-The authority index is definitive when this summary and the registry differ.
+A summary list was maintained here until 2026-09-08 and removed because it had
+gone stale without anyone noticing: it still named rulebook v4.6, semantic
+observation v1.1 and encoder v1.0 as authoritative, long after v4.7, RULEBOOK-V5.1,
+OBS-V1.3 and ENC-V1.3/V1.4 had superseded them for the selected paths. A second
+register that is merely declared subordinate to the first is a register that
+drifts, so the list is gone rather than corrected.
 
 ## Implementation Plans
 

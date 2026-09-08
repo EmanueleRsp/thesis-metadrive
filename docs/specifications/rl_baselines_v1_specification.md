@@ -27,6 +27,14 @@
   - `docs/decisions/ADR-004-assigned-route-metadata-for-pg-and-waymo.md`
   - `docs/decisions/ADR-011-rulebook-scalarization-v1.md`
   - `docs/decisions/ADR-014-scenarionet-acl-learning-potential-only.md`
+  - `docs/decisions/ADR-036-lidar-arm-temporal-alignment-and-lq-tokenization.md`
+    (point 8, replay-capacity unification; Amendment RSA-2)
+  - `docs/decisions/ADR-075-undiscounted-return-for-the-rule-hierarchy.md`
+    (Amendment RSA-3)
+  - `docs/decisions/ADR-078-sac-learner-update-throughput.md`
+    (Amendment RSA-4)
+  - `docs/decisions/ADR-081-severity-slope-and-the-discount-that-admits-it.md`
+    (amends ADR-075; Amendment RSA-3)
 - Authoritative: `YES`
 - Canonical repository path: `docs/specifications/rl_baselines_v1_specification.md`
 
@@ -38,6 +46,52 @@
 > prefixes with a truncation boundary and PPO preserves valid rollout prefixes
 > with final-observation value bootstrap. Typed data-aborts are excluded from
 > evaluation policy metrics; generic exceptions remain fatal.
+
+> Amendment RSA-2 (approved 2026-07-30; ADR-036 point 8): the off-policy replay
+> capacity is unified at `buffer_size = 300000` for both `sac_sb3` and
+> `td3_sb3`, replacing SAC's `1000000`. This supersedes `REQ-RLB-008`'s "replay
+> capacity 1,000,000", the §9.4 SAC `buffer_size` row, and the "capacity 300,000
+> or 1,000,000" cell of the §5 `replay_state` row. `run_profile=fast`
+> additionally overrides the capacity to `24000` (ADR-036 point 9), preserving
+> the 20 % buffer-to-budget ratio of the `thesis` profile.
+
+> Amendment RSA-3 (approved 2026-08-20; ADR-075, amended 2026-09-07 by
+> ADR-081): the discount is `gamma = 0.996` on **every** algorithm and every
+> arm, replacing the `gamma = 0.99` this document requires in `REQ-RLB-006`,
+> `REQ-RLB-008`, `REQ-RLB-010` and the §9.3, §9.4 and §9.5 configuration
+> tables. `learning_potential_gamma` tracks it, or Ng et al.'s
+> policy-invariance theorem for potential-based shaping no longer applies. One
+> discount is shared by all arms so that a difference in results stays
+> attributable to the preference structure under test, and the value is bounded
+> below by the requirement that the rule hierarchy must not invert inside an
+> episode: a future violation at level `k` outranks a present one at `k+1`
+> while `ln(a) / -ln(gamma) > L`, which at `a = 2.5` and a measured horizon of
+> `L = 199` steps excludes `0.995` (183 steps). Guarded by
+> `tests/test_hydra_agent_presets.py::test_every_algorithm_shares_one_hierarchy_preserving_discount`,
+> which pins the bound as a derivation rather than as a literal.
+
+> Amendment RSA-4 (approved 2026-09-06; ADR-078): for the off-policy learners
+> the replay minibatch is `batch_size = 512`, the new `update_to_data_ratio` is
+> `0.5`, and `gradient_steps = auto` resolves to
+> `max(round(train_freq * n_envs * update_to_data_ratio), 1)` rather than to
+> `n_envs`. This supersedes the `256` of `REQ-RLB-006`, `REQ-RLB-008`, the §3.4
+> profile matrix and the §9.3/§9.4 `batch_size` rows, and it supersedes the
+> `auto -> n_envs` resolution wherever this document states it, including the
+> §9.3/§9.4 `gradient_steps` rows and the resolved-value column of the §3.4
+> execution table. Version 1.0's resolution is the `update_to_data_ratio = 1.0`
+> case, so the atomic unit is unchanged and only the resolution moves. The
+> `smoke` profile keeps its diagnostic `batch_size = 64`.
+>
+> **Which configuration these amendments describe.** RSA-2 and RSA-4 apply to
+> the fork-backed SB3 path, `agent/planner/algorithm={td3_sb3,sac_sb3}`, which
+> is the configuration ADR-078 names as affected. The retained `td3` and `sac`
+> presets declare themselves in their own header as the temporary legacy
+> baseline kept while the SB3 paths are consolidated, and they carry different
+> values — `batch_size: 128`, no `update_to_data_ratio`, and a legacy `auto`
+> that maps to the transitions collected in the last rollout. That divergence
+> from this document's `256` is registered in `docs/open_items.md` rather than
+> resolved here. RSA-3's discount, by contrast, applies to all six presets,
+> legacy included.
 
 This specification defines the three scalar, non-lexicographic,
 non-distributional reinforcement-learning baselines used by the thesis:

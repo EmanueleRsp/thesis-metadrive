@@ -285,8 +285,9 @@ make run-train ALGORITHM=td3_sb3 NUM_ENVS=1
 make run-train ALGORITHM=td3_sb3 NUM_ENVS=5 SEED=123
 ```
 
-The defaults are ScenarioNet, `semantic_v2`, LQ, `mlp_encoded`, Rulebook
-v4.7, `bounded_satisfaction_rank`, Scenario ACL, PER, transition replay
+The defaults are ScenarioNet, `semantic_v3`, LQ, `mlp_encoded`, the Rulebook at
+`rulebook.specification_id: RULEBOOK-V5.1`, `six_level_priority_weighted_rank`,
+Scenario ACL, PER, transition replay
 `n_steps=3`, checkpoint/replay persistence, and the `smoke` profile. Choose a
 different learner or run label/profile explicitly when needed:
 
