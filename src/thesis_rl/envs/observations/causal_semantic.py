@@ -236,6 +236,7 @@ def _actor_type_index(actor_class: ActorClass) -> int:
 
 # OBS-V1.3 feature offsets. They are exported so tests and the encoder can
 # reference positions by name instead of re-deriving them from the field order.
+DYNAMIC_ROUTE_STATION_INDEX = 17
 DYNAMIC_ROUTE_LATERAL_INDEX = 18
 STATIC_TYPE_SLICE = slice(6, 11)
 CONTROL_GOVERNS_INDEX = 12
@@ -1483,6 +1484,8 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         self._previous_control_id: str | None = None
         self._last_context_row_step: int | None = None
         self._preexisting_zone_occupancy: dict[str, bool] = {}
+        self._last_built_key: tuple[str, int] | None = None
+        self._last_built_batch: SemanticObservationBatchV12 | None = None
         self._dynamic_diagnostics: tuple[Any, ...] = (0, 0, 0, (), ())
         self._static_diagnostics: tuple[int, int] = (0, 0)
         self._control_diagnostics: tuple[int, int] = (0, 0)
@@ -1499,6 +1502,8 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         self._previous_dashed_feature_id = None
         self._previous_control_id = None
         self._last_context_row_step = None
+        self._last_built_key = None
+        self._last_built_batch = None
         self._preexisting_zone_occupancy.clear()
         self._dynamic_diagnostics = (0, 0, 0, (), ())
         self._static_diagnostics = (0, 0)
@@ -1554,6 +1559,16 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         self, vehicle: object, context: CausalSceneContext | None = None
     ) -> SemanticObservationBatchV12:
         context = self._context_v12(context, vehicle)
+        # REQ-AF-03 (OBS-AUDIT-FIX-001): MetaDrive calls ``observe()`` inside
+        # ``step()`` while the committed context is still the previous step's,
+        # and the Rulebook wrapper calls it again after committing the new one.
+        # The stale call would append a second ``context_history`` row for the
+        # same step (halving the window and zeroing the continuity flags) and
+        # would mix the live vehicle pose of step k+1 with the context of step
+        # k.  One batch per (scenario, step) is the observation contract.
+        build_key = (context.snapshot.scenario_id, int(context.snapshot.step_index))
+        if self._last_built_batch is not None and build_key == self._last_built_key:
+            return self._last_built_batch
         ego = context.snapshot.ego
         mission_s_m = _mission_s_m(context)
         self._record_ego_frame(
@@ -1586,7 +1601,7 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             context, ego, lane_road, control_trace, ego_speed_cap
         )
         self._publish_diagnostics()
-        return SemanticObservationBatchV12(
+        batch = SemanticObservationBatchV12(
             ego_history=ego_history,
             ego_history_mask=ego_history_mask,
             ego_current=ego_current,
@@ -1605,6 +1620,9 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
             context_history_mask=context_history_mask,
             signal_onset_state=self._yellow_memory(ego_speed_cap),
         )
+        self._last_built_key = build_key
+        self._last_built_batch = batch
+        return batch
 
     def _dynamic_candidates(
         self, context: CausalSceneContext, ego: ActorSnapshot
@@ -1964,6 +1982,11 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         # whole right half-plane onto zero.
         projection = self._route_projection_or_raise(actor, ego, context)
         values[DYNAMIC_ROUTE_LATERAL_INDEX] = _clip(projection.lateral_distance_m, 50.0)
+        # REQ-AF-02 (OBS-AUDIT-FIX-001): the base re-projects the ego without a
+        # station anchor, so on a route that passes near itself the ego station
+        # can snap to the far branch while every other OBS-V1.3 block reads the
+        # committed mission station.  Use the single station authority.
+        values[DYNAMIC_ROUTE_STATION_INDEX] = _clip(projection.s_m - _mission_s_m(context), 50.0)
         return values
 
     def _approach_control_in_horizon(

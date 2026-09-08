@@ -11,6 +11,7 @@ from dataclasses import asdict
 import random
 import os
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -708,6 +709,35 @@ def _write_step_timing_rows(
         )
 
 
+def chunk_carry_kwargs(
+    chunk_summary: Mapping[str, Any] | None, *, previous_env: Any, env: Any
+) -> dict[str, Any]:
+    """Continue the previous chunk's in-flight episodes on the same live env.
+
+    REQ-AF-05 (OBS-AUDIT-FIX-001): ``Agent.train_vectorized`` resets every
+    vector slot when it receives no ``initial_observations``.  On the
+    non-curriculum path the environment object survives the chunk boundary, so
+    that reset silently discarded the running episodes without a truncation
+    flag, and the last replay row of each slot was followed by a row of an
+    unrelated episode (n-step windows and PPO advantages crossed the boundary).
+    The ACL driver already forwards ``last_observations``; this helper gives
+    the plain loop the same behaviour.  The carry is valid only while the
+    environment object is the very same one the summary came from: a closed and
+    rebuilt environment starts from ``reset()`` as before.
+    """
+
+    if chunk_summary is None or previous_env is None or previous_env is not env:
+        return {}
+    observations = chunk_summary.get("last_observations")
+    if observations is None:
+        return {}
+    kwargs: dict[str, Any] = {"initial_observations": observations}
+    lengths = chunk_summary.get("last_episode_lengths")
+    if lengths is not None:
+        kwargs["initial_episode_lengths"] = lengths
+    return kwargs
+
+
 def run_training(cfg: DictConfig) -> None:
     # `DEC-RES-002`: `docker stop` / scheduler cancellation reach the same
     # graceful path as Ctrl+C instead of killing the run without a trace.
@@ -868,7 +898,6 @@ def run_training(cfg: DictConfig) -> None:
     last_snapshot_global_step = 0
     chunk_id = 0
     eval_id = 0
-    previous_chunk_last_observations: Any | None = None
     current_stage_name = "baseline"
     current_stage_index = 0
     beta_progress_env_steps = 0
@@ -1746,6 +1775,9 @@ def run_training(cfg: DictConfig) -> None:
         remaining = max(0, total_timesteps - resume_global_steps_done)
         chunk_id = int(resume_chunk_id)
         eval_id = int(resume_eval_id)
+        # REQ-AF-05: the previous chunk's summary and the environment it ran on.
+        previous_chunk_summary: dict[str, Any] | None = None
+        previous_chunk_env: Any = None
         while remaining > 0:
             chunk_id += 1
 
@@ -1807,16 +1839,23 @@ def run_training(cfg: DictConfig) -> None:
                     )
 
                 extra_train_kwargs["progress_callback"] = _log_training_progress
-                if curriculum_manager is None and previous_chunk_last_observations is not None:
+                if curriculum_manager is None:
                     # Continue the slots' episodes across the chunk boundary instead of
                     # resetting every worker. A reset here left the last transition of
                     # each slot stored with `done=0`, so the n-step sampler chained it
                     # into the next episode's rewards and bootstrapped it from another
                     # scenario's observation; it also dropped `n_envs` partial episodes
-                    # from the chunk statistics (audit 2026-09-06, A4). The staged
-                    # curriculum path still resets, because its stage transitions
-                    # change the environment overrides.
-                    extra_train_kwargs["initial_observations"] = previous_chunk_last_observations
+                    # from the chunk statistics (audit 2026-09-06 A4 = C17; audit
+                    # 2026-09-07 REQ-AF-05). The staged curriculum path still resets,
+                    # because its stage transitions close and rebuild the environment
+                    # with different overrides; `chunk_carry_kwargs` additionally
+                    # refuses the carry whenever the environment object changed and
+                    # forwards the per-slot episode lengths with the observations.
+                    extra_train_kwargs.update(
+                        chunk_carry_kwargs(
+                            previous_chunk_summary, previous_env=previous_chunk_env, env=env
+                        )
+                    )
             provider_driven_scenarionet = str(
                 cfg.env.get("name", "")
             ).lower() == "scenarionet" and str(
@@ -1845,9 +1884,8 @@ def run_training(cfg: DictConfig) -> None:
                 ),
                 **extra_train_kwargs,
             )
-            previous_chunk_last_observations = (
-                chunk_summary.get("last_observations") if vectorized_training else None
-            )
+            previous_chunk_summary = chunk_summary if vectorized_training else None
+            previous_chunk_env = env if vectorized_training else None
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
             beta_progress_env_steps += actual_chunk_steps
             remaining = max(0, remaining - actual_chunk_steps)
@@ -2676,12 +2714,12 @@ def run_training(cfg: DictConfig) -> None:
             # continue the slots' episodes, not reset every worker into the middle of
             # the rollout being completed. The baseline path never rebuilds the
             # environment between chunks, so the carried observations are live.
-            if (
-                vectorized_training
-                and curriculum_manager is None
-                and previous_chunk_last_observations is not None
-            ):
-                extra_train_kwargs["initial_observations"] = previous_chunk_last_observations
+            if vectorized_training and curriculum_manager is None:
+                extra_train_kwargs.update(
+                    chunk_carry_kwargs(
+                        previous_chunk_summary, previous_env=previous_chunk_env, env=env
+                    )
+                )
             overshoot_summary = train_fn(
                 env=env,
                 chunk_timesteps=pending_atomic_steps,

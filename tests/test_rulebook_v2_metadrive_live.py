@@ -248,6 +248,83 @@ def test_metadrive_signal_provider_keeps_unknown_state_explicit():
     assert live_signal_states_by_physical_id(UnknownSignalEnv())["signal-red"] == "UNKNOWN"
 
 
+def test_metadrive_signal_provider_reads_raw_source_state_when_object_state_is_simplified():
+    """REQ-AF-04 (OBS-AUDIT-FIX-001): MetaDrive folds FLASHING_STOP into
+    TRAFFIC_LIGHT_UNKNOWN and FLASHING_CAUTION into TRAFFIC_LIGHT_YELLOW before
+    the light object is readable; the source sequence at the current frame
+    carries the approved mapping's inputs."""
+
+    class RawLightManager(_LightManager):
+        episode_step = 2
+        spawned_objects = {
+            "runtime-red": _Light("TRAFFIC_LIGHT_UNKNOWN"),
+            "runtime-go": _Light("TRAFFIC_LIGHT_YELLOW"),
+        }
+        _episode_light_data = {
+            "signal-red": {"object_state": ["LANE_STATE_STOP", "LANE_STATE_STOP", "LANE_STATE_FLASHING_STOP"]},
+            "signal-go": {"object_state": ["LANE_STATE_GO", "LANE_STATE_GO", "LANE_STATE_FLASHING_CAUTION"]},
+        }
+
+    class RawEngine:
+        light_manager = RawLightManager()
+
+    class RawEnv:
+        engine = RawEngine()
+
+    assert live_signal_states_by_physical_id(RawEnv()) == {
+        "signal-red": "RED",
+        "signal-go": "FLASHING_YELLOW",
+    }
+
+
+def test_metadrive_signal_provider_clamps_raw_index_past_scenario_length():
+    """The light manager freezes the last recorded state past the scenario
+    length; the raw read follows the same index rule and never looks ahead."""
+
+    class FrozenLightManager(_LightManager):
+        episode_step = 7
+        spawned_objects = {
+            "runtime-red": _Light("TRAFFIC_LIGHT_RED"),
+            "runtime-go": _Light("TRAFFIC_LIGHT_GREEN"),
+        }
+        _episode_light_data = {
+            "signal-red": {"object_state": ["LANE_STATE_GO", "LANE_STATE_STOP"]},
+            "signal-go": {"object_state": ["LANE_STATE_STOP", "LANE_STATE_GO"]},
+        }
+
+    class FrozenEngine:
+        light_manager = FrozenLightManager()
+
+    class FrozenEnv:
+        engine = FrozenEngine()
+
+    assert live_signal_states_by_physical_id(FrozenEnv()) == {
+        "signal-red": "RED",
+        "signal-go": "GREEN",
+    }
+
+
+def test_metadrive_signal_provider_keeps_raw_unknown_explicit():
+    class UnknownRawManager(_LightManager):
+        episode_step = 0
+        spawned_objects = {
+            "runtime-red": _Light("TRAFFIC_LIGHT_RED"),
+            "runtime-go": _Light("TRAFFIC_LIGHT_GREEN"),
+        }
+        _episode_light_data = {
+            "signal-red": {"object_state": ["LANE_STATE_UNKNOWN"]},
+            "signal-go": {"object_state": ["LANE_STATE_GO"]},
+        }
+
+    class UnknownRawEngine:
+        light_manager = UnknownRawManager()
+
+    class UnknownRawEnv:
+        engine = UnknownRawEngine()
+
+    assert live_signal_states_by_physical_id(UnknownRawEnv())["signal-red"] == "UNKNOWN"
+
+
 def test_metadrive_stationary_vehicle_stays_classified_as_vehicle():
     """REQ-R2-06 (rulebook v4.8): a parked/stationary VEHICLE-typed object
     must never be reclassified STATIC_COLLIDABLE based on its velocity, so

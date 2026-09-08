@@ -285,8 +285,55 @@ def live_signal_states_by_physical_id(env: Any) -> dict[str, str]:
         object_state = payload.get("object_state") if isinstance(payload, Mapping) else None
         if not isinstance(object_state, str):
             raise ValueError(f"Live traffic light {physical_id!r} returned no object_state")
-        states[str(physical_id)] = _LIVE_SIGNAL_STATE_MAP.get(object_state, "UNKNOWN")
+        raw_state = _raw_signal_state_at_current_step(manager, physical_id)
+        states[str(physical_id)] = _LIVE_SIGNAL_STATE_MAP.get(
+            object_state if raw_state is None else raw_state, "UNKNOWN"
+        )
     return states
+
+
+def _raw_signal_state_at_current_step(manager: Any, physical_id: object) -> str | None:
+    """Return the source-recorded state the light manager applied at this step.
+
+    ``ScenarioTrafficLight.set_status`` receives the state already simplified by
+    ``MetaDriveType.parse_light_status(..., simplifying=True)``, which folds
+    ``LANE_STATE_FLASHING_STOP`` into ``LIGHT_UNKNOWN`` and
+    ``LANE_STATE_FLASHING_CAUTION`` into ``LIGHT_YELLOW``.  Reading the light
+    object therefore can never yield the flashing states the approved mapping
+    prices (``FLASHING_STOP -> RED``, ``FLASHING_CAUTION -> FLASHING_YELLOW``),
+    and a flashing red aborts the episode as an invalid transition instead.
+    The light manager keeps the raw per-frame sequence and applies exactly index
+    ``episode_step`` in ``after_step`` (frozen past the scenario length), so the
+    same index is read here.  Only the current frame is consulted: this is the
+    state the simulator is displaying now, not a look-ahead
+    (OBS-AUDIT-FIX-001, DEC-AF-003).  ``None`` means the raw sequence is not
+    available and the caller falls back to the simplified object state.
+    """
+
+    episode_data = getattr(manager, "_episode_light_data", None)
+    if not isinstance(episode_data, Mapping):
+        return None
+    entry = episode_data.get(physical_id)
+    if entry is None:
+        entry = episode_data.get(str(physical_id))
+    if not isinstance(entry, Mapping):
+        return None
+    sequence = entry.get("object_state")
+    try:
+        length = len(sequence)  # type: ignore[arg-type]
+    except TypeError:
+        return None
+    if length == 0:
+        return None
+    try:
+        episode_step = int(getattr(manager, "episode_step"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    index = min(max(episode_step, 0), length - 1)
+    raw = sequence[index]  # type: ignore[index]
+    if raw is None:
+        return None
+    return str(raw)
 
 
 def _contact_method(contact: Any, *names: str) -> Any:
@@ -475,7 +522,9 @@ class MetaDriveContactRecorder:
                         manifold_point = self.getManifoldPoint()
                         getter = getattr(manifold_point, "getDistance", None)
                         if not callable(getter):
-                            raise AttributeError("Persistent manifold point has no distance accessor")
+                            raise AttributeError(
+                                "Persistent manifold point has no distance accessor"
+                            )
                         return getter()
 
                 point = _PersistentContact()
@@ -513,9 +562,8 @@ class MetaDriveContactRecorder:
         if physics_world is None:
             return False
         dynamic_world = getattr(physics_world, "dynamic_world", None)
-        manifold_getter = (
-            getattr(dynamic_world, "get_manifolds", None)
-            or getattr(dynamic_world, "getManifolds", None)
+        manifold_getter = getattr(dynamic_world, "get_manifolds", None) or getattr(
+            dynamic_world, "getManifolds", None
         )
         if callable(manifold_getter):
             return True
