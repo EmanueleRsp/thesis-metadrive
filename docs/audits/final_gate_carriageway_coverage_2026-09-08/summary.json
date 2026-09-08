@@ -1,0 +1,81 @@
+{
+  "constants": {
+    "direction_alignment_cos_threshold": 0.5,
+    "ego_length_m": 4.515,
+    "ego_width_m": 1.852,
+    "final_gate_builder_epsilon_m": 0.01,
+    "lane_width_m": 3.5
+  },
+  "scope": {
+    "limit": null,
+    "records": 3500,
+    "source": "all",
+    "split": "all"
+  },
+  "summary": {
+    "component_counts": {
+      "aligned_cone_ge_0p5": {
+        "max": 9.0,
+        "median": 1.0,
+        "min": 1.0,
+        "p05": 1.0,
+        "p25": 1.0,
+        "p75": 2.0,
+        "p95": 4.0
+      },
+      "forward_cone_gt_0": {
+        "max": 10.0,
+        "median": 1.0,
+        "min": 1.0,
+        "p05": 1.0,
+        "p25": 1.0,
+        "p75": 2.0,
+        "p95": 5.0
+      }
+    },
+    "gate_length_m": {
+      "max": 200.00000000000037,
+      "median": 10.256420707502038,
+      "min": 2.6839365944819864,
+      "p05": 3.967621912506883,
+      "p25": 7.458042940404523,
+      "p75": 14.055454948324348,
+      "p95": 65.94849976215852
+    },
+    "gate_narrower_than_carriageway": {
+      "one_lane_change_either_side_leaves_gate": 289,
+      "one_lane_change_some_side_leaves_gate": 1996
+    },
+    "outcomes": {
+      "ok": 3500
+    },
+    "reconstruction_residual_m": {
+      "max": 3.5207392556912964e-12,
+      "median": 1.4210854715202004e-14,
+      "min": 0.0,
+      "p05": 0.0,
+      "p25": 1.7763568394002505e-15,
+      "p75": 8.79296635503124e-14,
+      "p95": 4.0678571622265736e-13
+    },
+    "records_evaluated": 3500,
+    "records_ok": 3500,
+    "uncovered_same_direction_component": {
+      "bike_lane_only": 0,
+      "fraction": 0.4382857142857143,
+      "gap_to_gate_m": {
+        "max": 96.76117340527793,
+        "median": 16.546138060554853,
+        "min": 0.01005792208390588,
+        "p05": 0.04583438602136525,
+        "p25": 1.6264517715351143,
+        "p75": 50.57944976541625,
+        "p95": 81.55994392210339
+      },
+      "is_a_route_lane": 13,
+      "records": 1534,
+      "within_ego_length": 532,
+      "within_ego_width": 426
+    }
+  }
+}

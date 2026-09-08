@@ -1,9 +1,19 @@
 """L6 `progress_rate`, RULEBOOK-V5.1 §4.6 (ADR-076).
 
-The sixth level, below relaxable lane compliance. It exists because `gamma = 1`
-(ADR-075) makes the mission channel telescope: two trajectories that reach the
+The sixth level, below relaxable lane compliance. It exists because the mission
+channel telescopes when summed undiscounted: two trajectories that reach the
 same place score identically at L4 however long they take, and nothing else in
 the rulebook prefers the faster one — `speed_limit` is an upper bound only.
+
+*The premise is weaker than it was.* ADR-075 chose `gamma = 1`, which makes that
+tie hold in the agent's return as well; ADR-081 then set `gamma = 0.996`, under
+which a discounted sum weights the same increments by recency and the sooner
+arrival scores strictly more. This level's *reason to exist* survives — an
+undiscounted L4 still cannot prefer the faster completion, and the crawl
+pathology below is measured, not derived from the discount — but its companion
+claim, that placing L6 below L5 keeps time preference from paying for a lane
+violation, does **not** survive: at the shipped discount the comparison resolves
+at L4 before L5 is consulted. See `RULEBOOK-V5.1` §11.12.
 
 Arrival is not a sufficient bound either. Measured over the frozen Waymo `train`
 panel, the median mission needs only 3.40 m/s to arrive inside its horizon while
@@ -16,6 +26,12 @@ interaction sub-rules. Without L6 the optimum is to crawl at 12 km/h.
 strongly the reward prefers arriving sooner is decoupled from whether arriving
 sooner can pay for a lane violation. Folding the same quantity into L4 was
 implemented, measured and rejected for exactly that reason.
+
+That decoupling is a property of the **undiscounted** comparison. At
+`gamma = 0.996` the shortcut's discounted L4 total exceeds the legal route's, so
+the ordering is settled at L4 and this placement never gets to do its job for
+that pair. The remedy is a decision, not a code change; it is tracked as
+`REQ-RB5.1-O3-DISCOUNT`.
 """
 
 from __future__ import annotations

@@ -171,9 +171,27 @@ for the *reported* metric. It changes the reward ceiling by **nothing**, because
 1. **The discount is not free** (`REQ-RB5.1-GAMMA`). `Σ Δq = (s_T − s_0)/D_REF`
    holds only undiscounted. Under `γ = 0.99` at 10 Hz over ~200 steps, early
    progress weighs substantially more, so a faster illegal shortcut beats a slower
-   legal route *at L4* and L5 is never reached — for the lexicographic arms. For
-   the scalar arm it is immaterial. The resolution must be recorded in the
+   legal route *at L4* and L5 is never reached — for the lexicographic arms. ~~For
+   the scalar arm it is immaterial.~~ The resolution must be recorded in the
    algorithm specification before any lexicographic arm is trained.
+
+   > **This risk has materialised. Recorded 2026-09-08.** It was correct in its
+   > main clause and wrong in one: ADR-075 withdrew "immaterial for the scalar
+   > arm" on measurement, and the scalar margin at the shipped `γ = 0.996` is
+   > **−3.5789**. Everything else this risk predicted is what happens — the
+   > shortcut wins **at L4** and L5 is never reached.
+   >
+   > The sequence is worth stating, because no single step was wrong. ADR-075
+   > *avoided* the risk by choosing `γ = 1`. ADR-081 then moved to `γ = 0.996`
+   > for two independent and undisputed reasons (no Bellman contraction at 1 with
+   > two thirds of episodes bootstrapping; hierarchy inversion unless
+   > `ln(a)/−ln(γ) > 199`) — and did not consult this register, so the risk was
+   > re-incurred without being re-priced. The mitigation this item asks for,
+   > "recorded in the algorithm specification before any lexicographic arm is
+   > trained", is **still outstanding**.
+   >
+   > Measured in `RULEBOOK-V5.1` §4.4, recorded as §11.12, tracked as
+   > `REQ-RB5.1-O3-DISCOUNT` and `D15` in `docs/open_items.md`.
 2. **`v_ref` now carries two unrelated roles.** It is the progress normalizer here
    and the reference speed v5.0 criticized as a desired-speed degeneracy. The
    coincidence with MetaDrive's `max_speed_km_h` is what makes the clip inert, and

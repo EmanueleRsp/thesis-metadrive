@@ -289,6 +289,20 @@ assumed there.
   and not resumable; this compounds the breaks already accepted in `D4`.
 - `RULEBOOK-V5.1` §4.4, §5.4 and §5.5 need amending, and ADR-075 needs a
   superseding note pointing here.
+- **`γ = 0.996` spends ordering O3, and this was not weighed above.** Recorded
+  on 2026-09-08, after the decision, when the figure was measured rather than
+  interpolated. ADR-075 chose `γ = 1` partly because it is the unique value for
+  which `Σ_t Δq_t` telescopes, so two trajectories reaching the same place tie at
+  L4 and L5 decides; its own table shows O3 failing at every `γ < 1`. At the
+  selected value, against the §4.6 reference shortcut, the scalar margin is
+  **−3.5789** where it was **+0.2000**, and under the ordered arms the
+  comparison resolves at **L4** — L5 is never consulted, so ADR-076's placement
+  of relaxable lane compliance above the time preference is inoperative for this
+  pair. The arguments above for moving `γ` are unaffected; what is corrected is
+  the accounting. Measured by `test_o3_margin_across_the_discount_range` and
+  `test_o3_fails_at_the_shipped_discount`; recorded as `RULEBOOK-V5.1` §11.12
+  and tracked as `REQ-RB5.1-O3-DISCOUNT`. Whether to restate the orderings as
+  undiscounted properties or to reopen `γ` is not decided here.
 - The `a_req^max` criterion is a new derived quantity, not a specification
   contract: it is a lower bound on `σ` from vehicle dynamics, and it should be
   restated if `τ`, `v_ref` or the TTC cost shape change.
