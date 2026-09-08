@@ -6,7 +6,9 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from math import hypot, isfinite
 from statistics import median
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+import numpy as np
 
 from thesis_rl.rulebook.v2.geometry.canonical import PRECISION_GRID_M
 from thesis_rl.rulebook.v2.geometry.vertical import VERTICAL_COMPATIBILITY_TOLERANCE_M
@@ -60,7 +62,12 @@ class RoutePolyline:
     # lies inside this range (up to one rounding); callers that only need the
     # vertical-compatibility verdict can decide most polylines from it without
     # projecting (F8, `drivable.py`).
-    z_range_m: tuple[float, float] = field(init=False, repr=False)
+    z_range_m: tuple[float, float] = field(init=False, repr=False, compare=False)
+    # F8: per-segment NumPy arrays for the vectorised projection, built on the
+    # first call (most polylines are lane centerlines that are never projected
+    # on). Excluded from equality and hashing: derived data, and arrays do not
+    # hash.
+    _segment_arrays: Any = field(init=False, repr=False, compare=False, default=None)
 
     def __post_init__(self) -> None:
         consolidated = self._consolidate_points(self.points_xyz)
@@ -184,72 +191,88 @@ class RoutePolyline:
             if not isfinite(max_s_jump_m) or max_s_jump_m < 0.0:
                 raise ValueError("Route projection max_s_jump_m must be finite and non-negative")
 
-        candidates: list[RouteProjection] = []
-        for index, (first, second) in enumerate(zip(self.points_xyz, self.points_xyz[1:])):
-            length = self._segment_lengths_m[index]
-            tangent = ((second[0] - first[0]) / length, (second[1] - first[1]) / length)
-            offset_x = point_xy[0] - first[0]
-            offset_y = point_xy[1] - first[1]
-            fraction = min(1.0, max(0.0, (offset_x * tangent[0] + offset_y * tangent[1]) / length))
-            projected_x = first[0] + fraction * length * tangent[0]
-            projected_y = first[1] + fraction * length * tangent[1]
-            z_m = first[2] + fraction * (second[2] - first[2])
-            if (
-                position_z is not None
-                and abs(position_z - z_m) > VERTICAL_COMPATIBILITY_TOLERANCE_M
-            ):
-                continue
-            lateral_distance = (point_xy[0] - projected_x) * -tangent[1] + (
-                point_xy[1] - projected_y
-            ) * tangent[0]
-            candidates.append(
-                RouteProjection(
-                    s_m=self._segment_starts_m[index] + fraction * length,
-                    tangent_xy=tangent,
-                    z_m=z_m,
-                    lateral_distance_m=lateral_distance,
-                    segment_index=index,
-                )
-            )
-        if not candidates:
-            raise ValueError("Route projection has no vertically compatible segment")
+        (
+            first_x,
+            first_y,
+            first_z,
+            delta_z,
+            lengths,
+            tangent_x,
+            tangent_y,
+            starts,
+        ) = self._projection_arrays()
+        px = float(point_xy[0])
+        py = float(point_xy[1])
+        # One pass over every segment, with the reference's arithmetic per
+        # segment: clamped fraction, projected point, interpolated z, signed
+        # lateral distance and the planar distance recomputed from ``s``.
+        offset_x = px - first_x
+        offset_y = py - first_y
+        fraction = np.clip((offset_x * tangent_x + offset_y * tangent_y) / lengths, 0.0, 1.0)
+        along = fraction * lengths
+        projected_x = first_x + along * tangent_x
+        projected_y = first_y + along * tangent_y
+        z_m = first_z + fraction * delta_z
+        s_m = starts + along
+        if position_z is not None:
+            mask = np.abs(position_z - z_m) <= VERTICAL_COMPATIBILITY_TOLERANCE_M
+            if not mask.any():
+                raise ValueError("Route projection has no vertically compatible segment")
+        else:
+            mask = np.ones(len(lengths), dtype=bool)
         if max_s_jump_m is not None:
             assert previous_s_m is not None
-            plausible = [
-                candidate
-                for candidate in candidates
-                if abs(candidate.s_m - previous_s_m) <= max_s_jump_m + GEOMETRY_EPSILON_M
-            ]
             # A *preference*, not a hard gate.  When no candidate is plausible
             # the unbounded selection is kept: the bound exists to stop a far
             # branch from winning while a plausible one is available, and
             # turning its absence into a failure would convert a rare geometric
             # situation into an episode abort with no compensating benefit.
-            if plausible:
-                candidates = plausible
-
-        def planar_distance(candidate: RouteProjection) -> float:
-            first = self.points_xyz[candidate.segment_index]
-            along = candidate.s_m - self._segment_starts_m[candidate.segment_index]
-            projected_x = first[0] + along * candidate.tangent_xy[0]
-            projected_y = first[1] + along * candidate.tangent_xy[1]
-            return hypot(point_xy[0] - projected_x, point_xy[1] - projected_y)
-
-        minimum_distance = min(planar_distance(candidate) for candidate in candidates)
-        tied = [
-            candidate
-            for candidate in candidates
-            if planar_distance(candidate) <= minimum_distance + GEOMETRY_EPSILON_M
-        ]
-        if previous_s_m is None:
-            return min(tied, key=lambda candidate: (candidate.s_m, candidate.segment_index))
-        return min(
-            tied,
-            key=lambda candidate: (
-                abs(candidate.s_m - previous_s_m),
-                candidate.segment_index,
-            ),
+            plausible = mask & (np.abs(s_m - previous_s_m) <= max_s_jump_m + GEOMETRY_EPSILON_M)
+            if plausible.any():
+                mask = plausible
+        candidate_indices = np.flatnonzero(mask)
+        along_from_s = s_m[candidate_indices] - starts[candidate_indices]
+        distance = np.hypot(
+            px - (first_x[candidate_indices] + along_from_s * tangent_x[candidate_indices]),
+            py - (first_y[candidate_indices] + along_from_s * tangent_y[candidate_indices]),
         )
+        tied = candidate_indices[distance <= distance.min() + GEOMETRY_EPSILON_M]
+        tied_s = s_m[tied]
+        key = tied_s if previous_s_m is None else np.abs(tied_s - previous_s_m)
+        # Lexicographic minimum: the key first, the segment index on ties,
+        # exactly as the reference's ``min`` over ``(key, segment_index)``.
+        index = int(tied[np.lexsort((tied, key))[0]])
+        return RouteProjection(
+            s_m=float(s_m[index]),
+            tangent_xy=(float(tangent_x[index]), float(tangent_y[index])),
+            z_m=float(z_m[index]),
+            lateral_distance_m=float(
+                (px - projected_x[index]) * -tangent_y[index]
+                + (py - projected_y[index]) * tangent_x[index]
+            ),
+            segment_index=index,
+        )
+
+    def _projection_arrays(self) -> tuple[np.ndarray, ...]:
+        arrays = self._segment_arrays
+        if arrays is None:
+            points = np.asarray(self.points_xyz, dtype=np.float64)
+            lengths = np.asarray(self._segment_lengths_m, dtype=np.float64)
+            first_x = points[:-1, 0]
+            first_y = points[:-1, 1]
+            first_z = points[:-1, 2]
+            arrays = (
+                first_x,
+                first_y,
+                first_z,
+                points[1:, 2] - first_z,
+                lengths,
+                (points[1:, 0] - first_x) / lengths,
+                (points[1:, 1] - first_y) / lengths,
+                np.asarray(self._segment_starts_m, dtype=np.float64),
+            )
+            object.__setattr__(self, "_segment_arrays", arrays)
+        return arrays
 
     def projection_diagnostics(
         self,
