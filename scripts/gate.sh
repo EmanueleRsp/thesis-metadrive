@@ -29,6 +29,25 @@ QUALITY_SPEC="${PYTHON_QUALITY_PATHS:-$DEFAULT_QUALITY_PATHS}"
 BASE_REF="${GATE_BASE_REF:-origin/main}"
 PYTEST_ARGS=("$@")
 
+# pytest-xdist workers. The suite's cost sits in two ~585 s integration cases
+# of one file (the Waymo panel of test_reward_return_ordering_runtime.py), so
+# the gate is short only if they run on different workers. Every xdist mode
+# hands out contiguous runs of the collection, so adjacent long cases land on
+# one worker (measured: 19m50s with --dist load, 19m36s with --dist worksteal,
+# both at -n 16, against 28m00s sequential). The fix is in the collection
+# order, not the scheduler: tests/conftest.py spreads `integration` items
+# evenly through the collection, so no chunk holds two of them, and a worker
+# running a long case is not offered more work until it finishes. `--dist
+# loadfile` would pin the whole file to one worker and hide order dependence
+# between tests instead of exposing it, so it is deliberately not used.
+# GATE_WORKERS=1 runs the suite sequentially; the worker count is recorded in
+# the log header either way.
+GATE_WORKERS="${GATE_WORKERS:-16}"
+PYTEST_DIST=()
+if [ "$GATE_WORKERS" != "1" ]; then
+  PYTEST_DIST=(-n "$GATE_WORKERS")
+fi
+
 SCOPE_NOTES=()
 if [ ${#PYTEST_ARGS[@]} -gt 0 ]; then
   SCOPE_NOTES+=("pytest args: ${PYTEST_ARGS[*]}")
@@ -121,6 +140,7 @@ COMPOSE_RUN=(docker compose run --rm -T dev uv run --no-sync)
   printf 'checkout    %s\n' "$REPO_ROOT"
   printf 'machine     %s %s\n' "$(hostname)" "$(uname -m)"
   printf 'quality     %s\n' "${QUALITY_PATHS[*]}"
+  printf 'workers     %s\n' "$GATE_WORKERS"
   if [ -n "$RANGE_BASE" ]; then
     printf 'whitespace  %s..HEAD, %s pending, %s untracked\n' \
       "${RANGE_BASE:0:7}" "$DIRTY_COUNT" "$UNTRACKED_COUNT"
@@ -209,7 +229,8 @@ fi
 run_step "ruff" "${COMPOSE_RUN[@]}" ruff check "${QUALITY_PATHS[@]}"
 # --durations makes the slowest tests part of the recorded evidence, so "the
 # suite is slow" is answerable from any log instead of needing a special run.
-run_step "pytest" "${COMPOSE_RUN[@]}" python -m pytest -q --durations=25 "${PYTEST_ARGS[@]}"
+run_step "pytest" "${COMPOSE_RUN[@]}" python -m pytest -q --durations=25 \
+  "${PYTEST_DIST[@]}" "${PYTEST_ARGS[@]}"
 
 if [ ${#FAILED[@]} -eq 0 ]; then
   VERDICT="PASS"

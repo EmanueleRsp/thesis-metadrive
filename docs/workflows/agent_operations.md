@@ -71,35 +71,45 @@ change-dependent requirement, covered by the production-path smoke below.
 make check
 ```
 
-The same steps as the gate minus the seven `integration` tests. Measured on
-2026-09-08: **3m55s against the full suite's 27m59s** (1838 passed, 5 skipped, 7
-deselected, against 1845 passed and 5 skipped). The point of the short one is that
+The same steps as the gate minus the nine `integration` tests. Measured on
+2026-09-08 with 16 workers: **about 1m35s against the gate's 10m01s** (1838
+passed, 5 skipped in 94–95 s over three runs, against 1855 passed and 5 skipped;
+run sequentially the same two took 3m55s and 27m59s). The point of the short one is that
 it is cheap enough to run on *every* change, which removes the need to guess which
 subset covers a change; guessing wrong is how defects reach `main`. It is
 `PARTIAL` by construction and never a merge gate.
 
-**Two tests are 74% of the suite.**
-`test_reward_return_ordering_on_validation_panels` costs 628s for `b_rulebook` and
-621s for `a_native` — 1249s of the full run's 1679s. The other five `integration`
-tests come to about 48s together, and the two PG-generator ones do not reach the
-top 25 at all (under 5s each). So "the seven slow tests" is the wrong picture:
-five of the seven are cheap, and the cost is concentrated in one parametrized
-test. Each of its two cases builds a fresh env per behaviour and runs a complete
-episode, over two panels and three behaviours — six env constructions and six full
-episodes per case, twelve in all. The return *is* the episode, so there is nothing
-to shorten inside them.
+**Two cases are the whole cost, and it is not the episode.**
+`test_reward_return_ordering_on_validation_panels` is parametrized over arm and
+panel; its two Waymo cases take **585 s each** and its two PG cases **41 s each**
+(sequentially, 628 s for `b_rulebook` and 621 s for `a_native`, 1249 s of the full
+run's 1679 s). The other `integration` tests come to about 48 s together. A
+cProfile of one Waymo case shows env construction at 16–17 s per behaviour and the
+step loop at the rest: `RoutePolyline.project` is a pure-Python scan over every
+segment of a centerline, `drivable_surface_for_ego` calls it on every lane of the
+scenario (~180 on Waymo, a handful on PG) only to read the lane's height, and that
+is invoked about six times per step on identical inputs — about 1 500 projections
+per step, 67 % of the case. This is production code that also runs in every
+training worker; it is recorded as `F8` in `docs/open_items.md` with the two
+semantics-preserving changes that would remove it. Shortening the episodes is not
+an option: the return *is* the episode.
 
-**On parallelising it.** A parallel run measured in a separate session bought only
-84 seconds on the residual suite (2m30s against 3m55s), because what is left there
-is many small tests where starting sixteen processes that import torch and
-MetaDrive eats most of the gain. On the full suite it gave 21m07s against 28m00s,
-and the durations above say why that is a floor rather than a parallelism limit:
-the two expensive cases are in the same file, so `--dist loadfile` pins them to
-one worker, and even per-test distribution still has to run the longer of the two
-end to end. Parallelism can only help here once the expensive case is split into
-smaller independent ones. That run also surfaced one order-dependent failure,
-which is a defect to record on its own rather than a reason to pick a
-distribution mode that hides it.
+**How the parallel run is kept short.** Both gate targets run under
+`pytest-xdist` with `GATE_WORKERS` workers (default 16, `make gate GATE_WORKERS=1`
+for a sequential run; the count is in the log header). Worker count alone did not
+help: at `-n 16` the full suite took **19m50s with `--dist load` and 19m36s with
+`--dist worksteal`**, and in both logs the two Waymo cases sum to the whole run.
+Reading xdist's schedulers explains it — every mode hands out *contiguous* runs of
+the collection (`load` in chunks, `worksteal` as an even split, and it never
+steals the last queued item behind a running test), so adjacent long cases land
+on one worker and run back to back. The fix is in `tests/conftest.py`: a
+collection hook spreads `integration` items evenly through the collection (stride
+~206 items, against a maximum chunk of 57 at 16 workers), so no chunk holds two
+of them, and xdist only offers a worker more work when it completes a test. With
+that the gate is **10m01s**, and the four long cases alone on four workers take
+9m53s, so the remaining floor is one Waymo case (`F8`). `--dist loadfile` is
+deliberately not used: it would pin a whole file to one worker and hide
+order-dependent tests instead of exposing them; the four known ones are `C43`.
 
 **Why the five slowest unmarked tests stay unmarked.** In the short run the top
 five durations are all in `tests/test_scenarionet_vectorized_integration.py`

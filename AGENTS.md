@@ -180,9 +180,11 @@ Run commands from the repository root.
 
 - Merge gate with recorded evidence: `make gate` (whitespace, Ruff and the full
   test suite; log under `outputs/gate/`).
-- Working-loop check: `make check` — the same steps without the seven
-  `integration` tests, 3m55s against the gate's 28m00s as measured on
-  2026-09-08. Cheap enough to run on every change; `PARTIAL`, so never a gate.
+- Working-loop check: `make check` — the same steps without the nine
+  `integration` tests, about 1m35s against the gate's 10m01s as measured on
+  2026-09-08 with 16 `pytest-xdist` workers (`GATE_WORKERS`, `1` for a
+  sequential run). Cheap enough to run on every change; `PARTIAL`, so never a
+  gate.
 - Narrow either while iterating with
   `make gate GATE_ARGS="tests/test_module.py -k case"`, which also marks the run
   `PARTIAL`.

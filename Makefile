@@ -6,6 +6,8 @@ PYTHON_QUALITY_PATHS ?= src tests scripts
 # and marks it PARTIAL in the evidence log, for example:
 #   make gate GATE_ARGS="tests/test_rulebook_v2.py -k activation"
 GATE_ARGS ?=
+# pytest-xdist worker count for `make gate` / `make check`; scripts/gate.sh
+# defaults it to 16 and `make gate GATE_WORKERS=1` runs sequentially.
 
 # The final integration run is intentionally explicit about the learner. All
 # values are Hydra config names under conf/agent/planner/algorithm/.
@@ -411,11 +413,12 @@ shell:
 gate:
 	@bash scripts/gate.sh $(GATE_ARGS)
 
-# The working-loop check: the same steps minus the seven `integration` tests.
-# Measured 2026-09-08: 3m55s against the full suite's 27m59s, and 1249s of that
-# full run is one parametrized test (test_reward_return_ordering, 628s + 621s).
-# Cheap enough to run on every change instead of guessing which subset covers
-# it. PARTIAL by construction, so it is never a merge gate.
+# The working-loop check: the same steps minus the nine `integration` tests.
+# Measured 2026-09-08 with 16 workers: about 1m35s against the gate's 10m01s
+# (sequentially 3m55s against 27m59s); the gate's floor is the two ~585 s Waymo
+# cases of test_reward_return_ordering, see docs/open_items.md F8. Cheap enough
+# to run on every change instead of guessing which subset covers it. PARTIAL by
+# construction, so it is never a merge gate.
 check:
 	@bash scripts/gate.sh -m "not integration" $(GATE_ARGS)
 
