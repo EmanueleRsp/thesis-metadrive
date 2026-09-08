@@ -139,9 +139,7 @@ def test_reward_return_ordering_on_validation_panels(
 
     results = _returns_by_behaviour(cfg, panel.env_overrides())
     still, partial, full = (results[key]["return"] for key in ("still", "partial", "full"))
-    record_property(
-        f"{arm}:{panel.name}", {key: value["return"] for key, value in results.items()}
-    )
+    record_property(f"{arm}:{panel.name}", {key: value["return"] for key, value in results.items()})
     assert (
         results["full"]["route_completion"]
         > results["partial"]["route_completion"]
