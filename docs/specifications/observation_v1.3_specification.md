@@ -9,6 +9,7 @@
 **Supersedes:** OBS-V1.2 for the selected semantic-observation implementation path
 **Related decisions:** ADR-004, ADR-022, ADR-026, ADR-033
 **Related documents:** ENC-V1.3, RULEBOOK-V4.7, `docs/implementation/semantic_observation_causal_correctness_v1.3_exec_plan.md`
+**Amended by:** OBS-V1.3.1 (`docs/specifications/observation_v1.3.1_amendment.md`, APPROVED 2026-09-01, `DEC-RB51-001`): `lane_road` 12 → 14 values, `D` 3009 → 3011. See the callout in §2.
 
 ## 1. Purpose
 
@@ -23,6 +24,20 @@ The perception contract of OBS-V1.2 §6 is carried over verbatim and is not
 restated here. Everything below is either a correction or a field-list change.
 
 ## 2. Observation schema
+
+> **Amended by OBS-V1.3.1 (2026-09-01, approved under `DEC-RB51-001`): the
+> current flat dimension is `D = 3011`.** The `lane_road` group gains the
+> posted speed limit and its explicit availability flag, so that group holds
+> **14** values instead of 12. Every figure in this section that derives from
+> the 12-value `lane_road` group — the `D = 3009` below, the `3064 - 55 = 3009`
+> arithmetic of §3, and the "23 of 3009" count of §8 — is the pre-amendment
+> derivation and is superseded by that width. Token count, group order, mask
+> order, every other group's shape, and the `ENC-V1.3` tokenization contract
+> apart from the `lane_road` projection width are unchanged. The runtime
+> enforces the amended value: `SemanticObservationSchemaV12.flat_dim` is 3011
+> (`src/thesis_rl/contracts/observation_schema.py:255`). Checkpoint
+> compatibility is intentionally broken. See
+> `docs/specifications/observation_v1.3.1_amendment.md`.
 
 The flat observation is `float32`, finite, and has exact dimension
 

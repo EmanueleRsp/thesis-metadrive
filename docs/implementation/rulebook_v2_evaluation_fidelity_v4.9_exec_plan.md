@@ -236,6 +236,22 @@ already-approved `DEC-EF-01`. No other mandatory test was weakened.
 No unresolved gate remains for `M1`-`M5`, `M6a`, `M6b-i` and `M8`. `M6b-ii`
 (`R4` corridor gate) is held by explicit user instruction on 2026-07-30.
 
+**2026-09-08, documentation reconciliation.** The hold stands, but its stated
+condition no longer describes what is pending. `DEC-EF-06`'s option **A**
+attenuates positive `R4` by the footprint fraction outside the task corridor,
+which is an off-route `R4` term and a runtime lateral envelope.
+`DRIVING-MISSION-V1.1` §8 lists **off-route `R4` zeroing** and **runtime
+authority of any final lateral envelope** among the elements to remove
+(`docs/specifications/driving_mission_v1.1_specification.md:104`, approved
+2026-08-04, i.e. after this decision), and §1 states the mission is "not ... a
+way to put legality, heading, or lateral offset into `R4`". A specification
+outranks an ExecPlan, so **no `M6a` measurement can unblock this gate**: what is
+pending is a user choice between formally closing `DEC-EF-06` and amending the
+mission specification. Separately, the `M6a` diagnostic this decision was staged
+on is computed every step and read by nothing. Both halves are registered as
+`D14` in `docs/open_items.md`, with the evidence. Nothing is decided here, and
+the `M6b-ii` rows below are left as they stand.
+
 ## 7. Proposed Design
 
 ### M1 — `point_at` (`geometry/route.py`)

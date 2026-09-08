@@ -10,6 +10,7 @@
 **Related decisions:** ADR-022, ADR-026, ADR-033
 **Note:** two token groups are renamed by OBS-V1.3 `DEC-011`; the widths and the token order are unaffected.
 **Related documents:** OBS-V1.3, `docs/implementation/semantic_observation_causal_correctness_v1.3_exec_plan.md`
+**Amended by:** OBS-V1.3.1 (`docs/specifications/observation_v1.3.1_amendment.md`, APPROVED 2026-09-01, `DEC-RB51-001`): `D` 3009 → 3011 and `lane_road_projection` 12 → 14. See the callout in §2.
 
 ## 1. Purpose and scope
 
@@ -23,6 +24,23 @@ structure, mask handling, type embeddings, time embeddings and the removal of
 the dynamic slot embedding (ADR-026) is carried over unchanged.
 
 ## 2. Input contract
+
+> **Amended by OBS-V1.3.1 (2026-09-01, approved under `DEC-RB51-001`): the
+> input dimension is `D = 3011` and the `lane_road_projection` width is `14`.**
+> The `lane_road` group gains the posted speed limit and its explicit
+> availability flag, which widens that one projection back to its ENC-V1.2
+> width and adds 2 to `D`. This supersedes, in this document, the `D = 3009` of
+> §2 including the factory-rejection `MUST`, the `lane_road_projection` value
+> `12` in the §3 table, the `3009` MLP input width of §4 with the parameter
+> count derived from it, and the `D = 3009` acceptance criterion of §6. Every
+> other projection width, the raw token count `143`, and the token order are
+> unchanged. The runtime enforces the amended value: the encoder factory
+> rejects anything that is not `SemanticObservationSchemaV12` at `D = 3011`
+> (`src/thesis_rl/agent/planners/encoders/factory.py:116`), and the schema's
+> `flat_dim` is 3011
+> (`src/thesis_rl/contracts/observation_schema.py:255`). Checkpoint
+> compatibility is intentionally broken. See
+> `docs/specifications/observation_v1.3.1_amendment.md`.
 
 The encoder consumes the OBS-V1.3 flat observation:
 
