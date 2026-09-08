@@ -11,7 +11,6 @@ from dataclasses import asdict
 import random
 import os
 import shutil
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +51,21 @@ from thesis_rl.runtime.wiring.builders import (
 )
 from thesis_rl.runtime.io.console import print_evaluation_summary, print_run_setup
 from thesis_rl.runtime.io.csv_recorder import CSVRecorder
+from thesis_rl.runtime.io.atomic import atomic_omegaconf_save, atomic_pickle_dump
+from thesis_rl.runtime.io.resume_snapshot import (
+    assert_snapshot_model_consistent,
+    assert_snapshot_seed_consistent,
+    classify_replay_resume,
+    periodic_snapshot_due,
+    planner_trained_timesteps,
+    prune_periodic_companions,
+    prune_replay_snapshots,
+    remove_replay_snapshots_after_final,
+    resolve_resume_checkpoint_name,
+    resume_artifact_paths,
+    write_checkpoint_pair,
+)
+from thesis_rl.runtime.signals import install_sigterm_as_keyboard_interrupt
 from thesis_rl.runtime.comfort_diagnostics import (
     comfort_aggregate_fields,
     comfort_episode_fields,
@@ -84,10 +98,7 @@ from thesis_rl.runtime.execution.seeding import (
     set_global_seed,
     train_episode_seed_from_env_overrides,
 )
-from thesis_rl.sb3_extensions.replay import (
-    require_replay_buffer_for_resume,
-    resolve_transition_replay_config,
-)
+from thesis_rl.sb3_extensions.replay import resolve_transition_replay_config
 
 
 CHECKPOINT_INDEX_FIELDS = [
@@ -235,23 +246,34 @@ def _prune_old_periodic_checkpoints(periodic_dir: Path, keep_last: int) -> None:
 
 
 def _save_training_state(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    OmegaConf.save(config=OmegaConf.create(payload), f=str(path))
+    # `RESUME-ABRUPT-001` REQ-RES-001: the training state is the snapshot's
+    # commit marker, so it is published atomically and written last.
+    atomic_omegaconf_save(path, payload)
 
 
-def _save_json_atomically(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = path.with_name(f".{path.name}.tmp")
-    try:
-        temporary_path.write_text(
-            json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8"
-        )
-        with temporary_path.open("rb") as handle:
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_path, path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
+def _best_keys_payload(
+    lex_key: tuple[float, ...] | None,
+    strict_key: tuple[float, ...] | None,
+    thresholded_key: tuple[float, ...] | None,
+) -> dict[str, list[float] | None]:
+    """Serialize the best-checkpoint comparison keys (REQ-RES-007)."""
+
+    return {
+        "lexicographic": None if lex_key is None else [float(v) for v in lex_key],
+        "rulebook_strict": None if strict_key is None else [float(v) for v in strict_key],
+        "rulebook_thresholded": (
+            None if thresholded_key is None else [float(v) for v in thresholded_key]
+        ),
+    }
+
+
+def _restore_best_key(payload: Any, name: str) -> tuple[float, ...] | None:
+    if not isinstance(payload, dict):
+        return None
+    values = payload.get(name)
+    if values is None:
+        return None
+    return tuple(float(v) for v in values)
 
 
 def _validate_checkpoint_pair(
@@ -275,7 +297,9 @@ def _validate_checkpoint_pair(
         raise ValueError(f"Checkpoint pair manifest must be an object: {pair_path}")
     if not str(payload.get("checkpoint_id", "")):
         raise ValueError(f"Checkpoint pair manifest has no checkpoint_id: {pair_path}")
-    expected_model_name = f"{checkpoint_name}.zip"
+    # The pair records the model's basename; `checkpoint_name` may carry the
+    # `periodic/` directory (`RESUME-ABRUPT-001`, found by `TEST-RES-010`).
+    expected_model_name = f"{Path(checkpoint_name).name}.zip"
     if payload.get("model_path") != expected_model_name:
         raise ValueError(
             "Checkpoint pair model identity mismatch: "
@@ -376,9 +400,7 @@ def _save_rng_state(path: Path) -> None:
     }
     if torch.cuda.is_available():
         payload["cuda"] = [state.cpu().numpy().tolist() for state in torch.cuda.get_rng_state_all()]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as handle:
-        pickle.dump(payload, handle)
+    atomic_pickle_dump(path, payload)
 
 
 def _load_rng_state(path: Path) -> bool:
@@ -687,6 +709,9 @@ def _write_step_timing_rows(
 
 
 def run_training(cfg: DictConfig) -> None:
+    # `DEC-RES-002`: `docker stop` / scheduler cancellation reach the same
+    # graceful path as Ctrl+C instead of killing the run without a trace.
+    install_sigterm_as_keyboard_interrupt()
     # Save metadata for this run (config, git info, etc.)
     artifacts_dir = Path(str(cfg.paths.artifacts_dir))
     metadata_path = save_run_metadata(cfg, artifacts_dir)
@@ -756,11 +781,9 @@ def run_training(cfg: DictConfig) -> None:
     best_rulebook_thresholded_checkpoint_stem = (
         checkpoints_best_dir / "best_thresholded_lexicographic_rulebook"
     )
-    latest_replay_buffer_path = checkpoints_dir / "latest_replay_buffer.pkl"
     final_replay_buffer_path = checkpoints_dir / "final_replay_buffer.pkl"
     final_checkpoint_pair_path = checkpoints_dir / "final_checkpoint_pair.json"
     latest_training_state_path = checkpoints_dir / "latest_training_state.yaml"
-    latest_checkpoint_pair_path = checkpoints_dir / "latest_checkpoint_pair.json"
     latest_rng_state_path = checkpoints_dir / "latest_rng_state.pkl"
     latest_quarantine_state_path = checkpoints_dir / "latest_quarantine_state.json"
     train_log_path = logs_dir / "train.log"
@@ -830,7 +853,19 @@ def run_training(cfg: DictConfig) -> None:
         total_timesteps=total_timesteps,
         legacy_save_replay_buffer=bool(cfg.checkpoint.get("save_replay_buffer", False)),
     )
+    if transition_replay_config.periodic_replay_persistence and not (
+        bool(cfg.checkpoint.get("save_periodic", True))
+        and int(cfg.checkpoint.get("periodic_interval_steps", 0)) > 0
+    ):
+        raise ValueError(
+            "transition_replay.persistence.trigger=periodic_and_final pairs the replay buffer "
+            "with the periodic model checkpoint, so checkpoint.save_periodic must be true and "
+            "checkpoint.periodic_interval_steps positive."
+        )
     current_global_step = 0
+    # Step at which the last resume snapshot was written; drives the periodic
+    # snapshot's crossing test (`periodic_snapshot_due`).
+    last_snapshot_global_step = 0
     chunk_id = 0
     eval_id = 0
     previous_chunk_last_observations: Any | None = None
@@ -859,23 +894,25 @@ def run_training(cfg: DictConfig) -> None:
             else run_dir
         )
         resume_checkpoint_name = str(resume_cfg.get("checkpoint_name", "latest"))
-        resume_checkpoint_stem = resume_run_dir / "checkpoints" / resume_checkpoint_name
-        resume_checkpoint_zip = resume_checkpoint_stem.with_suffix(".zip")
-        resume_replay_buffer_path = (
-            resume_run_dir / "checkpoints" / f"{resume_checkpoint_name}_replay_buffer.pkl"
-        )
-        resume_checkpoint_pair_path = (
-            resume_run_dir / "checkpoints" / f"{resume_checkpoint_name}_checkpoint_pair.json"
-        )
-        resume_training_state_path = resume_run_dir / "checkpoints" / "latest_training_state.yaml"
-        resume_rng_state_path = resume_run_dir / "checkpoints" / "latest_rng_state.pkl"
-        resume_quarantine_state_path = (
-            resume_run_dir / "checkpoints" / "latest_quarantine_state.json"
-        )
+        if resume_enabled:
+            # `periodic` resolves to the newest periodic checkpoint carrying a
+            # complete replay pair (`RESUME-ABRUPT-001`).
+            resume_checkpoint_name = resolve_resume_checkpoint_name(
+                resume_run_dir / "checkpoints", resume_checkpoint_name
+            )
+        resume_paths = resume_artifact_paths(resume_run_dir / "checkpoints", resume_checkpoint_name)
+        resume_checkpoint_zip = resume_paths.model_path
+        resume_replay_buffer_path = resume_paths.replay_path
+        resume_checkpoint_pair_path = resume_paths.pair_path
+        resume_training_state_path = resume_paths.training_state_path
+        resume_rng_state_path = resume_paths.rng_state_path
+        resume_quarantine_state_path = resume_paths.quarantine_state_path
+        resume_allow_replay_reset = bool(resume_cfg.get("allow_replay_reset", False))
         resume_state: dict[str, Any] | None = None
         resume_global_steps_done = 0
         resume_chunk_id = 0
         resume_eval_id = 0
+        resume_replay_mode = "not_applicable"
 
         ###################
         ###### SETUP ######
@@ -1169,7 +1206,12 @@ def run_training(cfg: DictConfig) -> None:
                 current_stage_name=job.stage,
                 current_stage_index=job.stage_index,
                 metrics=metrics,
+                # `C16`: copy the snapshot that was evaluated, not the live
+                # learner, whose weights have moved on during the evaluation.
                 source_checkpoint_stem=Path(job.checkpoint_stem),
+                # The callback runs from `poll()` inside a training chunk; the
+                # resume snapshot is written at the chunk boundary instead.
+                write_resume_snapshot=False,
             )
             eval_logger.info(
                 "Asynchronous evaluation finished | eval_id=%d | step=%d | metrics=%s",
@@ -1192,8 +1234,33 @@ def run_training(cfg: DictConfig) -> None:
 
         if resume_enabled:
             agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
-            if transition_replay_config.persistence_enabled:
-                _validate_checkpoint_pair(
+            if resume_state is None and resume_training_state_path.exists():
+                resume_state = _load_training_state(resume_training_state_path)
+            # `RESUME-ABRUPT-001` REQ-RES-003: refuse a torn snapshot and a seed change.
+            loaded_model_timesteps = planner_trained_timesteps(planner)
+            if resume_state is not None:
+                assert_snapshot_model_consistent(
+                    recorded_model_timesteps=resume_state.get("model_num_timesteps"),
+                    loaded_model_timesteps=loaded_model_timesteps,
+                    checkpoint_name=resume_checkpoint_name,
+                    state_path=resume_training_state_path,
+                    logger=train_logger,
+                )
+                assert_snapshot_seed_consistent(
+                    recorded_seed=resume_state.get("seed"), configured_seed=run_seed
+                )
+            # `TRANSITION-REPLAY` REQ-025 / `DEC-RES-004`: continuation when the
+            # pair is complete, an explicit empty segment otherwise, never silent.
+            resume_replay_mode = classify_replay_resume(
+                learner_has_replay=bool(transition_replay_config.enabled),
+                persistence_enabled=bool(transition_replay_config.persistence_enabled),
+                pair_path=resume_checkpoint_pair_path,
+                replay_path=resume_replay_buffer_path,
+                allow_replay_reset=resume_allow_replay_reset,
+                checkpoint_name=resume_checkpoint_name,
+            )
+            if resume_replay_mode == "continuation":
+                pair_payload = _validate_checkpoint_pair(
                     resume_checkpoint_pair_path,
                     checkpoint_name=resume_checkpoint_name,
                     replay_path=resume_replay_buffer_path,
@@ -1201,24 +1268,49 @@ def run_training(cfg: DictConfig) -> None:
                     if resume_state is not None
                     else None,
                 )
+                assert_snapshot_model_consistent(
+                    recorded_model_timesteps=pair_payload.get("model_num_timesteps"),
+                    loaded_model_timesteps=loaded_model_timesteps,
+                    checkpoint_name=resume_checkpoint_name,
+                    state_path=resume_checkpoint_pair_path,
+                    logger=train_logger,
+                )
                 _load_replay_buffer_if_available(planner, resume_replay_buffer_path)
                 _validate_replay_buffer_n_envs(planner)
             if bool(resume_cfg.get("restore_rng_state", True)):
                 _load_rng_state(resume_rng_state_path)
             _load_quarantine_state(env, resume_quarantine_state_path)
-            if resume_state is None and resume_training_state_path.exists():
-                resume_state = _load_training_state(resume_training_state_path)
             if resume_state is not None:
                 resume_global_steps_done = int(resume_state.get("global_steps_done", 0))
                 resume_chunk_id = int(resume_state.get("chunk_id", 0))
                 resume_eval_id = int(resume_state.get("eval_id", 0))
-                if transition_replay_config.persistence_enabled:
+                if resume_replay_mode == "continuation":
                     beta_progress_env_steps = int(resume_state.get("beta_progress_env_steps", 0))
-            require_replay_buffer_for_resume(
-                planner,
-                resumed_global_steps=int(resume_global_steps_done),
-                replay_persistence_enabled=bool(transition_replay_config.persistence_enabled),
-            )
+                # REQ-RES-007: a resumed run must not demote the true best checkpoints.
+                best_keys_state = resume_state.get("best_keys")
+                best_lex_key = _restore_best_key(best_keys_state, "lexicographic")  # type: ignore[assignment]
+                best_rulebook_strict_key = _restore_best_key(best_keys_state, "rulebook_strict")
+                best_rulebook_thresholded_key = _restore_best_key(
+                    best_keys_state, "rulebook_thresholded"
+                )
+            if resume_replay_mode == "reset":
+                # REQ-025: a new empty replay segment, said out loud and recorded.
+                beta_progress_env_steps = 0
+                train_logger.warning(
+                    "Resume replay_reset=true | checkpoint=%s | the replay buffer starts empty; "
+                    "this is not a replay-equivalent continuation (TRANSITION-REPLAY REQ-025).",
+                    resume_checkpoint_name,
+                )
+                log_event(
+                    events_log_path,
+                    "replay_reset",
+                    replay_reset=True,
+                    checkpoint=str(resume_checkpoint_zip),
+                    resumed_global_steps=int(resume_global_steps_done),
+                )
+                update_run_metadata(artifacts_dir, {"replay_reset": True})
+
+        last_snapshot_global_step = int(resume_global_steps_done)
 
         # Training and evaluation params
         log_interval = int(cfg.experiment.get("log_interval", 1000))
@@ -1296,6 +1388,7 @@ def run_training(cfg: DictConfig) -> None:
             current_stage_index: int,
             metrics: dict[str, Any],
             source_checkpoint_stem: Path | None = None,
+            write_resume_snapshot: bool = True,
         ) -> None:
             """Save all chunk-level checkpoints shared by curriculum and baseline runs.
 
@@ -1306,6 +1399,12 @@ def run_training(cfg: DictConfig) -> None:
             earlier revision did) labelled weights from step ``g + Δ`` with the
             metrics of step ``g``, Δ being the whole asynchronous validation
             (audit 2026-09-06, A3).
+
+            ``write_resume_snapshot=False`` is used by the asynchronous-evaluation
+            completion callback, which may run mid-chunk: the best checkpoints
+            below are legitimately driven by the evaluated metrics, but the
+            resumable ``latest``/periodic snapshot must only be written at a
+            chunk boundary (see ``write_resume_snapshot_files``).
             """
             nonlocal best_lex_key
             nonlocal best_lex_payload
@@ -1461,36 +1560,91 @@ def run_training(cfg: DictConfig) -> None:
                     },
                 )
 
-            if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
-                _persist(latest_checkpoint_stem)
-                curriculum_state_payload = (
-                    curriculum_manager.state_dict()
-                    if curriculum_manager is not None
-                    else {
-                        "stage_index": 0,
-                        "stage_steps_done": 0,
-                        "eval_count_at_stage": 0,
-                        "consecutive_passes": 0,
-                        "last_eval_passed": False,
-                    }
+            if write_resume_snapshot:
+                write_resume_snapshot_files(
+                    current_global_step=current_global_step,
+                    chunk_id=chunk_id,
+                    eval_id=eval_id,
+                    current_stage_name=current_stage_name,
+                    current_stage_index=current_stage_index,
+                    metrics=metrics,
                 )
-                latest_state_payload = {
-                    "global_steps_done": int(current_global_step),
-                    "chunk_id": int(chunk_id),
-                    "eval_id": int(eval_id),
-                    "remaining_steps": int(total_timesteps - current_global_step),
-                    "curriculum": {
-                        "enabled": bool(curriculum_manager is not None),
-                        **curriculum_state_payload,
-                    },
-                    "seed": int(run_seed),
-                    "updated_at": datetime.now().isoformat(timespec="seconds"),
-                    "beta_progress_env_steps": int(beta_progress_env_steps),
+
+        def write_resume_snapshot_files(
+            *,
+            current_global_step: int,
+            chunk_id: int,
+            eval_id: int,
+            current_stage_name: str,
+            current_stage_index: int,
+            metrics: dict[str, Any],
+        ) -> None:
+            """Write the chunk-boundary resume snapshot (`RESUME-ABRUPT-001`).
+
+            ``latest`` is model-only at every chunk. When the run crosses a
+            multiple of ``checkpoint.periodic_interval_steps`` the periodic
+            checkpoint is written too and, under `TRANSITION-REPLAY` v1.1
+            ``trigger=periodic_and_final``, carries the replay buffer, its pair
+            manifest and its own training/RNG/quarantine state. Every file is
+            published atomically and the training state is written last so it
+            acts as the snapshot's commit marker. Only chunk boundaries call
+            this: mid-chunk the model is ahead of every counter recorded here.
+            """
+
+            nonlocal last_snapshot_global_step
+            model_num_timesteps = planner_trained_timesteps(planner)
+            curriculum_state_payload = (
+                curriculum_manager.state_dict()
+                if curriculum_manager is not None
+                else {
+                    "stage_index": 0,
+                    "stage_steps_done": 0,
+                    "eval_count_at_stage": 0,
+                    "consecutive_passes": 0,
+                    "last_eval_passed": False,
                 }
-                _save_training_state(latest_training_state_path, latest_state_payload)
-                if bool(cfg.checkpoint.get("save_rng_state", True)):
+            )
+            state_payload = {
+                "global_steps_done": int(current_global_step),
+                "chunk_id": int(chunk_id),
+                "eval_id": int(eval_id),
+                "remaining_steps": int(total_timesteps - current_global_step),
+                "curriculum": {
+                    "enabled": bool(curriculum_manager is not None),
+                    **curriculum_state_payload,
+                },
+                "seed": int(run_seed),
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+                "beta_progress_env_steps": int(beta_progress_env_steps),
+                "model_num_timesteps": model_num_timesteps,
+                "best_keys": _best_keys_payload(
+                    best_lex_key, best_rulebook_strict_key, best_rulebook_thresholded_key
+                ),
+            }
+            index_metrics = {
+                "success_rate": float(metrics.get("success_rate", 0.0)),
+                "collision_rate": float(metrics.get("collision_rate", 0.0)),
+                "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
+                "top_rule_violation_rate": float(metrics.get("top_rule_violation_rate", 0.0)),
+                "route_completion": float(metrics.get("route_completion", 0.0)),
+                "mean_reward": float(metrics.get("mean_reward", 0.0)),
+                "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
+                "max_error_value": float(metrics.get("max_error_value", 0.0)),
+            }
+            save_rng = bool(cfg.checkpoint.get("save_rng_state", True))
+
+            if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
+                # The live learner is the right thing to save here: this function
+                # runs only at a chunk boundary. `C16`'s mislabelling came from
+                # the asynchronous-evaluation callback writing `latest`, and that
+                # callback now passes `write_resume_snapshot=False`, so it never
+                # reaches this code at all. `best_*` still goes through
+                # `_persist`, which is where the evaluated snapshot matters.
+                agent.save(latest_checkpoint_stem)
+                if save_rng:
                     _save_rng_state(latest_rng_state_path)
                 _save_quarantine_state(env, latest_quarantine_state_path)
+                _save_training_state(latest_training_state_path, state_payload)
                 _append_checkpoint_index_row(
                     checkpoint_index_path,
                     {
@@ -1501,16 +1655,7 @@ def run_training(cfg: DictConfig) -> None:
                         "eval_id": int(eval_id),
                         "stage": str(current_stage_name),
                         "stage_index": int(current_stage_index),
-                        "success_rate": float(metrics.get("success_rate", 0.0)),
-                        "collision_rate": float(metrics.get("collision_rate", 0.0)),
-                        "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
-                        "top_rule_violation_rate": float(
-                            metrics.get("top_rule_violation_rate", 0.0)
-                        ),
-                        "route_completion": float(metrics.get("route_completion", 0.0)),
-                        "mean_reward": float(metrics.get("mean_reward", 0.0)),
-                        "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
-                        "max_error_value": float(metrics.get("max_error_value", 0.0)),
+                        **index_metrics,
                         "reason": "chunk_end_latest",
                         "timestamp": datetime.now().isoformat(timespec="seconds"),
                     },
@@ -1518,9 +1663,29 @@ def run_training(cfg: DictConfig) -> None:
 
             if bool(cfg.checkpoint.get("save_periodic", True)):
                 periodic_interval = int(cfg.checkpoint.get("periodic_interval_steps", 0))
-                if periodic_interval > 0 and (current_global_step % periodic_interval == 0):
+                if periodic_snapshot_due(
+                    last_snapshot_global_step, current_global_step, periodic_interval
+                ):
                     periodic_stem = checkpoints_periodic_dir / f"step_{current_global_step:08d}"
-                    _persist(periodic_stem)
+                    periodic_paths = resume_artifact_paths(
+                        checkpoints_dir, f"{checkpoints_periodic_dir.name}/{periodic_stem.name}"
+                    )
+                    agent.save(periodic_stem)
+                    paired_replay = bool(transition_replay_config.periodic_replay_persistence)
+                    if paired_replay:
+                        _save_replay_buffer_atomically(planner, periodic_paths.replay_path)
+                        write_checkpoint_pair(
+                            periodic_paths.pair_path,
+                            checkpoint_name=periodic_paths.checkpoint_name,
+                            replay_name=periodic_paths.replay_path.name,
+                            training_timestep=int(current_global_step),
+                            beta_progress_env_steps=int(beta_progress_env_steps),
+                            model_num_timesteps=model_num_timesteps,
+                        )
+                    if save_rng:
+                        _save_rng_state(periodic_paths.rng_state_path)
+                    _save_quarantine_state(env, periodic_paths.quarantine_state_path)
+                    _save_training_state(periodic_paths.training_state_path, state_payload)
                     _append_checkpoint_index_row(
                         checkpoint_index_path,
                         {
@@ -1531,24 +1696,35 @@ def run_training(cfg: DictConfig) -> None:
                             "eval_id": int(eval_id),
                             "stage": str(current_stage_name),
                             "stage_index": int(current_stage_index),
-                            "success_rate": float(metrics.get("success_rate", 0.0)),
-                            "collision_rate": float(metrics.get("collision_rate", 0.0)),
-                            "out_of_road_rate": float(metrics.get("out_of_road_rate", 0.0)),
-                            "top_rule_violation_rate": float(
-                                metrics.get("top_rule_violation_rate", 0.0)
+                            **index_metrics,
+                            "reason": (
+                                "periodic_interval_paired_replay"
+                                if paired_replay
+                                else "periodic_interval"
                             ),
-                            "route_completion": float(metrics.get("route_completion", 0.0)),
-                            "mean_reward": float(metrics.get("mean_reward", 0.0)),
-                            "avg_error_value": float(metrics.get("avg_error_value", 0.0)),
-                            "max_error_value": float(metrics.get("max_error_value", 0.0)),
-                            "reason": "periodic_interval",
                             "timestamp": datetime.now().isoformat(timespec="seconds"),
                         },
                     )
+                    if paired_replay:
+                        removed = prune_replay_snapshots(
+                            checkpoints_dir, keep_checkpoint_name=periodic_paths.checkpoint_name
+                        )
+                        log_event(
+                            events_log_path,
+                            "replay_snapshot_written",
+                            checkpoint=periodic_paths.checkpoint_name,
+                            global_step=int(current_global_step),
+                            replay_bytes=int(periodic_paths.replay_path.stat().st_size),
+                            removed_previous=[str(p.relative_to(run_dir)) for p in removed],
+                        )
                     _prune_old_periodic_checkpoints(
                         checkpoints_periodic_dir,
                         keep_last=int(cfg.checkpoint.get("keep_last_periodic", 4)),
                     )
+                    prune_periodic_companions(checkpoints_dir)
+            last_snapshot_global_step = max(
+                int(last_snapshot_global_step), int(current_global_step)
+            )
 
         if curriculum_manager is None:
             async_evaluation_manager = AsyncEvaluationManager(
@@ -1756,6 +1932,18 @@ def run_training(cfg: DictConfig) -> None:
             # Record training steps in curriculum manager for potential stage progression
             if curriculum_manager is not None:
                 curriculum_manager.record_train_steps(actual_chunk_steps)
+            else:
+                # Asynchronous validation: the completion callback cannot write
+                # the resume snapshot (it may fire mid-chunk), so the chunk
+                # boundary writes it here with the live counters.
+                write_resume_snapshot_files(
+                    current_global_step=current_global_step,
+                    chunk_id=chunk_id,
+                    eval_id=eval_id,
+                    current_stage_name=current_stage_name,
+                    current_stage_index=current_stage_index,
+                    metrics={},
+                )
 
             # Staged curriculum retains the synchronous MetaDrive lifecycle. Ordinary
             # validation keeps the live learner environment open while the evaluator
@@ -2542,21 +2730,28 @@ def run_training(cfg: DictConfig) -> None:
         agent.save(final_checkpoint_stem)
         if transition_replay_config.persistence_enabled:
             _save_replay_buffer_atomically(planner, final_replay_buffer_path)
-        _save_json_atomically(
+        write_checkpoint_pair(
             final_checkpoint_pair_path,
-            {
-                "checkpoint_id": uuid.uuid4().hex,
-                "training_timestep": int(total_timesteps),
-                "replay_segment_id": 0,
-                "beta_progress_env_steps": int(beta_progress_env_steps),
-                "model_path": final_checkpoint_stem.with_suffix(".zip").name,
-                "replay_path": (
-                    final_replay_buffer_path.name
-                    if transition_replay_config.persistence_enabled
-                    else None
-                ),
-            },
+            checkpoint_name="final",
+            replay_name=(
+                final_replay_buffer_path.name
+                if transition_replay_config.persistence_enabled
+                else None
+            ),
+            training_timestep=int(total_timesteps),
+            beta_progress_env_steps=int(beta_progress_env_steps),
+            model_num_timesteps=planner_trained_timesteps(planner),
         )
+        if transition_replay_config.persistence_enabled:
+            # `DEC-RES-006`: `final` now carries the pair; the intermediate
+            # replay copies only cost disk.
+            removed_replay_snapshots = remove_replay_snapshots_after_final(checkpoints_dir)
+            if removed_replay_snapshots:
+                log_event(
+                    events_log_path,
+                    "replay_snapshots_removed_after_final",
+                    removed=[str(path.relative_to(run_dir)) for path in removed_replay_snapshots],
+                )
         final_adapter_ckpt_path = agent.adapter_checkpoint_path(final_checkpoint_stem)
         _append_checkpoint_index_row(
             checkpoint_index_path,
@@ -3118,69 +3313,17 @@ def run_training(cfg: DictConfig) -> None:
             stage_index=int(current_stage_index),
             duration_seconds=duration_seconds,
         )
-        try:
-            agent.save(latest_checkpoint_stem)
-            if transition_replay_config.persistence_enabled:
-                _save_replay_buffer_atomically(planner, latest_replay_buffer_path)
-                _save_json_atomically(
-                    latest_checkpoint_pair_path,
-                    {
-                        "checkpoint_id": uuid.uuid4().hex,
-                        "training_timestep": int(current_global_step),
-                        "replay_segment_id": 0,
-                        "beta_progress_env_steps": int(beta_progress_env_steps),
-                        "model_path": latest_checkpoint_stem.with_suffix(".zip").name,
-                        "replay_path": latest_replay_buffer_path.name,
-                    },
-                )
-            curriculum_state_payload = (
-                curriculum_manager.state_dict()
-                if curriculum_manager is not None
-                else {
-                    "stage_index": 0,
-                    "stage_steps_done": 0,
-                    "eval_count_at_stage": 0,
-                    "consecutive_passes": 0,
-                    "last_eval_passed": False,
-                }
-            )
-            _save_training_state(
-                latest_training_state_path,
-                {
-                    "global_steps_done": int(current_global_step),
-                    "chunk_id": int(chunk_id),
-                    "eval_id": int(eval_id),
-                    "remaining_steps": int(max(0, total_timesteps - current_global_step)),
-                    "curriculum": {
-                        "enabled": bool(curriculum_manager is not None),
-                        **curriculum_state_payload,
-                    },
-                    "seed": int(run_seed),
-                    "updated_at": datetime.now().isoformat(timespec="seconds"),
-                },
-            )
-            if bool(cfg.checkpoint.get("save_rng_state", True)):
-                _save_rng_state(latest_rng_state_path)
-            _save_quarantine_state(env, latest_quarantine_state_path)
-            _append_checkpoint_index_row(
-                checkpoint_index_path,
-                {
-                    "checkpoint_path": _checkpoint_rel(run_dir, latest_checkpoint_stem),
-                    "type": "latest",
-                    "global_step": int(current_global_step),
-                    "chunk_id": int(chunk_id),
-                    "eval_id": int(eval_id),
-                    "stage": str(current_stage_name),
-                    "stage_index": int(current_stage_index),
-                    "reason": "run_interrupted",
-                    "timestamp": datetime.now().isoformat(timespec="seconds"),
-                },
-            )
-        except Exception as checkpoint_error:
-            errors_logger.warning(
-                "Interrupt checkpoint save failed | error=%s",
-                str(checkpoint_error),
-            )
+        # `DEC-RES-007`: the interrupt path no longer overwrites the resumable
+        # snapshot. Mid-chunk the model is ahead of every chunk-level counter
+        # (`current_global_step`, curriculum state, β progress), so a snapshot
+        # written here was internally inconsistent; the last chunk-boundary
+        # snapshot is complete and atomic, and is what a resume should read.
+        train_logger.info(
+            "Resumable snapshot kept at the last chunk boundary | latest=%s | resume with "
+            "checkpoint.resume.enabled=true checkpoint.resume.run_dir=%s",
+            str(latest_checkpoint_stem.with_suffix(".zip")),
+            str(run_dir),
+        )
         update_run_metadata(
             artifacts_dir,
             {

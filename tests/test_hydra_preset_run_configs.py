@@ -269,7 +269,10 @@ def test_trajectory_logging_is_enabled_only_for_smoke_by_default() -> None:
         assert bool(cfg.video.save_trajectory_log) is (profile == "smoke")
 
 
-def test_replay_persistence_is_enabled_only_for_smoke_by_default() -> None:
+def test_replay_persistence_is_enabled_on_every_profile_by_default() -> None:
+    """ADR-079 (supersedes ADR-017): every profile pairs the replay buffer with
+    the periodic checkpoint so an abruptly killed run can be resumed."""
+
     profiles = ("default", "smoke", "fast", "medium", "long", "tune", "thesis")
 
     for algorithm in ("td3_sb3", "sac_sb3"):
@@ -278,9 +281,12 @@ def test_replay_persistence_is_enabled_only_for_smoke_by_default() -> None:
                 f"run_profile={profile}",
                 f"agent/planner/algorithm={algorithm}",
             )
-            assert bool(cfg.agent.planner.algorithm.transition_replay.persistence.enabled) is (
-                profile == "smoke"
-            )
+            persistence = cfg.agent.planner.algorithm.transition_replay.persistence
+            assert bool(persistence.enabled) is True
+            assert str(persistence.trigger) == "periodic_and_final"
+            assert bool(cfg.checkpoint.save_periodic) is True
+            assert int(cfg.checkpoint.periodic_interval_steps) > 0
+            assert bool(cfg.checkpoint.resume.allow_replay_reset) is False
 
 
 def test_replay_persistence_can_be_enabled_explicitly_outside_smoke() -> None:
@@ -357,7 +363,8 @@ def test_final_scalar_pipeline_defaults_compose() -> None:
     assert bool(cfg.agent.planner.algorithm.transition_replay.prioritized) is True
     assert bool(cfg.agent.planner.algorithm.transition_replay.persistence.enabled) is True
     assert (
-        str(cfg.agent.planner.algorithm.transition_replay.persistence.trigger) == "final_or_manual"
+        str(cfg.agent.planner.algorithm.transition_replay.persistence.trigger)
+        == "periodic_and_final"
     )
     assert bool(cfg.checkpoint.save_latest_each_chunk) is True
     assert bool(cfg.checkpoint.save_final) is True

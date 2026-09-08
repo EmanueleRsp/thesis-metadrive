@@ -74,9 +74,45 @@ def test_legacy_replay_persistence_requires_migration() -> None:
         )
 
 
-def test_periodic_replay_persistence_is_rejected() -> None:
-    with pytest.raises(ValueError, match="Periodic"):
+def test_periodic_frequency_steps_is_not_a_setting() -> None:
+    """`TRANSITION-REPLAY` v1.1 REQ-024: the periodic replay snapshot rides the
+    periodic model checkpoint, so a second frequency knob is rejected."""
+
+    with pytest.raises(ValueError, match="periodic_frequency_steps"):
         resolve_transition_replay_config(
             {"persistence": {"enabled": True, "periodic_frequency_steps": 100}},
+            algorithm_name="sac_sb3",
+        )
+
+
+def test_periodic_and_final_trigger_is_accepted() -> None:
+    """`TEST-RES-006`: v1.1 trigger resolves to periodic replay persistence."""
+
+    config = resolve_transition_replay_config(
+        {"persistence": {"enabled": True, "trigger": "periodic_and_final"}},
+        algorithm_name="td3_sb3",
+    )
+
+    assert config.persistence_enabled is True
+    assert config.persistence_trigger == "periodic_and_final"
+    assert config.periodic_replay_persistence is True
+
+    legacy = resolve_transition_replay_config(
+        {"persistence": {"enabled": True, "trigger": "final_or_manual"}},
+        algorithm_name="td3_sb3",
+    )
+    assert legacy.periodic_replay_persistence is False
+
+    disabled = resolve_transition_replay_config(
+        {"persistence": {"enabled": False, "trigger": "periodic_and_final"}},
+        algorithm_name="td3_sb3",
+    )
+    assert disabled.periodic_replay_persistence is False
+
+
+def test_unknown_persistence_trigger_is_rejected() -> None:
+    with pytest.raises(ValueError, match="trigger must be one of"):
+        resolve_transition_replay_config(
+            {"persistence": {"enabled": True, "trigger": "every_chunk"}},
             algorithm_name="sac_sb3",
         )

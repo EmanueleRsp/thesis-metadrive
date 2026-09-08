@@ -60,7 +60,7 @@ transition_replay:
   store_reward_vector: false
   persistence:
     enabled: ${run_profile.replay_persistence}
-    trigger: final_or_manual
+    trigger: periodic_and_final   # TRANSITION-REPLAY v1.1: replay paired with each periodic checkpoint (cadence = checkpoint.periodic_interval_steps) and with final.
     periodic_frequency_steps: null
     keep_last: 1
   per:

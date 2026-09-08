@@ -2,7 +2,6 @@
 
 from thesis_rl.sb3_extensions.replay.config import (
     TransitionReplayConfig,
-    require_replay_buffer_for_resume,
     resolve_transition_replay_config,
 )
 
@@ -14,6 +13,5 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only outside the pro
 __all__ = [
     "PrioritizedNStepReplayBuffer",
     "TransitionReplayConfig",
-    "require_replay_buffer_for_resume",
     "resolve_transition_replay_config",
 ]

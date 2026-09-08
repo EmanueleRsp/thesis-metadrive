@@ -60,14 +60,26 @@ from thesis_rl.runtime.comfort_diagnostics import (
 )
 from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
 from thesis_rl.runtime.io.metadata import update_run_metadata
+from thesis_rl.runtime.io.atomic import atomic_write_text
+from thesis_rl.runtime.io.resume_snapshot import (
+    assert_snapshot_model_consistent,
+    assert_snapshot_seed_consistent,
+    classify_replay_resume,
+    is_periodic_checkpoint_name,
+    periodic_snapshot_due,
+    planner_trained_timesteps,
+    prune_old_periodic_checkpoints,
+    prune_replay_snapshots,
+    remove_replay_snapshots_after_final,
+    resolve_resume_checkpoint_name,
+    resume_artifact_paths,
+    write_checkpoint_pair,
+)
 from thesis_rl.runtime.io.run_logging import log_event
 from thesis_rl.runtime.async_evaluation import AsyncEvaluationManager, EvaluationJob
 from thesis_rl.runtime.evaluation_plan import resolve_scenarionet_evaluation_panels
 from thesis_rl.runtime.final_panels import run_scenarionet_final_panels
-from thesis_rl.sb3_extensions.replay import (
-    require_replay_buffer_for_resume,
-    resolve_transition_replay_config,
-)
+from thesis_rl.sb3_extensions.replay import resolve_transition_replay_config
 from thesis_rl.runtime.wiring.builders import (
     adapter_space_kwargs,
     build_adapter,
@@ -208,20 +220,194 @@ def _save_acl_checkpoint_pair(
     checkpoint_name: str,
     replay_name: str,
     training_timestep: int,
+    model_num_timesteps: int | None = None,
 ) -> None:
-    """Publish the model/replay pair identity used by ACL resume."""
+    """Publish the model/replay pair identity used by ACL resume (atomic, REQ-024)."""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    write_checkpoint_pair(
+        path,
+        checkpoint_name=checkpoint_name,
+        replay_name=replay_name,
+        training_timestep=int(training_timestep),
+        model_num_timesteps=model_num_timesteps,
+    )
+
+
+def _acl_resume_run_dir(cfg: DictConfig, artifact_paths: dict[str, Path]) -> Path:
+    resume_cfg = cfg.checkpoint.get("resume", {})
+    configured_run_dir = resume_cfg.get("run_dir")
+    return (
+        Path(str(configured_run_dir))
+        if configured_run_dir not in (None, "", "null")
+        else artifact_paths["root"].parents[1]
+    )
+
+
+def _acl_resume_checkpoint_name(cfg: DictConfig, resume_run_dir: Path) -> str:
+    """Resolve `checkpoint.resume.checkpoint_name` (``periodic`` alias included)."""
+
+    resume_cfg = cfg.checkpoint.get("resume", {})
+    return resolve_resume_checkpoint_name(
+        resume_run_dir / "checkpoints", str(resume_cfg.get("checkpoint_name", "latest"))
+    )
+
+
+def _acl_state_dir_for_checkpoint(
+    run_dir: Path, checkpoint_name: str, *, artifacts_curriculum_dir: Path | None = None
+) -> Path:
+    """Where the ACL curriculum state of one checkpoint name lives.
+
+    ``latest``/``final`` read the live ``artifacts/curriculum`` directory, which
+    is rewritten at every chunk boundary together with ``latest``; a periodic
+    snapshot keeps its own frozen copy next to the model so that a resume from
+    ``periodic/step_X`` restores bandit, buffer, coverage and vector state as
+    they were at step X.
+    """
+
+    if is_periodic_checkpoint_name(checkpoint_name):
+        paths = resume_artifact_paths(run_dir / "checkpoints", checkpoint_name)
+        assert paths.acl_state_dir is not None
+        return paths.acl_state_dir
+    return (
+        artifacts_curriculum_dir
+        if artifacts_curriculum_dir is not None
+        else run_dir / "artifacts" / "curriculum"
+    )
+
+
+def _acl_resume_state_root(cfg: DictConfig, artifact_paths: dict[str, Path]) -> Path:
+    resume_run_dir = _acl_resume_run_dir(cfg, artifact_paths)
+    checkpoint_name = _acl_resume_checkpoint_name(cfg, resume_run_dir)
+    return _acl_state_dir_for_checkpoint(resume_run_dir, checkpoint_name)
+
+
+def _write_acl_state_files(
+    *,
+    root: Path,
+    acl_state_payload: dict[str, Any],
+    buffer: ScenarioBuffer,
+    visit_state: ScenarioCatalogVisitState,
+    vector_state: Any | None,
+) -> None:
+    """Write the ACL curriculum state set into ``root``; ``scenario_acl_state.json`` last."""
+
+    _persist_buffer_state(path=root / "scenario_buffer.json", buffer=buffer)
+    _persist_coverage_state(path=root / "scenario_coverage_state.json", visit_state=visit_state)
+    if vector_state is not None:
+        save_acl_vector_state(root / "scenario_acl_vector_state.json", vector_state)
+    atomic_write_text(
+        root / "scenario_acl_state.json",
+        json.dumps(acl_state_payload, ensure_ascii=True, indent=2),
+    )
+
+
+def _write_acl_resume_snapshot(
+    *,
+    cfg: DictConfig,
+    paths: ScenarioAclDriverPaths,
+    agent: Agent,
+    planner: Any,
+    transition_replay_config: Any,
+    artifact_paths: dict[str, Path],
+    acl_state_payload: dict[str, Any],
+    buffer: ScenarioBuffer,
+    visit_state: ScenarioCatalogVisitState,
+    vector_state: Any | None,
+    current_global_step: int,
+    last_snapshot_global_step: int,
+    train_logger: logging.Logger,
+) -> int:
+    """Chunk-boundary resume snapshot for the scenario ACL loops (`RESUME-ABRUPT-001`).
+
+    Order: ``latest`` model, RNG, the live curriculum state (state file last as
+    the commit marker); then, when a multiple of
+    ``checkpoint.periodic_interval_steps`` was crossed, the periodic model with
+    the replay pair (`TRANSITION-REPLAY` v1.1 ``periodic_and_final``), its RNG
+    and a frozen copy of the curriculum state. Returns the updated
+    ``last_snapshot_global_step``.
+    """
+
+    model_num_timesteps = planner_trained_timesteps(planner)
     payload = {
-        "checkpoint_id": hashlib.sha256(
-            f"{checkpoint_name}:{replay_name}:{training_timestep}".encode()
-        ).hexdigest(),
-        "training_timestep": int(training_timestep),
-        "replay_segment_id": 0,
-        "model_path": f"{checkpoint_name}.zip",
-        "replay_path": replay_name,
+        **acl_state_payload,
+        "model_num_timesteps": model_num_timesteps,
+        "seed": int(cfg.seed),
     }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    save_rng = bool(cfg.checkpoint.get("save_rng_state", True))
+    if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
+        agent.save(paths.latest_checkpoint_stem)
+        if save_rng:
+            _save_acl_rng_state(paths.checkpoints_dir / "latest_rng_state.pkl")
+    _write_acl_state_files(
+        root=artifact_paths["root"],
+        acl_state_payload=payload,
+        buffer=buffer,
+        visit_state=visit_state,
+        vector_state=vector_state,
+    )
+
+    if bool(cfg.checkpoint.get("save_periodic", True)):
+        interval = int(cfg.checkpoint.get("periodic_interval_steps", 0))
+        if periodic_snapshot_due(last_snapshot_global_step, current_global_step, interval):
+            periodic_name = f"periodic/step_{int(current_global_step):08d}"
+            periodic_paths = resume_artifact_paths(paths.checkpoints_dir, periodic_name)
+            agent.save(periodic_paths.checkpoint_stem)
+            paired_replay = bool(transition_replay_config.periodic_replay_persistence)
+            if paired_replay:
+                _save_acl_replay_buffer(planner, periodic_paths.replay_path)
+                _save_acl_checkpoint_pair(
+                    path=periodic_paths.pair_path,
+                    checkpoint_name=periodic_name,
+                    replay_name=periodic_paths.replay_path.name,
+                    training_timestep=int(current_global_step),
+                    model_num_timesteps=model_num_timesteps,
+                )
+            if save_rng:
+                _save_acl_rng_state(periodic_paths.rng_state_path)
+            assert periodic_paths.acl_state_dir is not None
+            _write_acl_state_files(
+                root=periodic_paths.acl_state_dir,
+                acl_state_payload=payload,
+                buffer=buffer,
+                visit_state=visit_state,
+                vector_state=vector_state,
+            )
+            removed_replay: list[Path] = []
+            if paired_replay:
+                removed_replay = prune_replay_snapshots(
+                    paths.checkpoints_dir, keep_checkpoint_name=periodic_name
+                )
+            prune_old_periodic_checkpoints(
+                paths.checkpoints_dir, keep_last=int(cfg.checkpoint.get("keep_last_periodic", 4))
+            )
+            train_logger.info(
+                "Periodic resume snapshot written | checkpoint=%s | global_step=%d | "
+                "paired_replay=%s | replay_bytes=%s | removed_previous_replay=%d",
+                periodic_name,
+                int(current_global_step),
+                paired_replay,
+                periodic_paths.replay_path.stat().st_size if paired_replay else 0,
+                len(removed_replay),
+            )
+            log_event(
+                paths.events_log_path,
+                "replay_snapshot_written" if paired_replay else "periodic_snapshot_written",
+                checkpoint=periodic_name,
+                global_step=int(current_global_step),
+                paired_replay=paired_replay,
+            )
+    return max(int(last_snapshot_global_step), int(current_global_step))
+
+
+def _read_acl_state_field(root: Path, key: str) -> Any:
+    state_path = root / "scenario_acl_state.json"
+    if not state_path.is_file():
+        return None
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload.get(key) if isinstance(payload, dict) else None
 
 
 def _summarize_episode_acl_outcomes(
@@ -480,11 +666,7 @@ def _persist_buffer_state(
     path: Path,
     buffer: ScenarioBuffer,
 ) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(buffer.state_dict(), ensure_ascii=True, indent=2),
-        encoding="utf-8",
-    )
+    atomic_write_text(path, json.dumps(buffer.state_dict(), ensure_ascii=True, indent=2))
 
 
 def _persist_coverage_state(
@@ -494,11 +676,7 @@ def _persist_coverage_state(
 ) -> None:
     """Persist the per-arm coverage-cycle state (ACL `v1.3` REQ-005, `DEC-009`)."""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(visit_state.state_dict(), ensure_ascii=True, indent=2),
-        encoding="utf-8",
-    )
+    atomic_write_text(path, json.dumps(visit_state.state_dict(), ensure_ascii=True, indent=2))
 
 
 def _scenario_acl_resume_state(
@@ -563,13 +741,9 @@ def _load_scenario_acl_resume_state(
             [],
         )
 
-    configured_run_dir = resume_cfg.get("run_dir")
-    resume_run_dir = (
-        Path(str(configured_run_dir))
-        if configured_run_dir not in (None, "", "null")
-        else artifact_paths["root"].parents[1]
-    )
-    resume_root = resume_run_dir / "artifacts" / "curriculum"
+    # `RESUME-ABRUPT-001`: `latest`/`final` read the live curriculum directory,
+    # a periodic snapshot reads its frozen `periodic/step_X_acl/` copy.
+    resume_root = _acl_resume_state_root(cfg, artifact_paths)
     state_path = resume_root / "scenario_acl_state.json"
     buffer_path = resume_root / "scenario_buffer.json"
     coverage_path = resume_root / "scenario_coverage_state.json"
@@ -665,6 +839,8 @@ def _run_scenario_acl_vectorized_training(
     n_envs = count_envs(env)
     if n_envs <= 1 or not bool(getattr(env, "acl_mode", False)):
         raise ValueError("Scenario ACL vector driver requires an ACL-mode vector environment.")
+    # Step of the last resume snapshot; drives the periodic snapshot crossing test.
+    last_snapshot_global_step = int(current_global_step)
     scenario_cfg = curriculum_cfg.scenario_acl
     validation_panels = resolve_scenarionet_evaluation_panels(cfg, final=False)
     arms = list(build_default_scenario_arms())
@@ -680,14 +856,9 @@ def _run_scenario_acl_vectorized_training(
 
     vector_state_load_path = artifact_paths["vector_state"]
     if resume_enabled:
-        configured_resume_dir = cfg.checkpoint.get("resume", {}).get("run_dir")
-        if configured_resume_dir not in (None, "", "null"):
-            vector_state_load_path = (
-                Path(str(configured_resume_dir))
-                / "artifacts"
-                / "curriculum"
-                / "scenario_acl_vector_state.json"
-            )
+        vector_state_load_path = (
+            _acl_resume_state_root(cfg, artifact_paths) / "scenario_acl_vector_state.json"
+        )
         if not vector_state_load_path.is_file():
             raise FileNotFoundError(
                 "Scenario ACL vector resume requires the versioned vector state: "
@@ -1309,38 +1480,36 @@ def _run_scenario_acl_vectorized_training(
             }
             _append_jsonl(artifact_paths["history"], history_payload)
             _append_jsonl(artifact_paths["iterations"], history_payload)
-            artifact_paths["state"].write_text(
-                json.dumps(
-                    _scenario_acl_resume_state(
-                        global_step=current_global_step,
-                        chunk_id=current_chunk_id,
-                        eval_id=current_eval_id,
-                        episode_id=vector_state.next_episode_id,
-                        buffer_size=len(buffer),
-                        bandit=bandit,
-                        visit_state=visit_state,
-                        rng=rng,
-                        recent_usefulness=recent_usefulness,
-                    ),
-                    ensure_ascii=True,
-                    indent=2,
-                ),
-                encoding="utf-8",
+            # `RESUME-ABRUPT-001` publishes this atomically; `C31` decides what
+            # goes in it. The payload main introduced here repeated the eight
+            # keys the pre-`C31` writer used, so it carried the omission of
+            # `recent_usefulness` into the new mechanism.
+            acl_state_payload = _scenario_acl_resume_state(
+                global_step=current_global_step,
+                chunk_id=current_chunk_id,
+                eval_id=current_eval_id,
+                episode_id=vector_state.next_episode_id,
+                buffer_size=len(buffer),
+                bandit=bandit,
+                visit_state=visit_state,
+                rng=rng,
+                recent_usefulness=recent_usefulness,
             )
-            if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
-                agent.save(paths.latest_checkpoint_stem)
-                if transition_replay_config.persistence_enabled:
-                    _save_acl_replay_buffer(
-                        planner, paths.checkpoints_dir / "latest_replay_buffer.pkl"
-                    )
-                    _save_acl_checkpoint_pair(
-                        path=paths.checkpoints_dir / "latest_checkpoint_pair.json",
-                        checkpoint_name="latest",
-                        replay_name="latest_replay_buffer.pkl",
-                        training_timestep=current_global_step,
-                    )
-                if bool(cfg.checkpoint.get("save_rng_state", True)):
-                    _save_acl_rng_state(paths.checkpoints_dir / "latest_rng_state.pkl")
+            last_snapshot_global_step = _write_acl_resume_snapshot(
+                cfg=cfg,
+                paths=paths,
+                agent=agent,
+                planner=planner,
+                transition_replay_config=transition_replay_config,
+                artifact_paths=artifact_paths,
+                acl_state_payload=acl_state_payload,
+                buffer=buffer,
+                visit_state=visit_state,
+                vector_state=vector_state,
+                current_global_step=current_global_step,
+                last_snapshot_global_step=last_snapshot_global_step,
+                train_logger=train_logger,
+            )
 
             run_intermediate_evaluation()
 
@@ -1352,6 +1521,40 @@ def _run_scenario_acl_vectorized_training(
                 len(buffer),
                 len(vector_state.pending_completions),
             )
+    except KeyboardInterrupt:
+        # `DEC-RES-002`/`DEC-RES-007`: SIGINT/SIGTERM end the run cleanly; the
+        # last chunk-boundary snapshot is the resumable one.
+        duration_seconds = round(time.time() - start_time, 2)
+        train_logger.warning(
+            "Run interrupted | step=%d | chunk_id=%d | resumable snapshot kept at the last "
+            "chunk boundary (%s)",
+            int(current_global_step),
+            int(current_chunk_id),
+            str(paths.latest_checkpoint_stem.with_suffix(".zip")),
+        )
+        log_event(
+            paths.events_log_path,
+            "run_interrupted",
+            global_step=int(current_global_step),
+            chunk_id=int(current_chunk_id),
+            eval_id=int(current_eval_id),
+            stage="scenario_acl_vectorized",
+            duration_seconds=duration_seconds,
+        )
+        update_run_metadata(
+            paths.artifacts_dir,
+            {
+                "status": "interrupted",
+                "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_seconds": duration_seconds,
+                "global_step": int(current_global_step),
+                "chunk_id": int(current_chunk_id),
+                "eval_id": int(current_eval_id),
+                "stage": "scenario_acl_vectorized",
+                "stage_index": 0,
+            },
+        )
+        raise SystemExit(130)
     finally:
         env.close()
 
@@ -1368,7 +1571,10 @@ def _run_scenario_acl_vectorized_training(
             checkpoint_name="final",
             replay_name="final_replay_buffer.pkl",
             training_timestep=current_global_step,
+            model_num_timesteps=planner_trained_timesteps(planner),
         )
+        # `DEC-RES-006`: `final` carries the pair; drop the intermediate copies.
+        remove_replay_snapshots_after_final(paths.checkpoints_dir)
     if bool(cfg.checkpoint.get("save_rng_state", True)):
         _save_acl_rng_state(paths.checkpoints_dir / "latest_rng_state.pkl")
 
@@ -1624,9 +1830,16 @@ def run_scenario_acl_training(
         total_timesteps=total_timesteps,
         legacy_save_replay_buffer=bool(cfg.checkpoint.get("save_replay_buffer", False)),
     )
-    latest_replay_buffer_path = paths.checkpoints_dir / "latest_replay_buffer.pkl"
+    if transition_replay_config.periodic_replay_persistence and not (
+        bool(cfg.checkpoint.get("save_periodic", True))
+        and int(cfg.checkpoint.get("periodic_interval_steps", 0)) > 0
+    ):
+        raise ValueError(
+            "transition_replay.persistence.trigger=periodic_and_final pairs the replay buffer "
+            "with the periodic model checkpoint, so checkpoint.save_periodic must be true and "
+            "checkpoint.periodic_interval_steps positive."
+        )
     final_replay_buffer_path = paths.checkpoints_dir / "final_replay_buffer.pkl"
-    latest_checkpoint_pair_path = paths.checkpoints_dir / "latest_checkpoint_pair.json"
     final_checkpoint_pair_path = paths.checkpoints_dir / "final_checkpoint_pair.json"
     latest_rng_state_path = paths.checkpoints_dir / "latest_rng_state.pkl"
     rng = np.random.default_rng(run_seed)
@@ -1677,10 +1890,14 @@ def run_scenario_acl_training(
         if resume_run_dir_cfg not in (None, "", "null")
         else paths.run_dir
     )
-    resume_checkpoint_stem = (
-        resume_run_dir / "checkpoints" / str(resume_cfg.get("checkpoint_name", "latest"))
-    )
-    resume_checkpoint_zip = resume_checkpoint_stem.with_suffix(".zip")
+    resume_checkpoint_name = str(resume_cfg.get("checkpoint_name", "latest"))
+    if resume_enabled:
+        resume_checkpoint_name = _acl_resume_checkpoint_name(cfg, resume_run_dir)
+    resume_paths = resume_artifact_paths(resume_run_dir / "checkpoints", resume_checkpoint_name)
+    resume_checkpoint_zip = resume_paths.model_path
+    resume_acl_state_root = _acl_state_dir_for_checkpoint(resume_run_dir, resume_checkpoint_name)
+    # Step of the last resume snapshot; drives the periodic snapshot crossing test.
+    last_snapshot_global_step = int(current_global_step)
     if resume_enabled:
         if not resume_checkpoint_zip.exists():
             raise FileNotFoundError(
@@ -1700,31 +1917,63 @@ def run_scenario_acl_training(
     agent.set_checkpoint_identity(build_reward_semantics_identity(cfg))
     if resume_enabled:
         agent.load_adapter(checkpoint_path=resume_checkpoint_zip, strict=True)
-        # The ACL driver has its own resume path, so it needs the same guard as the
-        # baseline loop: without a persisted buffer the learner restarts full-size
-        # updates on ~`n_envs` transitions with the warm-up already spent
-        # (audit 2026-09-06, A8).
-        require_replay_buffer_for_resume(
-            planner,
-            resumed_global_steps=int(current_global_step),
-            replay_persistence_enabled=bool(transition_replay_config.persistence_enabled),
+        # `RESUME-ABRUPT-001` REQ-RES-003: model and curriculum state from one save.
+        loaded_model_timesteps = planner_trained_timesteps(planner)
+        assert_snapshot_model_consistent(
+            recorded_model_timesteps=_read_acl_state_field(
+                resume_acl_state_root, "model_num_timesteps"
+            ),
+            loaded_model_timesteps=loaded_model_timesteps,
+            checkpoint_name=resume_checkpoint_name,
+            state_path=resume_acl_state_root / "scenario_acl_state.json",
+            logger=train_logger,
         )
-        if transition_replay_config.persistence_enabled:
-            resume_replay_path = (
-                resume_run_dir
-                / "checkpoints"
-                / f"{resume_cfg.get('checkpoint_name', 'latest')}_replay_buffer.pkl"
+        assert_snapshot_seed_consistent(
+            recorded_seed=_read_acl_state_field(resume_acl_state_root, "seed"),
+            configured_seed=run_seed,
+        )
+        # `TRANSITION-REPLAY` REQ-025 / `DEC-RES-004`.
+        resume_replay_mode = classify_replay_resume(
+            learner_has_replay=bool(transition_replay_config.enabled),
+            persistence_enabled=bool(transition_replay_config.persistence_enabled),
+            pair_path=resume_paths.pair_path,
+            replay_path=resume_paths.replay_path,
+            allow_replay_reset=bool(resume_cfg.get("allow_replay_reset", False)),
+            checkpoint_name=resume_checkpoint_name,
+        )
+        if resume_replay_mode == "continuation":
+            pair_payload = json.loads(resume_paths.pair_path.read_text(encoding="utf-8"))
+            if int(pair_payload.get("training_timestep", -1)) != int(current_global_step):
+                raise ValueError(
+                    "ACL checkpoint pair training timestep mismatch: "
+                    f"pair={pair_payload.get('training_timestep')!r}, "
+                    f"curriculum state={int(current_global_step)!r}."
+                )
+            assert_snapshot_model_consistent(
+                recorded_model_timesteps=pair_payload.get("model_num_timesteps"),
+                loaded_model_timesteps=loaded_model_timesteps,
+                checkpoint_name=resume_checkpoint_name,
+                state_path=resume_paths.pair_path,
+                logger=train_logger,
             )
-            _load_acl_replay_buffer(planner, resume_replay_path)
-            resume_pair_path = (
-                resume_run_dir
-                / "checkpoints"
-                / f"{resume_cfg.get('checkpoint_name', 'latest')}_checkpoint_pair.json"
+            _load_acl_replay_buffer(planner, resume_paths.replay_path)
+        elif resume_replay_mode == "reset":
+            train_logger.warning(
+                "Resume replay_reset=true | checkpoint=%s | the replay buffer starts empty; "
+                "this is not a replay-equivalent continuation (TRANSITION-REPLAY REQ-025).",
+                resume_checkpoint_name,
             )
-            if not resume_pair_path.is_file():
-                raise FileNotFoundError(f"ACL checkpoint pair is missing: {resume_pair_path}")
-            if bool(resume_cfg.get("restore_rng_state", True)):
-                _load_acl_rng_state(resume_run_dir / "checkpoints" / "latest_rng_state.pkl")
+            log_event(
+                paths.events_log_path,
+                "replay_reset",
+                replay_reset=True,
+                checkpoint=str(resume_checkpoint_zip),
+                resumed_global_steps=int(current_global_step),
+            )
+            update_run_metadata(paths.artifacts_dir, {"replay_reset": True})
+        # RNG restore no longer depends on replay persistence.
+        if bool(resume_cfg.get("restore_rng_state", True)):
+            _load_acl_rng_state(resume_paths.rng_state_path)
 
     print_run_setup(
         title="Training Run",
@@ -2420,60 +2669,59 @@ def run_scenario_acl_training(
                 buffer_actions=dict(buffer_actions),
                 buffer_size=len(buffer),
             )
-            artifact_paths["state"].write_text(
-                json.dumps(
-                    {
-                        **_scenario_acl_resume_state(
-                            global_step=current_global_step,
-                            chunk_id=current_chunk_id,
-                            eval_id=current_eval_id,
-                            episode_id=current_episode_id,
-                            buffer_size=len(buffer),
-                            bandit=bandit,
-                            visit_state=visit_state,
-                            rng=rng,
-                            recent_usefulness=recent_usefulness,
-                        ),
-                        "last_mode": chunk_mode,
-                        "last_arm_name": chunk_stage,
-                        "last_arm_index": -1,
-                        "last_scenario_seed": None,
-                        "last_replay_scenario_id": None,
-                        "generate_count": int(generate_count),
-                        "replay_count": int(replay_count),
-                        "chunk_generate_count": int(chunk_generate_count),
-                        "chunk_replay_count": int(chunk_replay_count),
-                        "buffer_actions": dict(buffer_actions),
-                        "acl_episode_modes": episode_modes,
-                        "acl_episode_arms": episode_arms,
-                        "buffer_top": [
-                            {
-                                "scenario_id": record.scenario_id,
-                                "rank": int(record.rank),
-                                "usefulness": float(record.usefulness),
-                                "num_seen": int(record.num_seen),
-                                "source": record.source,
-                            }
-                            for record in buffer.top_k(5)
-                        ],
-                    },
-                    ensure_ascii=True,
-                    indent=2,
+            # As on the vector path: `RESUME-ABRUPT-001` publishes it, `C31`
+            # decides its resume-critical half. The diagnostic keys below are
+            # this path's own and the loader does not read them.
+            acl_state_payload = {
+                **_scenario_acl_resume_state(
+                    global_step=current_global_step,
+                    chunk_id=current_chunk_id,
+                    eval_id=current_eval_id,
+                    episode_id=current_episode_id,
+                    buffer_size=len(buffer),
+                    bandit=bandit,
+                    visit_state=visit_state,
+                    rng=rng,
+                    recent_usefulness=recent_usefulness,
                 ),
-                encoding="utf-8",
+                "last_mode": chunk_mode,
+                "last_arm_name": chunk_stage,
+                "last_arm_index": -1,
+                "last_scenario_seed": None,
+                "last_replay_scenario_id": None,
+                "generate_count": int(generate_count),
+                "replay_count": int(replay_count),
+                "chunk_generate_count": int(chunk_generate_count),
+                "chunk_replay_count": int(chunk_replay_count),
+                "buffer_actions": dict(buffer_actions),
+                "acl_episode_modes": episode_modes,
+                "acl_episode_arms": episode_arms,
+                "buffer_top": [
+                    {
+                        "scenario_id": record.scenario_id,
+                        "rank": int(record.rank),
+                        "usefulness": float(record.usefulness),
+                        "num_seen": int(record.num_seen),
+                        "source": record.source,
+                    }
+                    for record in buffer.top_k(5)
+                ],
+            }
+            last_snapshot_global_step = _write_acl_resume_snapshot(
+                cfg=cfg,
+                paths=paths,
+                agent=agent,
+                planner=planner,
+                transition_replay_config=transition_replay_config,
+                artifact_paths=artifact_paths,
+                acl_state_payload=acl_state_payload,
+                buffer=buffer,
+                visit_state=visit_state,
+                vector_state=None,
+                current_global_step=current_global_step,
+                last_snapshot_global_step=last_snapshot_global_step,
+                train_logger=train_logger,
             )
-            if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
-                agent.save(paths.latest_checkpoint_stem)
-                if transition_replay_config.persistence_enabled:
-                    _save_acl_replay_buffer(planner, latest_replay_buffer_path)
-                    _save_acl_checkpoint_pair(
-                        path=latest_checkpoint_pair_path,
-                        checkpoint_name="latest",
-                        replay_name=latest_replay_buffer_path.name,
-                        training_timestep=current_global_step,
-                    )
-                    if bool(cfg.checkpoint.get("save_rng_state", True)):
-                        _save_acl_rng_state(latest_rng_state_path)
 
             train_logger.info(
                 "Scenario ACL chunk finished | chunk_id=%d | mode=%s | arms=%s | "
@@ -2503,9 +2751,12 @@ def run_scenario_acl_training(
                 checkpoint_name="final",
                 replay_name=final_replay_buffer_path.name,
                 training_timestep=current_global_step,
+                model_num_timesteps=planner_trained_timesteps(planner),
             )
-            if bool(cfg.checkpoint.get("save_rng_state", True)):
-                _save_acl_rng_state(latest_rng_state_path)
+            # `DEC-RES-006`: `final` carries the pair; drop the intermediate copies.
+            remove_replay_snapshots_after_final(paths.checkpoints_dir)
+        if bool(cfg.checkpoint.get("save_rng_state", True)):
+            _save_acl_rng_state(latest_rng_state_path)
 
         def build_final_panel_agent(final_env: Any) -> Agent:
             evaluator = Agent(
@@ -2702,17 +2953,15 @@ def run_scenario_acl_training(
             },
         )
     except KeyboardInterrupt:
-        agent.save(paths.latest_checkpoint_stem)
-        if transition_replay_config.persistence_enabled:
-            _save_acl_replay_buffer(planner, latest_replay_buffer_path)
-            _save_acl_checkpoint_pair(
-                path=latest_checkpoint_pair_path,
-                checkpoint_name="latest",
-                replay_name=latest_replay_buffer_path.name,
-                training_timestep=current_global_step,
-            )
-            if bool(cfg.checkpoint.get("save_rng_state", True)):
-                _save_acl_rng_state(latest_rng_state_path)
+        # `DEC-RES-007`: no mid-chunk snapshot. The model is ahead of the
+        # chunk-level curriculum state here, so the last chunk-boundary
+        # snapshot (complete and atomic) is the one a resume should read.
+        train_logger.info(
+            "Resumable snapshot kept at the last chunk boundary | latest=%s | resume with "
+            "checkpoint.resume.enabled=true checkpoint.resume.run_dir=%s",
+            str(paths.latest_checkpoint_stem.with_suffix(".zip")),
+            str(paths.run_dir),
+        )
         duration_seconds = round(time.time() - start_time, 2)
         update_run_metadata(
             paths.artifacts_dir,

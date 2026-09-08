@@ -15,9 +15,22 @@ moving it to *Closed* with the date and the change that closed it. **Identifiers
 are never recycled**: a closed `D2` stays `D2`, and the next new decision takes
 the next free number.
 
-Last reviewed: 2026-09-07 (`C30`–`C37`, the mechanical list of the block-B audit). `D1` was briefly
+Last reviewed: 2026-09-08 (`C30`–`C39` merged onto `main`; see the identifier note below).
+Previous passes: 2026-09-07 (`C30`–`C37`, the mechanical list of the block-B audit), 2026-09-06
+(`C13`), 2026-09-01 (after `RB51` closed). `D1` was briefly
 closed on 2026-08-20 and **reopened the same day**: the value chosen presumed an episodic threshold,
 and the mechanism is not chosen yet.
+
+**Identifier collisions, twice, and the rule that resolves them.** `C13` was drafted as `C12` on a
+branch and renumbered on merge, because `C12` had been taken on `main` in the meantime by the
+intra-chunk progress and fail-fast defect, whose identifier source code already referenced. It was
+then renumbered *into* a `C13` that the audit lineage had been using since 2026-09-06 for ADR-071's
+dead not-at-fault truncation, because neither branch could see the other. On merging the two
+lineages on 2026-09-08 the audit side moved — `C13` → `C40`, and its `ADR-079` → `ADR-081`,
+`ADR-080` → `ADR-082`, `TRANSITION-REPLAY-V1.0.1` → `V1.1.1` — because `main` was published and
+referenced. Two branches taking the same next free number is the way this register breaks, and the
+rule that identifiers are never recycled is what forces the renaming onto whichever side has not
+landed yet. **Take the next free number from `origin/main`, not from your branch.**
 
 **Checks executed for `C30`–`C37`** (2026-09-07, branch `worktree-audit-block-a-fixes`): full suite
 **1789 passed, 5 skipped, exit 0** in 27m52s — re-run **after** `C37`'s revert, so it covers the
@@ -29,6 +42,17 @@ curriculum=scenario_acl_scenarionet device=cuda`), two chunks of 1000 steps, dri
 `scenario_acl_vectorized`, 40 MAB updates, 951 gradient steps — so it exercised every path this
 batch touched, including the chunk boundary where `C31`'s state write happens. An earlier full-suite
 run caught a regression introduced by `C35`'s first form; see that entry.
+
+**`C19` is superseded, not carried.** `RESUME-ABRUPT-001` replaced
+`require_replay_buffer_for_resume` with `classify_replay_resume`, which makes the same refusal,
+names the exact override that would proceed, and additionally distinguishes a partially committed
+checkpoint pair from an explicitly accepted empty replay segment. The function and its four test
+cases were removed on merging; `tests/test_resume_snapshot.py` covers every branch of the
+replacement, so the contract is enforced more strictly than `C19` enforced it. `C16`'s half of that
+test file stays, and `C16` itself is now partly moot on the same lineage: `latest` and periodic
+checkpoints are no longer written from the asynchronous-evaluation callback at all, since it passes
+`write_resume_snapshot=False`, so only `best_*` still needs the evaluated-snapshot copy — which it
+does, through `_persist`.
 
 ---
 
@@ -116,7 +140,7 @@ run caught a regression introduced by `C35`'s first form; see that entry.
 | # | item | notes |
 |---|---|---|
 | V1 | **`make smoke` not run** since ADR-058's episode-contract change, and not run after `γ = 1`. The discount change alters value-target scale, which is what an end-to-end smoke test would surface. | **Partly retired 2026-09-01**: `make smoke` passed under `γ = 1` and the six-level reward after `RB51`/`M6` fixed the scalarization config. It could not have passed before — the four-margin default would have raised on the first step. **Closed 2026-09-01**: re-run after `M3`, `M4`, `M5`, `M7` and the §7 diagnostics landed — `make smoke` exit 0 on the finished six-level rulebook under `γ = 1`. |
-| V2 | **Transition replay**: source-backed learner smoke and checkpoint/resume remain pending. | `TRANSITION-REPLAY` ExecPlan | **Half closed, half converted into a finding, 2026-09-01.** The *source-backed learner smoke* is **PASS**: `make smoke` runs `td3_sb3` with `transition_replay.enabled=true, prioritized=true, n_steps=3` against frozen ScenarioNet records, and completed exit 0 with both evaluations. The *checkpoint/resume* half was run and **failed for a structural reason worth recording**: `TRANSITION-REPLAY` v1 hard-codes `persistence.trigger = final_or_manual` and forbids `periodic_frequency_steps` (`sb3_extensions/replay/config.py:73-75`), so the replay buffer is paired only with the **`final`** checkpoint. The periodic `latest` checkpoint has no buffer, and resuming from it raises *"Replay continuation requires a checkpoint pair manifest"*. **A crashed run never reaches `final`, so it can never resume with replay continuation** -- which is almost certainly the `sac-0`/`ppo-0` failure recorded in `D4`. **The mechanism itself is sound**: resuming the same run with `checkpoint.resume.checkpoint_name=final`, which does have a paired buffer, completed **exit 0**. So the defect is not the resume path but *which* checkpoint carries a buffer. The code fails closed with a clear message rather than resuming on an empty buffer, so this is a design limitation, not a bug. Note the ACL driver *does* write `latest_checkpoint_pair.json` periodically (`curriculum/scenario_acl/driver.py:1256`), so runs with the curriculum enabled are not affected; the smoke ran with the curriculum disabled. **Decided 2026-09-01 (user): park it.** Mid-run replay continuation is a convenience, not a requirement — a crashed run restarts, and with the ACL enabled the periodic pair is written anyway. Revisit only if crashes prove frequent enough that losing the buffer costs real time. The failure mode is now documented rather than mysterious, which is what `D4` was missing. |
+| V2 | **Transition replay**: source-backed learner smoke and checkpoint/resume remain pending. | `TRANSITION-REPLAY` ExecPlan | **Half closed, half converted into a finding, 2026-09-01.** The *source-backed learner smoke* is **PASS**: `make smoke` runs `td3_sb3` with `transition_replay.enabled=true, prioritized=true, n_steps=3` against frozen ScenarioNet records, and completed exit 0 with both evaluations. The *checkpoint/resume* half was run and **failed for a structural reason worth recording**: `TRANSITION-REPLAY` v1 hard-codes `persistence.trigger = final_or_manual` and forbids `periodic_frequency_steps` (`sb3_extensions/replay/config.py:73-75`), so the replay buffer is paired only with the **`final`** checkpoint. The periodic `latest` checkpoint has no buffer, and resuming from it raises *"Replay continuation requires a checkpoint pair manifest"*. **A crashed run never reaches `final`, so it can never resume with replay continuation** -- which is almost certainly the `sac-0`/`ppo-0` failure recorded in `D4`. **The mechanism itself is sound**: resuming the same run with `checkpoint.resume.checkpoint_name=final`, which does have a paired buffer, completed **exit 0**. So the defect is not the resume path but *which* checkpoint carries a buffer. The code fails closed with a clear message rather than resuming on an empty buffer, so this is a design limitation, not a bug. Note the ACL driver *does* write `latest_checkpoint_pair.json` periodically (`curriculum/scenario_acl/driver.py:1256`), so runs with the curriculum enabled are not affected; the smoke ran with the curriculum disabled. **Decided 2026-09-01 (user): park it.** Mid-run replay continuation is a convenience, not a requirement — a crashed run restarts, and with the ACL enabled the periodic pair is written anyway. Revisit only if crashes prove frequent enough that losing the buffer costs real time. The failure mode is now documented rather than mysterious, which is what `D4` was missing. **Re-examined 2026-09-06 as `C13` / issue #3** and **resolved the same day**: the user approved `DEC-RES-003` (ADR-079), so the replay buffer is now paired with every periodic checkpoint on every profile and a crashed run resumes with `checkpoint.resume.checkpoint_name=periodic`. The checkpoint/resume half of this item is thereby closed; the source-backed learner smoke half was already `PASS`. |
 
 ---
 
@@ -124,6 +148,7 @@ run caught a regression introduced by `C35`'s first form; see that entry.
 
 | # | item | closed | how |
 |---|---|---|---|
+| C13 | ([issue #3](https://github.com/EmanueleRsp/thesis-metadrive/issues/3)) **An abruptly killed run could not be resumed as a valid continuation**: only SIGINT reached the save handler; `latest.zip`, the training state, the RNG state and the ACL state files were written in place; the periodic `latest` carried no replay buffer and persistence was off on every production profile (ADR-017), so a resume failed closed or continued silently on an empty buffer; Ctrl+C recorded a stale step counter and dropped `beta_progress_env_steps`; best keys were never restored. | 2026-09-06 | `RESUME-ABRUPT-001` (`implementation/resumable_training_after_abrupt_interruption_v1_exec_plan.md`, `IMPLEMENTED`), `TRANSITION-REPLAY` v1.1 amendment, ADR-079 (supersedes ADR-017). Atomic publication of every resume artifact with the training state as commit marker; replay buffer paired with every periodic checkpoint on every profile (`trigger=periodic_and_final`, cadence `periodic_interval_steps` with crossing semantics, `keep_last=1`, deleted after `final`); `checkpoint.resume.checkpoint_name=periodic`; torn-snapshot and seed checks; REQ-025 empty-segment resume gated by `allow_replay_reset` and logged as `replay_reset=true`; SIGTERM handled like Ctrl+C; interrupt handlers no longer write a mid-chunk snapshot (`DEC-RES-007`). Found on the way: the async-evaluation callback wrote `latest` mid-chunk with the evaluated step; the ACL loops wrote no periodic checkpoints; periodic checkpoints were skipped whenever `periodic_interval_steps` was not a multiple of `eval_interval`. Evidence: full suite `1704 passed`; kill -9 smoke resumed twice from `periodic` snapshots, ran to the full budget and completed (`status: completed`, final panels recorded), with a strictly monotone `checkpoint_index.csv`, self-consistent counters and the post-`final` replay cleanup observed. |
 | D2 | **L6 rewards speed, and PG admits no speed limit.** | 2026-08-20 | Decided: **accept**. PG blocks are synthetic, so there is no traffic law to encode and MetaDrive's design speeds are simulator parameters, not norms; inventing a PG limit would be the unmotivated calibrated constant this project rejects elsewhere. `offroad` at L3 constrains reactively, and it is a difference between *sources*, not between *arms*, so it does not confound the comparison. Recorded as `RULEBOOK-V5.1` limitation 13, with a new §7 diagnostic `mean_ego_speed_by_source` so the divergence is measured rather than assumed away. |
 | D3 | **Whether to raise MetaDrive's `max_speed_km_h = 80`.** | 2026-08-20 | Decided: **do not raise**; declare the ceiling. The reason is quantitative: the episode ceiling is `a · distance / longest single step`, and the cap *is* the longest step, so it sits in the denominator of what a mission can be worth. A 110 km/h cap — the least that covers all nine records — costs **−27 %** of every mission's worth while every per-step penalty stays unchanged, and `λ₄` cannot compensate because `λ₄ + 0.1·(λ₅+λ₆) < a`. Completing those records *would* be legal (posted limits 65–70 mph), so the obstruction is the vehicle, not the rulebook. Recorded as `RULEBOOK-V5.1` limitation 14 with the full table. |
 

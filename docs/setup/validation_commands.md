@@ -538,23 +538,39 @@ Visual/manual checks:
 ## 8) Resume Validation
 
 What this step validates:
-- Resume restores planner/adapter/replay/state/RNG and continues without silent resets.
+- Resume restores planner/adapter/replay/state/RNG and continues without silent resets
+  (`RESUME-ABRUPT-001`, `TRANSITION-REPLAY` v1.1).
 
-Use a real completed run path:
+Resume **in place** (same `run_dir`, so CSVs and checkpoints continue in one directory)
+from the newest periodic snapshot, which carries the replay buffer:
 
 ```bash
 uv run --no-sync python -m thesis_rl.cli.train \
   --config-name presets/td3/td3_native_curr \
   run_profile=medium \
+  paths.run_dir='/absolute/path/to/previous/run_dir' \
   checkpoint.resume.enabled=true \
   checkpoint.resume.run_dir='/absolute/path/to/previous/run_dir' \
-  checkpoint.resume.checkpoint_name=latest
+  checkpoint.resume.checkpoint_name=periodic
 ```
+
+`checkpoint_name` accepts `latest` (model-only, every chunk), `final`, `periodic`
+(newest `periodic/step_X` with a complete model/replay pair) or an explicit stem
+such as `periodic/step_00125000`. A model-only resume of TD3/SAC fails before
+training unless `checkpoint.resume.allow_replay_reset=true`, which starts an
+empty replay segment and records `replay_reset=true` (REQ-025).
 
 Expected:
 - Resume log includes restored checkpoint/state/replay/RNG.
 - Training continues with increasing global step.
 - New checkpoints and CSV rows append coherently.
+- A torn snapshot (model and state from different saves) or a different `seed`
+  fails before training with a message naming both values.
+
+Kill-and-resume check (`TEST-RES-010`): run a smoke, `docker kill -s KILL` its
+container after the first `replay_snapshot_written` event, relaunch with the
+command above; the resumed run must finish with `final.zip`, and
+`checkpoints/metadata/checkpoint_index.csv` must show monotone `global_step`.
 
 Visual/manual checks:
 - Compare pre-resume and post-resume CSV tails: `global_step` and `chunk_id` should continue, not restart.

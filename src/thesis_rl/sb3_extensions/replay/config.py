@@ -17,39 +17,16 @@ class TransitionReplayConfig:
     store_reward_vector: bool
     beta_anneal_steps: int | None
     persistence_enabled: bool = False
+    persistence_trigger: str = "final_or_manual"
+
+    @property
+    def periodic_replay_persistence(self) -> bool:
+        """`TRANSITION-REPLAY` v1.1: pair the replay with each periodic checkpoint."""
+
+        return bool(self.persistence_enabled) and self.persistence_trigger == "periodic_and_final"
 
 
-def require_replay_buffer_for_resume(
-    planner: Any,
-    *,
-    resumed_global_steps: int,
-    replay_persistence_enabled: bool,
-) -> None:
-    """Refuse to resume an off-policy learner whose replay buffer was not persisted.
-
-    A resumed replay learner restores ``num_timesteps`` from its checkpoint, so the
-    ``learning_starts`` warm-up is already spent: it starts full-size gradient
-    updates on a buffer holding only the first ``n_envs`` transitions, and every
-    batch is drawn from those few rows until the buffer refills. Nothing raises, and
-    the resumed policy silently overfits and collapses (audit 2026-09-06, A8).
-    Failing here makes the loss of the buffer an explicit decision instead.
-
-    On-policy learners keep no replay buffer and are exempt. Both the baseline
-    training loop and the scenario-ACL driver call this, because both resume the
-    same learners through their own separate resume paths.
-    """
-
-    if not hasattr(planner, "load_replay_buffer"):
-        return
-    if int(resumed_global_steps) <= 0 or replay_persistence_enabled:
-        return
-    raise RuntimeError(
-        "Resuming an off-policy learner requires its persisted replay buffer: "
-        f"the checkpoint records {int(resumed_global_steps)} training steps but "
-        "`transition_replay.persistence.enabled` is false, so no buffer can be "
-        "restored and the learner would update on a near-empty buffer without a "
-        "warm-up. Enable replay persistence for the run being resumed, or restart it."
-    )
+PERSISTENCE_TRIGGERS = ("final_or_manual", "periodic_and_final")
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -194,10 +171,20 @@ def resolve_transition_replay_config(
             "`transition_replay.persistence.enabled=true` with trigger=final_or_manual."
         )
     trigger = str(persistence.get("trigger", "final_or_manual")).strip().lower()
-    if trigger != "final_or_manual":
-        raise ValueError("transition_replay.persistence.trigger must be `final_or_manual` in v1.")
+    if trigger not in PERSISTENCE_TRIGGERS:
+        raise ValueError(
+            "transition_replay.persistence.trigger must be one of "
+            f"{list(PERSISTENCE_TRIGGERS)} (TRANSITION-REPLAY v1.1), got {trigger!r}."
+        )
+    # v1.1 `REQ-024`: the periodic replay snapshot rides the periodic model
+    # checkpoint, so its cadence is `checkpoint.periodic_interval_steps` by
+    # construction and no second frequency knob exists.
     if persistence.get("periodic_frequency_steps") is not None:
-        raise ValueError("Periodic replay persistence is not supported in transition replay v1.")
+        raise ValueError(
+            "transition_replay.persistence.periodic_frequency_steps is not a setting: the "
+            "periodic replay snapshot follows checkpoint.periodic_interval_steps "
+            "(trigger=periodic_and_final)."
+        )
     if int(persistence.get("keep_last", 1)) != 1:
         raise ValueError("transition_replay.persistence.keep_last must equal 1 in v1.")
     custom_replay = raw.get("replay_buffer_class") is not None
@@ -245,4 +232,5 @@ def resolve_transition_replay_config(
         store_reward_vector=store_reward_vector,
         beta_anneal_steps=beta_anneal_steps,
         persistence_enabled=persistence_enabled,
+        persistence_trigger=trigger,
     )

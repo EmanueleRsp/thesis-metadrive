@@ -1,8 +1,15 @@
-"""Audit 2026-09-06, block A3 and A8: checkpoint provenance and resume guard.
+"""Audit 2026-09-06, block A3: checkpoint provenance.
 
-A3: the checkpoints written when an asynchronous validation completes must be
-copies of the snapshot that was evaluated, not a fresh save of the live learner.
-A8: an off-policy learner cannot be resumed without its persisted replay buffer.
+The checkpoints written when an asynchronous validation completes must be copies
+of the snapshot that was evaluated, not a fresh save of the live learner.
+
+Block A8's half of this file — `C19`, refusing to resume an off-policy learner
+without its persisted replay buffer — was **superseded** by `RESUME-ABRUPT-001`,
+which replaced the guard with `classify_replay_resume`: that function makes the
+same refusal, names the exact override that would proceed, and additionally
+distinguishes a partially committed pair and an explicitly accepted empty
+segment. `tests/test_resume_snapshot.py` covers every branch of it, so the
+contract is enforced more strictly than before and nothing here was lost.
 """
 
 from __future__ import annotations
@@ -12,7 +19,6 @@ from pathlib import Path
 import pytest
 
 from thesis_rl.runtime.loops.train_loop import _copy_checkpoint_snapshot
-from thesis_rl.sb3_extensions.replay import require_replay_buffer_for_resume
 
 
 def test_copy_checkpoint_snapshot_copies_zip_and_sidecars_but_not_the_job_payload(
@@ -48,48 +54,3 @@ def test_copy_checkpoint_snapshot_requires_the_snapshot_zip(tmp_path: Path) -> N
     with pytest.raises(FileNotFoundError):
         _copy_checkpoint_snapshot(tmp_path / "missing", tmp_path / "target")
 
-
-class _ReplayPlanner:
-    def load_replay_buffer(self, path: str) -> bool:
-        return True
-
-
-class _OnPolicyPlanner:
-    pass
-
-
-def test_resume_of_a_replay_learner_without_persisted_buffer_fails_fast() -> None:
-    with pytest.raises(RuntimeError, match="persisted replay buffer"):
-        require_replay_buffer_for_resume(
-            _ReplayPlanner(), resumed_global_steps=125_000, replay_persistence_enabled=False
-        )
-
-
-def test_resume_is_allowed_with_a_persisted_buffer_or_from_step_zero() -> None:
-    require_replay_buffer_for_resume(
-        _ReplayPlanner(), resumed_global_steps=125_000, replay_persistence_enabled=True
-    )
-    require_replay_buffer_for_resume(
-        _ReplayPlanner(), resumed_global_steps=0, replay_persistence_enabled=False
-    )
-
-
-def test_on_policy_learners_are_not_subject_to_the_replay_guard() -> None:
-    require_replay_buffer_for_resume(
-        _OnPolicyPlanner(), resumed_global_steps=125_000, replay_persistence_enabled=False
-    )
-
-
-def test_both_resume_paths_use_the_same_guard() -> None:
-    """The ACL driver resumes through its own code path, not the training loop.
-
-    A copy of the guard in one of them would drift, and the ACL path is the one
-    that can actually resume from a periodic checkpoint (it writes its own
-    checkpoint pair), so it is the path where the defect bites.
-    """
-
-    from thesis_rl.curriculum.scenario_acl import driver as acl_driver
-    from thesis_rl.runtime.loops import train_loop
-
-    assert acl_driver.require_replay_buffer_for_resume is require_replay_buffer_for_resume
-    assert train_loop.require_replay_buffer_for_resume is require_replay_buffer_for_resume
