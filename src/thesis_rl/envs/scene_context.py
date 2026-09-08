@@ -18,6 +18,17 @@ class SceneContextAdapter:
     _GUARDRAIL = "GUARDRAIL"
     _FULL_FOOTPRINT_EPSILON_M2 = 1.0e-4
 
+    def __init__(self) -> None:
+        # F8: one-entry memo of the full-footprint exit classification, keyed
+        # on the Rulebook adapter (one per episode, compared by identity) and
+        # the snapshot ego pose. MetaDrive's native ``done_function``,
+        # ``reward_function`` and ``cost_function`` plus the thesis
+        # ``done_function`` all query it on the same physics state within one
+        # ``env.step``; the geometry is identical each time, so build it once.
+        self._footprint_exit_memo: (
+            tuple[Any, tuple[Any, ...], tuple[bool, float | None, float | None]] | None
+        ) = None
+
     def get_ego_vehicle(self, env: Any, vehicle_id: str | None = None) -> Any:
         agents = getattr(env, "agents", {})
         if vehicle_id is not None and vehicle_id in agents:
@@ -102,6 +113,14 @@ class SceneContextAdapter:
         )
 
         ego = snapshotter(env).ego
+        pose_key = (
+            tuple(ego.position_xy),
+            float(ego.position_z),
+            getattr(ego, "heading_rad", None),
+        )
+        memo = self._footprint_exit_memo
+        if memo is not None and memo[0] is adapter and memo[1] == pose_key:
+            return memo[2]
         surface = drivable_surface_for_ego(
             ego_footprint=ego.footprint,
             ego_position_xy=ego.position_xy,
@@ -114,7 +133,9 @@ class SceneContextAdapter:
         ego_area = float(ego.footprint.area)
         outside_area = float(ego.footprint.difference(surface).area)
         fully_outside = outside_area >= ego_area - self._FULL_FOOTPRINT_EPSILON_M2
-        return fully_outside, outside_area, ego_area
+        result = (fully_outside, outside_area, ego_area)
+        self._footprint_exit_memo = (adapter, pose_key, result)
+        return result
 
     def get_physical_road_diagnostics(self, env: Any, vehicle: Any) -> dict[str, Any]:
         """Return native values needed to audit physical-road termination."""

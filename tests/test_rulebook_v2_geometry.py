@@ -13,6 +13,7 @@ from thesis_rl.rulebook.v2.geometry.elevation import PolylineElevation
 from thesis_rl.rulebook.v2.geometry.drivable import (
     DrivableLaneRecord,
     _union_selected_surfaces,
+    carriageway_surfaces_for_ego,
     drivable_surface_for_ego,
 )
 from thesis_rl.rulebook.v2.geometry.controls import derive_control_line
@@ -914,3 +915,93 @@ def test_route_projection_continuity_bound_rejects_a_far_branch_jump() -> None:
 
     with pytest.raises(ValueError, match="requires previous_s_m"):
         route.project(near_the_fold, max_s_jump_m=1.0)
+
+
+@pytest.mark.parametrize("ego_z", [0.0, 2.5, -2.5, 3.0 - 1.0e-7, 3.0 + 1.0e-7, 7.0])
+def test_drivable_surface_vertical_preclassification_matches_projection_gate(
+    monkeypatch: pytest.MonkeyPatch, ego_z: float
+) -> None:
+    """REQ-F8-03/04: deciding a lane from its z-range must equal the projection gate.
+
+    Lanes fully inside or fully outside the vertical tolerance are decided
+    without projecting; a lane whose elevation straddles the boundary, or lies
+    within the guard band of it, is projected exactly as before. The reference
+    is the pre-F8 gate: project the ego on every centerline and compare ``z_m``.
+    """
+    from thesis_rl.rulebook.v2.geometry.vertical import VERTICAL_COMPATIBILITY_TOLERANCE_M
+
+    def lane(name: str, z_start: float, z_end: float, y: float) -> DrivableLaneRecord:
+        return DrivableLaneRecord(
+            name, RoutePolyline(((0.0, y, z_start), (20.0, y, z_end))), None, 3.0
+        )
+
+    lanes = (
+        lane("flat", 0.0, 0.0, 0.0),
+        lane("below", -10.0, -10.0, 4.0),
+        lane("above", 10.0, 10.0, 8.0),
+        lane("ramp_up", 0.0, 6.0, 12.0),
+        lane("ramp_down", 6.0, 0.0, 16.0),
+        lane(
+            "at_tolerance",
+            VERTICAL_COMPATIBILITY_TOLERANCE_M,
+            VERTICAL_COMPATIBILITY_TOLERANCE_M,
+            20.0,
+        ),
+        lane("just_inside", 2.9999999, 2.9999999, 24.0),
+        lane("just_outside", 3.0000001, 3.0000001, 28.0),
+    )
+    ego_xy = (5.0, 0.0)
+    ego = oriented_bounding_box(center_xy=ego_xy, heading_rad=0.0, length_m=4.0, width_m=2.0)
+    expected_ids = {
+        record.lane_id
+        for record in lanes
+        if abs(ego_z - record.centerline.project(ego_xy).z_m) <= VERTICAL_COMPATIBILITY_TOLERANCE_M
+    }
+    expected = shapely.union_all([r.resolved_polygon() for r in lanes if r.lane_id in expected_ids])
+
+    projected: list[int] = []
+    original = RoutePolyline.project
+
+    def counting(self, *args, **kwargs):
+        projected.append(id(self))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(RoutePolyline, "project", counting)
+    surface = drivable_surface_for_ego(
+        ego_footprint=ego, ego_position_xy=ego_xy, ego_position_z=ego_z, lanes=lanes
+    )
+    # Same lane set: the lanes are 1 m apart, wider than the seam closing, so the
+    # areas agree to the closing's corner rounding and each lane is either wholly in or wholly out.
+    assert surface.area == pytest.approx(expected.area, abs=1.0e-3)
+    for record in lanes:
+        assert surface.covers(record.resolved_polygon().representative_point()) is (
+            record.lane_id in expected_ids
+        )
+
+    # Only lanes whose z-range straddles (or nearly touches) the boundary are projected.
+    def z_range(record: DrivableLaneRecord) -> tuple[float, float]:
+        elevations = [point[2] for point in record.centerline.points_xyz]
+        return min(elevations), max(elevations)
+
+    undecided = {
+        id(r.centerline)
+        for r in lanes
+        if not (
+            z_range(r)[1] - ego_z < VERTICAL_COMPATIBILITY_TOLERANCE_M - 1.0e-6
+            and ego_z - z_range(r)[0] < VERTICAL_COMPATIBILITY_TOLERANCE_M - 1.0e-6
+        )
+        and not (
+            ego_z - z_range(r)[1] > VERTICAL_COMPATIBILITY_TOLERANCE_M + 1.0e-6
+            or z_range(r)[0] - ego_z > VERTICAL_COMPATIBILITY_TOLERANCE_M + 1.0e-6
+        )
+    }
+    assert set(projected) == undecided
+
+    carriageway = carriageway_surfaces_for_ego(
+        ego_position_xy=ego_xy, ego_position_z=ego_z, route_tangent_xy=(1.0, 0.0), lanes=lanes
+    )
+    # Every lane here runs along +x, so all compatible lanes are "aligned".
+    for record in lanes:
+        point = record.resolved_polygon().representative_point()
+        assert carriageway.aligned.covers(point) is (record.lane_id in expected_ids)
+    assert carriageway.opposing.is_empty

@@ -132,7 +132,7 @@ def test_scene_context_terminates_full_rulebook_geometric_exit_without_contact()
     )
     lane = SimpleNamespace(
         lane_id="lane-a",
-        centerline=SimpleNamespace(project=lambda _position: SimpleNamespace(z_m=0.0)),
+        centerline=RoutePolyline(((-2.0, 0.0, 0.0), (2.0, 0.0, 0.0))),
         polygon_xy=box(-2.0, -2.0, 2.0, 2.0),
     )
     env = SimpleNamespace(
@@ -159,7 +159,7 @@ def test_scene_context_does_not_terminate_partial_rulebook_geometric_exit() -> N
     )
     lane = SimpleNamespace(
         lane_id="lane-a",
-        centerline=SimpleNamespace(project=lambda _position: SimpleNamespace(z_m=0.0)),
+        centerline=RoutePolyline(((-2.0, 0.0, 0.0), (2.0, 0.0, 0.0))),
         polygon_xy=box(-2.0, -2.0, 2.0, 2.0),
     )
     env = SimpleNamespace(
@@ -858,3 +858,69 @@ def test_observation_passthrough_is_accepted_by_environment_config(
             f"ThesisScenarioEnv.default_config() does not declare, so the environment "
             f"cannot be constructed: {error}"
         )
+
+
+def test_scene_context_footprint_exit_is_computed_once_per_pose(monkeypatch) -> None:
+    """REQ-F8-05: identical (adapter, ego pose) queries reuse one geometry computation.
+
+    MetaDrive's native ``done_function``, ``reward_function`` and ``cost_function``
+    plus the thesis ``done_function`` all reach ``is_physically_out_of_road`` on the
+    same physics state; the surface must be built once, and a pose change or a
+    new adapter (a new episode) must rebuild it.
+    """
+    from thesis_rl.rulebook.v2.geometry import drivable as drivable_module
+
+    computations: list[tuple[float, float]] = []
+    original = drivable_module.drivable_surface_for_ego
+
+    def counting(**kwargs):
+        computations.append(kwargs["ego_position_xy"])
+        return original(**kwargs)
+
+    monkeypatch.setattr(drivable_module, "drivable_surface_for_ego", counting)
+    adapter = SceneContextAdapter()
+    lane = SimpleNamespace(
+        lane_id="lane-a",
+        centerline=RoutePolyline(((-2.0, 0.0, 0.0), (2.0, 0.0, 0.0))),
+        polygon_xy=box(-2.0, -2.0, 2.0, 2.0),
+    )
+
+    def make_env(position_xy: tuple[float, float]):
+        ego = SimpleNamespace(
+            footprint=box(position_xy[0] - 1.0, -1.0, position_xy[0] + 1.0, 1.0),
+            position_xy=position_xy,
+            position_z=0.0,
+            heading_rad=0.0,
+        )
+        return SimpleNamespace(
+            rulebook_v2_adapter=SimpleNamespace(
+                snapshotter=lambda _env: SimpleNamespace(ego=ego),
+                initial_cache=SimpleNamespace(route_lanes=(lane,)),
+            )
+        )
+
+    vehicle = SimpleNamespace(crash_sidewalk=False, contact_results=())
+    env = make_env((0.0, 0.0))
+    assert adapter.is_physically_out_of_road(env, vehicle) is False
+    assert adapter.is_physically_out_of_road(env, vehicle) is False
+    assert (
+        adapter.get_physical_road_diagnostics(env, vehicle)["geometric_full_footprint_exit"]
+        is False
+    )
+    assert computations == [(0.0, 0.0)]
+
+    # Same adapter, new pose: recomputed, and the fully-outside answer is not stale.
+    env.rulebook_v2_adapter.snapshotter = lambda _env: SimpleNamespace(
+        ego=SimpleNamespace(
+            footprint=box(10.0, 10.0, 12.0, 12.0),
+            position_xy=(11.0, 11.0),
+            position_z=0.0,
+            heading_rad=0.0,
+        )
+    )
+    assert adapter.is_physically_out_of_road(env, vehicle) is True
+    assert computations == [(0.0, 0.0), (11.0, 11.0)]
+
+    # New adapter object (new episode) with the first pose again: recomputed.
+    assert adapter.is_physically_out_of_road(make_env((0.0, 0.0)), vehicle) is False
+    assert computations == [(0.0, 0.0), (11.0, 11.0), (0.0, 0.0)]
