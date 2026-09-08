@@ -273,5 +273,15 @@ Fallback/logging: none added. Errors: identical.
   prepared ScenarioNet validation runtime is absent, so a gate log must show
   `test_vectorised_projection_matches_reference_on_frozen_panel_records` as
   passed rather than skipped for AC-F8-01's panel evidence to count.
-- Remaining per-step cost after M2 (312 ms/step on this Waymo case against
-  ~70 ms/step on PG) is profiled below.
+- 2026-09-08, **remaining cost after M2** (cProfile of the same case, 593
+  steps, 283 s of step loop under the profiler, ~1.5× overhead): `project` is
+  down to 310 459 calls and 14 s (**4 %**). The step is now the semantic
+  observation, 153 s (**54 %**): `causal_semantic._build_static_v12` 123 s, of
+  which `_local_tangent_rad` 105 s — 75 904 calls (128 per step) that build one
+  Shapely `LineString` per boundary segment of every local map feature (5.7 M
+  `LineString` constructions, 6.5 M `distance` calls). Second is the Rulebook
+  transition, 100 s (**35 %**): `associate_route_lane` 36 s (61 calls per step,
+  one per actor, reading `polygon.bounds` on every route lane — 6.9 M `bounds`
+  calls). Environment build is 16 s per env, 9.5 s of it parsing the 10 500-record
+  scenario catalog, not a per-step cost. Recorded as `docs/open_items.md` `F9`;
+  out of this plan's scope (observation code, not Rulebook geometry).
