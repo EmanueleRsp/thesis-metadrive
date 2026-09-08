@@ -1,6 +1,13 @@
-.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-rebuild-existing scenarionet-recatalog scenarionet-pg-replenish scenarionet-v1-2-seed-check scenarionet-v1-2-generate-pg-holdouts scenarionet-v1-2-verify-pg-holdouts scenarionet-v1-2-replenish-pg-holdouts scenarionet-v1-2-rebuild scenarionet-v1-2-prepare scenarionet-v1-2-bootstrap scenarionet-v1-2-build-panels scenarionet-v1-2-freeze scenarionet-v1-2-regenerate-freeze scenarionet-v1-2-rebuild-existing scenarionet-freeze scenarionet-from-frozen scenarionet-materialize-frozen up up-gpu shell test lint format format-check gpu-check smoke smoke-gpu run run-train run-golden-rulebook config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
+.PHONY: setup verify verify-gpu build build-gpu build-waymo install-gcloud waymo-auth waymo-inventory waymo-convert waymo-pipeline waymo-expand scenarionet-pipeline scenarionet-rebuild-existing scenarionet-recatalog scenarionet-pg-replenish scenarionet-v1-2-seed-check scenarionet-v1-2-generate-pg-holdouts scenarionet-v1-2-verify-pg-holdouts scenarionet-v1-2-replenish-pg-holdouts scenarionet-v1-2-rebuild scenarionet-v1-2-prepare scenarionet-v1-2-bootstrap scenarionet-v1-2-build-panels scenarionet-v1-2-freeze scenarionet-v1-2-regenerate-freeze scenarionet-v1-2-rebuild-existing scenarionet-freeze scenarionet-from-frozen scenarionet-materialize-frozen up up-gpu shell gate check test lint format format-check gpu-check smoke smoke-gpu run run-train run-golden-rulebook config config-gpu rulebook-v2-init rulebook-v2-prepare rulebook-v2-collect-trials rulebook-v2-calibrate rulebook-v2-validate-calibration rulebook-v2-filter-catalog rulebook-v2-pilot rulebook-v2-pilot-final rulebook-v2-check rulebook-v2-f10
 
 PYTHON_QUALITY_PATHS ?= src tests scripts
+
+# Extra arguments forwarded to pytest by `make gate`. Any value scopes the run
+# and marks it PARTIAL in the evidence log, for example:
+#   make gate GATE_ARGS="tests/test_rulebook_v2.py -k activation"
+GATE_ARGS ?=
+# pytest-xdist worker count for `make gate` / `make check`; scripts/gate.sh
+# defaults it to 16 and `make gate GATE_WORKERS=1` runs sequentially.
 
 # The final integration run is intentionally explicit about the learner. All
 # values are Hydra config names under conf/agent/planner/algorithm/.
@@ -399,6 +406,21 @@ up-gpu:
 
 shell:
 	docker compose exec dev bash
+
+# The merge gate: whitespace, Ruff and the full test suite on the project
+# machine, writing an evidence log under outputs/gate/. GitHub CI checks
+# portability only, so this is the project's only test signal.
+gate:
+	@bash scripts/gate.sh $(GATE_ARGS)
+
+# The working-loop check: the same steps minus the nine `integration` tests.
+# Measured 2026-09-08 with 16 workers: about 1m35s against the gate's 10m01s
+# (sequentially 3m55s against 27m59s); the gate's floor is the two ~585 s Waymo
+# cases of test_reward_return_ordering, see docs/open_items.md F8. Cheap enough
+# to run on every change instead of guessing which subset covers it. PARTIAL by
+# construction, so it is never a merge gate.
+check:
+	@bash scripts/gate.sh -m "not integration" $(GATE_ARGS)
 
 test:
 	docker compose run --rm dev uv run --no-sync python -m pytest -q

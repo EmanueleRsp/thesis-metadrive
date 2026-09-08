@@ -13,6 +13,12 @@ The check runs on the first scenario of each frozen validation panel, so the
 episodes are the ones every screening arm is evaluated on. It is an integration
 test: it needs the prepared ScenarioNet runtime and takes minutes, not seconds.
 
+Each ``(arm, panel)`` pair is a separate case. The three behaviours have to be
+compared inside one panel, so they stay in one case, but the panels are
+independent of each other: splitting them keeps a case near five minutes instead
+of ten, lets a parallel run overlap them, and names the failing panel in the
+node id instead of inside a joined message.
+
 The ordering is a *necessary* condition, not a sufficient one. MetaDrive's
 native reward satisfies it (a replayed expert earns a large positive return)
 and still drove arm A of the learnability screening to a standstill, because
@@ -41,6 +47,7 @@ PRESETS = {
     "a_native": "presets/learnability/sac_a_native",
     "b_rulebook": "presets/learnability/sac_b_rulebook",
 }
+PANELS = ("validation_waymo_empirical", "validation_pg")
 BEHAVIOURS: dict[str, dict[str, Any]] = {
     "still": {"agent_policy": "env_input_policy"},
     "partial": {"agent_policy": "replay_ego_policy", "replay_ego_stop_fraction": 0.5},
@@ -118,31 +125,28 @@ def _returns_by_behaviour(cfg: Any, panel_overrides: dict[str, Any]) -> dict[str
 
 @pytest.mark.integration
 @pytest.mark.parametrize("arm", ["a_native", "b_rulebook"])
+@pytest.mark.parametrize("panel_name", PANELS)
 def test_reward_return_ordering_on_validation_panels(
-    arm: str, tmp_path: Path, record_property: Any
+    arm: str, panel_name: str, tmp_path: Path, record_property: Any
 ) -> None:
     _require_runtime()
     from thesis_rl.runtime.evaluation_plan import resolve_scenarionet_evaluation_panels
 
     cfg = _compose(PRESETS[arm], tmp_path)
     panels = resolve_scenarionet_evaluation_panels(cfg, final=False)
-    assert [panel.name for panel in panels] == ["validation_waymo_empirical", "validation_pg"]
+    assert [panel.name for panel in panels] == list(PANELS)
+    panel = next(candidate for candidate in panels if candidate.name == panel_name)
 
-    failures: list[str] = []
-    for panel in panels:
-        results = _returns_by_behaviour(cfg, panel.env_overrides())
-        still, partial, full = (results[key]["return"] for key in ("still", "partial", "full"))
-        record_property(
-            f"{arm}:{panel.name}", {key: value["return"] for key, value in results.items()}
-        )
-        assert (
-            results["full"]["route_completion"]
-            > results["partial"]["route_completion"]
-            > results["still"]["route_completion"]
-        ), f"{panel.name}: replay did not produce increasing progress: {results}"
-        if not still < partial < full:
-            failures.append(
-                f"{panel.name} ({results['still']['scenario_uid']}): "
-                f"still={still:.2f} partial={partial:.2f} full={full:.2f}"
-            )
-    assert not failures, "return ordering violated: " + "; ".join(failures)
+    results = _returns_by_behaviour(cfg, panel.env_overrides())
+    still, partial, full = (results[key]["return"] for key in ("still", "partial", "full"))
+    record_property(f"{arm}:{panel.name}", {key: value["return"] for key, value in results.items()})
+    assert (
+        results["full"]["route_completion"]
+        > results["partial"]["route_completion"]
+        > results["still"]["route_completion"]
+    ), f"{panel.name}: replay did not produce increasing progress: {results}"
+    assert still < partial < full, (
+        f"return ordering violated on {panel.name} "
+        f"({results['still']['scenario_uid']}): "
+        f"still={still:.2f} partial={partial:.2f} full={full:.2f}"
+    )
