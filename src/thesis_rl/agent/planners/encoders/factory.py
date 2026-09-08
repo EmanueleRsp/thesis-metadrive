@@ -27,6 +27,49 @@ def _get(config: Any, key: str, default: Any = None) -> Any:
     return getter(key, default) if callable(getter) else getattr(config, key, default)
 
 
+# The latent-query architecture is frozen: every setting the constructor accepts
+# is validated against its core value there, and the ones below are not accepted
+# at all because the module hard-codes them -- ReLU in `_TokenProjection` and
+# `_FeedForward`, `dropout=0.0` on both `MultiheadAttention` modules, and type,
+# time and slot embeddings that are constructed and added unconditionally.
+#
+# Listing them in the YAML documents the architecture accurately, but until C24
+# nothing enforced it: `agent.planner.encoder.dropout=0.2` or
+# `type_embedding=false` parsed, logged, reached the checkpoint's configuration
+# record, and changed nothing. An ablation run that way reports "no effect" for a
+# knob that was never connected, which is a false negative in a results table
+# rather than an inefficiency. Rejecting the value is the same discipline the
+# constructor already applies to `num_latents` and `depth`.
+_FROZEN_LATENT_QUERY_SETTINGS: tuple[tuple[str, Any], ...] = (
+    ("activation", "relu"),
+    ("dropout", 0.0),
+    ("attention_dropout", 0.0),
+    ("type_embedding", True),
+    ("time_embedding", True),
+    ("slot_embedding", True),
+    ("residual_gating", False),
+)
+
+
+def _reject_non_core_latent_query_settings(cfg_encoder: Any, *, encoder_name: str) -> None:
+    """Refuse any frozen latent-query setting the configuration tries to change."""
+
+    for key, frozen in _FROZEN_LATENT_QUERY_SETTINGS:
+        value = _get(cfg_encoder, key, frozen)
+        if isinstance(frozen, bool):
+            matches = bool(value) is frozen
+        elif isinstance(frozen, float):
+            matches = float(value) == frozen
+        else:
+            matches = str(value).strip().lower() == frozen
+        if not matches:
+            raise ValueError(
+                f"{encoder_name} hard-codes {key}={frozen!r}; configuration requested {value!r}. "
+                "The latent-query architecture is frozen, so this setting cannot take effect: "
+                "change the encoder module, or drop the override."
+            )
+
+
 def build_encoder(
     cfg_encoder: Any,
     *,
@@ -52,10 +95,7 @@ def build_encoder(
             raise ValueError(
                 "LatentQueryEncoderV2 requires semantic v1.1 observation schema and D=2541."
             )
-        if bool(_get(cfg_encoder, "residual_gating", False)):
-            raise ValueError(
-                "Residual gating is not supported by the encoder v1.0 core configuration."
-            )
+        _reject_non_core_latent_query_settings(cfg_encoder, encoder_name="LatentQueryEncoderV2")
         return LatentQueryEncoderV2(
             schema=observation_schema,
             token_dim=int(_get(cfg_encoder, "token_dim", _get(cfg_encoder, "d_model", 64))),
@@ -75,10 +115,7 @@ def build_encoder(
             raise ValueError(
                 "LatentQueryEncoderV3 requires semantic v1.2 observation schema and D=3011."
             )
-        if bool(_get(cfg_encoder, "residual_gating", False)):
-            raise ValueError(
-                "Residual gating is not supported by the encoder v1.1 core configuration."
-            )
+        _reject_non_core_latent_query_settings(cfg_encoder, encoder_name="LatentQueryEncoderV3")
         return LatentQueryEncoderV3(
             schema=observation_schema,
             token_dim=int(_get(cfg_encoder, "token_dim", _get(cfg_encoder, "d_model", 64))),
@@ -98,6 +135,7 @@ def build_encoder(
             raise ValueError(
                 "LatentQueryEncoderV3Lite requires semantic v1.2 observation schema and D=3011."
             )
+        _reject_non_core_latent_query_settings(cfg_encoder, encoder_name="LatentQueryEncoderV3Lite")
         return LatentQueryEncoderV3Lite(
             schema=observation_schema,
             token_dim=int(_get(cfg_encoder, "token_dim", 64)),
@@ -117,6 +155,9 @@ def build_encoder(
             raise ValueError(
                 "LatentQueryEncoderV3Micro requires semantic v1.2 observation schema and D=3011."
             )
+        _reject_non_core_latent_query_settings(
+            cfg_encoder, encoder_name="LatentQueryEncoderV3Micro"
+        )
         return LatentQueryEncoderV3Micro(
             schema=observation_schema,
             token_dim=int(_get(cfg_encoder, "token_dim", 64)),

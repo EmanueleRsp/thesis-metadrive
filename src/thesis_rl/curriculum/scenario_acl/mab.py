@@ -24,11 +24,14 @@ class ScenarioArmBandit:
     target_scores: np.ndarray = field(init=False, repr=False)
     reward_scale: np.ndarray = field(init=False, repr=False)
     update_count: int = 0
-    # ACL v1.3 REQ-005: `acl_ema_v3` marks the Generate/catalog decoupling
-    # (ADR-032, `DEC-008`/`DEC-009`). The stored fields are unchanged from
-    # `acl_ema_v2`, but the scores they hold were produced under different
-    # selection semantics, so resuming across the boundary is forbidden.
-    state_schema: str = field(init=False, default="acl_ema_v3")
+    # ACL v1.3 REQ-005: `acl_ema_v3` marked the Generate/catalog decoupling
+    # (ADR-032, `DEC-008`/`DEC-009`). `acl_ema_v4` (C26) marks the reward-scale
+    # unit fix: the stored `reward_scale` held an episode-return magnitude and
+    # now holds a per-step one, so the two differ by a factor of the episode
+    # length. The field names are unchanged, which is precisely why the schema
+    # has to move -- a v3 checkpoint would load without complaint and normalize
+    # every learning potential by roughly two hundred times too much.
+    state_schema: str = field(init=False, default="acl_ema_v4")
 
     def __post_init__(self) -> None:
         if self.config.update_method != "ema":
@@ -144,12 +147,34 @@ class ScenarioArmBandit:
             raise ValueError("Raw learning potential must be finite and non-negative.")
         return value / self.reward_scale_estimate(arm_index)
 
-    def update_reward_scale(self, arm_index: int, episode_reward: float) -> None:
-        """Update the per-arm reward-scale EMA (DEC-006). Generate episodes only."""
+    def update_reward_scale(
+        self, arm_index: int, episode_reward: float, episode_steps: int
+    ) -> None:
+        """Update the per-arm reward-scale EMA (DEC-006). Generate episodes only.
+
+        The estimate is a **per-step** magnitude, ``|G| / T``, because the value
+        it normalizes is one: ``compute_td3_learning_potential`` returns the
+        *mean* positive-part TD residual over an episode's transitions. Dividing
+        a per-step quantity by an accumulated episode return left ``LP_scaled``
+        with units of 1/steps, so an arm whose episodes end early -- exactly the
+        hard arms, where the ego crashes in the first seconds -- scored a
+        systematically larger learning potential for no reason connected to
+        learning.
+
+        The degenerate direction is worse than the bias. An episode whose
+        progress nearly cancels its violations has ``|G| ~ 0``, and the clamp at
+        ``_MIN_REWARD_SCALE`` then multiplies its LP by up to a thousand. Arms
+        that sit near the cancellation point would have dominated the bandit on
+        arithmetic alone.
+        """
+
         index = int(arm_index)
         if not 0 <= index < len(self.reward_scale):
             raise ValueError(f"MAB arm_index out of range: {index}")
-        magnitude = abs(float(episode_reward))
+        steps = int(episode_steps)
+        if steps <= 0:
+            raise ValueError(f"Episode step count must be positive, got {steps}.")
+        magnitude = abs(float(episode_reward)) / float(steps)
         if not np.isfinite(magnitude):
             raise ValueError("Episode reward must be finite.")
         alpha = float(self.config.alpha)
@@ -173,12 +198,14 @@ class ScenarioArmBandit:
         state: dict[str, object],
     ) -> "ScenarioArmBandit":
         schema = state.get("schema")
-        if schema != "acl_ema_v3":
+        if schema != "acl_ema_v4":
             raise ValueError(
-                "Incompatible Scenario ACL MAB checkpoint: expected schema 'acl_ema_v3', got "
+                "Incompatible Scenario ACL MAB checkpoint: expected schema 'acl_ema_v4', got "
                 f"{schema!r}. ADR-032 (`DEC-008`/`DEC-009`) changed the Generate selection "
-                "semantics the EMA scores were estimated under, so 'acl_ema_v2' and "
-                "'acl_ema_v1' checkpoints cannot be resumed and require a fresh run."
+                "semantics the EMA scores were estimated under, and C26 changed "
+                "`reward_scale` from an episode-return magnitude to a per-step one, so "
+                "'acl_ema_v3' and earlier checkpoints cannot be resumed and require a "
+                "fresh run."
             )
         bandit = cls(config)
         scores = state.get("scores")

@@ -2531,6 +2531,15 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         """Append one actual-step trace row without reading Rulebook memory."""
 
         step = context.snapshot.step_index
+        if self._context_rows and self._context_rows[-1][0] == step:
+            # `observe()` runs more than once for the same step: MetaDrive builds
+            # the observation before the Rulebook wrapper publishes the committed
+            # context and the wrapper rebuilds it afterwards. The row for this
+            # step was already traced from the committed context; appending a
+            # second copy consumed `maxlen` slots and halved the effective
+            # history window, and re-tracing would corrupt the continuity flags
+            # against the wrong predecessor (audit 2026-09-06, A5).
+            return self._context_history_window(step)
         dashed_feature_id = self._nearest_dashed_feature_id(context, ego)
         control_id, control_type, state, control_distance, _controls_ego = control_trace
         signal_index = {"red": 0, "yellow": 1, "green": 2, "off": 3}.get(state, 4)
@@ -2573,6 +2582,9 @@ class PerceptionBoundedSemanticBatchBuilder(CausalSemanticBatchBuilder):
         self._previous_control_id = control_id
         self._last_context_row_step = step
         self._context_rows.append((step, row))
+        return self._context_history_window(step)
+
+    def _context_history_window(self, step: int) -> tuple[np.ndarray, np.ndarray]:
         history = np.zeros((self.context_history_length, 23), dtype=np.float32)
         mask = np.zeros(self.context_history_length, dtype=np.float32)
         by_step = dict(self._context_rows)

@@ -43,6 +43,15 @@ class CSVRecorder:
             "ep_collision_rate",
             "ep_out_of_road_rate",
             "ep_route_completion_mean",
+            # For TD3 and DDPG, `actor_loss` is exactly `-mean Q1(s, pi(s))`
+            # (`third_party/stable-baselines3/.../td3/td3.py:215`), so **negating
+            # this column gives the mean critic value of the on-policy action**.
+            # That is the quantity that drifts when the discount cannot damp a
+            # bootstrapped horizon, and it needs no separate column: a rising
+            # `-actor_loss` alongside a rising `critic_loss` is value drift, a
+            # rising `critic_loss` with a flat `-actor_loss` is not.
+            # The identity does not hold for SAC, whose actor loss carries the
+            # entropy term `ent_coef * log_prob` as well.
             "actor_loss",
             "critic_loss",
             "actor_loss_ema",

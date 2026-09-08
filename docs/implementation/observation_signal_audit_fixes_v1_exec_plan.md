@@ -213,6 +213,20 @@ Commands (verified available, run inside the provisioned container):
   renumber. **Not resolved here**: the other branch's owner must rebase it onto
   `origin/main`; its own conflicts with the resume feature (`driver.py`,
   `train_loop.py`) are unrelated to this plan.
+- 2026-09-08: **merged second, renumbered and reconciled.** The other branch
+  landed first (PRs #7 and #8), so this plan's identifiers moved: `C14` → `C44`
+  (LiDAR admission gate) and `C16` → `C45` (flashing red), while `C15` and `C17`
+  were not re-registered — they are the same defects as `main`'s `C18` and
+  `C17`, whose rows now carry this plan's extensions. Code reconciliation in
+  `train_loop.py`: the chunk boundary and the PPO overshoot both use
+  `chunk_carry_kwargs` (environment-identity check, `last_episode_lengths`),
+  kept behind `main`'s `curriculum_manager is None` gate, which is redundant
+  with the identity check on the staged path (it closes and rebuilds the
+  environment every chunk) but states the intent; `main`'s
+  `previous_chunk_last_observations` variable was removed. In
+  `causal_semantic.py` the batch cache (`DEC-AF-002`) and `main`'s row-level
+  guard (`C18`) both remain; the guard is now a second line of defence.
+  Everything else auto-merged. Checks after the merge are in §14.
 
 ## 12. Deviations
 

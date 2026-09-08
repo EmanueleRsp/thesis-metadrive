@@ -96,6 +96,29 @@ from thesis_rl.runtime.wiring.builders import (
 )
 
 
+def aborted_acl_slots(payloads: Sequence[dict[str, Any]]) -> set[int]:
+    """Slots whose episode ended by a typed abort rather than a real outcome.
+
+    Both typed aborts (scenario data, `RSA-1`; geometry, `GEOM-ABORT`) end the
+    slot's episode without an ``acl_episode_id``: the collector rebuilds their
+    info from scratch. Treating only the data abort as such made the first
+    geometry abort of an ACL run fatal on ``int(payload["episode_id"])``
+    (audit 2026-09-06, A2). A payload with no ``episode_id`` at all is classified
+    the same way, so an abort kind added later cannot reintroduce the crash.
+    """
+
+    aborted: set[int] = set()
+    for payload in payloads:
+        info = dict(payload.get("info", {}))
+        if (
+            bool(info.get("runtime_scenario_data_abort", False))
+            or bool(info.get("runtime_geometry_abort", False))
+            or payload.get("episode_id") is None
+        ):
+            aborted.add(int(payload["worker_id"]))
+    return aborted
+
+
 @dataclass(frozen=True)
 class ScenarioAclDriverPaths:
     artifacts_dir: Path
@@ -656,6 +679,45 @@ def _persist_coverage_state(
     atomic_write_text(path, json.dumps(visit_state.state_dict(), ensure_ascii=True, indent=2))
 
 
+def _scenario_acl_resume_state(
+    *,
+    global_step: int,
+    chunk_id: int,
+    eval_id: int,
+    episode_id: int,
+    buffer_size: int,
+    bandit: ScenarioArmBandit,
+    visit_state: ScenarioCatalogVisitState,
+    rng: np.random.Generator,
+    recent_usefulness: Sequence[float],
+) -> dict[str, Any]:
+    """Every field `_load_scenario_acl_resume_state` reads, produced in one place.
+
+    The two chunk-end writers had diverged: the vectorized one — the production
+    path, since every serious profile runs 20 environments — omitted
+    `recent_usefulness`, and the loader's `.get(..., [])` turned the omission into
+    an empty window without complaint. A resumed teacher then normalizes the
+    first episode against nothing, which `_normalize_learning_potential` scores
+    as a maximum by construction.
+
+    `buffer_size` is the one field here the loader does *not* read — the buffer
+    is restored from `scenario_buffer.json` — and is produced because the
+    artifact has always carried it.
+    """
+
+    return {
+        "global_step": int(global_step),
+        "chunk_id": int(chunk_id),
+        "eval_id": int(eval_id),
+        "episode_id": int(episode_id),
+        "buffer_size": int(buffer_size),
+        "recent_usefulness": [float(value) for value in recent_usefulness],
+        "mab": bandit.state_dict(),
+        "coverage": visit_state.coverage_summary(),
+        "rng_state": rng.bit_generator.state,
+    }
+
+
 def _load_scenario_acl_resume_state(
     *,
     cfg: DictConfig,
@@ -916,11 +978,12 @@ def _run_scenario_acl_vectorized_training(
     def vector_episode_end_callback(
         vector_env: Any, done_indices: list[int], payloads: list[dict[str, Any]]
     ) -> dict[int, Any]:
-        aborted_slots = {
-            int(payload["worker_id"])
-            for payload in payloads
-            if bool(dict(payload.get("info", {})).get("runtime_scenario_data_abort", False))
-        }
+        # Both typed aborts (scenario data, `RSA-1`; geometry, `GEOM-ABORT`) end
+        # the slot's episode without an `acl_episode_id`: the collector rebuilds
+        # their info from scratch. Treating only the data abort here made the
+        # first geometry abort of an ACL run fatal on `int(payload["episode_id"])`
+        # (audit 2026-09-06, A2).
+        aborted_slots = aborted_acl_slots(payloads)
         # An aborted scenario must still be replaced in its slot, but cannot
         # produce completion, LP, MAB, or scenario-buffer effects.
         payloads = [
@@ -1020,7 +1083,16 @@ def _run_scenario_acl_vectorized_training(
                     normalized_usefulness=normalized,
                     selection_probability=float(completion.selection.selection_probability),
                 )
-                bandit.update_reward_scale(arm_index, float(metrics.get("reward", 0.0)))
+                episode_length = metrics.get("episode_length")
+                if episode_length is None:
+                    raise ValueError(
+                        "ACL completion metrics must carry `episode_length`: the reward-scale "
+                        "EMA is a per-step magnitude (C26) and cannot be formed from an "
+                        "episode return alone."
+                    )
+                bandit.update_reward_scale(
+                    arm_index, float(metrics.get("reward", 0.0)), int(episode_length)
+                )
             scenario_uid = completion.selection.scenario_uid
             if scenario_uid is None:
                 raise ValueError("ACL completion is missing scenario identity.")
@@ -1308,12 +1380,28 @@ def _run_scenario_acl_vectorized_training(
             rulebook_timing=(dict(rulebook_timing) if isinstance(rulebook_timing, dict) else {}),
         )
 
+    def log_training_progress(snapshot: dict[str, Any]) -> None:
+        # `C12`'s durable, TTY-independent step counter, which reached the
+        # baseline loop only: this driver collects through its own loop and never
+        # passed the callback, so an ACL run — every serious run — had no step
+        # figure between chunk boundaries and no fps or EMA losses anywhere
+        # (`C42`). `chunk_id` is read at call time so a record lands under the
+        # chunk it belongs to.
+        log_event(
+            paths.events_log_path,
+            "training_progress",
+            chunk_id=int(current_chunk_id),
+            stage="scenario_acl_vectorized",
+            **snapshot,
+        )
+
     current_observations = initial_observations
     try:
         while current_global_step < total_timesteps:
             current_chunk_id += 1
             chunk_steps = min(eval_interval, total_timesteps - current_global_step)
             summary = agent.train_vectorized(
+                progress_callback=log_training_progress,
                 env=env,
                 chunk_timesteps=chunk_steps,
                 global_total_timesteps=total_timesteps,
@@ -1408,16 +1496,21 @@ def _run_scenario_acl_vectorized_training(
             }
             _append_jsonl(artifact_paths["history"], history_payload)
             _append_jsonl(artifact_paths["iterations"], history_payload)
-            acl_state_payload = {
-                "global_step": current_global_step,
-                "chunk_id": current_chunk_id,
-                "eval_id": current_eval_id,
-                "episode_id": vector_state.next_episode_id,
-                "buffer_size": len(buffer),
-                "mab": bandit.state_dict(),
-                "coverage": visit_state.coverage_summary(),
-                "rng_state": rng.bit_generator.state,
-            }
+            # `RESUME-ABRUPT-001` publishes this atomically; `C31` decides what
+            # goes in it. The payload main introduced here repeated the eight
+            # keys the pre-`C31` writer used, so it carried the omission of
+            # `recent_usefulness` into the new mechanism.
+            acl_state_payload = _scenario_acl_resume_state(
+                global_step=current_global_step,
+                chunk_id=current_chunk_id,
+                eval_id=current_eval_id,
+                episode_id=vector_state.next_episode_id,
+                buffer_size=len(buffer),
+                bandit=bandit,
+                visit_state=visit_state,
+                rng=rng,
+                recent_usefulness=recent_usefulness,
+            )
             last_snapshot_global_step = _write_acl_resume_snapshot(
                 cfg=cfg,
                 paths=paths,
@@ -1530,12 +1623,26 @@ def _run_scenario_acl_vectorized_training(
         event=lambda name, **payload: log_event(paths.events_log_path, name, **payload),
         eval_id_start=current_eval_id,
     )
+    duration_seconds = round(time.time() - start_time, 2)
+    # `C42`: this driver returns to `train_loop` before the loop's own
+    # `run_completed`, so a finished ACL run left no terminal event at all —
+    # while it did record `run_interrupted` and, through the loop's exception
+    # handler, `run_failed`. Paired with the metadata update the way the
+    # interrupt path already pairs them, so the event log states every outcome.
+    log_event(
+        paths.events_log_path,
+        "run_completed",
+        global_step=int(current_global_step),
+        eval_id=int(final_eval_id),
+        stage="scenario_acl_vectorized",
+        duration_seconds=duration_seconds,
+    )
     update_run_metadata(
         paths.artifacts_dir,
         {
             "status": "completed",
             "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "duration_seconds": round(time.time() - start_time, 2),
+            "duration_seconds": duration_seconds,
             "global_step": current_global_step,
             "eval_id": final_eval_id,
             "final_panels": sorted(final_panel_metrics),
@@ -1653,12 +1760,24 @@ def _run_scenario_acl_vectorized_training(
             "checkpoint_global_step": current_global_step,
         },
     )
+    duration_seconds = round(time.time() - start_time, 2)
+    # `C42`, second completion branch of the vector path: same reasoning as the
+    # final-panels branch above.
+    log_event(
+        paths.events_log_path,
+        "run_completed",
+        global_step=int(current_global_step),
+        chunk_id=int(current_chunk_id),
+        eval_id=int(current_eval_id + 1),
+        stage="scenario_acl_vectorized",
+        duration_seconds=duration_seconds,
+    )
     update_run_metadata(
         paths.artifacts_dir,
         {
             "status": "completed",
             "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "duration_seconds": round(time.time() - start_time, 2),
+            "duration_seconds": duration_seconds,
             "global_step": current_global_step,
             "chunk_id": current_chunk_id,
             "eval_id": current_eval_id + 1,
@@ -2202,7 +2321,9 @@ def run_scenario_acl_training(
                             selection_probability=float(spec.arm_probabilities[spec.arm_index]),
                         )
                         bandit.update_reward_scale(
-                            spec.arm_index, float(episode_metrics.get("reward", 0.0))
+                            spec.arm_index,
+                            float(episode_metrics.get("reward", 0.0)),
+                            int(episode_metrics["episode_length"]),
                         )
                     selection["usefulness"] = episode_usefulness
                     selection["usefulness_norm"] = normalized_episode_usefulness
@@ -2590,18 +2711,26 @@ def run_scenario_acl_training(
                 buffer_actions=dict(buffer_actions),
                 buffer_size=len(buffer),
             )
+            # As on the vector path: `RESUME-ABRUPT-001` publishes it, `C31`
+            # decides its resume-critical half. The diagnostic keys below are
+            # this path's own and the loader does not read them.
             acl_state_payload = {
-                "global_step": int(current_global_step),
-                "chunk_id": int(current_chunk_id),
-                "eval_id": int(current_eval_id),
-                "recent_usefulness": [float(x) for x in recent_usefulness],
+                **_scenario_acl_resume_state(
+                    global_step=current_global_step,
+                    chunk_id=current_chunk_id,
+                    eval_id=current_eval_id,
+                    episode_id=current_episode_id,
+                    buffer_size=len(buffer),
+                    bandit=bandit,
+                    visit_state=visit_state,
+                    rng=rng,
+                    recent_usefulness=recent_usefulness,
+                ),
                 "last_mode": chunk_mode,
                 "last_arm_name": chunk_stage,
-                "episode_id": int(current_episode_id),
                 "last_arm_index": -1,
                 "last_scenario_seed": None,
                 "last_replay_scenario_id": None,
-                "buffer_size": len(buffer),
                 "generate_count": int(generate_count),
                 "replay_count": int(replay_count),
                 "chunk_generate_count": int(chunk_generate_count),
@@ -2619,9 +2748,6 @@ def run_scenario_acl_training(
                     }
                     for record in buffer.top_k(5)
                 ],
-                "mab": bandit.state_dict(),
-                "coverage": visit_state.coverage_summary(),
-                "rng_state": rng.bit_generator.state,
             }
             last_snapshot_global_step = _write_acl_resume_snapshot(
                 cfg=cfg,
@@ -2686,7 +2812,9 @@ def run_scenario_acl_training(
                 adapter=adapter,
                 ema_alpha=ema_alpha_cfg,
             )
-            evaluator.load_adapter(checkpoint_path=f"{paths.final_checkpoint_stem}.zip", strict=True)
+            evaluator.load_adapter(
+                checkpoint_path=f"{paths.final_checkpoint_stem}.zip", strict=True
+            )
             return evaluator
 
         final_eval_id, final_panel_metrics = run_scenarionet_final_panels(
@@ -2704,6 +2832,18 @@ def run_scenario_acl_training(
             eval_id_start=current_eval_id,
         )
         duration_seconds = round(time.time() - start_time, 2)
+        # `C42`, non-vectorized path. Its collection loop is `Agent.train`, which
+        # carries no progress channel at all, so this path still has no step
+        # counter between chunks — but it can at least state its own end.
+        log_event(
+            paths.events_log_path,
+            "run_completed",
+            global_step=int(current_global_step),
+            chunk_id=int(current_chunk_id),
+            eval_id=int(final_eval_id),
+            stage="scenario_acl",
+            duration_seconds=duration_seconds,
+        )
         update_run_metadata(
             paths.artifacts_dir,
             {
@@ -2853,6 +2993,16 @@ def run_scenario_acl_training(
         )
 
         duration_seconds = round(time.time() - start_time, 2)
+        # `C42`, non-vectorized path's second completion branch.
+        log_event(
+            paths.events_log_path,
+            "run_completed",
+            global_step=int(current_global_step),
+            chunk_id=int(current_chunk_id),
+            eval_id=int(final_eval_id),
+            stage="scenario_acl",
+            duration_seconds=duration_seconds,
+        )
         update_run_metadata(
             paths.artifacts_dir,
             {

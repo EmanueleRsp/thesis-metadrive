@@ -136,6 +136,30 @@ def _object_from_node(node):
     return node.obj
 
 
+@pytest.fixture(autouse=True)
+def _contain_traffic_scenario_mapping():
+    """Restore `_Traffic.obj_id_to_scenario_id` after each test in this module.
+
+    It is a *class* attribute holding one declared entry, and two tests below add
+    `other-runtime -> other-scenario` to it without removing it, so every test
+    running later in the same process inherited the addition. That is how
+    `test_metadrive_contact_recorder_accepts_node_only_callback_without_manifold_query`
+    came to pass — not because of what it asserts, but because a sibling had
+    seeded the mapping it reads. Run on its own it failed, and it failed again
+    under `pytest-xdist`, which hands tests of one file to different workers.
+
+    Containing the mutation here closes the whole class of leak rather than the
+    one instance: a test added later cannot silently depend on, or silently
+    provide, an entry in this mapping. Only this mapping is restored — nothing
+    else on `_Traffic` is mutated by any test in the module.
+    """
+
+    declared = dict(_Traffic.obj_id_to_scenario_id)
+    yield
+    _Traffic.obj_id_to_scenario_id.clear()
+    _Traffic.obj_id_to_scenario_id.update(declared)
+
+
 def test_metadrive_actor_normalization_uses_stable_scenario_identity():
     snapshot = actor_snapshot_from_metadrive(_Env(), _Vehicle())
     assert snapshot.actor_id == "scenario-object"
@@ -345,6 +369,9 @@ def test_metadrive_contact_uses_scenario_env_agent_as_ego():
 
 
 def test_metadrive_contact_recorder_clears_per_control_step():
+    # Same precondition, established locally rather than inherited.
+    _Traffic.obj_id_to_scenario_id["other-runtime"] = "other-scenario"
+
     recorder = MetaDriveContactRecorder(_Env(), object_from_node=_object_from_node)
     recorder.observe(_Contact())
     records, active = recorder.snapshot_contact_state()
@@ -549,6 +576,10 @@ def test_metadrive_contact_recorder_accepts_node_only_callback_without_manifold_
         def __init__(self):
             super().__init__()
             self.manifold_point = None
+
+    # Establish the runtime-to-scenario mapping this test reads, instead of
+    # inheriting it from whichever sibling happened to run first.
+    _Traffic.obj_id_to_scenario_id["other-runtime"] = "other-scenario"
 
     recorder = MetaDriveContactRecorder(_Env(), object_from_node=_object_from_node)
     recorder.observe(NodeOnlyContact())

@@ -27,6 +27,13 @@ defaults:
 
 seed: 42
 device: auto
+# C28. Device for the *asynchronous evaluator* subprocess. Null keeps `device`,
+# which is the historical behaviour: the evaluator loads a second copy of the
+# policy onto the training accelerator while the learner is mid-update, and that
+# is what produced the observed out-of-memory. Set it to `cpu` to move the
+# evaluator off the accelerator entirely, at the cost of a slower panel; the
+# evaluator runs concurrently with training, so a slower panel is usually free.
+eval_device: null
 
 runtime:
   # Null preserves PyTorch's process-wide default. Positive values are an
@@ -45,9 +52,17 @@ runtime:
 # `version` names the *implementation family* of the Rulebook v2 machinery, not
 # the specification version: `runtime/wiring/builders.py` accepts it inside a set
 # alongside "v2" and "v4.6" and routes every member to the same v2 adapter. The
-# specification actually in force is `specification_id`. Renaming the family
-# string is deliberately out of scope here because it is also stamped into cached
-# rulebook-catalog provenance, where a change invalidates the cache.
+# specification actually in force is `specification_id`.
+#
+# The value below is misleading — it reads as a specification version two
+# releases behind the six-level vector actually implemented — and it **cannot be
+# corrected in isolation**. `DEC-C8-004`'s stated reason for deferring the rename
+# is wrong (the catalog cache keys on `relative_path` and `scenario_fingerprint`,
+# not on this string), but the deferral was right for a reason it did not name:
+# `geometry_config_hash()` hashes a payload containing this string, and
+# `scripts/verify_rulebook_eligibility_stability.py` compares that hash against
+# the one frozen into the dataset's eligibility provenance. Renaming it therefore
+# moves a dataset provenance identity, which is a user decision. See `C8`.
 rulebook:
   implementation_family: v2
   specification_id: RULEBOOK-V5.1
