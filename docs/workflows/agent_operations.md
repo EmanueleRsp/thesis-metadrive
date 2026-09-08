@@ -89,13 +89,17 @@ episode, over two panels and three behaviours — six env constructions and six 
 episodes per case, twelve in all. The return *is* the episode, so there is nothing
 to shorten inside them.
 
-`pytest-xdist` was measured and rejected: `-n 16` on the residual suite bought
-only 84 seconds (2m30s against 3m55s), because what is left is many small tests
-where starting sixteen processes that import torch and MetaDrive eats most of the
-gain. Not worth a new dependency. The parallel run did surface one order-dependent
-test — it failed under `-n 16` and passed under `--dist loadfile` — which is a
-defect in its own right, tracked in `docs/open_items.md`, not a reason to adopt
-xdist.
+**On parallelising it.** A parallel run measured in a separate session bought only
+84 seconds on the residual suite (2m30s against 3m55s), because what is left there
+is many small tests where starting sixteen processes that import torch and
+MetaDrive eats most of the gain. On the full suite it gave 21m07s against 28m00s,
+and the durations above say why that is a floor rather than a parallelism limit:
+the two expensive cases are in the same file, so `--dist loadfile` pins them to
+one worker, and even per-test distribution still has to run the longer of the two
+end to end. Parallelism can only help here once the expensive case is split into
+smaller independent ones. That run also surfaced one order-dependent failure,
+which is a defect to record on its own rather than a reason to pick a
+distribution mode that hides it.
 
 **Why the five slowest unmarked tests stay unmarked.** In the short run the top
 five durations are all in `tests/test_scenarionet_vectorized_integration.py`
