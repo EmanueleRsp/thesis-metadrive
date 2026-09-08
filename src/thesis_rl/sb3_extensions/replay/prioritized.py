@@ -116,9 +116,11 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         # the other slots' chronology; an invalid leaf is never addressable,
         # sampled, prioritized, or interpreted as a replay transition.
         self.valid_transitions = np.zeros((self.buffer_size, self.n_envs), dtype=bool)
-        # The specification assigns an unseen transition the exact current raw
-        # maximum (or 1.0 for an empty buffer).  Tracking its multiplicity avoids
-        # scanning the entire allocation at every vector insertion.
+        # An unseen transition is primed at the exact current raw maximum (or 1.0
+        # for an empty buffer); see `_insertion_priority` for why there is no
+        # floor above it. Tracking the multiplicity avoids scanning the entire
+        # allocation at every vector insertion; `_recompute_current_max` is the
+        # fallback for the one case the counter cannot resolve incrementally.
         self._current_max_raw_priority = 1.0
         self._current_max_count = 0
         self._tree = _SumTree(self.buffer_size * self.n_envs)
@@ -179,11 +181,26 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         elif retained_max_count > 0:
             self._current_max_count = retained_max_count
         else:
-            self._current_max_raw_priority = float(np.max(self.raw_priorities))
-            self._current_max_count = int(
-                np.count_nonzero(self.raw_priorities == self._current_max_raw_priority)
-            )
+            self._recompute_current_max()
         self._tree.set_batch(indices, values**self.alpha)
+
+    def _recompute_current_max(self) -> None:
+        """Rescan for the maximum, treating "no positive priority" as an empty buffer.
+
+        A masked data-abort slot writes 0.0, so a buffer cycle in which every
+        slot aborted leaves no priced row at all. `_insertion_priority` has to
+        prime the next transition at 1.0 there, exactly as it does before the
+        first insertion: recording a maximum of 0.0 would instead make
+        `_set_raw_priority` reject that insertion as non-positive.
+        """
+
+        highest = float(np.max(self.raw_priorities))
+        if highest <= 0.0:
+            self._current_max_raw_priority = 1.0
+            self._current_max_count = 0
+            return
+        self._current_max_raw_priority = highest
+        self._current_max_count = int(np.count_nonzero(self.raw_priorities == highest))
 
     def _update_current_max(self, previous: float, value: float) -> None:
         if value > self._current_max_raw_priority:
@@ -199,12 +216,30 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         self._current_max_count -= 1
         if self._current_max_count > 0:
             return
-        self._current_max_raw_priority = float(np.max(self.raw_priorities))
-        self._current_max_count = int(
-            np.count_nonzero(self.raw_priorities == self._current_max_raw_priority)
-        )
+        self._recompute_current_max()
 
     def _insertion_priority(self) -> float:
+        """The exact current maximum, with 1.0 standing in for an empty buffer.
+
+        Deliberately **not** `max(1.0, current)`. Raw priorities are absolute
+        `|TD error| + epsilon` in reward units, and the sampler is otherwise
+        exactly equivariant to a rescaling of them: leaves hold `p ** alpha`,
+        each address's probability is its leaf over the total, and the
+        importance weights are max-normalised within the batch, so multiplying
+        every priority by a constant changes no address and no weight. A
+        constant floor would be the one reward-scale-dependent term in it, and
+        `conf/scalarization/default.yaml` is a file this project recalibrates.
+
+        A floor also buys nothing it is supposed to buy. The share of draws
+        reaching rows that have never been priced is pinned by arrivals over
+        draws — `n_envs / (gradient_steps * batch_size)` — whatever value they
+        are primed at, so the priming level sets only the latency to a first
+        sample, and that latency is orders of magnitude inside a row's
+        residence. Where a floor does bind it destroys the machinery it sits
+        in: `_current_max_raw_priority` collapses onto the injected constant
+        and stops measuring the critic.
+        """
+
         return self._current_max_raw_priority if self._current_max_count > 0 else 1.0
 
     def add(self, *args: Any, valid_mask: np.ndarray | None = None, **kwargs: Any) -> None:
@@ -223,7 +258,15 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             if mask[env_index]:
                 self._set_raw_priority(flat_index, maximum)
             else:
+                # The overwritten row may have been the one holding the running
+                # maximum. Release it through the same bookkeeping the valid
+                # branch uses: skipping it left `_current_max_count` counting a
+                # row that no longer exists, and that error never self-corrects,
+                # because the decrement fires only on a value equal to the
+                # recorded maximum.
+                previous = float(self.raw_priorities.flat[flat_index])
                 self.raw_priorities.flat[flat_index] = 0.0
+                self._update_current_max(previous, 0.0)
                 self._tree.set(flat_index, 0.0)
 
     def close_previous_transition_as_data_abort(
@@ -255,12 +298,35 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         masses = self.rng.uniform(bounds[:-1], bounds[1:])
         flat_indices = self._tree.find_prefix_batch(masses)
         flat_indices %= active_count
+        probabilities = self._tree.tree[flat_indices + self._tree.capacity] / total
+        # A prefix search can land on a zero-priority leaf (a masked data-abort
+        # slot, or float drift in the incrementally maintained sums), and the
+        # active-range wrap above can move an index onto one. Such a leaf has
+        # probability 0, so its importance weight is `inf`, the max-normalisation
+        # turns the batch into `NaN`/0 and the critic parameters become NaN with
+        # no exception. Re-sample those addresses from the positive mass instead
+        # (audit 2026-09-06, A7).
+        invalid = ~(probabilities > 0.0)
+        attempts = 0
+        while np.any(invalid):
+            attempts += 1
+            if attempts > 16:
+                raise ValueError(
+                    "PER sampling repeatedly landed on zero-priority leaves; "
+                    "the sum tree is inconsistent with its leaves."
+                )
+            redraw = self.rng.uniform(0.0, total, size=int(np.count_nonzero(invalid)))
+            redrawn = self._tree.find_prefix_batch(redraw) % active_count
+            flat_indices[invalid] = redrawn
+            probabilities = self._tree.tree[flat_indices + self._tree.capacity] / total
+            invalid = ~(probabilities > 0.0)
         storage_indices = flat_indices // self.n_envs
         env_indices = flat_indices % self.n_envs
-        probabilities = self._tree.tree[flat_indices + self._tree.capacity] / total
         beta = self.current_beta()
         weights = (active_count * probabilities) ** (-beta)
         weights /= max(float(np.max(weights)), 1.0e-12)
+        if not np.all(np.isfinite(weights)):
+            raise ValueError("PER importance-sampling weights must be finite.")
         return storage_indices, env_indices, weights.astype(np.float32)
 
     def current_beta(self) -> float:

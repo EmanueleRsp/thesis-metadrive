@@ -234,8 +234,14 @@ class LatentQueryEncoderV2(BaseEncoder):
             ),
             dim=1,
         ).bool()
-        if not valid_mask.any(dim=1).all():
-            raise ValueError("LQ v2 requires at least one valid token per batch item.")
+        # No runtime check that every row carries a valid token: three of the
+        # concatenated blocks above are literal `torch.ones`, so the property
+        # holds by construction whatever the data masks contain. Asserting it
+        # here forced a device-to-host synchronisation on every forward, and the
+        # encoder runs once per collected step plus roughly six times per
+        # gradient step. `tests/test_encoders_v10.py` and `test_encoders_v11.py`
+        # pin the invariant on an all-zero observation instead, at no runtime
+        # cost.
         return tokens * valid_mask.unsqueeze(-1).to(tokens.dtype), valid_mask
 
     def forward(self, flat_obs: torch.Tensor) -> torch.Tensor:
@@ -419,8 +425,8 @@ class LatentQueryEncoderV3(BaseEncoder):
             ),
             dim=1,
         ).bool()
-        if not valid_mask.any(dim=1).all():
-            raise ValueError("LQ v3 requires at least one valid token per batch item.")
+        # Unconditionally-valid blocks make the "one valid token per row"
+        # property structural; see the note in the v2 tokenizer above.
         return tokens * valid_mask.unsqueeze(-1).to(tokens.dtype), valid_mask
 
     def forward(self, flat_obs: torch.Tensor) -> torch.Tensor:

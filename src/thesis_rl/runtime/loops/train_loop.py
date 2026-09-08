@@ -10,6 +10,7 @@ import pickle
 from dataclasses import asdict
 import random
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -344,6 +345,29 @@ def _save_replay_buffer_atomically(planner: Any, path: Path) -> bool:
         return True
     finally:
         temporary_path.unlink(missing_ok=True)
+
+
+def _copy_checkpoint_snapshot(source_stem: Path, target_stem: Path) -> None:
+    """Copy a saved checkpoint (zip plus every sidecar) from one stem to another.
+
+    Sidecars are every file named ``<stem>.<suffix>`` next to the zip: the adapter
+    state, the reward-semantics and checkpoint-manifest JSON. The asynchronous
+    evaluation snapshot payload ``<stem>.json`` is skipped because it describes
+    the evaluation job, not the checkpoint.
+    """
+
+    source_zip = source_stem.with_suffix(".zip")
+    if not source_zip.exists():
+        raise FileNotFoundError(f"Checkpoint snapshot is missing: {source_zip}")
+    target_stem.parent.mkdir(parents=True, exist_ok=True)
+    prefix = f"{source_stem.name}."
+    for path in sorted(source_stem.parent.iterdir()):
+        if not path.is_file() or not path.name.startswith(prefix):
+            continue
+        if path.name == f"{source_stem.name}.json":
+            continue
+        suffix = path.name[len(source_stem.name) :]
+        shutil.copyfile(path, target_stem.parent / f"{target_stem.name}{suffix}")
 
 
 def _load_replay_buffer_if_available(planner: Any, path: Path) -> bool:
@@ -844,6 +868,7 @@ def run_training(cfg: DictConfig) -> None:
     last_snapshot_global_step = 0
     chunk_id = 0
     eval_id = 0
+    previous_chunk_last_observations: Any | None = None
     current_stage_name = "baseline"
     current_stage_index = 0
     beta_progress_env_steps = 0
@@ -1181,6 +1206,9 @@ def run_training(cfg: DictConfig) -> None:
                 current_stage_name=job.stage,
                 current_stage_index=job.stage_index,
                 metrics=metrics,
+                # `C16`: copy the snapshot that was evaluated, not the live
+                # learner, whose weights have moved on during the evaluation.
+                source_checkpoint_stem=Path(job.checkpoint_stem),
                 # The callback runs from `poll()` inside a training chunk; the
                 # resume snapshot is written at the chunk boundary instead.
                 write_resume_snapshot=False,
@@ -1359,9 +1387,18 @@ def run_training(cfg: DictConfig) -> None:
             current_stage_name: str,
             current_stage_index: int,
             metrics: dict[str, Any],
+            source_checkpoint_stem: Path | None = None,
             write_resume_snapshot: bool = True,
         ) -> None:
             """Save all chunk-level checkpoints shared by curriculum and baseline runs.
+
+            ``source_checkpoint_stem`` is the snapshot the ``metrics`` were measured
+            on. When given, every checkpoint written here is a copy of that snapshot,
+            so the weights stored under ``best_*``/``latest``/periodic are the weights
+            the recorded metrics describe. Saving the live learner instead (as an
+            earlier revision did) labelled weights from step ``g + Δ`` with the
+            metrics of step ``g``, Δ being the whole asynchronous validation
+            (audit 2026-09-06, A3).
 
             ``write_resume_snapshot=False`` is used by the asynchronous-evaluation
             completion callback, which may run mid-chunk: the best checkpoints
@@ -1376,10 +1413,16 @@ def run_training(cfg: DictConfig) -> None:
             nonlocal best_rulebook_thresholded_key
             nonlocal best_rulebook_thresholded_payload
 
+            def _persist(target_stem: Path) -> None:
+                if source_checkpoint_stem is None:
+                    agent.save(target_stem)
+                    return
+                _copy_checkpoint_snapshot(source_checkpoint_stem, target_stem)
+
             save_best_lex = bool(cfg.checkpoint.get("save_best_lexicographic", True))
             candidate_key = _lexicographic_eval_key(metrics)
             if save_best_lex and (best_lex_key is None or candidate_key < best_lex_key):
-                agent.save(best_lex_checkpoint_stem)
+                _persist(best_lex_checkpoint_stem)
                 best_lex_key = candidate_key
                 best_lex_payload = {
                     "path": _checkpoint_rel(run_dir, best_lex_checkpoint_stem),
@@ -1433,7 +1476,7 @@ def run_training(cfg: DictConfig) -> None:
             if save_best_rulebook_strict and (
                 best_rulebook_strict_key is None or strict_key < best_rulebook_strict_key
             ):
-                agent.save(best_rulebook_strict_checkpoint_stem)
+                _persist(best_rulebook_strict_checkpoint_stem)
                 best_rulebook_strict_key = strict_key
                 best_rulebook_strict_payload = {
                     "path": _checkpoint_rel(run_dir, best_rulebook_strict_checkpoint_stem),
@@ -1479,7 +1522,7 @@ def run_training(cfg: DictConfig) -> None:
                 best_rulebook_thresholded_key is None
                 or thresholded_key < best_rulebook_thresholded_key
             ):
-                agent.save(best_rulebook_thresholded_checkpoint_stem)
+                _persist(best_rulebook_thresholded_checkpoint_stem)
                 best_rulebook_thresholded_key = thresholded_key
                 best_rulebook_thresholded_payload = {
                     "path": _checkpoint_rel(run_dir, best_rulebook_thresholded_checkpoint_stem),
@@ -1591,6 +1634,12 @@ def run_training(cfg: DictConfig) -> None:
             save_rng = bool(cfg.checkpoint.get("save_rng_state", True))
 
             if bool(cfg.checkpoint.get("save_latest_each_chunk", True)):
+                # The live learner is the right thing to save here: this function
+                # runs only at a chunk boundary. `C16`'s mislabelling came from
+                # the asynchronous-evaluation callback writing `latest`, and that
+                # callback now passes `write_resume_snapshot=False`, so it never
+                # reaches this code at all. `best_*` still goes through
+                # `_persist`, which is where the evaluated snapshot matters.
                 agent.save(latest_checkpoint_stem)
                 if save_rng:
                     _save_rng_state(latest_rng_state_path)
@@ -1758,6 +1807,16 @@ def run_training(cfg: DictConfig) -> None:
                     )
 
                 extra_train_kwargs["progress_callback"] = _log_training_progress
+                if curriculum_manager is None and previous_chunk_last_observations is not None:
+                    # Continue the slots' episodes across the chunk boundary instead of
+                    # resetting every worker. A reset here left the last transition of
+                    # each slot stored with `done=0`, so the n-step sampler chained it
+                    # into the next episode's rewards and bootstrapped it from another
+                    # scenario's observation; it also dropped `n_envs` partial episodes
+                    # from the chunk statistics (audit 2026-09-06, A4). The staged
+                    # curriculum path still resets, because its stage transitions
+                    # change the environment overrides.
+                    extra_train_kwargs["initial_observations"] = previous_chunk_last_observations
             provider_driven_scenarionet = str(
                 cfg.env.get("name", "")
             ).lower() == "scenarionet" and str(
@@ -1785,6 +1844,9 @@ def run_training(cfg: DictConfig) -> None:
                     else None
                 ),
                 **extra_train_kwargs,
+            )
+            previous_chunk_last_observations = (
+                chunk_summary.get("last_observations") if vectorized_training else None
             )
             actual_chunk_steps = int(chunk_summary.get("chunk_steps_actual", chunk_steps))
             beta_progress_env_steps += actual_chunk_steps
@@ -2610,6 +2672,16 @@ def run_training(cfg: DictConfig) -> None:
                 "Completing final atomic collection unit before stopping | pending_steps=%d",
                 pending_atomic_steps,
             )
+            # Same rule as the chunk boundary above: completing a partial rollout must
+            # continue the slots' episodes, not reset every worker into the middle of
+            # the rollout being completed. The baseline path never rebuilds the
+            # environment between chunks, so the carried observations are live.
+            if (
+                vectorized_training
+                and curriculum_manager is None
+                and previous_chunk_last_observations is not None
+            ):
+                extra_train_kwargs["initial_observations"] = previous_chunk_last_observations
             overshoot_summary = train_fn(
                 env=env,
                 chunk_timesteps=pending_atomic_steps,

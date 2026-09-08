@@ -57,6 +57,30 @@ class _JobState:
     process: mp.Process | None = None
 
 
+def resolve_evaluation_device(cfg: Any) -> str | None:
+    """Return the device the asynchronous evaluator must use, or ``None`` to inherit.
+
+    C28. The evaluator is a separate process that loads its own copy of the
+    policy, and it runs *while* the learner is updating. Inheriting `device`
+    therefore puts two models plus two sets of activations on the same
+    accelerator at the moment the learner's memory use peaks, which is what
+    produced the observed out-of-memory. Because the evaluator is concurrent
+    with training rather than on its critical path, moving it to the CPU
+    usually costs nothing in wall-clock.
+
+    Left as ``None`` by default so no existing run changes behaviour.
+    """
+
+    getter = getattr(cfg, "get", None)
+    value = getter("eval_device", None) if callable(getter) else getattr(cfg, "eval_device", None)
+    if value is None:
+        return None
+    device = str(value).strip()
+    if not device:
+        raise ValueError("`eval_device` must be a non-empty device string or null.")
+    return device
+
+
 def _evaluation_worker_main(job: EvaluationJob, output_queue: Any) -> None:
     """Rebuild an isolated evaluator and execute one immutable job."""
 
@@ -72,6 +96,9 @@ def _evaluation_worker_main(job: EvaluationJob, output_queue: Any) -> None:
         )
 
         cfg = OmegaConf.create(job.cfg)
+        evaluation_device = resolve_evaluation_device(cfg)
+        if evaluation_device is not None:
+            cfg.device = evaluation_device
         set_global_seed(int(cfg.seed))
         env = build_eval_env(
             cfg,
@@ -148,9 +175,12 @@ class AsyncEvaluationManager:
         process_factory: Callable[..., mp.Process] | None = None,
         start_method: str = "spawn",
         numeric_library_num_threads: int | None = None,
+        max_consecutive_failures: int = 2,
     ) -> None:
         if start_method not in mp.get_all_start_methods():
             raise ValueError(f"Unsupported asynchronous evaluation start method: {start_method}")
+        if int(max_consecutive_failures) < 1:
+            raise ValueError("max_consecutive_failures must be at least 1.")
         self._ctx = mp.get_context(start_method)
         self._queue = self._ctx.Queue()
         self._process_factory = process_factory or self._ctx.Process
@@ -174,6 +204,17 @@ class AsyncEvaluationManager:
         )
         self._progress_task = self._progress.add_task("Evaluation idle", total=1, completed=1)
         self._fatal_error: AsyncEvaluationError | None = None
+        # C27. An evaluation is a *measurement*: losing one must not cost the
+        # twenty hours of training that produced it, so a single failure is
+        # recorded and skipped. A persistently broken evaluator is different --
+        # the run then produces no comparable metrics at all, so continuing
+        # would burn the remaining budget generating a checkpoint nobody can
+        # score. The threshold is on *consecutive* failures, because that is what
+        # separates a transient (an OOM while the learner happened to peak) from
+        # a systematic one.
+        self._max_consecutive_failures = int(max_consecutive_failures)
+        self._consecutive_failures = 0
+        self._failed_evaluations = 0
 
     @property
     def active(self) -> EvaluationJob | None:
@@ -422,7 +463,9 @@ class AsyncEvaluationManager:
             if progress_state is not None
             else None
         )
-        progress_description = "Evaluation idle" if label is None else f"Evaluation {label} ({current})"
+        progress_description = (
+            "Evaluation idle" if label is None else f"Evaluation {label} ({current})"
+        )
         self._progress.update(
             self._progress_task,
             description=progress_description,
@@ -503,6 +546,10 @@ class AsyncEvaluationManager:
             state.status = "finished"
             state.completed = state.job.episode_count
             state.metrics = metrics
+            # A success clears the streak: the threshold is on *consecutive*
+            # failures, so an evaluator that recovers is not carrying the count
+            # of an unrelated transient towards the abort.
+            self._consecutive_failures = 0
             self._last_completed = state
             self._event_messages.append(
                 f"[EVAL] Evaluation {eval_id} completed | step={state.job.global_step}"
@@ -530,14 +577,36 @@ class AsyncEvaluationManager:
     def _fail(self, state: _JobState, reason: str) -> None:
         state.status = "failed"
         state.error = reason
-        self._event_messages.append(f"[EVAL] Evaluation {state.job.eval_id} failed: {reason}")
+        self._consecutive_failures += 1
+        self._failed_evaluations += 1
         if state.process is not None and state.process.is_alive():
             state.process.terminate()
             state.process.join(timeout=5.0)
-        self._fatal_error = AsyncEvaluationError(
-            f"Asynchronous evaluation {state.job.eval_id} failed; training terminated.\n{reason}"
+        if self._consecutive_failures >= self._max_consecutive_failures:
+            self._event_messages.append(f"[EVAL] Evaluation {state.job.eval_id} failed: {reason}")
+            self._fatal_error = AsyncEvaluationError(
+                f"Asynchronous evaluation {state.job.eval_id} failed "
+                f"{self._consecutive_failures} times in a row; training terminated. A run whose "
+                "evaluator is persistently broken produces no comparable metrics, so continuing "
+                f"would only spend the remaining budget.\n{reason}"
+            )
+            self._active = None
+            return
+        # Skipped, not fatal. The snapshot must still be released or the
+        # checkpoint directory grows by one evaluated model per failure.
+        self._event_messages.append(
+            f"[EVAL] Evaluation {state.job.eval_id} failed and was skipped "
+            f"({self._consecutive_failures}/{self._max_consecutive_failures} consecutive): {reason}"
         )
+        self._release_snapshot(state.job)
         self._active = None
+        self._launch_next()
+
+    @property
+    def failed_evaluation_count(self) -> int:
+        """How many evaluations failed over the run, skipped ones included."""
+
+        return self._failed_evaluations
 
     def _release_snapshot(self, job: EvaluationJob) -> None:
         stem = Path(job.checkpoint_stem)

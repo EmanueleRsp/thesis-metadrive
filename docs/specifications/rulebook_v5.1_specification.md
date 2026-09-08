@@ -401,6 +401,22 @@ is the standard separation between a training signal and a score.
 
 ### 4.4 The discount, resolved: `γ = 1` (ADR-075)
 
+> **Amended by ADR-081 (2026-09-07, approved): `γ = 0.996`.**
+> Two corrections to what follows, neither of which changes its *reasoning*.
+> First, the break-even table below compares a future collision (`a³`) against a
+> present **L3** violation (`a¹`), a ratio of `a²`. The binding comparison is one
+> level apart — L1 against L2, and identically L2 against L3 — with ratio `a`, so
+> every figure in the table is **2× too generous**. At `γ = 0.99` the real
+> break-even is 78 steps, not 157; the conclusion that 0.99 breaks inside the
+> episode therefore holds for a stronger reason than stated, and the "safe" mark
+> on 0.995 does not survive at `a = 2.2` over a 199-step episode. Second, the
+> undiscounted case has a cost this section does not weigh: with roughly two
+> thirds of episodes ending in a **bootstrapped truncation** rather than a true
+> terminal, `γ = 1` leaves the value level pinned only by the terminating
+> minority, so approximation bias walks it freely. The requirement is
+> `Δ = ln(a) / −ln(γ) > L`, which at `a = 2.5` (ADR-081) and `L = 199` gives
+> `γ > 0.99541`.
+
 An earlier revision left this open and listed three options. Measurement closed
 it, and **withdrew two claims that revision made**:
 
@@ -728,6 +744,23 @@ the exact opposite of this document's purpose. `λ₄` and `η` are fixed togeth
 §5.5, by measurement.
 
 ### 5.5 Selected weights
+
+> **Amended by ADR-081 (2026-09-07, approved):
+> `a = 2.5`, `σ = 0.30`.** `λ₄ = 2.0`, `η = 1.0`, `λ₆ = 0.2` and `φ = 0.25` are
+> unchanged, so the measured calibration below stands. Two things this section
+> states that turned out to be load-bearing in the other direction. `σ = 0` is
+> described here as "inherited from `SCAL-V1.2`", and it is: the instrument
+> sweeps `σ` only in the four-level counterfactual family, so it had **never**
+> been priced in this hierarchy. And `a = 2.2` is the first round value above
+> §5.4's lower bound of 2.12 — a lower bound, with no upper bound anywhere in
+> this document. The reason to move it is that §5.4 caps `σ` at 0.1227 when
+> `a = 2.2`, and no `σ` in that window makes the reward's local gradient point
+> the right way in a conflict a real vehicle could still brake out of; the
+> criterion is `a_req^max = (w₂σ + φ)·v_ref / (2·λ₄·τ)`, which the shipped
+> weights put at **1.46 m/s²** against a braking limit of about 9. Measured on
+> this same 1100-record panel by the `(a, σ, λ₄)` grid ADR-081 added:
+> `fraction_below_standstill` **3.36 % → 4.55 %**, `w₃`/tail **1.04 → 1.18**,
+> `a_req^max` **1.46 → 12.43 m/s²**, expert p1 **−61.8 → −99.4**.
 
 **`λ₄ = 2.0`, `η = 1.0`, `λ₆ = 0.2`**, with `a = 2.2`, `σ = 0`, `φ = 0.25`
 inherited from `SCAL-V1.2`. Admissible: `2.0 + 0.1·1.2 = 2.12 < 2.2`.

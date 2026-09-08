@@ -374,6 +374,68 @@ def v51_weight_grid() -> tuple[tuple[str, float, float, float], ...]:
     )
 
 
+# --- (a, sigma, lambda4) calibration grid ------------------------------------
+# `v51_weight_grid` holds `a` and `sigma` at their SCAL-V1.2 inherited values and
+# sweeps only the utility tail, so §5.5 calibrated `lambda4` against a severity
+# term that was never itself varied *in this hierarchy*. The four-level
+# counterfactual family does vary `(a, sigma)` but under a placeholder
+# `lambda = 1` and with no L5/L6 tail, so its `below standstill` column cannot be
+# read across. This grid closes that: it prices `(a, sigma, lambda4)` jointly
+# under the six-level reward, so the three are comparable on one instrument.
+#
+# Why it matters is not aesthetic. With `sigma = 0` a violated level is a step
+# function whose only slope is the shared `phi`, so inside the violated set the
+# reward carries no information about which direction reduces the violation --
+# and a deterministic-policy-gradient learner moves only along `grad_a Q`. The
+# reachable severity slope is `w_k * sigma + phi` per unit of cost; against the
+# progress term it discourages closing a conflict only while
+#
+#   (w_2 * sigma + phi) * v_ref / (2 * lambda4 * tau)  >  u^2 / d  =  2 * a_req
+#
+# where `a_req` is the constant deceleration the conflict demands. At `a = 2.2`
+# the rank-preservation bound caps `sigma` at 0.1227, which covers `a_req` up to
+# ~4.9 m/s^2 -- under a real vehicle's ~9 m/s^2 -- so the admissible window at
+# that base contains no value that makes the gradient point the right way in a
+# hard-braking conflict. Raising `a` lifts both that cap and `lambda4`'s
+# (`lambda4 < a - 0.1 * (eta + lambda6)`), which is why the three must be priced
+# together rather than one at a time.
+V51_CAL_BASE_GRID = (2.2, 2.5, 3.0)
+V51_CAL_SEVERITY_GRID = (0.0, 0.15, 0.3, 0.5)
+V51_CAL_LAMBDA4_GRID = (2.0, 2.5, 2.8)
+# Held fixed at the §5.5 selection: the existing sweep already showed the expert
+# mean moves by under 0.1 across `eta` in [0, 5], and `lambda6 < 0.25` is pinned
+# by the episodic O3 condition above, so neither can absorb what `a` costs.
+V51_CAL_ETA = 1.0
+V51_CAL_LAMBDA6 = 0.2
+
+
+def v51_calibration_grid() -> tuple[tuple[str, float, float, float, float, float], ...]:
+    """Admissible ``(base, severity, lambda4)`` triples under the six-level tail.
+
+    Returns ``(label, base, severity, lam, eta, lam6)``. Inadmissible members are
+    never priced, exactly as ``v51_weight_grid`` and ``family_grid`` refuse
+    non-rank-preserving ones -- a reward that cannot preserve the ordering is not
+    a cheaper rulebook, it is a different one.
+    """
+
+    return tuple(
+        (
+            f"a{base:g}_sev{severity:g}_l4{lam:g}",
+            base,
+            severity,
+            lam,
+            V51_CAL_ETA,
+            V51_CAL_LAMBDA6,
+        )
+        for base in V51_CAL_BASE_GRID
+        for severity in V51_CAL_SEVERITY_GRID
+        for lam in V51_CAL_LAMBDA4_GRID
+        if v51_is_rank_preserving(
+            base, severity, FINAL_FLAT_TIE_BREAKER, lam, V51_CAL_ETA, V51_CAL_LAMBDA6
+        )
+    )
+
+
 def v51_standstill_return(variant: str, episode_steps: int) -> float:
     """The return standing still would have earned, for this variant.
 
@@ -390,6 +452,11 @@ def v51_standstill_return(variant: str, episode_steps: int) -> float:
         if variant == f"v51_{label}":
             # A stopped ego advances nothing, so `c_L6 = 1` on every step. L4
             # itself is exactly 0, as it was before ADR-076.
+            return -lam6 * (V51_STEP_DT_S / V51_T_REF_S) * float(episode_steps)
+    for label, _base, _severity, _lam, _eta, lam6 in v51_calibration_grid():
+        if variant == f"v51cal_{label}":
+            # `base` and `severity` do not enter: a stopped in-lane ego satisfies
+            # L1-L3, and a satisfied level contributes exactly 0 at every base.
             return -lam6 * (V51_STEP_DT_S / V51_T_REF_S) * float(episode_steps)
     return 0.0
 
@@ -665,6 +732,8 @@ def v51_reward(
     lam: float,
     eta: float,
     lam6: float = 0.0,
+    base: float = FINAL_PRIORITY_BASE,
+    severity: float = FINAL_SEVERITY,
 ) -> float:
     """One step's reward under ``SCAL-V1.4`` (RULEBOOK-V5.1 §5.1).
 
@@ -685,9 +754,9 @@ def v51_reward(
     costs = (l1, l2, l3)
     canonical = tuple(0.0 if abs(c) <= SCALARIZATION_FAMILY_TOLERANCE else -c for c in costs)
     total = 0.0
-    for weight, margin in zip(family_weights(FINAL_PRIORITY_BASE), canonical):
+    for weight, margin in zip(family_weights(base), canonical):
         satisfied = 1.0 if margin == 0.0 else 0.0
-        total += weight * ((satisfied - 1.0) + FINAL_SEVERITY * margin)
+        total += weight * ((satisfied - 1.0) + severity * margin)
         total += FINAL_FLAT_TIE_BREAKER * margin
     total += lam * delta_q
     total -= eta * l5 * (V51_STEP_DT_S / V51_T_REF_S)
@@ -1534,6 +1603,9 @@ class Measurement:
                     else None
                 ),
                 "admissible_weight_triples": [label for label, _, _, _ in v51_weight_grid()],
+                "admissible_calibration_triples": [
+                    label for label, _, _, _, _, _ in v51_calibration_grid()
+                ],
                 "q_start_mean": (
                     round(sum(self.v51_q_start) / len(self.v51_q_start), 4)
                     if self.v51_q_start
@@ -1728,6 +1800,7 @@ def all_variant_names() -> tuple[str, ...]:
         *(f"final_gate{gate:g}" for gate in AT_FAULT_GATE_THRESHOLDS_MPS),
         *(f"family_{label}" for label, _, _, _ in family_grid()),
         *(f"v51_{label}" for label, _, _, _ in v51_weight_grid()),
+        *(f"v51cal_{label}" for label, _, _, _, _, _ in v51_calibration_grid()),
     )
 
 
@@ -2403,6 +2476,20 @@ def replay_scenario(
                 lam=lam,
                 eta=eta,
                 lam6=lam6,
+            )
+        for label, base, severity, lam, eta, lam6 in v51_calibration_grid():
+            variant_totals[f"v51cal_{label}"] += v51_reward(
+                l1=v51_l1,
+                l2=v51_l2,
+                l3=v51_l3,
+                delta_q=v51_l4,
+                l5=v51_l5,
+                l6=v51_l6,
+                lam=lam,
+                eta=eta,
+                lam6=lam6,
+                base=base,
+                severity=severity,
             )
         final_margins = (float(result.margins[0]), -final_r2, -final_r3, progress_margin)
         final_reward = family_reward(

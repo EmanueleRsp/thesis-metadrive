@@ -11,6 +11,7 @@ import pytest
 from shapely.geometry import Polygon
 
 from thesis_rl.reward.scalarization import (
+    SIX_LEVEL_PRIORITY_BASE,
     SIX_LEVEL_VECTOR_SCHEMA_ID,
     RulebookScalarizer,
     ScalarizationConfig,
@@ -29,12 +30,16 @@ from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 from thesis_rl.rulebook.v2.wrapper import RulebookV2MonitorWrapper
 
 
+_EGO_SPEED_MPS = 3.0
+
+
 class _Env(gym.Env):
     observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(1,))
     action_space = gym.spaces.Discrete(2)
 
     def __init__(self) -> None:
         self.t = 0
+        self.speed_mps = _EGO_SPEED_MPS
 
     def reset(self, **_kwargs):
         self.t = 0
@@ -45,17 +50,14 @@ class _Env(gym.Env):
         return [0.0], 0.0, False, False, {}
 
 
-_EGO_SPEED_MPS = 3.0
-
-
-def _snapshot(step: int) -> EnvSnapshot:
+def _snapshot(step: int, speed_mps: float = _EGO_SPEED_MPS) -> EnvSnapshot:
     ego = ActorSnapshot(
         "ego",
         ActorClass.VEHICLE,
         (float(step), 0.0),
         0.0,
         0.0,
-        (_EGO_SPEED_MPS, 0.0),
+        (speed_mps, 0.0),
         Polygon(((-2.0, -0.9), (2.0, -0.9), (2.0, 0.9), (-2.0, 0.9))),
         None,
         20.0,
@@ -72,7 +74,7 @@ def _wrapper(margins: tuple[float, ...]) -> RulebookV2MonitorWrapper:
 
     return RulebookV2MonitorWrapper(
         _Env(),
-        snapshotter=lambda env: _snapshot(env.t),
+        snapshotter=lambda env: _snapshot(env.t, env.speed_mps),
         transition_evaluator=evaluate_transition,
         initial_memory=RulebookMemory(),
         initial_cache=EpisodeCache("s", route),
@@ -80,7 +82,7 @@ def _wrapper(margins: tuple[float, ...]) -> RulebookV2MonitorWrapper:
         scalarizer=RulebookScalarizer(
             ScalarizationConfig(
                 mode="six_level_priority_weighted_rank",
-                priority_base=2.2,
+                priority_base=SIX_LEVEL_PRIORITY_BASE,
                 vector_schema_id=SIX_LEVEL_VECTOR_SCHEMA_ID,
             )
         ),
@@ -139,3 +141,48 @@ def test_counters_accumulate_across_steps_and_speed_is_published() -> None:
     # on Waymo only, so the per-source divergence must be measured, not assumed.
     assert info["ego_speed_mps"] == pytest.approx(_EGO_SPEED_MPS)
     assert info["mean_ego_speed_mps"] == pytest.approx(_EGO_SPEED_MPS)
+
+
+def test_control_line_diagnostics_are_published_at_reset_not_on_every_step() -> None:
+    """Static per scenario, so it belongs in the reset info and nowhere else.
+
+    The evaluation loop's `metadata_keys` reads this key from **both** the reset
+    info and the last step info, and only the second used to fire: the wrapper
+    returned the inner reset info unmodified, so the route the exec plan
+    intended ("same mechanism as `scenario_uid`") was dead and a payload that
+    cannot change was pickled through the worker pipe on every step instead.
+    """
+
+    wrapped = _wrapper((0.0, 0.0, 0.0, 0.2, 0.0, 0.0))
+    _, reset_info = wrapped.reset()
+    _, _, _, _, step_info = wrapped.step(0)
+
+    assert isinstance(reset_info["rulebook_control_line_diagnostics"], dict)
+    assert "rulebook_control_line_diagnostics" not in step_info
+
+
+def test_reset_clears_the_episode_counters() -> None:
+    """The counters are per-episode, and one wrapper serves every episode of a slot.
+
+    Accumulating across `reset()` makes each of the three unreadable in a
+    different way: `l4_clip_binding_steps` exists to be zero, so an override in
+    any earlier episode reports forever; `l5_reached_steps` grows with the
+    slot's age rather than with the episode; and `mean_ego_speed_mps` averages
+    scenarios the episode never visited, which is exactly the per-source
+    grouping limitation 13 asks for.
+    """
+
+    wrapped = _wrapper((0.0, 0.0, 0.0, 1.0, 0.0, 0.0))
+    wrapped.reset()
+    for _ in range(3):
+        wrapped.step(0)
+
+    second_episode_speed_mps = 9.0
+    wrapped.env.speed_mps = second_episode_speed_mps
+    wrapped.reset()
+    _, _, _, _, info = wrapped.step(0)
+
+    assert info["l4_clip_binding_steps"] == 1
+    assert info["l5_reached_steps"] == 1
+    assert info["ego_speed_mps"] == pytest.approx(second_episode_speed_mps)
+    assert info["mean_ego_speed_mps"] == pytest.approx(second_episode_speed_mps)

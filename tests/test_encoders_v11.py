@@ -36,6 +36,12 @@ def test_lq_v11_has_143_tokens_and_21_step_time_embedding() -> None:
     assert tokens.shape == (2, 143, 64)
     assert mask.shape == (2, 143)
     assert mask[:, 5].all() and mask[:, 104].all() and mask[:, 142].all()
+    # Those three positions are literal `torch.ones` blocks, so every row carries
+    # a valid token whatever the data masks hold -- here, an all-zero
+    # observation. The tokenizer used to assert this at runtime, which cost a
+    # device-to-host synchronisation on every forward for a branch that cannot
+    # be taken.
+    assert mask.any(dim=1).all()
     assert encoder.type_embedding.num_embeddings == 10
     assert encoder.history_time_embedding.num_embeddings == 21
     assert torch.count_nonzero(tokens[~mask]).item() == 0

@@ -4,7 +4,7 @@ import logging
 import time
 import math
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -101,6 +101,108 @@ def _format_episode_event(
         f"len={int(episode_length)} reward={float(reward):.2f} | reason={reason} "
         f"route_completion={float(route_completion):.2f}{context_suffix}"
     )
+
+
+def _unique_reset_seed_count(reset_seeds_used: Sequence[int]) -> int | None:
+    """How many distinct MetaDrive reset seeds a chunk used, or ``None``.
+
+    ``None``, not ``0``. The seed list stays empty whenever no reset-seed
+    function drives resets, which is the normal case under ScenarioNet: the
+    scenario provider selects records by UID and MetaDrive's seed never enters
+    the choice. Reporting ``0`` there reads as "this run visited zero distinct
+    scenarios", which is both false and the opposite of reassuring in a column
+    whose purpose is reproducibility evidence -- an empty cell says "not
+    applicable to this provider", which is what is true.
+
+    The statistic that *would* be informative under ScenarioNet is the number of
+    distinct scenario UIDs visited; it is not collected anywhere yet, and adding
+    it is a separate change to the runtime-stats counters.
+    """
+
+    if not reset_seeds_used:
+        return None
+    return len(set(int(seed) for seed in reset_seeds_used))
+
+
+def _episode_termination_reason(
+    *, success: bool, collision: bool, out_of_road: bool, aborted: bool = False
+) -> str:
+    """Classify a finished episode for the training statistics.
+
+    ``aborted`` is tested first because a typed abort ends the episode before any
+    outcome could be observed: the scenario data or the map geometry was
+    unusable, so there is no success, no collision and no off-road, and the
+    trailing ``else`` filed every one of them under ``timeout``. That is not a
+    cosmetic mislabel. The timeout rate is precisely the statistic used to judge
+    how many episodes are reaching the horizon, so an inflated one -- with the
+    abort rate pinned at zero next to it -- makes the horizon look like a bigger
+    part of the training distribution than it is, and hides the aborts entirely.
+
+    One implementation rather than three: the reason was spelled out inline at
+    each site, so a fourth outcome had to be remembered in three places.
+    """
+
+    if aborted:
+        return "aborted"
+    if success:
+        return "success"
+    if collision:
+        return "collision"
+    if out_of_road:
+        return "out_of_road"
+    return "timeout"
+
+
+def _preprocess_terminal_observations(
+    infos: Sequence[dict[str, Any]], preprocessor: BasePreprocessor
+) -> None:
+    """Run the preprocessor over each worker's terminal observation, exactly once.
+
+    The workers emit the raw pre-auto-reset observation under
+    ``terminal_observation`` for every ``done``
+    (`runtime/execution/deterministic_subproc_vec_env.py`), and
+    :func:`normalize_vector_transition_boundary` then copies that value into the
+    ``final_observations`` batch. Everything downstream therefore reads an
+    observation that has already been through the preprocessor, and must not run
+    it again -- see :func:`_attach_terminal_observations`, which deliberately
+    takes no preprocessor.
+    """
+
+    for info in infos:
+        terminal_observation = info.get("final_observation")
+        if terminal_observation is None:
+            terminal_observation = info.get("terminal_observation")
+        if terminal_observation is None:
+            continue
+        processed = preprocessor(terminal_observation)
+        info["final_observation"] = processed
+        info["terminal_observation"] = processed
+
+
+def _attach_terminal_observations(
+    infos: Sequence[dict[str, Any]],
+    dones: np.ndarray,
+    final_observations: np.ndarray,
+    next_processed_obs: np.ndarray,
+) -> None:
+    """Publish the terminal observation of each finished episode as its ``next_obs``.
+
+    Takes no preprocessor **by design**: ``final_observations`` already carries
+    the preprocessed value that :func:`_preprocess_terminal_observations` wrote.
+    Applying the preprocessor a second time here corrupted precisely the state a
+    horizon-truncated transition bootstraps from, which is the one state whose
+    value feeds back into every earlier target in the episode. It was invisible
+    because the configured preprocessor is ``identity`` and idempotent; any
+    affine or stateful one would have made it a silent numerical error rather
+    than a no-op.
+    """
+
+    for index, info in enumerate(infos):
+        if not bool(dones[index]):
+            continue
+        info["final_observation"] = final_observations[index]
+        info["terminal_observation"] = info["final_observation"]
+        next_processed_obs[index] = info["final_observation"]
 
 
 class _ParallelEvaluationEpisode:
@@ -671,15 +773,15 @@ class Agent:
                     # If episode ended
                     if terminated:
                         lifecycle.on_episode_end()
-                        # Determine termination reason (priority: success > collision > out_of_road > timeout)
-                        if episode_success:
-                            reason = "success"
-                        elif episode_collision:
-                            reason = "collision"
-                        elif episode_out_of_road:
-                            reason = "out_of_road"
-                        else:
-                            reason = "timeout"
+                        # Priority: aborted > success > collision > out_of_road > timeout.
+                        # The non-vectorized path never aborts -- typed aborts are
+                        # raised by the subprocess workers -- so `aborted` stays at
+                        # its default here rather than being plumbed in.
+                        reason = _episode_termination_reason(
+                            success=bool(episode_success),
+                            collision=bool(episode_collision),
+                            out_of_road=bool(episode_out_of_road),
+                        )
                         # Increment episode count and record episode metrics
                         episodes += 1
                         recent_episode_lens.append(episode_len)
@@ -921,7 +1023,7 @@ class Agent:
             "chunk_steps_actual": int(chunk_timesteps),
             "train_reset_seed_first": reset_seeds_used[0] if reset_seeds_used else None,
             "train_reset_seed_last": reset_seeds_used[-1] if reset_seeds_used else None,
-            "train_reset_seed_unique_count": len(set(reset_seeds_used)),
+            "train_reset_seed_unique_count": _unique_reset_seed_count(reset_seeds_used),
         }
 
     def train_vectorized(
@@ -1237,9 +1339,7 @@ class Agent:
                                             "worker_slot": index,
                                             "scenario_uid": diagnostics.get("scenario_uid"),
                                             "reason_code": reason_code,
-                                            "environment_step": diagnostics.get(
-                                                "environment_step"
-                                            ),
+                                            "environment_step": diagnostics.get("environment_step"),
                                             "worker_step_index": result.payload.get(
                                                 "worker_step_index"
                                             ),
@@ -1351,14 +1451,7 @@ class Agent:
                                 )
                     rewards = np.asarray(rewards, dtype=np.float32)
                     dones = np.asarray(dones, dtype=bool)
-                    for info in infos:
-                        terminal_observation = info.get("final_observation")
-                        if terminal_observation is None:
-                            terminal_observation = info.get("terminal_observation")
-                        if terminal_observation is not None:
-                            processed_final_observation = self.preprocessor(terminal_observation)
-                            info["final_observation"] = processed_final_observation
-                            info["terminal_observation"] = processed_final_observation
+                    _preprocess_terminal_observations(infos, self.preprocessor)
 
                     terminated, truncated, final_observations = (
                         normalize_vector_transition_boundary(
@@ -1422,11 +1515,9 @@ class Agent:
                         )
 
                     next_processed_obs = _preprocess_batch(np.asarray(next_obs))
-                    for idx, info in enumerate(infos):
-                        if dones[idx]:
-                            info["final_observation"] = self.preprocessor(final_observations[idx])
-                            info["terminal_observation"] = info["final_observation"]
-                            next_processed_obs[idx] = info["final_observation"]
+                    _attach_terminal_observations(
+                        infos, dones, final_observations, next_processed_obs
+                    )
                     # `REQ-GA-007`: one boundary for both abort kinds. They differ in
                     # accounting and quarantine policy, not in how a truncated
                     # trajectory prefix is preserved.
@@ -1497,6 +1588,11 @@ class Agent:
                             "truncated": bool(truncated[idx]),
                             "metrics": {
                                 "reward": float(episode_scalar_reward[idx]),
+                                # Carried inside `metrics` as well as on the payload
+                                # so the ACL driver can read the return and the step
+                                # count it must be divided by from one place, the
+                                # same way the non-vectorized path already does.
+                                "episode_length": int(episode_len[idx]),
                                 "success": bool(episode_success[idx]),
                                 "collision": bool(episode_collision[idx]),
                                 "out_of_road": bool(episode_out_of_road[idx]),
@@ -1512,14 +1608,11 @@ class Agent:
                                     if episode_has_hybrid_reward[idx]
                                     else None
                                 ),
-                                "termination_reason": (
-                                    "success"
-                                    if episode_success[idx]
-                                    else "collision"
-                                    if episode_collision[idx]
-                                    else "out_of_road"
-                                    if episode_out_of_road[idx]
-                                    else "timeout"
+                                "termination_reason": _episode_termination_reason(
+                                    success=bool(episode_success[idx]),
+                                    collision=bool(episode_collision[idx]),
+                                    out_of_road=bool(episode_out_of_road[idx]),
+                                    aborted=idx in aborted_indices,
                                 ),
                             },
                             "learning_potential": getattr(
@@ -1551,25 +1644,21 @@ class Agent:
                             episode_id = payload.get("episode_id")
                             if episode_id is None:
                                 continue
-                            value = getattr(
-                                lifecycle, "acl_learning_potential", lambda *_: None
-                            )(slot_id, int(episode_id))
+                            value = getattr(lifecycle, "acl_learning_potential", lambda *_: None)(
+                                slot_id, int(episode_id)
+                            )
                             if value is not None:
                                 payload["learning_potential"] = float(value)
-                            payload["ready_learning_potentials"] = dict(
-                                ready_learning_potentials
-                            )
+                            payload["ready_learning_potentials"] = dict(ready_learning_potentials)
                         self.preprocessor.reset()
                     event_details: dict[int, tuple[int, str, int, float, float]] = {}
                     for idx in done_indices:
-                        if episode_success[idx]:
-                            reason = "success"
-                        elif episode_collision[idx]:
-                            reason = "collision"
-                        elif episode_out_of_road[idx]:
-                            reason = "out_of_road"
-                        else:
-                            reason = "timeout"
+                        reason = _episode_termination_reason(
+                            success=bool(episode_success[idx]),
+                            collision=bool(episode_collision[idx]),
+                            out_of_road=bool(episode_out_of_road[idx]),
+                            aborted=int(idx) in aborted_indices,
+                        )
                         episodes += 1
                         event_details[int(idx)] = (
                             episodes,
@@ -1624,7 +1713,9 @@ class Agent:
                                 "_thesis_worker_timing_seconds", {}
                             )
                             if isinstance(worker_timing, Mapping):
-                                phase_seconds["worker_reset"] += float(worker_timing.get("reset", 0.0))
+                                phase_seconds["worker_reset"] += float(
+                                    worker_timing.get("reset", 0.0)
+                                )
                             reset_timing = reset_infos[idx].get("_thesis_reset_timing_seconds", {})
                             if isinstance(reset_timing, Mapping):
                                 for name, seconds in reset_timing.items():
@@ -1804,7 +1895,7 @@ class Agent:
             "chunk_steps_actual": int(collected_steps),
             "train_reset_seed_first": reset_seeds_used[0] if reset_seeds_used else None,
             "train_reset_seed_last": reset_seeds_used[-1] if reset_seeds_used else None,
-            "train_reset_seed_unique_count": len(set(reset_seeds_used)),
+            "train_reset_seed_unique_count": _unique_reset_seed_count(reset_seeds_used),
             "last_observations": obs,
         }
 
@@ -2796,9 +2887,7 @@ class Agent:
                 float(np.mean(episode_gif_render_seconds)) if episode_gif_render_seconds else 0.0
             ),
             # EP-COMFORT-DIAG: see the analogous comment in `evaluate()`.
-            **aggregate_comfort_episodes(
-                [record.get("comfort_summary", {}) for record in records]
-            ),
+            **aggregate_comfort_episodes([record.get("comfort_summary", {}) for record in records]),
             "per_rule": per_rule_rows,
             # EP-SUBRULE-DIAG: see the analogous comment in `evaluate()`.
             "per_subrule": aggregate_subrule_episodes(

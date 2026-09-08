@@ -122,6 +122,25 @@ def _is_agent_ahead(pre_ego: ActorSnapshot, actor: ActorSnapshot) -> bool:
     longitudinal, lateral = _relative_position(pre_ego, actor)
     if longitudinal <= 0.0:
         return False
-    bounds = pre_ego.footprint.bounds
-    half_width = max((bounds[3] - bounds[1]), (bounds[2] - bounds[0])) / 2.0
-    return abs(lateral) <= half_width
+    return abs(lateral) <= _footprint_half_width(pre_ego)
+
+
+def _footprint_half_width(actor: ActorSnapshot) -> float:
+    """Half of the footprint's *shorter* oriented side, i.e. half its width.
+
+    Read from the minimum rotated rectangle so the value does not depend on the
+    heading: axis-aligned bounds of a rotated rectangle inflate with the angle.
+    An earlier revision took the *longer* side of the axis-aligned bounds, i.e.
+    half the vehicle's length (~2.4 m), which classified lateral impacts inside
+    that band as frontal and therefore unconditionally at fault
+    (audit 2026-09-06, A6).
+    """
+
+    rectangle = actor.footprint.minimum_rotated_rectangle
+    coords = list(rectangle.exterior.coords) if hasattr(rectangle, "exterior") else []
+    if len(coords) < 4:
+        bounds = actor.footprint.bounds
+        return min(bounds[3] - bounds[1], bounds[2] - bounds[0]) / 2.0
+    side_a = hypot(coords[1][0] - coords[0][0], coords[1][1] - coords[0][1])
+    side_b = hypot(coords[2][0] - coords[1][0], coords[2][1] - coords[1][1])
+    return min(side_a, side_b) / 2.0

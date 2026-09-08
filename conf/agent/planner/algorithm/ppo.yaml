@@ -7,19 +7,32 @@ n_steps: 2048
 batch_size: 64
 n_epochs: 10
 learning_rate: 3e-4
-# ADR-075: undiscounted. Exponential discounting erodes the rulebook's
-# geometric priority weights at different rates, so at 0.99 a collision more
-# than 15.7 s away costs less than one non-relaxable violation now -- inside a
-# 20 s episode. Episodes terminate at the logged horizon, so the return is
-# finite and the task is proper. One gamma for every arm: differing discounts
-# would make results non-attributable to the preference structure under test.
-# Declared fallback if the value-based arms fail to stabilize: 0.999 for ALL
-# arms together, never per-arm, with the O3 degradation reported.
-gamma: 1.0
+# ADR-081, amending ADR-075. Discounting does erode the geometric priority
+# weights, but the binding comparison is one level apart -- L1 against L2
+# ("violate the interaction-risk rule now, or collide in Delta steps?"), and
+# identically L2 against L3 -- not the two-level one ADR-075 tabulated, so its
+# break-even figures are 2x too generous. Dominance survives while
+# `Delta < ln(a) / -ln(gamma)`. At `a = 2.5` (ADR-081) and the measured 199-step
+# horizon (RULEBOOK-V5.1 §4.6: p5/p50/p95 = 197/199/200) that requires
+# `gamma > 0.99541`; 0.996 gives 229 steps, a 15 % margin over the whole
+# episode, and 457 steps for the two-level comparison.
+#
+# `gamma = 1` was not merely the conservative choice. Roughly two thirds of
+# episodes end in a bootstrapped truncation at the horizon rather than a true
+# terminal, and on those the backup `Q <- r + Q(s')` admits `V + c` for any
+# constant `c`; only the terminating minority pins `c`, so approximation bias
+# walks it -- the mechanism behind the observed critic-loss growth. What reaches
+# `t = 0` is damped by `gamma^199`: 0.45 at 0.996, against 0.82 at ADR-075's
+# declared 0.999 fallback, which restores the contraction on paper and damps
+# almost nothing inside an episode.
+#
+# One gamma for every arm: differing discounts would make results
+# non-attributable to the preference structure under test.
+gamma: 0.996
 gae_lambda: 0.95
 # Must equal `gamma`: Ng et al.'s policy-invariance theorem for
 # potential-based shaping holds only when the shaping discount is the MDP's.
-learning_potential_gamma: 1.0
+learning_potential_gamma: 0.996
 learning_potential_gae_lambda: 0.9
 log_std_init: 0.0
 optimizer_eps: 1e-5

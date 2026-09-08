@@ -27,6 +27,13 @@ defaults:
 
 seed: 42
 device: auto
+# C28. Device for the *asynchronous evaluator* subprocess. Null keeps `device`,
+# which is the historical behaviour: the evaluator loads a second copy of the
+# policy onto the training accelerator while the learner is mid-update, and that
+# is what produced the observed out-of-memory. Set it to `cpu` to move the
+# evaluator off the accelerator entirely, at the cost of a slower panel; the
+# evaluator runs concurrently with training, so a slower panel is usually free.
+eval_device: null
 
 runtime:
   # Null preserves PyTorch's process-wide default. Positive values are an

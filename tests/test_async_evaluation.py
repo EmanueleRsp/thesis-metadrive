@@ -128,25 +128,112 @@ def test_fifo_jobs_keep_distinct_snapshots_and_complete_in_order(tmp_path, monke
     manager.close()
 
 
+def _enqueue(manager, tmp_path, eval_id: int) -> None:
+    manager.enqueue(
+        agent=_FakeAgent(tmp_path),
+        cfg=_cfg(),
+        eval_id=eval_id,
+        global_step=10 * eval_id,
+        stage="baseline",
+        stage_index=0,
+        episode_count=1,
+        base_seed=100 + eval_id,
+        env_seed=200 + eval_id,
+    )
+
+
 def test_evaluation_error_is_fatal(tmp_path, monkeypatch):
+    """The original contract, now stated as the explicit `max_consecutive_failures=1`."""
+
     def fake_worker(job, output_queue):
         output_queue.put(("error", job.eval_id, "deterministic evaluator failure"))
 
     monkeypatch.setattr(async_module, "_evaluation_worker_main", fake_worker)
-    manager = AsyncEvaluationManager(checkpoints_dir=tmp_path, process_factory=_FakeProcess)
-    manager.enqueue(
-        agent=_FakeAgent(tmp_path),
-        cfg=_cfg(),
-        eval_id=1,
-        global_step=10,
-        stage="baseline",
-        stage_index=0,
-        episode_count=1,
-        base_seed=100,
-        env_seed=200,
+    manager = AsyncEvaluationManager(
+        checkpoints_dir=tmp_path, process_factory=_FakeProcess, max_consecutive_failures=1
     )
+    _enqueue(manager, tmp_path, 1)
     with pytest.raises(AsyncEvaluationError, match="training terminated"):
         manager.poll()
+
+
+def test_a_single_evaluation_failure_is_skipped_not_fatal(tmp_path, monkeypatch):
+    """C27: an evaluation is a measurement, and losing one must not lose the run.
+
+    Under the previous behaviour any evaluator failure -- an OOM while the
+    learner happened to peak, say -- terminated training and discarded every
+    hour that produced the checkpoint being measured.
+    """
+
+    def fake_worker(job, output_queue):
+        output_queue.put(("error", job.eval_id, "transient evaluator failure"))
+
+    monkeypatch.setattr(async_module, "_evaluation_worker_main", fake_worker)
+    manager = AsyncEvaluationManager(checkpoints_dir=tmp_path, process_factory=_FakeProcess)
+    _enqueue(manager, tmp_path, 1)
+
+    manager.poll()
+
+    assert manager.failed_evaluation_count == 1
+    assert manager.active is None
+    assert any("skipped" in message for message in manager.drain_event_messages())
+
+
+def test_two_consecutive_failures_terminate_the_run(tmp_path, monkeypatch):
+    """A persistently broken evaluator produces no comparable metrics at all."""
+
+    def fake_worker(job, output_queue):
+        output_queue.put(("error", job.eval_id, "systematic evaluator failure"))
+
+    monkeypatch.setattr(async_module, "_evaluation_worker_main", fake_worker)
+    manager = AsyncEvaluationManager(checkpoints_dir=tmp_path, process_factory=_FakeProcess)
+    _enqueue(manager, tmp_path, 1)
+    _enqueue(manager, tmp_path, 2)
+
+    with pytest.raises(AsyncEvaluationError, match="2 times in a row"):
+        manager.poll()
+        manager.poll()
+
+    assert manager.failed_evaluation_count == 2
+
+
+def test_a_success_between_failures_clears_the_streak(tmp_path, monkeypatch):
+    """The threshold is on *consecutive* failures, so a recovery must reset it."""
+
+    outcomes = {1: "error", 2: "finished", 3: "error"}
+
+    def fake_worker(job, output_queue):
+        if outcomes[job.eval_id] == "error":
+            output_queue.put(("error", job.eval_id, "intermittent evaluator failure"))
+        else:
+            output_queue.put(("finished", job.eval_id, {"per_episode": {"reward": [1.0]}}))
+
+    monkeypatch.setattr(async_module, "_evaluation_worker_main", fake_worker)
+    manager = AsyncEvaluationManager(checkpoints_dir=tmp_path, process_factory=_FakeProcess)
+    for eval_id in (1, 2, 3):
+        _enqueue(manager, tmp_path, eval_id)
+
+    for _ in range(3):
+        manager.poll()
+
+    assert manager.failed_evaluation_count == 2
+
+
+def test_a_skipped_failure_releases_its_snapshot(tmp_path, monkeypatch):
+    """Otherwise the checkpoint directory grows by one evaluated model per failure."""
+
+    def fake_worker(job, output_queue):
+        output_queue.put(("error", job.eval_id, "transient evaluator failure"))
+
+    monkeypatch.setattr(async_module, "_evaluation_worker_main", fake_worker)
+    manager = AsyncEvaluationManager(checkpoints_dir=tmp_path, process_factory=_FakeProcess)
+    _enqueue(manager, tmp_path, 1)
+    snapshot_dir = tmp_path / "async_eval"
+    assert list(snapshot_dir.glob("*.zip"))
+
+    manager.poll()
+
+    assert not list(snapshot_dir.glob("*.zip"))
 
 
 def test_progress_message_appends_a_per_episode_event(tmp_path, monkeypatch):
@@ -301,7 +388,12 @@ def test_batch_uses_one_snapshot_for_two_panels_and_serial_fifo(tmp_path, monkey
         stage="baseline",
         stage_index=0,
         jobs=(
-            {"eval_id": 1, "episode_count": 2, "env_seed": 10, "panel_name": "validation_waymo_empirical"},
+            {
+                "eval_id": 1,
+                "episode_count": 2,
+                "env_seed": 10,
+                "panel_name": "validation_waymo_empirical",
+            },
             {"eval_id": 2, "episode_count": 2, "env_seed": 11, "panel_name": "validation_pg"},
         ),
     )
@@ -339,3 +431,28 @@ def test_async_evaluator_inherits_numeric_thread_limit_before_spawn(tmp_path, mo
     assert _EnvironmentCapturingProcess.observed_openblas_threads == "2"
     assert os.environ["OPENBLAS_NUM_THREADS"] == "17"
     manager.close()
+
+
+def test_evaluation_device_defaults_to_inheriting_the_training_device() -> None:
+    """No existing run may change behaviour: null means the same device as training."""
+
+    assert async_module.resolve_evaluation_device(OmegaConf.create({"device": "cuda"})) is None
+    assert (
+        async_module.resolve_evaluation_device(
+            OmegaConf.create({"device": "cuda", "eval_device": None})
+        )
+        is None
+    )
+
+
+def test_evaluation_device_can_be_moved_off_the_training_accelerator() -> None:
+    """C28: the evaluator loads a second policy while the learner's memory peaks."""
+
+    cfg = OmegaConf.create({"device": "cuda", "eval_device": "cpu"})
+    assert async_module.resolve_evaluation_device(cfg) == "cpu"
+
+
+def test_an_empty_evaluation_device_is_refused_rather_than_inherited() -> None:
+    cfg = OmegaConf.create({"device": "cuda", "eval_device": "  "})
+    with pytest.raises(ValueError, match="eval_device"):
+        async_module.resolve_evaluation_device(cfg)

@@ -124,6 +124,103 @@ def test_per_insertion_priority_tracks_exact_maximum_across_updates_and_overwrit
     assert buffer._insertion_priority() == pytest.approx(float(np.max(buffer.raw_priorities)))
 
 
+def test_per_priming_is_scale_equivariant_and_tracks_the_live_maximum() -> None:
+    """No floor above the current maximum: priming follows the priority scale.
+
+    Replaces a floor test removed by user decision on 2026-09-07. Raw priorities
+    are absolute `|TD error| + epsilon` in reward units, and the sampler is
+    otherwise exactly equivariant to a rescaling of them, so a constant floor
+    would be its only reward-scale-dependent term — and this project recalibrates
+    the reward. Asserted here on the observable instead of on the constant: the
+    priming value rescales with the priorities, and the empty-buffer stand-in of
+    1.0 is used only while nothing is priced.
+    """
+
+    def priced_buffer(scale: float) -> PrioritizedNStepReplayBuffer:
+        buffer = PrioritizedNStepReplayBuffer(
+            buffer_size=4,
+            observation_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+            action_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+            device="cpu",
+            n_envs=2,
+            n_steps=1,
+            gamma=0.99,
+            beta_anneal_steps=10,
+        )
+        observation = np.zeros((2, 1), dtype=np.float32)
+        action = np.zeros((2, 1), dtype=np.float32)
+        # Nothing is priced yet, so the empty-buffer stand-in applies.
+        assert buffer._insertion_priority() == pytest.approx(1.0)
+        buffer.add(observation, observation, action, np.zeros(2), np.zeros(2, dtype=bool), [{}, {}])
+        buffer.update_priorities(
+            np.array([0, 1]), np.array([0.4 * scale, 0.9 * scale], dtype=np.float64)
+        )
+        return buffer
+
+    small = priced_buffer(1.0)
+    large = priced_buffer(100.0)
+
+    # The priming value is the live maximum at either scale, not a constant, and
+    # it moves by exactly the rescaling factor.
+    assert small._insertion_priority() == pytest.approx(0.9 + 1.0e-6)
+    assert large._insertion_priority() == pytest.approx(90.0 + 1.0e-6)
+    assert small._insertion_priority() < 1.0
+
+
+def test_per_masked_overwrite_releases_the_maximum_it_evicts() -> None:
+    """A masked data-abort slot evicts a priced row, and the maximum must follow.
+
+    The masked branch of `add` writes the leaf directly, so it used to skip the
+    max bookkeeping entirely. `_current_max_count` then over-counted, and the
+    error is **permanently sticky**: the decrement in `_update_current_max` fires
+    only when the overwritten value equals the recorded maximum, which can never
+    happen again once no row holds it. Every unseen transition is primed at a
+    maximum the buffer does not contain, over-weighting it in sampling for the
+    rest of the run.
+    """
+
+    buffer = PrioritizedNStepReplayBuffer(
+        # SB3 divides the supplied capacity by n_envs: two storage rows, so the
+        # third insertion wraps onto the row holding the maximum.
+        buffer_size=4,
+        observation_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+        action_space=spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32),
+        device="cpu",
+        n_envs=2,
+        n_steps=1,
+        gamma=0.99,
+        beta_anneal_steps=10,
+    )
+    observation = np.zeros((2, 1), dtype=np.float32)
+    action = np.zeros((2, 1), dtype=np.float32)
+    reward = np.zeros(2, dtype=np.float32)
+    done = np.zeros(2, dtype=bool)
+    infos = [{}, {}]
+    aborted = np.asarray([False, False])
+
+    buffer.add(observation, observation, action, reward, done, infos)
+    buffer.add(observation, observation, action, reward, done, infos)
+    # Row 0 becomes the sole holder of the maximum; row 1 stays at the 1.0 both
+    # rows were primed with.
+    buffer.update_priorities(np.array([0, 1]), np.array([9.0, 9.0]))
+    assert buffer._insertion_priority() == pytest.approx(9.0)
+
+    buffer.add(observation, observation, action, reward, done, infos, valid_mask=aborted)
+
+    assert np.max(buffer.raw_priorities) == pytest.approx(1.0)
+    assert buffer._insertion_priority() == pytest.approx(float(np.max(buffer.raw_priorities)))
+
+    # A whole buffer cycle of aborts leaves no priced row at all. The maximum has
+    # to fall back to the empty-buffer value, because priming an insertion at
+    # 0.0 would make `_set_raw_priority` reject it outright.
+    buffer.add(observation, observation, action, reward, done, infos, valid_mask=aborted)
+    assert np.max(buffer.raw_priorities) == pytest.approx(0.0)
+    assert buffer._insertion_priority() == pytest.approx(1.0)
+
+    buffer.add(observation, observation, action, reward, done, infos)
+    assert np.max(buffer.raw_priorities) == pytest.approx(1.0)
+
+
 def test_per_data_abort_leaf_is_non_addressable_and_closes_previous_transition() -> None:
     buffer = PrioritizedNStepReplayBuffer(
         buffer_size=8,
