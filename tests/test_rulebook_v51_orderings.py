@@ -65,6 +65,32 @@ MEASUREMENT = load_measurement_module()
 LAMBDA6 = 0.2
 
 
+def _shipped_gamma() -> float:
+    """The discount every arm actually trains at, read from the configuration.
+
+    Read rather than declared: a fixture that hardcoded the value would keep
+    asserting the old behaviour after the configuration moved, which is exactly
+    the failure this module is being amended to correct. ADR-081 requires one
+    discount across every algorithm preset and
+    `test_every_algorithm_shares_one_hierarchy_preserving_discount` guards that,
+    so any single preset is representative and disagreement is an error here.
+    """
+
+    algorithm_dir = Path(__file__).parents[1] / "conf" / "agent" / "planner" / "algorithm"
+    observed = {
+        line.split(":", 1)[1].strip()
+        for config in sorted(algorithm_dir.glob("*.yaml"))
+        for line in config.read_text(encoding="utf-8").splitlines()
+        if line.startswith("gamma:")
+    }
+    assert observed, "no algorithm preset declares a discount; the fixtures would be vacuous"
+    assert len(observed) == 1, f"algorithm presets disagree on the discount: {sorted(observed)}"
+    return float(next(iter(observed)))
+
+
+SHIPPED_GAMMA = _shipped_gamma()
+
+
 def l6_cost(advance: float) -> float:
     """`c_L6 = 1 - clip(Delta q, 0, 1)`, RULEBOOK-V5.1 §4.6.
 
@@ -84,17 +110,34 @@ def measurement() -> ModuleType:
 Step = tuple[float, float, float, float, float]
 
 
-def scalar_return(module: ModuleType, trajectory: list[Step], *, lam: float, eta: float) -> float:
-    """Summed ``SCAL-V1.3`` return, undiscounted.
+def scalar_return(
+    module: ModuleType,
+    trajectory: list[Step],
+    *,
+    lam: float,
+    eta: float,
+    gamma: float = 1.0,
+) -> float:
+    """Summed ``SCAL-V1.3`` return, undiscounted by default.
 
-    Undiscounted because §4.4 leaves the mission channel's discount an open
-    decision and records that `gamma = 1` is what makes the L4 tie exact. These
-    fixtures assert the ordering the specification claims, so they use the
-    discount under which that claim is made.
+    ``gamma`` defaults to 1 because that is the discount under which the
+    orderings of §1.1 are *stated*: it is the unique value for which the L4
+    channel telescopes, so two trajectories reaching the same place tie there
+    exactly and the ordering is decided by the level below.
+
+    It is a parameter rather than a constant because the shipped discount is
+    **not** 1. ADR-081 set `gamma = 0.996` on every arm, and a discounted sum of
+    the same increments is a *weighted* sum: moving an increment earlier
+    increases it. A shortcut that arrives sooner therefore collects a strictly
+    larger L4 total, the tie is gone, and whether the ordering still holds
+    becomes a calibration rather than an identity. The fixtures below assert
+    both — the identity at `gamma = 1` and the measured behaviour at the shipped
+    discount — so neither can be mistaken for the other.
     """
 
     return sum(
-        module.v51_reward(
+        gamma**index
+        * module.v51_reward(
             l1=l1,
             l2=l2,
             l3=l3,
@@ -105,35 +148,73 @@ def scalar_return(module: ModuleType, trajectory: list[Step], *, lam: float, eta
             eta=eta,
             lam6=LAMBDA6,
         )
-        for l1, l2, l3, dq, l5 in trajectory
+        for index, (l1, l2, l3, dq, l5) in enumerate(trajectory)
     )
 
 
 def channel_returns(
     trajectory: list[Step],
+    *,
+    gamma: float = 1.0,
 ) -> tuple[float, float, float, float, float, float]:
     """Per-channel episode totals, in the order the lexicographic arms compare.
 
     Six entries: the fixtures carry five, and L6 is derived from the advance
     because it is a function of it (§4.6) rather than an independent quantity.
+
+    ``gamma`` defaults to 1 for the reason given on ``scalar_return``.
     """
 
-    totals = [sum(step[index] for step in trajectory) for index in range(5)]
-    totals.append(sum(l6_cost(step[3]) for step in trajectory))
+    totals = [
+        sum(gamma**index * step[channel] for index, step in enumerate(trajectory))
+        for channel in range(5)
+    ]
+    totals.append(sum(gamma**index * l6_cost(step[3]) for index, step in enumerate(trajectory)))
     return tuple(totals)  # type: ignore[return-value]
 
 
-def strict_lex_prefers_first(first: list[Step], second: list[Step]) -> bool | None:
+def deciding_channel(
+    first: list[Step],
+    second: list[Step],
+    *,
+    gamma: float = 1.0,
+    tolerance: float = 1e-12,
+) -> str | None:
+    """Name the first channel on which the two trajectories differ.
+
+    Which channel decides is a stronger statement than who wins, and it is the
+    one the restructure of §3 is about: ADR-076 moved the time preference to L6
+    so that an illegal shortcut would be separated at L5, *above* any preference
+    for arriving sooner. A comparison that resolves at L4 instead has bypassed
+    the level the design put there to resolve it.
+    """
+
+    first_channels = channel_returns(first, gamma=gamma)
+    second_channels = channel_returns(second, gamma=gamma)
+    for index, name in enumerate(("L1", "L2", "L3", "L4", "L5", "L6")):
+        if abs(first_channels[index] - second_channels[index]) >= tolerance:
+            return name
+    return None
+
+
+def strict_lex_prefers_first(
+    first: list[Step],
+    second: list[Step],
+    *,
+    gamma: float = 1.0,
+) -> bool | None:
     """Compare by strict lexicographic order; ``None`` when every channel ties.
 
     L1, L2, L3 and L5 are costs (lower wins); L4 is progress (higher wins). The
     comparison stops at the first channel that differs, which is exactly the
     property that makes standing still unbeatable when it is 0 on the safety
     channels (§11.1).
+
+    ``gamma`` defaults to 1 for the reason given on ``scalar_return``.
     """
 
-    first_channels = channel_returns(first)
-    second_channels = channel_returns(second)
+    first_channels = channel_returns(first, gamma=gamma)
+    second_channels = channel_returns(second, gamma=gamma)
     for index, higher_is_better in enumerate((False, False, False, True, False, False)):
         a, b = first_channels[index], second_channels[index]
         if a == b:
@@ -561,13 +642,19 @@ def completing_run(steps: int, *, l5_steps: int = 0, severity: float = 0.0) -> l
 
 
 def test_l4_ties_exactly_between_two_completing_runs(measurement: ModuleType) -> None:
-    """`TEST-RB5.1-15`. The theorem ADR-076 exists to protect.
+    """`TEST-RB5.1-15`. The theorem ADR-076 exists to protect, **undiscounted**.
 
     The whole point of putting duration at L6 rather than inside L4 is that this
     stays an *exact* tie. With a time cost folded into L4 the shortcut would
     arrive with a strictly larger mission channel, and O3 would hold only for
     shortcuts whose L5 exposure happened to exceed the time they saved — a
     calibration where there had been a proof.
+
+    The identity is `sum_t Delta q_t = (s_T - s_0) / D_REF`, which telescopes and
+    is therefore a statement about **distance covered**, independent of duration.
+    It holds exactly, here and in the agent's return, only at `gamma = 1`; see
+    `test_l4_tie_does_not_survive_the_shipped_discount` for what the shipped
+    discount does to it.
     """
 
     legal = completing_run(REFERENCE_EPISODE_STEPS)
@@ -576,12 +663,51 @@ def test_l4_ties_exactly_between_two_completing_runs(measurement: ModuleType) ->
     assert channel_returns(legal)[3] == pytest.approx(channel_returns(shortcut)[3])
 
 
+def test_l4_tie_does_not_survive_the_shipped_discount(measurement: ModuleType) -> None:
+    """`TEST-RB5.1-15b`. The telescoping identity is undiscounted, and the agent is not.
+
+    `sum_t Delta q_t` telescopes because every increment carries weight 1. Under
+    `gamma < 1` the return is `sum_t gamma^t Delta q_t`, a *weighted* sum of the
+    same increments, and any trajectory that delivers them earlier scores more.
+    The shortcut covers the identical arc length in fewer steps, so its
+    discounted mission channel is strictly larger — not by calibration, by
+    algebra.
+
+    Asserted here rather than left implicit because the tie is what the level
+    below is supposed to decide. Once L4 separates, L5 is never consulted.
+    """
+
+    assert SHIPPED_GAMMA < 1.0, "this fixture exists to price the shipped discount"
+
+    legal = completing_run(REFERENCE_EPISODE_STEPS)
+    shortcut = completing_run(REFERENCE_SHORTCUT_STEPS)
+
+    undiscounted_legal = channel_returns(legal)[3]
+    undiscounted_shortcut = channel_returns(shortcut)[3]
+    assert undiscounted_legal == pytest.approx(undiscounted_shortcut)
+
+    discounted_legal = channel_returns(legal, gamma=SHIPPED_GAMMA)[3]
+    discounted_shortcut = channel_returns(shortcut, gamma=SHIPPED_GAMMA)[3]
+    assert discounted_shortcut > discounted_legal
+
+    # The two runs are identical except for duration, so the gap is exactly the
+    # advantage the discount hands to arriving sooner.
+    assert deciding_channel(legal, shortcut, gamma=SHIPPED_GAMMA) == "L4"
+
+
 def test_o3_holds_against_the_reference_shortcut(measurement: ModuleType) -> None:
-    """`TEST-RB5.1-16`. O3 where the shortcut actually arrives sooner.
+    """`TEST-RB5.1-16`. O3 where the shortcut actually arrives sooner, **undiscounted**.
 
     This is the case the equal-length fixtures cannot reach. Under strict
     lexicographic ordering it is decided at L5, before L6 is ever consulted,
     which is why the weight on L6 is unconstrained in that arm.
+
+    The scalar margin here is **+0.20** on a return of about 78, i.e. O3 holds by
+    a quarter of a percent even at `gamma = 1`. That thinness is not incidental:
+    `lambda6` is pinned just below its O3 bound (`TEST-RB5.1-17`), so the scalar
+    arm buys nearly all the time preference the ordering can afford. Anything
+    that hands the shortcut further advantage exhausts the margin immediately —
+    which is what `test_o3_fails_at_the_shipped_discount` measures.
     """
 
     legal = completing_run(REFERENCE_EPISODE_STEPS)
@@ -595,6 +721,82 @@ def test_o3_holds_against_the_reference_shortcut(measurement: ModuleType) -> Non
     assert scalar_return(measurement, legal, lam=2.0, eta=1.0) > scalar_return(
         measurement, shortcut, lam=2.0, eta=1.0
     )
+    assert deciding_channel(legal, shortcut) == "L5"
+
+
+def test_o3_fails_at_the_shipped_discount(measurement: ModuleType) -> None:
+    """`TEST-RB5.1-16b`. O3 does not survive `gamma = 0.996`, on either comparison.
+
+    ADR-081 moved the discount off 1 for two reasons that stand on their own —
+    the Bellman operator is not a contraction at `gamma = 1` while two thirds of
+    episodes end in a bootstrapped truncation, and the hierarchy inverts inside
+    the episode unless `ln(a) / -ln(gamma) > 199`. Neither is disputed here.
+
+    What that decision also did, and did not record, is spend O3. The mechanism
+    is the one `test_l4_tie_does_not_survive_the_shipped_discount` states: the
+    shortcut delivers the same arc length earlier, so its discounted L4 total is
+    larger. Against an undiscounted margin of only +0.20 the tie's collapse is
+    decisive, and it lands in two distinct ways:
+
+    * **scalar arm** — the shortcut wins outright;
+    * **ordered arms** — worse, the comparison now resolves at **L4**. L5 is
+      never reached, so the level ADR-076 placed there to separate an illegal
+      shortcut is bypassed entirely. This is not a weaker version of the
+      property; it is the property inverted.
+
+    This fixture records the measurement. It does not propose a remedy: the
+    candidates (restore `gamma = 1`, restate the ordering as undiscounted,
+    raise `eta`, or accept and report the failure) are a decision, not a test.
+    """
+
+    assert SHIPPED_GAMMA < 1.0, "this fixture exists to price the shipped discount"
+
+    legal = completing_run(REFERENCE_EPISODE_STEPS)
+    shortcut = completing_run(
+        REFERENCE_SHORTCUT_STEPS,
+        l5_steps=REFERENCE_L5_STEPS,
+        severity=REFERENCE_L5_SEVERITY,
+    )
+
+    assert strict_lex_prefers_first(legal, shortcut, gamma=SHIPPED_GAMMA) is False
+    assert deciding_channel(legal, shortcut, gamma=SHIPPED_GAMMA) == "L4"
+    assert scalar_return(
+        measurement, legal, lam=2.0, eta=1.0, gamma=SHIPPED_GAMMA
+    ) < scalar_return(measurement, shortcut, lam=2.0, eta=1.0, gamma=SHIPPED_GAMMA)
+
+
+def test_o3_margin_across_the_discount_range(measurement: ModuleType) -> None:
+    """`TEST-RB5.1-16c`. The measured O3 margin as a function of the discount.
+
+    Pinned as literals so the table in RULEBOOK-V5.1 §4.4 has an executed source
+    rather than an interpolation. The margin is `legal - shortcut` on the scalar
+    arm at `lambda4 = 2.0`, `eta = 1.0`, against the §4.6 reference shortcut.
+    Positive means O3 holds.
+
+    The values are stated at fixed gammas rather than at `SHIPPED_GAMMA`, so
+    this stays a regression on the arithmetic even if the configuration moves.
+    """
+
+    legal = completing_run(REFERENCE_EPISODE_STEPS)
+    shortcut = completing_run(
+        REFERENCE_SHORTCUT_STEPS,
+        l5_steps=REFERENCE_L5_STEPS,
+        severity=REFERENCE_L5_SEVERITY,
+    )
+
+    expected = {
+        1.0: +0.2000,
+        0.999: -1.1396,
+        0.997: -2.9784,
+        0.996: -3.5789,
+        0.995: -4.0198,
+        0.99: -4.7416,
+    }
+    for gamma, margin in expected.items():
+        measured = scalar_return(
+            measurement, legal, lam=2.0, eta=1.0, gamma=gamma
+        ) - scalar_return(measurement, shortcut, lam=2.0, eta=1.0, gamma=gamma)
+        assert measured == pytest.approx(margin, abs=5e-4), f"gamma={gamma}"
 
 
 def test_lambda6_stays_below_its_o3_bound(measurement: ModuleType) -> None:

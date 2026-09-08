@@ -1,5 +1,20 @@
 # ADR-076: `L6 progress_rate`, a sixth level below relaxable lane compliance
 
+> **Premise weakened by ADR-081 (2026-09-07, approved): `γ = 0.996`.** This
+> decision is stated throughout as a consequence of ADR-075's `γ = 1`. The
+> **crawl pathology** it exists to prevent is measured on the panel below, not
+> derived from the discount, so the case for having a sixth level stands. What
+> does not stand is the claim it makes for its **placement**: "an illegal
+> shortcut loses at L5 before L6 is consulted" assumes the two trajectories tie
+> at L4, and at `γ = 0.996` they do not — the shortcut's discounted L4 total is
+> larger by **+2.05** in this document's own reference comparison, so the
+> ordering resolves at L4 and L5 is never reached. Likewise the `λ₆ < 0.25`
+> bound derived below is an undiscounted episodic comparison; at the shipped
+> discount **no** `λ₆`, including zero, satisfies O3. Measured in
+> `RULEBOOK-V5.1` §4.4, recorded as §11.12, tracked as `REQ-RB5.1-O3-DISCOUNT`.
+> Nothing here is retracted: the level, its formula and `λ₆ = 0.2` are all still
+> in force and still admissible under §5.4, which is a per-step condition.
+
 - Status: **Approved**
 - Date: 2026-08-20
 - Approval evidence: explicit user approval on 2026-08-20 ("sì, procedi con L6"),

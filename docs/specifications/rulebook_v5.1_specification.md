@@ -110,13 +110,21 @@ the structural remedy v5.0 §11.8 identified but deferred.
 
 The design target is not "positive expert return". It is that the reward ranks
 controlled trajectory pairs the way a competent driver would. These orderings
-are the acceptance criteria of §9 and the fixtures of §10:
+are the acceptance criteria of §9 and the fixtures of §10.
+
+> **These are statements about the *undiscounted* channel sums.** They are
+> stated that way because that is the discount under which the L4 tie is exact.
+> The shipped discount is `γ = 0.996` (ADR-081), and **O3 does not survive it**:
+> the shortcut arrives sooner, so its discounted L4 total is strictly larger, it
+> wins on the scalar arm by −3.58 and — on the ordered arms — wins at **L4**
+> before L5 is consulted. Measured in §4.4, recorded as §11.12. O1, O2, O4, O5
+> and O6 do not depend on an exact L4 tie and are unaffected.
 
 | # | ordering that must hold | mechanism |
 |---|---|---|
 | O1 | legal completion ≻ standing still | both tie on L1–L3; L4 separates |
 | O2 | completion needing a brief lane relaxation ≻ standing still | both tie on L1–L3; L4 separates before L5 is reached |
-| O3 | legal route ≻ illegal shortcut, both completing | tie on L1–L4; L5 separates |
+| O3 | legal route ≻ illegal shortcut, both completing | tie on L1–L4; L5 separates — **undiscounted only**, see §11.12 |
 | O4 | lane relaxation ≻ collision | L1 separates |
 | O5 | waiting at red ≻ running it to finish | L3 separates, above L4 |
 | O6 | necessary relaxation ≻ gratuitous relaxation | tie on L1–L4; L5 separates |
@@ -129,7 +137,7 @@ the orderings out from the two constructions gives:
 |---|---|---|
 | O1 | fails | fails |
 | **O2** | **fails** | **passes** |
-| O3 | passes | passes |
+| O3 | passes | passes undiscounted; **fails at `γ = 0.996`** (§11.12) |
 | O4 | passes | passes |
 | O5 | passes | passes |
 | O6 | passes | passes |
@@ -329,14 +337,46 @@ to `a · (distance covered) / (longest single step)`, in which `D_REF` cancels
 exactly: changing it only rescales `λ₄` inversely. It is fixed at `v_ref · Δt`
 so that `λ₄` is directly comparable with the priority weights `a³, a², a`.
 
-**The clip is the vehicle's physical bound, not a design choice.** MetaDrive
-fixes `max_speed_km_h = 80` for every vehicle type
+**The clip is calibrated to the vehicle's physical bound.** MetaDrive fixes
+`max_speed_km_h = 80` for every vehicle type
 (`third_party/metadrive/metadrive/component/pg_space.py:233`) and enforces it by
 cutting engine force above that speed (`base_vehicle.py:499`), with no override
-in this repository's configuration. 80 km/h is 22.22 m/s, i.e. exactly `v_ref`.
-**The agent therefore cannot produce a step above `D_REF`, and the clip never
-binds on any policy this reward will train.** It exists so §5.4 has a declared
-bound, not to shape behaviour.
+in this repository's configuration. 80 km/h is 22.22 m/s, i.e. exactly `v_ref`,
+so **the agent cannot travel more than `D_REF` of ground in one step.**
+
+*Correcting an earlier revision, which concluded from this that "the clip never
+binds on any policy this reward will train".* That does not follow, because `s`
+is a **projection** onto the route polyline and not the ego's own travel, and the
+two differ:
+
+- **Curve geometry.** An ego on the inside of a bend of radius `R` at lateral
+  offset `d` traverses an arc of radius `R − d` while its projection traverses
+  `R`, so the station advances by `R / (R − d)` times the vehicle's own
+  displacement. This is **already an approved finding of this repository**:
+  ADR-035 sets `ROUTE_CONTINUITY_JUMP_FACTOR = 2.0`, i.e. a plausibility bound
+  of `2 · v_max · Δt`, and states in as many words that "the factor of 2 covers
+  the fact that cutting the inside of a curve advances the centerline coordinate
+  faster than the ego's own displacement". **The geometric bound on `Δq` is
+  therefore about 2, not 1.**
+- **Branch selection.** `project` chooses the globally nearest segment, with
+  `previous_s_m` breaking only geometric ties, so on a route that approaches
+  itself the selected station can move by more than one step of travel. ADR-035
+  introduced the jump bound for exactly this, and made it a **preference rather
+  than a gate**: when no candidate is plausible the unbounded selection is kept.
+  The production mission tracker does not pass it at all — `tracker.py`'s
+  `project` is documented as running "without a jump envelope or clamp" — so on
+  that path `Δq` has no geometric bound below the clip.
+
+Neither is bounded by the engine-force cap. Consistently, `AC-RB5.1-05` records
+the clip binding on **0.6 %** of expert steps.
+
+**This strengthens rather than weakens §5.4.** `ΔQ_MAX = 1` is the bound that
+document's admissibility condition rests on, and it is enforced *by the clip*
+rather than merely witnessed by vehicle dynamics — so it holds for the two cases
+above as well. What the clip does not do is pass an unbounded charge through: any
+per-step quantity exceeding `D_REF` is truncated, and the excess is discarded
+rather than deferred. A redefinition of this channel may therefore not assume the
+clip is inert.
 
 ### 4.1.1 Why not normalize by the route's own length
 
@@ -489,21 +529,84 @@ every `γ < 1`.
 
 #### Decision
 
-**`γ = 1` on every channel and every arm**, one discount for all four so that a
-difference in results stays attributable to the preference structure under test.
-`learning_potential_gamma` must track it, or Ng et al.'s policy-invariance
-theorem for potential-based shaping no longer applies. Declared fallback if the
-value-based arms fail to stabilize: **`γ = 0.999` for every arm together**, with
-the O3 degradation reported.
+**`γ = 0.996` on every channel and every arm** (ADR-081), one discount for all
+four so that a difference in results stays attributable to the preference
+structure under test. `learning_potential_gamma` must track it, or Ng et al.'s
+policy-invariance theorem for potential-based shaping no longer applies.
 
-**`REQ-RB5.1-GAMMA` is resolved.**
+*An earlier revision of this section decided `γ = 1`* (ADR-075), on the strength
+of the O3 table above, and declared `γ = 0.999` as a fallback. ADR-081 superseded
+it for two reasons that section did not weigh: at `γ = 1` the Bellman operator is
+non-expansive rather than contracting, and with roughly two thirds of episodes
+ending in a bootstrapped truncation the value level is pinned only by the
+terminating minority; and the hierarchy inverts inside the episode unless
+`ln(a) / −ln(γ) > L`, which at `a = 2.5` and `L = 199` requires `γ > 0.99541`.
+
+**What the amendment costs, measured rather than interpolated.** The O3 table
+above is the price, and it was not restated when the discount moved. Against the
+§4.6 reference shortcut, at `λ₄ = 2.0` and `η = 1.0`, the scalar margin
+`legal − shortcut` is:
+
+| `γ` | scalar O3 margin | strict-lex decided at | O3 |
+|---|---:|---|---|
+| **1.0** | **+0.2000** | L5 | holds |
+| 0.999 | −1.1396 | **L4** | fails |
+| 0.997 | −2.9784 | **L4** | fails |
+| **0.996 (shipped)** | **−3.5789** | **L4** | **fails** |
+| 0.995 | −4.0198 | **L4** | fails |
+| 0.99 | −4.7416 | **L4** | fails |
+
+Executed by `test_o3_margin_across_the_discount_range`; the shipped row is
+guarded separately by `test_o3_fails_at_the_shipped_discount`, which reads `γ`
+from the configuration rather than from a literal.
+
+Two things this table makes visible that the earlier one did not. First, O3 held
+at `γ = 1` by **+0.20 on a return of 78** — a quarter of a percent — because
+`λ₆` is pinned just under its O3 bound (§4.6), so the scalar arm already spends
+almost all the time preference the ordering can afford. Second, and worse, under
+the **ordered** arms the comparison no longer resolves at L5 at all: the
+shortcut's discounted L4 total is larger, so it wins at **L4** and L5 is never
+consulted. That is the level ADR-076 placed there precisely to separate an
+illegal shortcut, and the discount bypasses it. The failure is therefore not
+confined to the scalar arm, which is what the earlier table's framing implied.
+
+The mechanism is algebra, not calibration: `Σ_t Δq_t` telescopes because every
+increment carries weight 1, so it measures **distance covered**; `Σ_t γ^t Δq_t`
+is a *weighted* sum of the same increments, and a trajectory delivering them
+earlier scores strictly more. No choice of `λ₄`, `η` or `λ₆` restores the tie,
+because the tie is a property of the weighting, not of the weights.
+
+**This is recorded as a limitation (§11.12), not repaired here.** The remedies
+are the ones ADR-075 already falsified — a threshold on L4, potential-based
+shaping, raising `η` against the `λ₄ + 0.1·η < a` bound — plus two this document
+cannot choose between: restate O1–O6 as properties of the *undiscounted* channel
+sums and report the discounted ordering as a measured result, or reopen `γ`.
+Choosing belongs to the algorithm specification and to an approved decision.
+
+**`REQ-RB5.1-GAMMA` is resolved.** `REQ-RB5.1-O3-DISCOUNT` is open.
 
 ### 4.6 `L6 progress_rate` (ADR-076)
 
-`γ = 1` fixes the hierarchy and removes something at the same time: **all time
-pressure**. The channel telescopes, so two trajectories reaching the same place
-score identically however long they take, and nothing else in the rulebook
-prefers the faster one — `speed_limit` is an upper bound only.
+> **Affected by ADR-081 (2026-09-07, approved): `a = 2.5`, `γ = 0.996`.** Two
+> things below are stated at superseded values. The rank-preservation tail is
+> evaluated against `a = 2.2`; at `a = 2.5` the same inequality has more room,
+> so the conclusion is unchanged and the figure is conservative. More
+> substantially, this section's opening premise and its `λ₆ < 0.25` bound are
+> both **undiscounted episodic comparisons**, and the shipped discount is not 1.
+> What survives and what does not is stated inline below and in §11.12.
+
+The mission channel telescopes when summed undiscounted, which fixes the
+hierarchy and removes something at the same time: **all time pressure**. Two
+trajectories reaching the same place then score identically however long they
+take, and nothing else in the rulebook prefers the faster one — `speed_limit` is
+an upper bound only.
+
+*An earlier revision attributed this to `γ = 1`.* That was the shipped discount
+when this section was written, and under it the property held in the agent's
+return as well. At `γ = 0.996` the return weights earlier increments more, so the
+faster completion does score more — which means the **motivation** for L6 is
+weaker than stated here, while the **crawl pathology** it was built to prevent is
+measured below rather than derived from the discount and stands regardless.
 
 **Arrival is not a sufficient bound, and this was measured rather than assumed.**
 
@@ -546,6 +649,14 @@ sooner is decoupled from whether arriving sooner can buy a lane violation.
 
 That decoupling is what a time cost inside L4 cannot provide, and it is why the
 first proposal was rejected.
+
+**This holds only for the undiscounted comparison, and the shipped discount is
+`γ = 0.996`.** The argument assumes the two trajectories tie at L4 so that L5 is
+reached; under discounting the shortcut's L4 total is strictly larger and the
+comparison stops there. So in the ordered arms the shortcut is not merely
+*less* penalised — it **wins, at L4**, and `c_L5 > 0` is never read. The
+decoupling this subsection claims is the property most directly lost, which is
+why §11.12 calls it structural rather than a degraded margin. Measured in §4.4.
 
 #### Why the advance shortfall rather than a flat time counter
 
@@ -594,7 +705,20 @@ gain = λ₆ · 40 · (Δt/T_REF)     cost = η · (1/3) · (Δt/T_REF) · 30 = 
 ```
 
 **`λ₆ = 0.2`**, a 20 % margin. §5.4's tail gains `λ₆·(Δt/T_REF)`:
-`2.0 + 0.1 + 0.02 = 2.12 < a = 2.2`.
+`2.0 + 0.1 + 0.02 = 2.12 < a = 2.2`, and `2.12 < a = 2.5` after ADR-081, so the
+margin widens rather than narrows.
+
+**The bound above is an undiscounted episodic comparison**, i.e. the same class
+of quantity as O3 and subject to the same correction. Under `γ = 0.996` the
+shortcut's gain is no longer `λ₆ · 40 · (Δt/T_REF)`: it also collects the L4
+advantage of arriving sooner, which is worth **+2.05** in this exact comparison
+(§4.4) against the `1.0` of L5 exposure the inequality prices — an advantage
+that exists at every `λ₆`, including zero. **No value of `λ₆` satisfies O3 at
+the shipped discount**, so the inequality is not merely re-derived at a different
+number: it stops being the binding constraint. `λ₆ = 0.2` remains admissible
+under §5.4, which is a per-step condition and unaffected. Recorded in §11.12; a
+replacement bound is not proposed here, because it depends on which exit is taken
+for `REQ-RB5.1-O3-DISCOUNT`.
 
 This bound binds on the **scalar arm only**. Summing every channel re-couples
 what an ordering separates, and the consequence is measurable: `λ₆ = 0.2` buys
@@ -844,17 +968,32 @@ hidden: it is the one weight in this document not pinned by measurement.
 
 ### 5.5.1 Why the Test A figures are conservative
 
-MetaDrive caps every vehicle at 80 km/h = `v_ref`, so the agent cannot produce a
-step above `D_REF` and the §4.1 clip never binds on it. The logged Waymo expert
-is a real car under no such cap: its step advance reaches **3.609 m** (130 km/h),
-with p50 0.489, p90 1.394, p99 2.021 and p99.9 2.920 m, and the clip binds on
-**1298 of 217,189 steps (0.6 %)**.
+MetaDrive caps every vehicle at 80 km/h = `v_ref`, so the agent cannot *travel*
+more than `D_REF` of ground in one step. The logged Waymo expert is a real car
+under no such cap. Its **station** advance reaches **3.609 m**, with p50 0.489,
+p90 1.394, p99 2.021 and p99.9 2.920 m, and the clip binds on **1298 of 217,189
+steps (0.6 %)**.
 
-Those steps are the expert being charged for speed the policy could never
-attain. **The +70.70 above is therefore a lower bound on what this reward gives a
-competent driver**, and the telescoping identity — inexact on the expert panel
-for exactly those 1298 steps — is exact for every trajectory the agent can
-generate.
+The clip only ever truncates a positive advance downwards, so **the +70.70 above
+is a lower bound on what this reward gives a competent driver.** That conclusion
+does not depend on why the clip binds.
+
+*Correcting an earlier revision*, which read the 3.609 m as "130 km/h" and
+concluded those steps were "the expert being charged for speed the policy could
+never attain", hence that the telescoping identity "is exact for every trajectory
+the agent can generate". Neither step is established. The measured quantity is
+the advance of the **projection** onto the route polyline, and §4.1 gives two
+mechanisms by which it exceeds the ego's own travel — curve geometry, at a factor
+`R / (R − d)`, and global branch selection — so an advance of 3.609 m is not by
+itself evidence of a 36 m/s vehicle. The agent is subject to both mechanisms too,
+so the identity is not guaranteed exact for its trajectories either.
+
+**The measurement that would settle it** is cheap and not yet run: on those 1298
+steps, compare the ego's own speed against the station advance. If the ego is
+genuinely above `v_ref` the original reading is right and `AC-RB5.1-05` is
+established; if it is not, the clip is truncating legitimate projected progress
+that the agent can also produce, and the identity's exactness must be restated
+for the agent arm as well.
 
 ---
 
@@ -880,8 +1019,14 @@ applicability mask, and the per-level channel values.
 
 Two new counters this document requires:
 
-- `l4_clip_binding_steps` — how often the §4.1 clip binds. Zero for any agent
-  trajectory by vehicle dynamics; non-zero only on expert replay (§5.5.1);
+- `l4_clip_binding_steps` — how often the §4.1 clip binds. *Correcting an
+  earlier revision, which expected "zero for any agent trajectory by vehicle
+  dynamics; non-zero only on expert replay":* the engine-force cap bounds the
+  ego's travel, not its projection (§4.1), so a non-zero count on an agent
+  trajectory is legitimate rather than evidence the cap was overridden. **This
+  counter has never been read on a real run**, so its production distribution is
+  unknown, and a large value would mean the reward is discarding real progress —
+  the clip truncates rather than defers;
 - `l5_reached_steps` — how often two compared trajectories tie through L4 so that
   L5 decides. If this is zero in practice, the restructure has not achieved what
   §1.1 claims and the result must be reported as such;
@@ -925,23 +1070,23 @@ scenario and therefore no counterfactual. Both halves are now in place.
 
 | ID | criterion | status |
 |---|---|---|
-| `AC-RB5.1-01` | O1–O6 all hold on the §10 fixtures under `SCAL-V1.4` | **PASS** — `tests/test_rulebook_v51_orderings.py` |
-| `AC-RB5.1-02` | O1–O6 all hold under strict lexicographic ordering on the five channels, **or** each failure is reported with the channel that caused it | **PASS** — O1 fails at L2 and the failure is asserted; O2–O6 hold |
+| `AC-RB5.1-01` | O1–O6 all hold on the §10 fixtures under `SCAL-V1.4` | **PASS undiscounted** — `tests/test_rulebook_v51_orderings.py`. **O3 fails at the shipped `γ = 0.996`** (§11.12); O1, O2, O4, O5, O6 do not depend on an exact L4 tie and are unaffected |
+| `AC-RB5.1-02` | O1–O6 all hold under strict lexicographic ordering on the five channels, **or** each failure is reported with the channel that caused it | **PASS undiscounted** — O1 fails at L2 and the failure is asserted; O2–O6 hold. At the shipped `γ` **O3 also fails, at L4**, and that failure is likewise asserted rather than repaired (`test_o3_fails_at_the_shipped_discount`) — which is what this criterion's "or" clause requires |
 | `AC-RB5.1-03` | Expert mean episode return is positive | **PASS** — +70.70 |
 | `AC-RB5.1-04` | Expert episodes below standstill do not exceed the v5.0 figure of 7.45 % | **PASS** — 3.36 % |
-| `AC-RB5.1-05` | The §4.1 clip binds on no step the agent can produce | **PASS** by vehicle dynamics (§5.5.1); binds on 0.6 % of *expert* steps, which are above the agent's physical maximum |
+| `AC-RB5.1-05` | The §4.1 clip binds on no step the agent can produce | **NOT ESTABLISHED.** The engine-force cap bounds the ego's *travel*, not its *projection*, which outruns it on the inside of a bend and can jump at a branch selection (§4.1). Measured: binds on 0.6 % of *expert* steps; the split between over-`v_ref` expert speed and projection geometry was not measured, so the criterion is unproven rather than failed. `ΔQ_MAX = 1` is unaffected — it is enforced by the clip itself |
 | `AC-RB5.1-06` | The selected `(a, σ, φ, λ₄, λ₅)` satisfies §5.4 for every `k` | **PASS** — `2.0 + 0.1 = 2.1 < 2.2`; inadmissible pairs are never priced |
-| `AC-RB5.1-07` | `Σ_t Δq_t = (s_T − s_0)/D_REF` to numerical tolerance | **PASS** for agent trajectories; inexact on the expert panel only where the clip binds (§5.5.1) |
+| `AC-RB5.1-07` | `Σ_t Δq_t = (s_T − s_0)/D_REF` to numerical tolerance | **PASS** for agent trajectories; inexact on the expert panel only where the clip binds (§5.5.1). The identity is **undiscounted** and is not the agent's return at `γ = 0.996` (§4.4, §11.12) |
 | `AC-RB5.1-08` | Every atomic cost of §3.4 is exposed alongside the aggregated channels | **PASS** — inherited from instrument |
 | `AC-RB5.1-09` | Validation and test splits are consulted by no calibration in this document | **PASS** — inherited from v5.0 `AC-RB5-12` |
 | `AC-RB5.1-10` | L1–L4 are bit-identical across `η` settings — `η` reaches only L5 | **PASS** — p1 and p5 identical across `η ∈ [0, 5]` |
 | `AC-RB5.1-11` | v5.1 is not worse than v5.0 on mean, p1, p5, p50 and below-standstill | **PASS** — dominates on all five |
-| `AC-RB5.1-12` | O3 holds against the §4.6 reference shortcut, which arrives sooner, in **both** the scalar and the strict-lex comparison | **PASS** — `TEST-RB5.1-16` |
+| `AC-RB5.1-12` | O3 holds against the §4.6 reference shortcut, which arrives sooner, in **both** the scalar and the strict-lex comparison | **PASS undiscounted** — `TEST-RB5.1-16`, margin +0.2000, decided at L5. **FAILS at the shipped `γ = 0.996`** — margin −3.5789 and decided at **L4**, so L5 is never consulted (`test_o3_fails_at_the_shipped_discount`). See §4.4 and §11.12 |
 | `AC-RB5.1-13` | `λ₆` is strictly below its O3 bound | **PASS** — 0.2 < 0.25 |
 | `AC-RB5.1-14` | The §5.4 predicate admits `(λ₄, η, λ₆) = (2.0, 1.0, 0.2)` and rejects an inadmissible `λ₆` | **PASS** — 2.12 < 2.2 at approval; 2.12 < 2.5 after ADR-081 |
 | `AC-RB5.1-15` | The below-standstill diagnostic compares against `−λ₆·(Δt/T_REF)·T`, not against 0 | **PASS** — `v51_standstill_return` |
 | `AC-RB5.1-16` | One discount shared by every algorithm configuration, `learning_potential_gamma` equal to it, and `ln(a)/−ln(γ)` above the 199-step horizon (ADR-081; originally `γ = 1`, ADR-075) | **PASS** — six configs at `γ = 0.996`, guarded by `test_every_algorithm_shares_one_hierarchy_preserving_discount` |
-| `AC-RB5.1-17` | L6 refines only ties: O1–O6 hold unchanged with the sixth level present | **PASS** — `TEST-RB5.1-20` |
+| `AC-RB5.1-17` | L6 refines only ties: O1–O6 hold unchanged with the sixth level present | **PASS undiscounted** — `TEST-RB5.1-20`. The premise "L6 refines only ties" is itself undiscounted: at `γ = 0.996` L4 no longer ties between runs of different duration, so there is no tie left for L6 to refine in that comparison (§11.12) |
 
 `AC-RB5.1-02` is deliberately permissive: strict lex is expected to fail O1 for
 the reason given in §11.1, and that failure is a **result to report**, not a
@@ -958,15 +1103,18 @@ defect to repair.
 | `TEST-RB5.1-05` | O5 fixture: waiting at red vs running it to complete |
 | `TEST-RB5.1-06` | O6 fixture: necessary vs gratuitous relaxation, equal completion |
 | `TEST-RB5.1-07` | `Σ Δq = (s_T − s_0)/D_REF` below the clip; a stretch covered forward and back nets exactly zero |
-| `TEST-RB5.1-08` | The §4.1 clip binds on no step reachable at `max_speed_km_h`, and `D_REF` equals `v_ref · Δt` |
+| `TEST-RB5.1-08` | The §4.1 clip binds on no step of *ground travel* reachable at `max_speed_km_h`, and `D_REF` equals `v_ref · Δt`. It says nothing about the *projected* advance, which is not bounded by that cap (§4.1) |
 | `TEST-RB5.1-09` | §5.4 predicate agrees with exhaustive search over the weight grid |
 | `TEST-RB5.1-10` | Per-step dominance of L1–L3 holds on a fixture covering all three |
 | `TEST-RB5.1-11` | `c_L5` denominator stays 3 when a sub-rule is inapplicable |
 | `TEST-RB5.1-12` | `c_L2 = 0` iff all three L2 sub-rules are 0 |
 | `TEST-RB5.1-13` | Varying `η` leaves L1–L4 channel values bit-identical |
 | `TEST-RB5.1-14` | ADR-071: at-fault terminates and charges; not-at-fault truncates and charges nothing |
-| `TEST-RB5.1-15` | L4 ties **exactly** between two completing runs of different duration |
-| `TEST-RB5.1-16` | O3 against the §4.6 reference shortcut, in both comparisons |
+| `TEST-RB5.1-15` | L4 ties **exactly** between two completing runs of different duration, undiscounted |
+| `TEST-RB5.1-15b` | the same tie **does not survive** the shipped `γ`, and the comparison moves to L4 |
+| `TEST-RB5.1-16` | O3 against the §4.6 reference shortcut, in both comparisons, undiscounted (decided at L5) |
+| `TEST-RB5.1-16b` | O3 **fails** at the shipped `γ`, in both comparisons, decided at L4 (§11.12) |
+| `TEST-RB5.1-16c` | the O3 scalar margin across `γ ∈ {1, 0.999, 0.997, 0.996, 0.995, 0.99}`, as executed evidence for §4.4's table |
 | `TEST-RB5.1-17` | `λ₆` stays strictly below its O3 bound, and so does every grid member |
 | `TEST-RB5.1-18` | `Σ c_L6 = T − Q` for every completion time, with L4 unchanged |
 | `TEST-RB5.1-19` | Standing still and reversing both cost the maximum at L6, and the standstill baseline follows |
@@ -1098,6 +1246,39 @@ an L2 sub-rule fires, not on how mild it is when it does.
     while the hierarchy already supplies the justification — a trajectory that
     runs the red differs at L3, above, and two trajectories both waiting tie at
     L6 for as long as they both wait.
+
+12. **O3 does not hold at the shipped discount, and fails at the wrong level.**
+    §1.1 states the orderings on the *undiscounted* channel sums, which is the
+    only weighting under which L4 ties between two trajectories reaching the same
+    place. ADR-081 set `γ = 0.996`. Against the §4.6 reference shortcut the
+    scalar margin is **−3.5789** where it was **+0.2000**, and under the ordered
+    arms the comparison resolves at **L4** rather than at L5 — so the level
+    ADR-076 introduced to separate an illegal shortcut is never consulted. Both
+    figures are executed (`test_o3_margin_across_the_discount_range`,
+    `test_o3_fails_at_the_shipped_discount`).
+
+    The mechanism is not a calibration that drifted. `Σ_t Δq_t` telescopes
+    because every increment carries weight 1, making it a statement about
+    distance covered; `Σ_t γ^t Δq_t` weights the same increments by recency, and
+    a trajectory delivering them sooner scores strictly more. No `(λ₄, η, λ₆)`
+    restores the tie, because the tie is a property of the weighting.
+
+    Two further observations, because they bound how surprising this is and how
+    it might be repaired. The undiscounted margin was **+0.20 on a return of
+    78**: `λ₆` sits just under the O3 bound of §4.6, so the scalar arm was
+    already spending nearly all the time preference the ordering can afford, and
+    it had no headroom to lose. And the exposure is asymmetric across the four
+    arms — the scalar arm loses an ordering, while the ordered arms lose the
+    *structure*, since a comparison resolved at L4 makes L5's placement
+    inoperative for this pair.
+
+    Not repaired here. ADR-075 already falsified a threshold on L4,
+    potential-based shaping, and raising `η` against `λ₄ + 0.1·η < a`. What
+    remains is a choice between restating O1–O6 as properties of the
+    undiscounted channel sums and reporting the discounted ordering as a
+    measured result, and reopening `γ` against the two arguments that moved it.
+    That is an approved decision, not a specification edit. Tracked as
+    `REQ-RB5.1-O3-DISCOUNT` (§4.4) and in `docs/open_items.md`.
 
 12. **`γ = 1` carries an off-policy stability risk** (§4.4). *Superseded in
     part by ADR-081 (2026-09-07): the production discount is `γ = 0.996`, chosen

@@ -12,6 +12,17 @@
 > it, which is the mechanism behind the observed critic-loss growth. The
 > declared 0.999 fallback would have restored the contraction on paper while
 > damping 18 % of that drift over a 199-step episode, against 55 % at 0.996.
+>
+> **What the amendment spends, which ADR-081 did not record: the O3 table
+> below.** This document chose `γ = 1` partly because it is the unique value
+> making the L4 tie exact, and its own measurements show O3 failing at every
+> `γ < 1`. That consequence stands and is now measured at the shipped value:
+> the scalar margin against the §4.6 reference shortcut is **−3.5789**, and
+> under the ordered arms the comparison resolves at **L4** rather than at L5, so
+> the level ADR-076 introduced to separate an illegal shortcut is bypassed.
+> ADR-081's reasons for moving `γ` are not disputed; the point is only that this
+> was a cost, not a neutral substitution. Recorded as `RULEBOOK-V5.1` §11.12 and
+> tracked as `REQ-RB5.1-O3-DISCOUNT`.
 
 - Status: **Approved, amended by ADR-081**
 - Date: 2026-08-20

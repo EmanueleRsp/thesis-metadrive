@@ -147,11 +147,22 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
     def _level_diagnostics(self, result: RulebookResult) -> dict[str, Any]:
         """RULEBOOK-V5.1 §7's two counters, plus the ego speed for §7's third.
 
-        `l4_clip_binding_steps` should be **zero for any agent trajectory**:
-        MetaDrive caps every vehicle at `max_speed_km_h = 80 = v_ref`, so the
-        §4.1 clip cannot bind on a step the agent produces. A non-zero count is
-        therefore not a statistic, it is a signal that the cap was overridden and
-        that the Test A figures no longer bound what the agent can earn.
+        `l4_clip_binding_steps` counts the steps where the §4.1 clip truncated
+        the advance. An earlier revision of this docstring expected it to be
+        **zero for any agent trajectory**, reasoning that MetaDrive caps every
+        vehicle at `max_speed_km_h = 80 = v_ref`. That cap bounds the ego's
+        *travel*, not its *projection*: ADR-035 sizes the gap at a factor of 2
+        (`ROUTE_CONTINUITY_JUMP_FACTOR`), because cutting the inside of a curve
+        advances the centerline coordinate faster than the ego does, and the
+        production mission tracker projects with no jump bound at all. So a
+        non-zero count is a legitimate reading, not proof that the cap was
+        overridden.
+
+        It is still worth watching. A count that is *large* means the reward is
+        discarding real progress — the clip truncates and does not defer — and
+        it means the Test A figures bound what the agent earns less tightly than
+        §5.5.1 assumes. Nothing in this repository has ever read this counter on
+        a real run, so its production distribution is unknown.
 
         `l5_reached_steps` counts the steps where nothing above L5 is charged, so
         L5 is the level that decides. **If this stays zero in practice the
