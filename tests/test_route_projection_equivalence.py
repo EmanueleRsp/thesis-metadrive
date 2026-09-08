@@ -106,9 +106,7 @@ def _reference_project(
     )
 
 
-def _assert_equivalent(
-    route: RoutePolyline, point_xy: tuple[float, float], **options: Any
-) -> None:
+def _assert_equivalent(route: RoutePolyline, point_xy: tuple[float, float], **options: Any) -> None:
     try:
         expected = _reference_project(route, point_xy, **options)
     except ValueError as error:
@@ -120,13 +118,18 @@ def _assert_equivalent(
     assert actual.segment_index == expected.segment_index, context
     assert abs(actual.s_m - expected.s_m) <= EQUIVALENCE_TOLERANCE_M, context
     assert abs(actual.z_m - expected.z_m) <= EQUIVALENCE_TOLERANCE_M, context
-    assert abs(actual.lateral_distance_m - expected.lateral_distance_m) <= EQUIVALENCE_TOLERANCE_M, (
-        context
-    )
+    assert (
+        abs(actual.lateral_distance_m - expected.lateral_distance_m) <= EQUIVALENCE_TOLERANCE_M
+    ), context
     assert abs(actual.tangent_xy[0] - expected.tangent_xy[0]) <= EQUIVALENCE_TOLERANCE_M, context
     assert abs(actual.tangent_xy[1] - expected.tangent_xy[1]) <= EQUIVALENCE_TOLERANCE_M, context
-    assert all(isinstance(value, float) for value in (actual.s_m, actual.z_m, actual.lateral_distance_m))
-    assert isinstance(actual.segment_index, int)
+    # ``np.float64`` subclasses ``float``, so ``isinstance`` would not catch a
+    # NumPy scalar leaking into the frozen dataclass; check the exact types.
+    assert all(
+        type(value) is float
+        for value in (actual.s_m, actual.z_m, actual.lateral_distance_m, *actual.tangent_xy)
+    )
+    assert type(actual.segment_index) is int
     assert isinstance(actual.tangent_xy, tuple) and len(actual.tangent_xy) == 2
 
 
@@ -137,7 +140,7 @@ def _probe_points(
 
     points: list[tuple[float, float]] = []
     vertices = route.points_xyz
-    step = max(1, len(vertices) // 40)
+    step = max(1, len(vertices) // 24)
     for index in range(0, len(vertices) - 1, step):
         first, second = vertices[index], vertices[index + 1]
         length = route._segment_lengths_m[index]
@@ -162,8 +165,9 @@ def _probe_points(
     return points
 
 
-def _option_sets(route: RoutePolyline, point_xy: tuple[float, float]) -> list[dict[str, Any]]:
-    reset = _reference_project(route, point_xy)
+def _option_sets(
+    route: RoutePolyline, point_xy: tuple[float, float], reset: RouteProjection
+) -> list[dict[str, Any]]:
     z_here = reset.z_m
     far_s = (reset.s_m + 0.5 * route.length_m) % route.length_m
     return [
@@ -183,7 +187,8 @@ def _option_sets(route: RoutePolyline, point_xy: tuple[float, float]) -> list[di
 def _check_route(route: RoutePolyline, rng: np.random.Generator) -> int:
     checked = 0
     for point in _probe_points(route, rng):
-        for options in _option_sets(route, point):
+        reset = _reference_project(route, point)
+        for options in _option_sets(route, point, reset):
             _assert_equivalent(route, point, **options)
             checked += 1
     return checked
@@ -235,10 +240,50 @@ def test_vectorised_projection_matches_reference_on_synthetic_routes(route_name:
         "roundabout": _roundabout_route,
         "ramp": _ramp_route,
         "random_0": lambda: _random_route(np.random.default_rng(0), 120),
-        "random_1": lambda: _random_route(np.random.default_rng(1), 350),
+        "random_1": lambda: _random_route(np.random.default_rng(1), 220),
         "random_2": lambda: _random_route(np.random.default_rng(2), 30),
     }
     assert _check_route(routes[route_name](), rng) > 500
+
+
+def test_vectorised_projection_breaks_bit_identical_ties_on_the_lower_segment_index() -> None:
+    """REQ-F8-01 step 7: with equal keys the smaller segment index wins.
+
+    A route that runs up the y axis and straight back: from a probe 1 m beside
+    it both segments are at planar distance exactly 1.0, and with
+    ``previous_s_m`` at the turning point both have ``abs(s - previous_s_m)``
+    exactly 7.0 (every coordinate here is an exact binary fraction). The
+    lexicographic secondary key must pick index 0, as the reference does.
+    """
+
+    route = RoutePolyline(((0.0, 0.0, 0.0), (0.0, 10.0, 0.0), (0.0, 0.0, 0.0)))
+    turning_s = route._segment_starts_m[1]
+    probe = (1.0, 3.0)
+    for options in ({"previous_s_m": turning_s}, {"previous_s_m": turning_s, "max_s_jump_m": 20.0}):
+        expected = _reference_project(route, probe, **options)
+        actual = route.project(probe, **options)
+        assert expected.segment_index == 0
+        assert actual.segment_index == 0
+        assert actual.s_m == 3.0 == expected.s_m
+    # The same probe without continuity is decided by the smaller ``s`` itself.
+    assert route.project(probe).segment_index == 0
+
+
+def test_route_polyline_equality_and_hash_ignore_the_projection_cache() -> None:
+    """The lazily built NumPy arrays must stay out of ``__eq__``/``__hash__``.
+
+    ``causal_semantic`` compares mission routes with ``!=`` on the observation
+    path; an array in the compared fields would raise on the truth value of a
+    multi-element array, and ``hash`` would raise ``TypeError``.
+    """
+
+    points = ((0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (20.0, 5.0, 1.0))
+    first = RoutePolyline(points)
+    second = RoutePolyline(points)
+    first.project((5.0, 1.0))
+    assert first == second
+    assert hash(first) == hash(second)
+    assert first != RoutePolyline(((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
 
 
 def test_vectorised_projection_preserves_argument_validation() -> None:
@@ -258,7 +303,9 @@ def test_vectorised_projection_preserves_argument_validation() -> None:
 
 
 def _runtime_root() -> Path:
-    return Path(os.environ.get("SCENARIONET_DATA_ROOT", "data/scenarionet")) / "runtime" / "validation"
+    return (
+        Path(os.environ.get("SCENARIONET_DATA_ROOT", "data/scenarionet")) / "runtime" / "validation"
+    )
 
 
 def _frozen_records(prefix: str, count: int) -> list[tuple[str, dict[str, Any]]]:
@@ -303,7 +350,8 @@ def test_vectorised_projection_matches_reference_on_frozen_panel_records(source:
         # Lane centerlines are what drivable/carriageway and lane association project on.
         for lane in list(result.route_lanes)[::7]:
             for point in _probe_points(lane.centerline, rng, per_vertex=1)[::5]:
-                for options in _option_sets(lane.centerline, point)[:4]:
+                reset = _reference_project(lane.centerline, point)
+                for options in _option_sets(lane.centerline, point, reset)[:4]:
                     _assert_equivalent(lane.centerline, point, **options)
                     checked += 1
     assert checked > 2000

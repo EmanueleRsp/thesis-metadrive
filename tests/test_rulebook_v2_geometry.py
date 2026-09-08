@@ -941,7 +941,12 @@ def test_drivable_surface_vertical_preclassification_matches_projection_gate(
         lane("above", 10.0, 10.0, 8.0),
         lane("ramp_up", 0.0, 6.0, 12.0),
         lane("ramp_down", 6.0, 0.0, 16.0),
-        lane("at_tolerance", VERTICAL_COMPATIBILITY_TOLERANCE_M, VERTICAL_COMPATIBILITY_TOLERANCE_M, 20.0),
+        lane(
+            "at_tolerance",
+            VERTICAL_COMPATIBILITY_TOLERANCE_M,
+            VERTICAL_COMPATIBILITY_TOLERANCE_M,
+            20.0,
+        ),
         lane("just_inside", 2.9999999, 2.9999999, 24.0),
         lane("just_outside", 3.0000001, 3.0000001, 28.0),
     )
@@ -972,6 +977,7 @@ def test_drivable_surface_vertical_preclassification_matches_projection_gate(
         assert surface.covers(record.resolved_polygon().representative_point()) is (
             record.lane_id in expected_ids
         )
+
     # Only lanes whose z-range straddles (or nearly touches) the boundary are projected.
     def z_range(record: DrivableLaneRecord) -> tuple[float, float]:
         elevations = [point[2] for point in record.centerline.points_xyz]

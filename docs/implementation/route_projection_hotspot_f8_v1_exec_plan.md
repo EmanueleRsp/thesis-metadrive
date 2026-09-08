@@ -14,7 +14,8 @@
   index"; §2.9.4 "Uno spatial index può accelerare la selezione, ma il risultato
   deve essere equivalente all'unione di tutte le lane verticalmente
   compatibili").
-- Status: `IN_PROGRESS`
+- Status: `IMPLEMENTED` (M1, M2 and the adversarial review done; `VERIFIED`
+  after the full `make gate` recorded in §11)
 - Created: 2026-09-08. Last updated: 2026-09-08.
 - Branch: `worktree-f8-route-projection-hotspot` (worktree off `main` at
   `7f4ae9c`).
@@ -57,7 +58,11 @@ cache; the snapshotter; the `DrivableLaneRecord` re-validation per call unless
 the post-M1 profile shows it (recorded in §11 if deferred).
 
 **Compatibility.** No public interface, configuration key, checkpoint, dataset
-or log schema changes. `RouteProjection` keeps its five fields and types.
+or log schema changes. `RouteProjection` keeps its five fields and types. One
+implicit structural contract tightens: `drivable_surface_for_ego` and
+`carriageway_surfaces_for_ego` now read `centerline.z_range_m`, so a
+duck-typed centerline exposing only `project` (as two test fakes did) no longer
+works; `DrivableLaneRecord.centerline` was already typed `RoutePolyline`.
 
 ## 3. Authoritative Requirements
 
@@ -132,9 +137,19 @@ All statements `VERIFIED` on `main` at `7f4ae9c` unless labelled.
   heading_rad)`; a pose change invalidates it, so semantics are identical by
   construction. The memo holds one entry.
 - Seeds, termination/truncation, dataset policy: untouched.
-- NaN/inf: the input validation of `project` is preserved verbatim; NumPy
-  arithmetic on finite inputs with positive lengths cannot produce non-finite
-  values.
+- NaN/inf: the input validation of `project` is preserved verbatim. NumPy
+  arithmetic on finite inputs with positive lengths produces finite values for
+  every coordinate magnitude this repository sees (|xy| < 1e4 m); the one
+  divergence from the reference is unreachable in practice: an overflowing dot
+  product (|xy| ≳ 1e154) gives `nan` where `min(1.0, max(0.0, nan))` gave `0.0`.
+- Input types: `project` widens `point_xy` to Python floats before the NumPy
+  pass, so a `float32` input would now be projected in double precision where
+  the reference kept single-precision arithmetic (~1e-4 m). No caller passes
+  `float32` (every path converts explicitly or comes from `point_at`).
+- Planar distance: `np.hypot` and `math.hypot` may differ by one ULP
+  (~1e-14 m), so the `d_min + eps_geom` tie set is identical up to one ULP of
+  the distance at the boundary, not bit-identical; this is inside
+  `DEC-F8-001` and is why the criterion is a tolerance.
 
 ## 6. Decisions And Approval Gates
 
@@ -168,8 +183,9 @@ distance for all segments in one pass; applies the vertical mask, the
 `max_s_jump_m` plausibility mask (preference), the `d_min + eps` tie mask,
 then the lexicographic reduction exactly as today. Only the selected segment
 materialises a `RouteProjection`. The planar distance uses the same formula as
-the current `planar_distance` (hypot from the projected point), not `abs(lateral)`,
-so the tie set is identical. Error messages preserved verbatim.
+the current `planar_distance` (hypot from the point re-projected from `s`), not
+`abs(lateral)`, so the tie set is identical up to one ULP of the distance (§5).
+Error messages preserved verbatim.
 
 Fallback/logging: none added. Errors: identical.
 
@@ -177,12 +193,12 @@ Fallback/logging: none added. Errors: identical.
 
 | Requirement | Acceptance criteria | Implementation | Tests | Status |
 |---|---|---|---|---|
-| `REQ-F8-01` | `AC-F8-01`: on ≥ 2 000 probe points from the frozen panels (route polylines and lane centerlines; on-centerline, laterally offset, near joints, roundabout self-approach) the NumPy `project` returns the same `segment_index` and values within 1e-9 m of the reference Python implementation for every combination of `position_z` / `previous_s_m` / `max_s_jump_m` | `route.py::RoutePolyline.project` | `tests/test_route_projection_equivalence.py::test_vectorised_projection_matches_reference_on_frozen_panels` (+ synthetic cases) and existing `test_rulebook_v2_geometry.py` projection tests | Planned |
-| `REQ-F8-02` | `AC-F8-02`: existing `test_route_projection_continuity_bound_rejects_a_far_branch_jump` passes unchanged; the equivalence test covers `max_s_jump_m` | as above | as above | Planned |
-| `REQ-F8-03` | `AC-F8-03`: the lane set selected by the pre-classification equals the projection-based gate on constructed lanes fully below, fully above, straddling and exactly at the tolerance boundary; existing drivable tests pass | `drivable.py::drivable_surface_for_ego` | `tests/test_rulebook_v2_geometry.py::test_drivable_surface_vertical_preclassification_matches_projection_gate` | Planned |
-| `REQ-F8-04` | `AC-F8-04`: same for `carriageway_surfaces_for_ego` | `drivable.py::carriageway_surfaces_for_ego` | same test (parametrised) | Planned |
-| `REQ-F8-05` | `AC-F8-05`: two calls with the same adapter and pose compute the surface once; a pose change or a new adapter recomputes; existing footprint-exit tests pass | `scene_context.py::_rulebook_full_footprint_exit` | `tests/test_thesis_scenario_env.py::test_scene_context_footprint_exit_is_computed_once_per_pose` | Planned |
-| `REQ-F8-06` | `AC-F8-06`: before/after step-loop time of `a_native` × `validation_waymo_empirical` without profiler, reported in `F8` | — | measurement script under `outputs/f8/` (git-ignored) | Planned |
+| `REQ-F8-01` | `AC-F8-01`: on ≥ 2 000 (probe point, option set) pairs from the frozen panels (route polylines and lane centerlines; on-centerline, laterally offset, near joints, roundabout self-approach) the NumPy `project` returns the same `segment_index` and values within 1e-9 m of the reference Python implementation for every combination of `position_z` / `previous_s_m` / `max_s_jump_m`; the same on synthetic routes that exercise each rule | `route.py::RoutePolyline.project`, `::_projection_arrays` | `tests/test_route_projection_equivalence.py::test_vectorised_projection_matches_reference_on_frozen_panel_records[waymo,pg]` (skips without the prepared validation runtime — a gate log must show it ran), `::test_vectorised_projection_matches_reference_on_synthetic_routes[7 routes]`, `::test_vectorised_projection_breaks_bit_identical_ties_on_the_lower_segment_index`, `::test_vectorised_projection_preserves_argument_validation`, `::test_route_polyline_equality_and_hash_ignore_the_projection_cache`; existing `test_rulebook_v2_geometry.py` projection tests unchanged | Implemented, tests pass |
+| `REQ-F8-02` | `AC-F8-02`: existing `test_route_projection_continuity_bound_rejects_a_far_branch_jump` passes unchanged; the equivalence test covers `max_s_jump_m` with and without a plausible candidate | as above | as above (option sets `max_s_jump_m` 5.0 and 0.0 from a far `previous_s_m`) | Implemented, tests pass |
+| `REQ-F8-03` | `AC-F8-03`: the lane set selected by the pre-classification equals the projection-based gate on constructed lanes fully below, fully above, straddling and exactly at / within 1e-7 m of the tolerance boundary, for six ego elevations; only undecided lanes are projected; existing drivable tests pass | `drivable.py::_vertical_compatibility_from_range`, `::drivable_surface_for_ego` | `tests/test_rulebook_v2_geometry.py::test_drivable_surface_vertical_preclassification_matches_projection_gate[6 ego_z]` | Implemented, tests pass; pre-fix failure executed (extra lanes projected) |
+| `REQ-F8-04` | `AC-F8-04`: same lane partition for `carriageway_surfaces_for_ego` | `drivable.py::carriageway_surfaces_for_ego` | same test | Implemented, tests pass |
+| `REQ-F8-05` | `AC-F8-05`: two calls with the same adapter and pose compute the surface once; a pose change or a new adapter recomputes; existing footprint-exit tests pass | `scene_context.py::SceneContextAdapter.__init__`, `::_rulebook_full_footprint_exit` | `tests/test_thesis_scenario_env.py::test_scene_context_footprint_exit_is_computed_once_per_pose` | Implemented, tests pass; pre-fix failure executed (3 computations against 1) |
+| `REQ-F8-06` | `AC-F8-06`: before/after step-loop time of `a_native` × `validation_waymo_empirical` without profiler, reported in `F8` | — | measurement script `outputs/f8/f8_profile_case.py` on the outputs volume (git-ignored); numbers in §11 and in `docs/open_items.md` `F8` | Measured: 1135 → 929 (M1) → 312 ms/step (M1+M2) |
 
 ## 9. Validation Commands
 
@@ -198,12 +214,64 @@ Fallback/logging: none added. Errors: identical.
 
 | Milestone | Content | Verification | Status |
 |---|---|---|---|
-| M0 | Baseline measurement without profiler | `TOTAL` line of `outputs/f8/baseline_a_native_waymo.log` | Running |
-| M1 | z-range pre-classification + per-step memo | AC-F8-03/04/05, `make check`, re-measure | Planned |
-| M2 | NumPy `project` | AC-F8-01/02, `make check`, re-measure | Planned |
-| M3 | Gate, adversarial review, docs, PR | `make gate`, review record, `F8` row, index | Planned |
+| M0 | Baseline measurement without profiler | `TOTAL` line of `outputs/f8/baseline_a_native_waymo.log`: 593 steps, step loop 673.3 s, **1135 ms/step**, wall 710 s | Done |
+| M1 | z-range pre-classification + per-step memo (commit `7c4500e`) | AC-F8-03/04/05 pass; `make check` PASS (PARTIAL by design, 1881 passed, 6 skipped, 2m37s); re-measured with the reference `project` swapped back in: **929 ms/step** (550.7 s, −18 %) | Done |
+| M2 | NumPy `project` (commit `f78faf6`) | AC-F8-01/02 pass; re-measured: **312 ms/step** (185.0 s, 3.6× over baseline; wall 217 s) | Done |
+| M3 | Gate, adversarial review, docs, PR | adversarial review recorded below; `F8` row and index updated; `make gate` result in §11 | In progress |
 
 ## 11. Progress Log, Findings, Limitations
 
-- 2026-09-08: plan created; worktree from `main` `7f4ae9c`; baseline launched
-  (tmux `f8-baseline`).
+- 2026-09-08: plan created; worktree from `main` `7f4ae9c`; baseline measured
+  (tmux `f8-baseline`): 1135 ms/step on `a_native` × `validation_waymo_empirical`
+  (three behaviours, 593 steps, no profiler).
+- 2026-09-08, M1: the three behaviours' returns (9.521790397819428,
+  198.71053857982088, 386.40149605475256) and route completions are identical
+  to every printed digit before and after M1 and after M2, so on this case the
+  change is not merely within tolerance but invisible.
+- 2026-09-08, M1 finding: **the caller count did not tell the story.** 644 903
+  of 890 952 `project` calls came from `drivable_surface_for_ego`, yet removing
+  them (M1) saved only 18 % of the step: the remaining ~300 calls per step are
+  on the *route* polyline (357 segments on the profiled record) and on longer
+  lane centerlines, each 2–3× the cost of a typical lane projection. M1 alone
+  would not have brought the Waymo case near the PG one; M2 was necessary, and
+  the numbers are recorded rather than assumed.
+- 2026-09-08, M2 micro-benchmark (`outputs/f8/microbench_project.py`, min of
+  5×50 repeats, in-container): route of `sd_waymo_training_20s_141f284b8bb5d418`,
+  357 segments: 743 µs → 23 µs plain, 594 µs → 24 µs with `position_z` and
+  continuity (×33 / ×25); its longest lane centerline, 213 segments: 444 µs →
+  20 µs (×22).
+- 2026-09-08, cost of the new test: the equivalence test runs the pure-Python
+  reference on ~10 000 probe/option pairs per route; after halving the probe
+  density and computing the reset projection once per probe, the slowest case
+  (`[waymo]`, three records) takes 33 s, the others < 5 s; the module runs in
+  parallel with the rest under `pytest-xdist`, so it adds no wall time to
+  `make check`.
+- 2026-09-08, **adversarial review** (AGENTS.md step 10) by a session that did
+  not write the change (Opus, read-only, given this plan and the pre-change
+  code). Verdict: no blocking defect; the NumPy `project` traced operation by
+  operation as bit-identical to the reference on float64 inputs except for
+  `np.hypot` vs `math.hypot` (one ULP, §5); the z-range gate sound (checked all
+  six ego elevations against the eight constructed lanes by hand); the memo
+  unable to go stale on the production path (new adapter per reset, frozen
+  `EpisodeCache`, footprint a pure function of the pose key, `heading_rad` a
+  required snapshot field). Findings acted on in the same session: focused
+  `ruff format` on the three test files (five lines over 100 columns); the
+  vacuous `isinstance(x, float)` type checks replaced by exact-type checks
+  (`np.float64` subclasses `float`); a regression test pinning that the lazy
+  array cache stays out of `__eq__`/`__hash__` (`causal_semantic` compares
+  routes with `!=` on the observation path); a test for the secondary
+  segment-index key on bit-identical continuity keys; the equivalence test's
+  cost reduced; this plan's status, §2 compatibility note, §5 invariants (NaN
+  overflow, `float32`, ULP) and §8 units corrected. Findings recorded, not
+  changed: the memo keeps a strong reference to the previous episode's adapter
+  until the next episode's first query (harmless); the memo sits after
+  `snapshotter(env)`, so the 4–5 snapshot captures per step remain (the
+  snapshotter is out of scope, §2); the pre-classification test's `undecided`
+  set restates the implementation's inequalities while its lane-set assertions
+  use the independent pre-F8 gate as oracle.
+- Limitation: the frozen-panel half of the equivalence test skips when the
+  prepared ScenarioNet validation runtime is absent, so a gate log must show
+  `test_vectorised_projection_matches_reference_on_frozen_panel_records` as
+  passed rather than skipped for AC-F8-01's panel evidence to count.
+- Remaining per-step cost after M2 (312 ms/step on this Waymo case against
+  ~70 ms/step on PG) is profiled below.

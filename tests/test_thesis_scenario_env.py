@@ -903,7 +903,10 @@ def test_scene_context_footprint_exit_is_computed_once_per_pose(monkeypatch) -> 
     env = make_env((0.0, 0.0))
     assert adapter.is_physically_out_of_road(env, vehicle) is False
     assert adapter.is_physically_out_of_road(env, vehicle) is False
-    assert adapter.get_physical_road_diagnostics(env, vehicle)["geometric_full_footprint_exit"] is False
+    assert (
+        adapter.get_physical_road_diagnostics(env, vehicle)["geometric_full_footprint_exit"]
+        is False
+    )
     assert computations == [(0.0, 0.0)]
 
     # Same adapter, new pose: recomputed, and the fully-outside answer is not stale.
