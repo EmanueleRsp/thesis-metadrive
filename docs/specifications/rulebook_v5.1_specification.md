@@ -31,7 +31,9 @@
   gate) and `ADR-071` (R1 at-fault classification, **approved** 2026-08-12) are
   incorporated into §3. New with this document: `ADR-072` (five-level
   hierarchy), `ADR-073` (signed `L4`), `ADR-074` (`SCAL-V1.3`), `ADR-075`
-  (`γ = 1`) and `ADR-076` (`L6 progress_rate`, and `SCAL-V1.4`).
+  (`γ = 1`, amended by `ADR-081` to `γ = 0.996`) and `ADR-076`
+  (`L6 progress_rate`, and `SCAL-V1.4`). `ADR-081` (2026-09-07) amends the
+  `SCAL-V1.4` weights `a` and `σ` and the discount; see §4.4, §5.4, §5.5.
 - Related specifications: `evaluation_protocol_v1.3_specification.md`,
   `observation_v1.3_specification.md`, `observation_lidar_v2.0.1_amendment.md`.
 - Measurement evidence: re-measured on the same 1100 Waymo `train` records,
@@ -58,6 +60,20 @@
   previously made, both falsified by measurement. An intermediate proposal
   placing the same quantity *inside* L4 was implemented, measured and rejected;
   ADR-076 records why.
+- **Amended 2026-09-07**, under explicit approval the same day (ADR-081, no
+  ExecPlan by explicit waiver): `a = 2.5`, `σ = 0.30` and `γ = 0.996`, with
+  `λ₄ = 2.0`, `η = 1.0`, `λ₆ = 0.2`, `φ = 0.25` unchanged. `σ = 0` had never
+  been priced in the six-level hierarchy and `a = 2.2` was a lower bound, not an
+  optimum; the selected package is the one that makes the reward's local
+  gradient inside a violation physically consistent (`a_req^max` 1.46 →
+  12.43 m/s²) and widens the thinnest margin (`w₃`/tail 1.04 → 1.18), at the
+  cost of 1.19 pp more expert episodes below standstill and an expert p1 of
+  −99.4. `γ = 0.996` follows from `a = 2.5` through `Δ = ln(a)/−ln(γ) > 199`;
+  ADR-075's `γ = 1` is amended, not contradicted, because ADR-081 weighs a cost
+  ADR-075 did not (value level pinned only by the terminating minority under
+  bootstrapped truncation). Evidence: `docs/audits/reward_calibration_2026-09-07/`.
+  The amendment callouts in §4.4, §5.4 and §5.5 are authoritative over the
+  text they annotate.
 - Authoritative: `YES` for §3 (the hierarchy and its aggregation), §4 (L4, its
   L6 and the discount), §5 (`SCAL-V1.4` and its weights), §9 and §10.
   **No open requirement remains**: `REQ-RB5.1-OBS-01` was withdrawn on
@@ -175,7 +191,8 @@ L6  progress rate
 
 **L6 is the last level and it is deliberately last** (ADR-076). It expresses a
 preference for arriving sooner, which under `γ = 1` (ADR-075) nothing else in
-the rulebook expresses. Placing it *below* L5 is what keeps that preference from
+the rulebook expresses (at ADR-081's `γ = 0.996` the discount adds only a weak
+time preference, and L6 remains the channel that carries it explicitly). Placing it *below* L5 is what keeps that preference from
 paying for a lane violation: an illegal shortcut carries `c_L5 > 0` and loses
 before the level is reached, so O3 stays a theorem rather than becoming a
 calibration.
@@ -399,7 +416,7 @@ comparable with the evaluation protocol's `route_completion`. That comparability
 moves to the reported metric of §7 rather than being carried by the reward, which
 is the standard separation between a training signal and a score.
 
-### 4.4 The discount, resolved: `γ = 1` (ADR-075)
+### 4.4 The discount, resolved: `γ = 1` (ADR-075), amended to `γ = 0.996` (ADR-081)
 
 > **Amended by ADR-081 (2026-09-07, approved): `γ = 0.996`.**
 > Two corrections to what follows, neither of which changes its *reasoning*.
@@ -702,6 +719,15 @@ experiment.
 
 ### 5.4 Rank-preservation condition
 
+> **Amended by ADR-081 (2026-09-07, approved): evaluated at `a = 2.5`,
+> `σ = 0.30`.** The condition itself is unchanged; the figures below are stated
+> at the superseded `a = 2.2`, `σ = 0`. At the selected weights the three
+> inequalities read `k = 3`: `2.5 > 2.12` (ratio 1.18, the thinnest margin, up
+> from 1.04); `k = 2`: `6.25 > 1.3·2.5 + 0.25 + 2.12 = 5.62`; `k = 1`:
+> `15.625 > 1.3·(6.25 + 2.5) + 0.5 + 2.12 = 14.0`. The `k = 2` inequality is
+> what capped `σ` at 0.1227 when `a = 2.2`, and is the reason `a` and `σ` could
+> not be moved separately.
+
 Level `k ∈ {1,2,3}` dominates iff
 
 ```
@@ -912,9 +938,9 @@ scenario and therefore no counterfactual. Both halves are now in place.
 | `AC-RB5.1-11` | v5.1 is not worse than v5.0 on mean, p1, p5, p50 and below-standstill | **PASS** — dominates on all five |
 | `AC-RB5.1-12` | O3 holds against the §4.6 reference shortcut, which arrives sooner, in **both** the scalar and the strict-lex comparison | **PASS** — `TEST-RB5.1-16` |
 | `AC-RB5.1-13` | `λ₆` is strictly below its O3 bound | **PASS** — 0.2 < 0.25 |
-| `AC-RB5.1-14` | The §5.4 predicate admits `(λ₄, η, λ₆) = (2.0, 1.0, 0.2)` and rejects an inadmissible `λ₆` | **PASS** — 2.12 < 2.2 |
+| `AC-RB5.1-14` | The §5.4 predicate admits `(λ₄, η, λ₆) = (2.0, 1.0, 0.2)` and rejects an inadmissible `λ₆` | **PASS** — 2.12 < 2.2 at approval; 2.12 < 2.5 after ADR-081 |
 | `AC-RB5.1-15` | The below-standstill diagnostic compares against `−λ₆·(Δt/T_REF)·T`, not against 0 | **PASS** — `v51_standstill_return` |
-| `AC-RB5.1-16` | `γ` is 1 in every algorithm configuration, and `learning_potential_gamma` equals it | **PASS** — six configs updated, guarded by `test_every_algorithm_is_undiscounted` |
+| `AC-RB5.1-16` | One discount shared by every algorithm configuration, `learning_potential_gamma` equal to it, and `ln(a)/−ln(γ)` above the 199-step horizon (ADR-081; originally `γ = 1`, ADR-075) | **PASS** — six configs at `γ = 0.996`, guarded by `test_every_algorithm_shares_one_hierarchy_preserving_discount` |
 | `AC-RB5.1-17` | L6 refines only ties: O1–O6 hold unchanged with the sixth level present | **PASS** — `TEST-RB5.1-20` |
 
 `AC-RB5.1-02` is deliberately permissive: strict lex is expected to fail O1 for
@@ -946,7 +972,7 @@ defect to repair.
 | `TEST-RB5.1-19` | Standing still and reversing both cost the maximum at L6, and the standstill baseline follows |
 | `TEST-RB5.1-20` | L6 does not disturb O1–O6 above it |
 | `TEST-RB5.1-21` | §5.4 admits the selected weights with `λ₆` and rejects an inadmissible one |
-| `TEST-RB5.1-22` | Every algorithm config is undiscounted, and the shaping discount tracks `γ` (`tests/test_hydra_agent_presets.py`) |
+| `TEST-RB5.1-22` | Every algorithm config shares one discount that preserves the hierarchy over the 199-step horizon, and the shaping discount tracks `γ` (`tests/test_hydra_agent_presets.py`; ADR-081) |
 
 Fixtures `TEST-RB5.1-01..06` are **constructed**, not replayed: expert replay
 contains no counterfactual and cannot establish an ordering between a taken and
@@ -1073,7 +1099,11 @@ an L2 sub-rule fires, not on how mild it is when it does.
     runs the red differs at L3, above, and two trajectories both waiting tie at
     L6 for as long as they both wait.
 
-12. **`γ = 1` carries an off-policy stability risk** (§4.4). The Bellman operator
+12. **`γ = 1` carries an off-policy stability risk** (§4.4). *Superseded in
+    part by ADR-081 (2026-09-07): the production discount is `γ = 0.996`, chosen
+    from the hierarchy-preservation bound rather than from this risk, which it
+    nevertheless removes; the declared `γ = 0.999` fallback is moot.* The
+    remainder is kept as the record of what `γ = 1` cost. The Bellman operator
     is not a sup-norm contraction at `γ = 1`; the task is proper, so the
     formulation stays well-posed, but bootstrapped Q-learning is practically less
     stable than at 0.99. The declared fallback is `γ = 0.999` **for every arm

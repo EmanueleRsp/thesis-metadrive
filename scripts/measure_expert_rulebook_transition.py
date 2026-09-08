@@ -247,7 +247,12 @@ SPEED_LIMIT_SENTINEL_KMH = 999.0
 # 1.0 s for VRU.
 TTC_THRESHOLD_SWEEP_S = (0.4, 0.6, 0.8, 0.95, 1.2)
 # The specified rulebook: nuPlan's uniform TTC bound, and the scalarization
-# member the family grid selected.
+# member the family grid selected.  ``FINAL_PRIORITY_BASE``/``FINAL_SEVERITY``
+# pin the RULEBOOK-V5.1 §5.5 baseline (a = 2.2, sigma = 0) deliberately, so the
+# ``v51_weight_grid`` baseline row keeps reproducing the published figures
+# (mean 70.70, p1 -61.81, below standstill 3.36 %).  Production has moved to
+# a = 2.5, sigma = 0.30 (ADR-081, 2026-09-07, ``conf/scalarization/default.yaml``);
+# that point is priced by ``v51_calibration_grid``, not by these constants.
 FINAL_TTC_THRESHOLD_S = 0.95
 FINAL_PRIORITY_BASE = 2.2
 FINAL_SEVERITY = 0.0

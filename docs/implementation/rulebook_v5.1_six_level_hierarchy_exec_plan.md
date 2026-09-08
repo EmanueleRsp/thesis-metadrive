@@ -87,7 +87,7 @@ specification. Coordinate with `D4`.
 | `REQ-RB51-17` | At-fault gate: interaction sub-rules inapplicable at or below the gate speed | ADR-070 |
 | `REQ-RB51-18` | At-fault collision terminates and charges; not-at-fault truncates and charges nothing | ADR-071 |
 | `REQ-RB51-19` | Diagnostics of §7, including `l4_clip_binding_steps`, `l5_reached_steps`, `mean_ego_speed_by_source` | §7 |
-| `REQ-RB51-20` | `γ = 1` in every algorithm configuration, shaping discount tracking it | §4.4, ADR-075 |
+| `REQ-RB51-20` | One shared discount in every algorithm configuration, shaping discount tracking it; `γ = 1` at approval (ADR-075), `γ = 0.996` since 2026-09-07 (ADR-081, together with `a = 2.5`, `σ = 0.30` in `conf/scalarization/default.yaml`) | §4.4, ADR-075, ADR-081 |
 
 `REQ-RB51-20` is **already met** (six configs updated 2026-08-20, guarded by
 `tests/test_hydra_agent_presets.py::test_every_algorithm_is_undiscounted`); it is
