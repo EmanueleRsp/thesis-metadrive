@@ -1033,7 +1033,29 @@ Two new counters this document requires:
 - **`mean_ego_speed_by_source`** — mean and p95 ego speed, reported **separately
   for PG and Waymo**. Required by limitation 13: L6 rewards speed and `speed_limit`
   is admitted on Waymo only, so the two sources are under different normative
-  regimes and the difference must be visible rather than inferred.
+  regimes and the difference must be visible rather than inferred;
+- **route adherence, per episode** (`REQ-EF-15`, added 2026-09-09):
+  `route_outside_evaluated_steps`, `route_outside_steps`,
+  `route_fully_outside_steps`, **`route_fully_outside_max_run`**,
+  `mean_route_outside_fraction`, `mean_route_adherence`. All six reach
+  `eval_episodes.csv`.
+
+  `route_outside_fraction` is the ego footprint's area fraction outside the union
+  of the **assigned** route lanes. It had been computed every step since
+  `REQ-EF-15` and read by nothing, which is why it is listed here now: the
+  quantity that says whether a policy drives off its assigned corridor existed,
+  and no run reported it. That matters because §4.1's channel credits advance of
+  a projection with no lateral cut-off while mission success is a crossing of one
+  frozen finite gate, so the two can come apart with nothing objecting — the
+  off-road surface is the union of *every* map lane and `wrong_carriageway`
+  classifies a same-direction road as aligned.
+
+  **`route_fully_outside_max_run` is the one to read.** A mean cannot separate
+  clipping the inside of four corners from eighty consecutive steps on another
+  carriageway, and only the second is the failure. `route_outside_evaluated_steps`
+  accompanies them because the evaluator omits the diagnostic when it has no ego
+  footprint or no corridor, and a zero must not be read as "never left" when it
+  means "never measured".
 
 ---
 
@@ -1074,7 +1096,7 @@ scenario and therefore no counterfactual. Both halves are now in place.
 | `AC-RB5.1-02` | O1–O6 all hold under strict lexicographic ordering on the five channels, **or** each failure is reported with the channel that caused it | **PASS undiscounted** — O1 fails at L2 and the failure is asserted; O2–O6 hold. At the shipped `γ` **O3 also fails, at L4**, and that failure is likewise asserted rather than repaired (`test_o3_fails_at_the_shipped_discount`) — which is what this criterion's "or" clause requires |
 | `AC-RB5.1-03` | Expert mean episode return is positive | **PASS** — +70.70 |
 | `AC-RB5.1-04` | Expert episodes below standstill do not exceed the v5.0 figure of 7.45 % | **PASS** — 3.36 % |
-| `AC-RB5.1-05` | The §4.1 clip binds on no step the agent can produce | **NOT ESTABLISHED.** The engine-force cap bounds the ego's *travel*, not its *projection*, which outruns it on the inside of a bend and can jump at a branch selection (§4.1). Measured: binds on 0.6 % of *expert* steps; the split between over-`v_ref` expert speed and projection geometry was not measured, so the criterion is unproven rather than failed. `ΔQ_MAX = 1` is unaffected — it is enforced by the clip itself |
+| `AC-RB5.1-05` | The §4.1 clip binds on no step the agent can produce | **NOT ESTABLISHED, now measurable.** The engine-force cap bounds the ego's *travel*, not its *projection*, which outruns it on the inside of a bend and can jump at a branch selection (§4.1). Measured: binds on 0.6 % of *expert* steps; the split between over-`v_ref` expert speed and projection geometry was not measured, so the criterion is unproven rather than failed. `ΔQ_MAX = 1` is unaffected — it is enforced by the clip itself. Since 2026-09-09 `l4_clip_binding_steps` reaches `eval_episodes.csv` per episode (§7), so the first evaluation run settles this criterion on agent trajectories instead of by deduction |
 | `AC-RB5.1-06` | The selected `(a, σ, φ, λ₄, λ₅)` satisfies §5.4 for every `k` | **PASS** — `2.0 + 0.1 = 2.1 < 2.2`; inadmissible pairs are never priced |
 | `AC-RB5.1-07` | `Σ_t Δq_t = (s_T − s_0)/D_REF` to numerical tolerance | **PASS** for agent trajectories; inexact on the expert panel only where the clip binds (§5.5.1). The identity is **undiscounted** and is not the agent's return at `γ = 0.996` (§4.4, §11.12) |
 | `AC-RB5.1-08` | Every atomic cost of §3.4 is exposed alongside the aggregated channels | **PASS** — inherited from instrument |

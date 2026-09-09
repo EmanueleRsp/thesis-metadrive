@@ -61,6 +61,28 @@ from thesis_rl.runtime.comfort_diagnostics import (
 )
 
 
+# RULEBOOK-V5.1 §7's reported-never-priced counters, carried from the last step
+# of an episode into that episode's record. `RulebookV2MonitorWrapper` keeps them
+# as running totals and republishes them every step, so the final step's value is
+# the episode's; nothing here re-derives them.
+#
+# They are separate from `metadata_keys` because that tuple identifies the
+# *scenario* -- uid, source, split, arm -- while these describe what happened
+# during the run, and a reader that cannot tell the two apart will eventually
+# group by one thinking it is the other.
+EPISODE_DIAGNOSTIC_KEYS = (
+    "l4_clip_binding_steps",
+    "l5_reached_steps",
+    "mean_ego_speed_mps",
+    "route_outside_evaluated_steps",
+    "route_outside_steps",
+    "route_fully_outside_steps",
+    "route_fully_outside_max_run",
+    "mean_route_outside_fraction",
+    "mean_route_adherence",
+)
+
+
 class _LiveEventLogHandler(logging.Handler):
     """Capture log records into the Live monitor event deque."""
 
@@ -2284,6 +2306,22 @@ class Agent:
                 if isinstance(step_info, dict):
                     episode_metadata.update(
                         {key: step_info[key] for key in metadata_keys if key in step_info}
+                    )
+                    # RULEBOOK-V5.1 §7's per-episode counters. The wrapper
+                    # accumulates them and republishes the running total on every
+                    # step, so the *last* step of the episode carries the episode
+                    # value; they are read here rather than in `metadata_keys`
+                    # because those identify the scenario and these describe the
+                    # run. `route_*` answers open item `D14` — whether a policy
+                    # drives off its assigned corridor while `R4` keeps paying —
+                    # and `l4_clip_binding_steps` is what `AC-RB5.1-05` needs in
+                    # order to stop being `NOT ESTABLISHED`.
+                    episode_metadata.update(
+                        {
+                            key: step_info[key]
+                            for key in EPISODE_DIAGNOSTIC_KEYS
+                            if key in step_info
+                        }
                     )
                     episode_metadata["termination_reason"] = step_info.get("termination_reason")
                 episode_metadata["terminated"] = bool(done)

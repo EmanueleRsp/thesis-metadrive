@@ -18,6 +18,7 @@ from thesis_rl.runtime.comfort_diagnostics import (
     comfort_aggregate_fields,
     comfort_episode_fields,
 )
+from thesis_rl.runtime.route_adherence_diagnostics import route_adherence_episode_fields
 from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
 from thesis_rl.runtime.wiring.builders import (
     adapter_space_kwargs,
@@ -556,6 +557,7 @@ def run_evaluation(cfg: DictConfig) -> None:
                 "eval_episodes.csv",
                 {
                     **comfort_episode_fields(per_episode, episode_idx),
+                    **route_adherence_episode_fields(scenario_metadata),
                     **base_csv_fields,
                     "eval_id": eval_id,
                     "eval_type": "final",
