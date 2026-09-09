@@ -3,11 +3,43 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import pytest
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
+from thesis_rl.scenarios.frozen import load_frozen_index
+
 
 CONF_DIR = Path(__file__).resolve().parents[1] / "conf"
+FROZEN_INDEX = Path("data/scenarionet/frozen/scenario_selection_index.json")
+
+
+def _measured_training_horizon_steps() -> tuple[int, list[int]]:
+    """Return the longest training episode in control steps, and every episode.
+
+    Measured rather than assumed, which is what the docstring below has always
+    claimed. The chain is closed in code and each link is checked here:
+
+    * the frozen index's `length` is the scenario's own `SD.LENGTH`, cross-checked
+      against the description by `scripts/validate_frozen_scenarionet_content.py`;
+    * the runtime reads the same field
+      (`third_party/metadrive/metadrive/manager/scenario_data_manager.py`);
+    * the episode truncates at `episode_steps >= scenario_length - 1 + extra`
+      (`src/thesis_rl/envs/thesis_scenario_env.py`), and `conf/env/scenarionet.yaml`
+      sets `extra_steps_after_scenario: 0` with `horizon: null`, so nothing caps
+      an episode earlier.
+
+    An episode is therefore `length - 1` control steps, and the horizon is the
+    maximum over the **training** split, because that is the mixture the discount
+    has to keep ordered while learning.
+    """
+
+    payload = load_frozen_index(FROZEN_INDEX)
+    episodes = [
+        int(record["length"]) - 1 for record in payload["records"] if record.get("split") == "train"
+    ]
+    assert episodes, "the frozen index has no training records; the guard would pass vacuously"
+    return max(episodes), episodes
 
 
 def _compose_preset(config_name: str):
@@ -229,33 +261,46 @@ def test_smoke_train_preset_composes() -> None:
     assert str(cfg.agent.planner.algorithm.name) == "td3_sb3"
 
 
+def _shipped_discount() -> float:
+    """The one discount every arm shares, read from the algorithm configs."""
+
+    algorithm_dir = CONF_DIR / "agent" / "planner" / "algorithm"
+    observed: set[str] = set()
+    for config in sorted(algorithm_dir.glob("*.yaml")):
+        text = config.read_text(encoding="utf-8")
+        observed.update(
+            line.split(":", 1)[1].strip() for line in text.splitlines() if line.startswith("gamma:")
+        )
+    assert len(observed) == 1, f"arms do not share one discount: {sorted(observed)}"
+    return float(observed.pop())
+
+
 def test_every_algorithm_shares_one_hierarchy_preserving_discount() -> None:
     """`AC-RB5.1-16` / ADR-081, amending ADR-075.
 
-    Two properties, and the second is pinned as a *derivation* rather than as a
-    literal, so that changing `priority_base` without revisiting `gamma` fails
-    here instead of silently inverting the hierarchy mid-episode.
+    **One discount for every arm.** Differing discounts across arms would make a
+    difference in results non-attributable to the preference structure under
+    test, which is the comparison this thesis exists to make. The shaping
+    discount is coupled to it rather than free, because Ng et al.'s
+    policy-invariance result for potential-based shaping holds only when the two
+    agree.
 
-    1. **One discount for every arm.** Differing discounts across arms would make
-       a difference in results non-attributable to the preference structure under
-       test, which is the comparison this thesis exists to make.
+    ADR-081's second property — that the discount must not invert the hierarchy
+    inside an episode — used to be asserted here against a horizon of `199`
+    hardcoded under a docstring reading "the horizon is measured, not assumed".
+    It was not measured, and `199` is the wrong number: `RULEBOOK-V5.1` §4.6's
+    p5/p50/p95 of 197/199/200 is the **1100 Waymo train records only**, while the
+    training mixture is half procedurally generated. That property now lives in
+    `test_the_hierarchy_preserving_horizon_is_measured_from_the_frozen_index`,
+    where the horizon is read from the committed index instead of asserted, and
+    where the shortfall this exposes (`C49`) is recorded rather than hidden by a
+    guard that passed for the wrong reason.
 
-    2. **The discount must not invert the hierarchy inside an episode.** A future
-       violation at level `k` still outranks a present one at `k+1` while
-       `Delta < ln(a) / -ln(gamma)`. The binding case is one level apart -- L1
-       against L2, and identically L2 against L3 -- not the two-level case
-       ADR-075 tabulated, whose figures are 2x too generous. The horizon is
-       measured, not assumed: RULEBOOK-V5.1 §4.6 reports p5/p50/p95 =
-       197/199/200 steps.
-
-    `gamma = 1` satisfied (2) trivially and failed something ADR-075 did not
-    weigh: with two thirds of episodes ending in a bootstrapped truncation there
-    is no contraction and the value level is pinned only by the terminating
-    minority. See ADR-081.
+    `gamma = 1` satisfied the second property trivially and failed something
+    ADR-075 did not weigh: with two thirds of episodes ending in a bootstrapped
+    truncation there is no contraction and the value level is pinned only by the
+    terminating minority. See ADR-081.
     """
-
-    horizon_steps = 199
-    priority_base = float(OmegaConf.load(CONF_DIR / "scalarization" / "default.yaml").priority_base)
 
     algorithm_dir = CONF_DIR / "agent" / "planner" / "algorithm"
     configs = sorted(algorithm_dir.glob("*.yaml"))
@@ -282,13 +327,65 @@ def test_every_algorithm_shares_one_hierarchy_preserving_discount() -> None:
     assert len(observed) == 1, f"arms do not share one discount: {sorted(observed)}"
     gamma = float(observed.pop())
     assert 0.0 < gamma <= 1.0, f"gamma must lie in (0, 1], got {gamma}"
+    assert gamma == _shipped_discount()
 
-    if gamma == 1.0:  # pragma: no cover - the undiscounted case needs no bound
-        return
+
+@pytest.mark.integration
+def test_the_hierarchy_preserving_horizon_is_measured_from_the_frozen_index() -> None:
+    """`C49`. ADR-081's own criterion, evaluated at the horizon it is about.
+
+    The criterion is `Delta = ln(a) / -ln(gamma) > L`: a future violation at level
+    `k` outranks a present one at `k+1` only while the discount has not damped the
+    former below the latter's one-level priority ratio. Equivalently
+    `gamma**L >= 1 / a` — whole-episode damping must not fall below the ratio one
+    level buys — which is the form that shows the trade, because ADR-081's
+    contraction argument wants `gamma**L` small and its hierarchy argument wants
+    it at least `1 / a`.
+
+    **The horizon is now read rather than asserted.** `_measured_training_horizon_steps`
+    documents the chain; the maximum training episode is 500 control steps, not
+    the 199 that used to be hardcoded here, because `199` is the Waymo-only
+    figure and half the training mixture is procedurally generated.
+
+    **At the shipped parameters the criterion does not hold, and this fixture
+    records that rather than concealing it.** That follows the convention
+    `tests/test_rulebook_v51_orderings.py::test_o3_does_not_survive_the_shipped_discount`
+    already sets for a measured failure whose remedy is a decision: the candidate
+    remedies here — raise `gamma`, raise `priority_base`, cap the episode, or
+    accept and report the exposure — trade against ADR-081's contraction argument
+    and against every calibrated weight, so none of them is a test's to make.
+
+    Every quantity is pinned to a literal, so any change to `priority_base`,
+    to `gamma`, or to the frozen index's episode lengths fails here — which is
+    the protection the previous formulation was meant to give and did not, since
+    it compared against a horizon that could not move.
+    """
+
+    priority_base = float(OmegaConf.load(CONF_DIR / "scalarization" / "default.yaml").priority_base)
+    gamma = _shipped_discount()
+    horizon_steps, episodes = _measured_training_horizon_steps()
+
+    assert priority_base == pytest.approx(2.5)
+    assert gamma == pytest.approx(0.996)
+    assert horizon_steps == 500
+    assert len(episodes) == 2200
+
+    # `conf/env/scenarionet.yaml` must keep letting an episode run to the end of
+    # its scenario, or the measured horizon above would not be the real one.
+    env_config = OmegaConf.load(CONF_DIR / "env" / "scenarionet.yaml")
+    assert env_config.config.horizon is None
+    assert int(env_config.episode_control.extra_steps_after_scenario) == 0
+
     break_even_steps = math.log(priority_base) / -math.log(gamma)
-    assert break_even_steps > horizon_steps, (
-        f"gamma={gamma} inverts the hierarchy after {break_even_steps:.0f} steps, inside the "
-        f"{horizon_steps}-step episode: a violation one level down becomes preferable to a "
-        f"higher-level one further away. Raise gamma above "
-        f"{math.exp(-math.log(priority_base) / horizon_steps):.5f} or raise priority_base."
-    )
+    assert break_even_steps == pytest.approx(228.6, abs=0.1)
+
+    # The recorded shortfall. Positive means the hierarchy inverts before the
+    # longest training episode ends.
+    assert break_even_steps < horizon_steps
+    past = sum(1 for steps in episodes if steps > break_even_steps)
+    assert past == 591
+    assert past / len(episodes) == pytest.approx(0.2686, abs=5.0e-4)
+
+    # What would satisfy the criterion at this `priority_base`, so the decision
+    # has its number here rather than in prose.
+    assert math.exp(-math.log(priority_base) / horizon_steps) == pytest.approx(0.998169, abs=1.0e-6)

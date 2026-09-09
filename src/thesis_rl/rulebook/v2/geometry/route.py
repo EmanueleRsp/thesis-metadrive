@@ -174,9 +174,18 @@ class RoutePolyline:
         candidates already within ``eps_geom`` of the minimum planar distance,
         so on a self-intersecting or closely parallel route (a roundabout, in
         practice) a strictly-closer far branch wins outright and the coordinate
-        jumps, producing spurious route progress.  When no candidate is within
-        the bound the projection fails closed rather than selecting an
-        implausible branch (v4.7 §3.4 forbids silent recovery).
+        jumps, producing spurious route progress.
+
+        The bound is a **preference, not a gate**: when no candidate is
+        plausible the unbounded selection is kept, for the reason the inline
+        comment at the selection gives.  An earlier revision of this docstring
+        claimed the projection "fails closed" instead, which contradicted the
+        code ten lines below it and the decision that introduced the bound
+        (ADR-035, which documents it as a preference and records the three
+        transition tests that failing closed broke).  Note also that **no
+        production call site supplies this argument**: ``e63e0bf`` withdrew it
+        from the progress evaluator on 2026-08-03 and the mission tracker
+        projects without a jump envelope (`C50`, `C52`).
         """
 
         if not all(isfinite(value) for value in point_xy):

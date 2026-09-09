@@ -1285,7 +1285,16 @@ class Measurement:
     v51_behind_peak_episodes: int = 0
     v51_q_start: list[float] = field(default_factory=list)
     v51_q_end: list[float] = field(default_factory=list)
-    v51_telescoping_max_error: float = 0.0
+    # `AC-RB5.1-07`'s telescoping residual, kept as its two signed extremes
+    # rather than as one absolute maximum. The absolute form cannot distinguish
+    # an over-payment from an under-payment, and the two have opposite meanings:
+    # a deficit is the forward clip truncating advance the ego earned, which is
+    # conservative, while a surplus is arc-length change the channel credited
+    # without the ego having made it — the ratchet `C50` executes. One extremum
+    # taken by magnitude would not do either, because a large deficit would hide
+    # a surplus behind it, and the surplus is the one worth detecting.
+    v51_telescoping_max_surplus: float = 0.0
+    v51_telescoping_max_deficit: float = 0.0
     # `T-RB51-12`. Until `RB51`/`M3`-`M5` this script *reimplemented* the
     # redefined sub-rules as variants, because production still charged the old
     # ones. Production now implements them natively, so the two must agree to
@@ -1365,6 +1374,23 @@ class Measurement:
         divergence = abs(float(production) - float(variant))
         self.oracle_divergence[name] = max(divergence, self.oracle_divergence.setdefault(name, 0.0))
 
+    def observe_telescoping_residual(self, residual: float) -> None:
+        """Record one episode's `AC-RB5.1-07` residual on the side it falls.
+
+        Both extremes are kept because the sign carries the meaning. A negative
+        residual is the forward clip truncating advance the ego earned, which
+        under-pays and is conservative. A positive one is arc-length change the
+        channel credited without the ego having made it, which is the ratchet
+        `C50` executes and the thing worth detecting. Reducing the pair to one
+        number — an absolute maximum, or an extremum taken by magnitude — makes
+        the second invisible whenever the first is larger, and on the expert
+        panel the first is 62.294.
+        """
+
+        value = float(residual)
+        self.v51_telescoping_max_surplus = max(self.v51_telescoping_max_surplus, value)
+        self.v51_telescoping_max_deficit = min(self.v51_telescoping_max_deficit, value)
+
     def merge(self, other: "Measurement") -> None:
         """Absorb one worker's partial accumulator; every field is additive.
 
@@ -1431,9 +1457,8 @@ class Measurement:
         self.v51_behind_peak_episodes += other.v51_behind_peak_episodes
         self.v51_q_start.extend(other.v51_q_start)
         self.v51_q_end.extend(other.v51_q_end)
-        self.v51_telescoping_max_error = max(
-            self.v51_telescoping_max_error, other.v51_telescoping_max_error
-        )
+        self.observe_telescoping_residual(other.v51_telescoping_max_surplus)
+        self.observe_telescoping_residual(other.v51_telescoping_max_deficit)
         self.final_negative_episodes += other.final_negative_episodes
         for crawl, mass in other.final_negative_mass_total.items():
             self.final_negative_mass_total[crawl] = (
@@ -1619,7 +1644,12 @@ class Measurement:
                 "q_end_mean": (
                     round(sum(self.v51_q_end) / len(self.v51_q_end), 4) if self.v51_q_end else None
                 ),
-                "telescoping_max_error": round(self.v51_telescoping_max_error, 12),
+                # Signed, and reported on both sides. The absolute figure earlier
+                # revisions published is `max(surplus, -deficit)`, so the
+                # 62.294 of the 2026-09-07 calibration is this run's
+                # `telescoping_max_deficit` with its sign restored.
+                "telescoping_max_surplus": round(self.v51_telescoping_max_surplus, 12),
+                "telescoping_max_deficit": round(self.v51_telescoping_max_deficit, 12),
             },
             "final_rulebook_blame": {
                 "reward_units_by_sub_rule": {
@@ -2631,12 +2661,13 @@ def replay_scenario(
             # the 25.2 % headline decomposable instead of an upper bound.
             if dropped >= signal_total:
                 measurement.scenarios_with_no_selectable_signal += 1
-    # AC-RB5.1-07. The monotone construction makes the undiscounted sum of the
-    # per-step increments equal the episode's net completion exactly; any error
-    # means `q` was not monotone or the clip bound.
-    measurement.v51_telescoping_max_error = max(
-        measurement.v51_telescoping_max_error,
-        abs(v51_episode_delta_q - v51_episode_delta_s / V51_REFERENCE_ADVANCE_M),
+    # AC-RB5.1-07. The signed construction makes the undiscounted sum of the
+    # per-step increments equal the episode's net completion exactly; any residual
+    # means the clip bound. Its **sign** says on which side, and the two sides are
+    # not equivalent: negative is the forward clip truncating advance the ego
+    # earned, positive is advance credited that the ego did not make.
+    measurement.observe_telescoping_residual(
+        v51_episode_delta_q - v51_episode_delta_s / V51_REFERENCE_ADVANCE_M
     )
     if v51_episode_behind_peak:
         measurement.v51_behind_peak_episodes += 1

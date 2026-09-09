@@ -641,3 +641,48 @@ def test_every_priced_variant_is_registered_by_the_accumulator() -> None:
     # column is a structural error rather than an empty percentile.
     reported = module.Measurement().summary()["counterfactual_rulebooks"]
     assert set(reported) == set(names)
+
+
+def test_the_telescoping_residual_keeps_both_signs_apart() -> None:
+    """TEST-RSEC-029: regression for `C51`.
+
+    The residual was accumulated as ``abs(...)`` into one maximum, so an
+    over-payment and an under-payment were indistinguishable in the report. The
+    two have opposite meanings: a deficit is the forward clip truncating advance
+    the ego earned, a surplus is advance credited that the ego never made — the
+    ratchet `C50` executes. On the expert panel the deficit is 62.294, so any
+    reduction to a single number, absolute or by magnitude, would have hidden a
+    surplus behind it. This pins that both survive, through the merge as well,
+    because the parallel replay reaches the report only through `merge`.
+    """
+
+    module = load_measurement_module()
+
+    measurement = module.Measurement()
+    assert measurement.v51_telescoping_max_surplus == 0.0
+    assert measurement.v51_telescoping_max_deficit == 0.0
+
+    # A large deficit must not conceal a smaller surplus, which is the failure
+    # the absolute form had.
+    measurement.observe_telescoping_residual(-62.294)
+    measurement.observe_telescoping_residual(+0.75)
+    measurement.observe_telescoping_residual(-1.5)
+    assert measurement.v51_telescoping_max_surplus == pytest.approx(0.75)
+    assert measurement.v51_telescoping_max_deficit == pytest.approx(-62.294)
+
+    # Each worker reports its own extremes and the merge must keep both sides.
+    worker = module.Measurement()
+    worker.observe_telescoping_residual(+9.5)
+    worker.observe_telescoping_residual(-3.0)
+    measurement.merge(worker)
+    assert measurement.v51_telescoping_max_surplus == pytest.approx(9.5)
+    assert measurement.v51_telescoping_max_deficit == pytest.approx(-62.294)
+
+    reported = measurement.summary()["rulebook_v51"]
+    assert reported["telescoping_max_surplus"] == pytest.approx(9.5)
+    assert reported["telescoping_max_deficit"] == pytest.approx(-62.294)
+    # The absolute figure earlier revisions published is recoverable, so a run
+    # against this report stays comparable with the 2026-09-07 calibration.
+    assert max(
+        reported["telescoping_max_surplus"], -reported["telescoping_max_deficit"]
+    ) == pytest.approx(62.294)
