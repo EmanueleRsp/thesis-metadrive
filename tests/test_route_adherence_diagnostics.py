@@ -100,3 +100,55 @@ def test_recorder_writes_the_columns(tmp_path: Path) -> None:
     assert float(rows[0]["mean_route_adherence"]) == pytest.approx(0.5)
     # Not measured on this row, and therefore blank rather than zero.
     assert rows[0]["route_outside_evaluated_steps"] == ""
+
+
+def test_every_eval_episodes_write_site_emits_the_columns() -> None:
+    """`D14`. Regression: the official panel path wrote these cells empty.
+
+    The columns were added to the four write sites inside the training and
+    intermediate-evaluation loops and not to the fifth, `final_panels.py`, which
+    is the one `run_scenarionet_final_panels` uses — and therefore the one
+    `cli.evaluate`, the training loop's ScenarioNet final-eval branch, the
+    curriculum driver and `evaluate_constant_action_baseline.py` all reach.
+    `CSVRecorder.append_row` fills a missing key with `None` without complaint,
+    so the schema declared the columns and every official panel row carried
+    blanks. `route_fully_outside_max_run` is the statistic that distinguishes
+    clipping four corners from eighty consecutive steps on another carriageway,
+    so it was reading nothing in exactly the place a decision would consult it.
+
+    Asserted over the **call sites** rather than over the helper, because the
+    defect was a forgotten site and a test of the helper cannot see one. Written
+    as a source scan for the same reason: reaching every one of these five sites
+    at runtime needs a simulator, a trained checkpoint and hours of panel
+    evaluation, and a guard that expensive is a guard that does not run.
+    """
+
+    source_root = Path(__file__).resolve().parents[1] / "src"
+    sites: dict[Path, int] = {}
+    emitters: dict[Path, int] = {}
+    for path in sorted(source_root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        # An `append_row` whose first argument is this file, i.e. a write site,
+        # rather than a schema declaration or a reader naming the same file.
+        writes = (
+            text.count('append_row(\n            "eval_episodes.csv"')
+            + text.count('append_row(\n                "eval_episodes.csv"')
+            + text.count('append_row(\n                    "eval_episodes.csv"')
+        )
+        if not writes:
+            continue
+        relative = path.relative_to(source_root)
+        sites[relative] = writes
+        emitters[relative] = text.count("route_adherence_episode_fields(")
+
+    assert sites, "found no eval_episodes.csv write sites; the guard would pass vacuously"
+    silent = {
+        path: (count, emitters[path]) for path, count in sites.items() if emitters[path] < count
+    }
+    assert not silent, (
+        "these modules append eval_episodes.csv rows without the route-adherence "
+        f"columns, so those cells will be silently empty: {silent}"
+    )
+    # Pinned so that adding a sixth write site is a deliberate act rather than a
+    # place these columns can go missing again unnoticed.
+    assert sum(sites.values()) == 5, f"write-site count moved: {sites}"
