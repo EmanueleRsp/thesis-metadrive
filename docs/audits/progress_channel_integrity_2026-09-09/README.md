@@ -177,17 +177,95 @@ comes back clean. Wiring it into the frozen-index validation path is what turns
 `C50` from a latent unbounded exposure into a population property with an
 executable guard — which is what the standing constraint asked for and never had.
 
+### `0.247 m` is not a bound, and the earlier verdict here is withdrawn
+
+An earlier revision of this section said the exposure "is not armed on the panels
+the thesis trains and evaluates on, and that is measured rather than argued:
+0.247 m of fold excess at the reach the exploit needs". **That reads a monotone
+function as if it were a bound, and the reach it is evaluated at is not imposed
+by anything.** The table in §"What the near-revisit audit found" is indexed by
+*lateral reach*, and it climbs steeply: fold excess 0.061 m at 0 m of reach,
+0.247 m at 1.75 m, 1.017 m at 3.00 m, 3.226 m at 5.00 m — 13× over a 2.9× change
+of reach. Quoting the 1.75 m row as a ceiling was a misreading of this audit's own
+measurement, and the choice of that row carried the whole argument.
+
+**Nothing in the runtime bounds the reach.** `conf/env/scenarionet.yaml` sets
+`out_of_route_done: false` and `relax_out_of_road_done: false`, and
+`is_physically_out_of_road` degrades explicitly for route drift — its own
+docstring says "excluding route drift". There is no `|lateral| > X` term anywhere
+in the termination path, by the deliberate design of ADR-053.
+
+**And the same committed run already carries the row that contradicts the
+verdict.** `run_2026-09-09.txt`, unbounded band: on-route under-charge **max
++128.751** with **1601 of 3500 routes positive**, p90 **+27.642**, p99
+**+80.823**; fold excess max **287.035 m**, and a branch-switch under-charge of
+**180.484 channel units** at a planar separation of 116.263 m, i.e. about 58 m of
+lateral excursion. `g6` nets about 36 channel units per lap, so the frozen
+population contains geometry worth roughly **five `g6` laps in a single branch
+switch**. The defensible statement is not "the population does not admit the
+exploit" but "**the population does not admit it within 5 m of lateral reach**",
+and the reach is unconstrained.
+
+**Joined against `D14` for the first time.** The two audits run over the same
+3500 records and had never been cross-referenced per record, which is where the
+answer lives: a fold is only exploitable if drivable surface exists at the offset
+its medial axis sits on. Using each record's own corridor offset as proof that an
+ego can be there, and `2·offset + D_REF` as the planar separation it can then
+span:
+
+* of the 318 records with an enterable corridor, **139** have a route whose
+  largest fold needs a planar separation their own corridor offset reaches;
+* those jumps run to **41.22 channel units** — a whole mean mission — on entry
+  gaps of **0.065 to 0.95 m**, i.e. essentially contiguous surface;
+* the median of the 139 is **−1.00**, so this is a tail of a few tens of records
+  rather than a property of the band.
+
+**What the join does *not* show, and it matters.** The corridor proves drivable
+surface at that offset near the goal cross-section and back along the route; the
+fold excess is a property of the polyline at some *other* station. The join is an
+upper bound on coincidence, not a demonstration that an ego can stand on a
+specific fold's medial axis. The measurement that would settle it — is the medial
+axis of each route's largest fold itself drivable — is not run, and it is the one
+cheap thing left on this item.
+
 ### Recommendation
 
-**`C` now, `A′` if a future index fails the audit, `B` rejected.**
+**`C` now, `A′` if a future index fails the audit, `B` rejected — the direction
+is unchanged and the reason is not.**
 
-The exposure is not armed on the panels the thesis trains and evaluates on, and
-that is measured rather than argued: 0.247 m of fold excess at the reach the
-exploit needs. Every candidate that closes it algebraically spends a
-specification amendment — SCAL-V1.4's bounded margin for `B`, the station's
-meaning in DRIVING-MISSION-V1.1 for `A′`. Spending one to close an exposure the
-measurement says is not armed is the wrong trade while the constraint that would
-detect a future one is now executable.
+Leaving the reward alone no longer rests on the geometry forbidding the exploit,
+because it does not. It rests on two narrower facts: nobody has shown that a
+policy drives ~40 m off its assigned route, and every candidate that closes the
+exposure algebraically spends a specification amendment — SCAL-V1.4's bounded
+margin for `B`, `DRIVING-MISSION-V1.1` §8's withdrawn continuity protocols for
+`A′`. **That position is only honest while the detector works**, which until
+`C53` it did not: `route_fully_outside_max_run` was schema-declared and silently
+empty on every row of every official panel evaluation.
+
+**And there is a remedy no candidate above names, because it is a weight rather
+than a mechanism.** For *some* admissible `w₅` to oppose an off-corridor drive at
+clip pace, the crossover must fall inside §5.4's cap:
+
+```
+λ₄·ΔQ_MAX / (1+σ)  ≤  (a − λ₄·ΔQ_MAX) / (1+σ)
+    ⇒  2·λ₄·ΔQ_MAX ≤ a
+    ⇒  λ₄ ≤ a / (2·ΔQ_MAX)  =  1.25   at a = 2.5, ΔQ_MAX = 1
+```
+
+`σ` cancels, so the condition is `λ₄ ≤ a/2` for every admissible severity, and
+the "factor of four" derived earlier is `λ₄/(a − λ₄·ΔQ_MAX)`, which reaches 1.0
+exactly at `λ₄ = a/2`. The shipped `λ₄ = 2.0` is 1.6× that. Lowering it does
+three things at once: it brings the off-corridor indicator inside the admissible
+window, it *improves* ADR-081's braking criterion — `λ₄` sits in the denominator
+of `a_req^max` — and it reduces `C50`'s payoff linearly, `g6`'s +72 reward units
+per lap becoming +45 at `λ₄ = 1.25`. It is a weight decision, so §8 forecloses
+nothing.
+
+It is **not proposed here**, for two reasons. `λ₄ = 2.0` is approved and
+measured, and the grid prices a reduction at about 1.1 pp of below-standstill per
+0.5 — but at `a = 2.2, σ = 0`, not at the shipped pair, so the cost at production
+weights is **unmeasured**. That measurement belongs in the 45-minute run A7
+requires anyway, and until it exists this is a derivation without a price.
 
 If `C50` is to be closed algebraically rather than by population property, `A′`
 is the candidate: it is the only one that removes a mechanism instead of adding
@@ -244,15 +322,58 @@ not established.** In it the median corridor offset is 10.70 m — about three
 lanes — and exactly **1 of 318** corridors is part of the assigned route, so
 these are not the ego's own carriageway seen twice.
 
-* **130 records, 3.7 % of the index, have such a corridor covering at least half
-  the mission.** All 130 are Waymo; by split, 67 train, 43 test, 14 validation,
-  so it is present in evaluation and not only in training.
+* **130 records have such a corridor covering at least half the mission.** All
+  130 are Waymo; by split, **69 train, 46 test, 15 validation**, so it is present
+  in evaluation and not only in training.
 * **Two records have one covering the whole route**: 158.6 m at an offset of
   −26.0 m and 139.7 m at +22.0 m, entered across gaps of 0.888 m and 0.872 m.
+  The larger of the two is a `LANE_FREEWAY` corridor, the only one in the subset.
 * In channel units the corridor is worth `length / D_REF`: median **6.75**,
-  maximum **71.36**, against a mean mission of **40.58**. On the worst record an
-  ego can bank more than a whole average mission's progress on a legal parallel
-  street and arrive outside the gate.
+  maximum **71.36**, against a mean mission of **40.58**.
+
+**Read the last figure in metres, not in share of route — the share flatters it,
+and an earlier revision of this section led with the share.** The
+at-least-half-the-mission subset is dominated by *short* routes: their route
+length has a median of **29.1 m** against **113.6 m** for the index, and **123 of
+the 130 (95 %) are below the index median**. Dividing a short corridor by a short
+route inflates the share, so "3.7 % of missions, up to a whole mission's worth"
+was literally true and misleading as a headline. In absolute terms, which is the
+unit the banked `R4` budget is actually denominated in:
+
+| corridor at least | records | share of index |
+|---|---:|---:|
+| 1 channel unit (2.2 m) | 215 | 6.1 % |
+| 5 channel units (11 m) | 184 | 5.3 % |
+| 10 channel units (22 m) | 122 | 3.5 % |
+| 20 channel units (44 m) | 39 | 1.1 % |
+| **one mean mission (90 m)** | **6** | **0.17 %** |
+
+And cross-tabulated: of the 130, the ones whose route is at least the index
+median length are **7**, or **0.20 %** of the index. Five of those seven are
+`topology=intersection`; the two `simple` ones are the whole-route pair above.
+
+**The mechanism is junction geometry, and the user's reading of it was right in
+substance.** Two hypotheses were put to this measurement and it adjudicates
+them. *That the scenarios are short*: **confirmed**, and it is the correction
+above. *That the gate sits at a junction and is therefore wider than it should
+be*: the gates in the band **are** wider — median 13.7 m against 10.3 m for the
+index — but a wider gate is *harder* to miss, so this works against the finding
+rather than explaining it. *That the corridors are junction interior rather than
+parallel streets*: **refuted on the surface type** — 129 of the 130 are
+`LANE_SURFACE_STREET`, one is `LANE_FREEWAY`, and **none** is purely
+`LANE_SURFACE_UNSTRUCTURE` — but **confirmed on the context**: 199 of the 318 in
+the band are `topology=intersection`, and intersections are over-represented,
+**12.2 %** of the index's intersection records landing in the band against
+**3.4 %** of its `simple` ones. So the picture is not an agent driving a parallel
+carriageway across a long mission; it is a short junction-crossing mission with
+another street of the same junction running alongside for most of its length.
+
+**The records are now identified.** `d14_corridor_records.csv` beside this file
+carries all 318, one row each: uid, source, split, topology, route length,
+corridor length and share, offset, entry gap, gate length, surface types, and the
+near-revisit join described under `C50` below. An aggregate that cannot be
+audited per record is an assertion, and the earlier revision of this directory
+committed only aggregates.
 
 **Spacing control.** A coarse walk could bridge a gap shorter than its spacing
 and over-report. Refining 5 m to 1 m moves the figures the *other* way: the band
@@ -273,10 +394,40 @@ by `scenario_uid` and were PG-heavy, and a sample chosen by sort order is not a
 sample.
 
 **What this does not show.** Geometry, not behaviour: whether a trained policy
-goes there is what `route_fully_outside_max_run` answers, and no
-`eval_episodes.csv` exists on disk. The continuity test is a lower bound in two
-ways — a component must fit an ego width at every sampled station, and
-consecutive components must overlap — so the true exposure is at least this.
+goes there is what `route_fully_outside_max_run` answers, and **until `C53` that
+column was silently empty on every official panel run** — schema-declared, filled
+with `None`, because the write site the official evaluation uses was the one of
+five that never emitted it. Fixed here; still unrun. The continuity test is a
+lower bound in two ways — a component must fit an ego width at every sampled
+station, and consecutive components must overlap — so the true exposure is at
+least this.
+
+**The decision, taken 2026-09-09: no remedy, recorded as an observation.** With
+the exposure re-expressed in metres it is 6 records at a whole-mission scale and
+7 whose route is even of median length, concentrated in short junction crossings.
+Every remedy that would work is foreclosed by one sentence of an approved
+specification (below), and the one that is not — `λ₄ ≤ a/2` — is unpriced at
+production weights. Reporting it as a declared limitation is the proportionate
+answer, and the diagnostic that would reopen it now works.
+
+**One thing that was mispriced and should not be repeated as a reason.** An
+earlier account of this decision leaned on an invariant said to forbid dropping
+records from the frozen index. **No such invariant exists**: `grep` finds no
+"3.2.6" anywhere, and the two occurrences of "the frozen panel is not edited to
+improve a figure" both sit outside their own documents' declared authoritative
+scope and are about the nine speed-infeasible Waymo records, not these. What does
+bear on it is precedent rather than prohibition — ADR-024 rejects "mutate frozen
+dataset eligibility" as `Prohibited`, and EVAL-PROTOCOL-V1.3.1 chose to
+declare-and-report rather than exclude a structurally similar defect — plus the
+mechanical cost, which is a re-freeze minting a new `selection_hash`. ADR-037
+accepted exactly that cost once, "acceptable only because official experiments
+have not started", which is still true; ADR-038 then *rejected* deferring a
+dataset change to a second freeze because it doubles the re-run cost. So
+exclusion is **cheaper now than it will ever be again**, not forbidden. It is
+still not recommended — the records are correct geometry, they pass every
+eligibility flag, no funnel stage ever tested for a parallel corridor, and the
+boundary is a chosen threshold on a smooth continuum rather than a natural break
+— but the reason is proportionality and scientific hygiene, not a rule.
 
 **The remedy remains a user decision and a specification amendment, and the
 hierarchy is not what blocks it.** An earlier version of this paragraph argued

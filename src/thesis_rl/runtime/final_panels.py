@@ -14,6 +14,7 @@ from thesis_rl.runtime.comfort_diagnostics import (
     comfort_episode_fields,
 )
 from thesis_rl.runtime.io.eval_artifacts import maybe_build_live_final_eval_recorder_factory
+from thesis_rl.runtime.route_adherence_diagnostics import route_adherence_episode_fields
 from thesis_rl.runtime.wiring.builders import (
     build_eval_env,
     evaluation_num_workers,
@@ -111,6 +112,18 @@ def _append_episode_rows(
             "eval_episodes.csv",
             {
                 **comfort_episode_fields(episode, index),
+                # `D14`: this is the write site the OFFICIAL panel evaluation uses
+                # — `run_scenarionet_final_panels` is what `cli.evaluate`, the
+                # training loop's ScenarioNet final-eval branch, the curriculum
+                # driver and `evaluate_constant_action_baseline.py` all call. The
+                # four sites inside the training and intermediate-eval loops
+                # carried these columns from the start and this one did not, so
+                # `route_fully_outside_max_run` was schema-declared and silently
+                # `None` on every row of every official panel run. That is the
+                # one statistic that separates clipping four corners from eighty
+                # consecutive steps on another carriageway, and it was reading
+                # nothing exactly where the decision needs it.
+                **route_adherence_episode_fields(metadata),
                 **base_fields, **common, "episode_id": index + 1,
                 "scenario_seed": None, "scenario_uid": metadata.get("scenario_uid"),
                 "scenario_id": metadata.get("scenario_id"), "source": metadata.get("source"),
