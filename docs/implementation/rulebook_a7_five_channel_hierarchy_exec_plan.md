@@ -9,18 +9,24 @@
 | Authoritative specification for the architecture being replaced | `docs/specifications/rulebook_v5.1_specification.md` (`RULEBOOK-V5.1`, `APPROVED` 2026-08-14, amended 2026-08-20 and 2026-09-07), `SCAL-V1.4` (§5) |
 | Authoritative specification for A7 | **None. It does not exist yet, and writing it is `DEC-A7-001` and milestone `M2` of this plan.** No production implementation may begin before it is approved |
 | Evidence of record | `docs/audits/rulebook_architecture_2026-09-09/` (the candidate bench, the impossibility results, the recommendation and its derivations) and `docs/audits/progress_channel_integrity_2026-09-09/` (authoritative wherever the two disagree) |
-| Status | `AWAITING_DECISIONS` |
+| Status | `APPROVED` — every gate in §6 resolved 2026-09-10. `M1` may begin; `M3` onward wait on the `M2` specification being written and approved |
 | Created | 2026-09-09 |
-| Last updated | 2026-09-09 |
+| Last updated | 2026-09-10 |
 | Branch | `worktree-a7-execplan`, from `main` at `3e58ce0` |
 | Related ADRs | ADR-072 (partly reverted: the negotiable lane rules return above progress), ADR-076 (`L6`, deleted), ADR-075 and ADR-081 (the discount), ADR-063…ADR-071 (the sub-rules, untouched), ADR-035 and ADR-053 (context for `C50`/`D14`). **A new ADR is required** for the architecture and the discount; the next free number is `ADR-083` |
 | Owner | Single maintainer; there is no reviewer to assign (`AGENTS.md`, Branching And Pull Requests) |
 
 **What is approved, and by whom.** The user approved **the A7 architecture** and
-**`γ = 0.9982`** on 2026-09-09. Nothing else in this document is approved.
-`w₅ = 0.15`, `φ = 0`, the removal of `η` and `λ₆`, every threshold value, and
-every change to a mandatory test are this plan's content and are recorded in §6
-as gates.
+**`γ = 0.9982`** on 2026-09-09, and on **2026-09-10** ratified every remaining gate
+in §6: `w₅ = 0.15`, `φ = 0`, the budget *rule*, both mandatory-test changes, the
+specification form, the `AB-LEARN` amendment, the `RB51` disposition and the
+vocabulary break with its pooling guard — plus the two decisions an adversarial
+review of §6 added, `DEC-A7-013` and `DEC-A7-014`.
+
+**What is still open is a measurement, not a decision.** The budget *values*
+`τ₁`–`τ₄` come from `M1`, under a rule fixed before the numbers are seen (§6.4);
+`φ = 0` carries a falsifier in the same run; and `DEC-A7-010` pre-registers what
+would reopen `λ₄`.
 
 **`λ₄ = 2.0` stands** and is not proposed for change (§6, `DEC-A7-010`).
 
@@ -97,8 +103,9 @@ A7 specification document; the amendment of the `AB-LEARN` pre-registration; the
 - **The thresholded-lexicographic algorithm and the mechanism that enforces a
   budget.** `D1` records that the object a threshold applies to differs by
   mechanism, and `I1b` proves an episodic budget has no per-state equivalent. This
-  plan fixes the budget *values* from the panel; the arm that consumes them is
-  separate, later work.
+  plan fixes the budget *values* from the panel and declares the requirement on
+  the undiscounted realized form; **which object a threshold is enforced on stays
+  `D1`'s**, which is why `M1` emits all three rather than one (§6.4).
 - **The distributional arm.**
 - **`C50`** — the negative-clip ratchet. Decided 2026-09-09: change nothing in the
   reward. Carried here as a declared limitation (§15).
@@ -109,6 +116,14 @@ A7 specification document; the amendment of the `AB-LEARN` pre-registration; the
 - **`RB51`'s `M9`** (multi-hop route reachability). It amends
   `rulebook_v4.11` §2.9.5 and touches no A7 channel; it detaches rather than
   riding this plan (§6, `DEC-A7-009`).
+- **Writing the ACL re-base.** `DEC-A7-014` records that `ACL-SN-EMA-001` v2.0
+  cannot run on an A7 rulebook and blocks the dependent ACL work behind `M5`, but
+  no ACL revision is drafted here: the A7 specification does not exist yet, so a
+  revision written now would be drafted against a contract that is not yet
+  authoritative (§6.10).
+- **The `make_rulebook_tables.py` name defect** (§4.6). It predates A7, it is
+  fixed separately and ahead of `M5`, and folding it in would put two causes in
+  one diff and destroy the pre-fix evidence.
 - Retraining, algorithm selection, observation or encoder changes, and any
   decision about GPU time.
 
@@ -214,7 +229,7 @@ register row proves what was true on its date.
 | Margin vector arity | Declared once, as data, keyed by mode: `{bounded_*: 4, six_level_priority_weighted_rank: 6}` | `reward/scalarization.py:52-58` `_REQUIRED_MARGIN_COUNT_BY_MODE` |
 | Required base per mode | `six_level_priority_weighted_rank` requires exactly `SIX_LEVEL_PRIORITY_BASE = 2.5`; a mismatch raises at construction | `reward/scalarization.py:38-44, 105-110` |
 | **The progress index is a literal `3`** | `_canonicalize_bounded` range-checks index 3 as `[-1, +1]` and every other index as `[-1, 0]`, with a docstring stating that the index "is 3 in both the four-level and the six-level vector, because ADR-072 added L5 and L6 *below* progress rather than around it" | `reward/scalarization.py:331-359` |
-| §5.4 predicate | Constructor-time, over the three priority weights, with `tail = λ₄ + η·(Δt/T_REF) + λ₆·(Δt/T_REF)` and `bound = (1+σ)·Σ(lower) + φ·|lower| + tail` | `reward/scalarization.py:147-196` `_validate_six_level_weights` |
+| §5.4 predicate | Constructor-time, over the three priority weights, with `tail = λ₄ + η·(Δt/T_REF) + λ₆·(Δt/T_REF)` and `bound = (1+σ)·Σ(lower) + φ·(number of lower priority levels) + tail` | `reward/scalarization.py:147-196` `_validate_six_level_weights` |
 | `φ` applies to the priority block only | `flat * margin` is added inside the three-level loop, and `flat * len(lower)` counts only the priority levels below `k` | `reward/scalarization.py:413, 191` |
 | Level membership and aggregation | `L5` normalized sum over three with a declared denominator; `L6` explicit denominator 1 | `rulebook/v2/aggregation.py`, `rulebook/v2/registry.py` |
 | `L6`'s sub-rule | `advance_shortfall`, deliberately not named `progress_rate` so the aggregated result cannot overwrite the atomic one | `rulebook/v2/components/progress_rate.py` |
@@ -270,7 +285,7 @@ eight test files reference `progress_rate`, `PROGRESS_RATE` or
 `margins`. `RB51`'s comparable 4→6 change rippled to 50 tests, all encoding the
 old contract. `VERIFIED` by enumeration today.
 
-### 4.5 The two plans A7 collides with
+### 4.5 The three plans A7 collides with
 
 Both were read in full, not through their index rows.
 
@@ -296,6 +311,19 @@ the two sources are graded by substantially different rulebooks. A7 changes the
 order, not the membership, so all three carry across unchanged and constrain what
 may be *claimed* about `K3`, not what it is.
 
+**`ACL-PROG-004` / `ACL-SN-EMA-001` v2.0 — the third collision, and this section
+missed it.** Found by an adversarial review of §6 rather than here.
+
+| Fact | Detail | Label |
+|---|---|---|
+| The ACL contract cannot run on an A7 rulebook | `ACL-SN-EMA-001` v2.0 §3.2 treats **six level margins as fatal if absent**: true today (`MACRO_RULE_ORDER` has six entries), false after `M5` | `VERIFIED` |
+| This plan already edits a file the ACL plan owns | §13 lists `curriculum/scenario_acl/usefulness.py` as a planned modification; its weight map is keyed on `progress_rate` at `:37`, the level A7 deletes | `VERIFIED` |
+| `DEC-206`'s ordering rests on a circular argument | It rejected `…→L5→T` because that "would invert ADR-072" — a citation of this repository's own ADR, which `AGENTS.md` does not admit as evidence. Applying its own `REQ-001` principle to the A7 order yields the rejected form | `VERIFIED` |
+| `REQ-002` is unaffected | A7 preserves sub-rule names, membership, `K4`'s denominator of 3, the at-fault gate and the atomic vector | `VERIFIED` |
+
+Disposition in `DEC-A7-014` and §6.10: record the re-base as a gate here, and do
+not write an ACL revision before the A7 specification exists.
+
 ### 4.6 Directly relevant debt
 
 `C49` (the discount; this plan closes it), `C50` and `D14` (decided; declared),
@@ -305,7 +333,27 @@ undiscounted dominance form is unobtainable), `V4` (the ordering fixtures'
 weight pair; folded into `DEC-A7-007`), `V1` (`make smoke` not run since the
 discount change), `C2`/`C3` (`signal` under-firing, independent of the order),
 `C8` (a run's provenance artifacts mislabel the rulebook family — worth knowing
-before reading any A7 run's banner, and not A7's to fix).
+before reading any A7 run's banner, and not A7's to fix), and `ACL-PROG-004`'s
+`DEC-206` (reopened without prejudice by `DEC-A7-014`).
+
+**One defect found while verifying this section, and it is not A7's to fix.**
+`analysis/tables/make_rulebook_tables.py:18` declares
+`R4_PROGRESS_MARGIN_RULE_NAME = "route_progress"` and compares it against the
+recorded rule name at `:200` and `:203`. But `route_progress` is a **v1** rulebook
+name; the v2 value is `MacroRule.MISSION_PROGRESS.value == "mission_progress"`,
+built at `rulebook/v2/wrapper.py:429` and carried to the `rule_name` column. The
+comparison can never match, so `rulebook_r4_progress_margin.csv` is written with a
+header and no rows, and the signed `[-1,+1]` progress margin instead falls into
+`rule_violation_by_rule.csv` under violation-rate columns — the terminology mixing
+that file's own comment declares must never happen. History dates the constant to
+`e4be417` ("rulebook v4.8"), so it was born correct and was **orphaned by
+`DEC-RB51-005`'s rename of 2026-08-20**, which updated fifty tests but not this
+consumer; nothing went red because it is not a test. Classification per
+`AGENTS.md`: a **defect of the repository**. It is fixed separately and **before**
+`M5` touches that file, so the two causes do not share a diff and the pre-fix
+evidence can still be captured; recorded in `docs/open_items.md` with a regression
+test that asserts the filtered name against `MACRO_RULE_ORDER` rather than against
+a literal, so the next rename cannot orphan it again.
 
 ---
 
@@ -391,22 +439,24 @@ deficit, which is what `horizon_steps == 500` in the guard exists to say.
 
 ## 6. Decisions And Approval Gates
 
-No dependent work starts while a gate is unresolved. `M1` depends on no gate.
+**Every gate was resolved by the user on 2026-09-10.** Three of the twelve originally listed here were not decisions at all and are marked as such rather than carrying a signature they did not need: `DEC-A7-004` is entailed by the approved architecture, `DEC-A7-010` was decided when `λ₄` was approved, and `DEC-A7-012` is a mechanical consequence of the ratified weights. Two decisions were **added** after an adversarial review of this section found them missing: `DEC-A7-013` and `DEC-A7-014`. `M1` depends on no gate and may begin.
 
 | ID | Category | Issue | Alternatives | Recommendation | Impact | Status |
 |---|---|---|---|---|---|---|
-| `DEC-A7-001` | Specification clarification | A7 has no specification document. What form does it take? | (a) a new `RULEBOOK-V5.2` + `SCAL-V1.5` superseding v5.1 §3/§4/§5/§9/§10; (b) an in-place amendment of v5.1, the form ADR-081 used; (c) a separate amendment file, the form `OBS-V1.3.1` used | **(a)** | A7 makes §3 (level count and membership), §4.6 (`L6`), §5.1 (the formula), §5.4 (the predicate), §5.5 (the weights), §9 (nine of seventeen acceptance criteria) and §10 (the fixtures) wrong **simultaneously**. ADR-081's in-place form worked for two constants; a reader of v5.1 plus five amendments would have to reconstruct the architecture from a changelog. The index's authority model already keys on version | Awaiting approval |
-| `DEC-A7-002` | Specification deviation | `w₅`, the weight on `K4` | 0.15 / 0.25 / any value in the derived window | **`w₅ = 0.15`** | See §6.1. Cost stated there | Awaiting approval |
-| `DEC-A7-003` | Specification deviation | `φ`, the shared absolute tie-breaker | remove (`φ = 0`) / keep 0.25 | **remove** | See §6.2. Cost stated there, with its falsifier in `M1` | Awaiting approval |
-| `DEC-A7-004` | Specification deviation | `η` and `λ₆`, and the `L6` level that carries `λ₆` | remove both / keep `L6` below `K5` / keep `η` only | **remove both** | See §6.3 | Awaiting approval |
-| `DEC-A7-005` | Specification clarification | The budgets `τ₁`–`τ₄` have no values | (a) fix each from the expert per-episode distribution at a **pre-registered** quantile; (b) choose values after seeing the distribution; (c) defer until the thresholded mechanism is chosen (`D1`) | **(a)**, criterion in §6.4, values filled in by `M1` | (b) is the post-hoc choice `EVAL-PROTOCOL` `REQ-018` prohibits in its own domain and the same objection applies here; (c) leaves the architecture without the budgets that define three of its five channels | Criterion awaiting approval; values awaiting `M1` |
-| `DEC-A7-006` | Mandatory test change | `tests/test_scal_v14.py` changes substantially | amend / delete and rewrite / leave and add a second file | **amend in place**, itemised in §6.5 | It is a mandatory test and `AGENTS.md` requires recorded approval. One test (`test_l6_reaches_only_the_last_term`) has no A7 counterpart and is **deleted**, not weakened | Awaiting approval |
-| `DEC-A7-007` | Mandatory test change | The `O1`–`O6` fixtures change, and they carry `V4` | amend for A7 only / amend and parametrise over both weight pairs / amend and read the shipped pair from the configuration | **amend and parametrise over both pairs**, closing `V4` in the same change | The fixtures assert at `a = 2.2, σ = 0`, which production has not used since ADR-081. Every ordering was checked to hold at the shipped pair (O3 excepted, the known `D15` failure), so this is a verification gap, not a behavioural one — but A7 rewrites these fixtures anyway, so folding it in costs one change instead of two | Awaiting approval |
-| `DEC-A7-008` | Specification clarification | `AB-LEARN`'s arm B is pre-registered on the reward A7 replaces | (a) amend the pre-registration explicitly and re-register arm B against A7 before any run; (b) run the screening on the old reward first, then A7; (c) leave `AB-LEARN` untouched and let it drift | **(a)** | See §6.6 | Awaiting approval |
-| `DEC-A7-009` | Scope | Two ExecPlans for one reward | (a) A7 supersedes `RB51` downstream of the hierarchy, `RB51` closes as `IMPLEMENTED` with its residue named; (b) A7 becomes a milestone of `RB51`; (c) A7 sequences behind `RB51`'s `M8`/`M9` | **(a)** | See §6.7 | Awaiting approval |
-| `DEC-A7-010` | Implementation detail | `λ₄` | keep 2.0 / reduce to 1.9 (buys back the §5.4 margin) / reduce to 1.25 (`λ₄ ≤ a/2`) | **keep 2.0.** Not reopened here | See §6.8. `M1` prices 1.9 and 1.25 at the production pair as *measurements*, which turns "we do not know" into "we know and chose"; the proposal stays 2.0 | Not a gate — recorded so the measurement is not mistaken for a proposal |
-| `DEC-A7-011` | Specification clarification | The recorded artifact schema and the checkpoint identity both break | declare both breaks / preserve the old channel names / emit both schemas | **declare both**, as `DEC-RB51-005` did for the same enum | `MacroRule` values reach CSVs, evaluation artifacts and analysis tables; the vector arity and schema id reach the checkpoint reward-semantics identity. Keeping a deleted level in the recorded schema is exactly the stale naming `DEC-RB51-005` refused | Awaiting approval |
-| `DEC-A7-012` | Specification clarification | Nine of the seventeen `AC-RB5.1-*` criteria stop applying or change meaning | restate them in the A7 specification / carry them unchanged / drop them silently | **restate**, with the disposition table in §9.3 | `AC-RB5.1-10` (`η` reaches only `L5`), `-13` (`λ₆` below its O3 bound), `-15` (the standstill baseline) and `-17` (`L6` refines only ties) become `NOT_APPLICABLE`; `-01`, `-02`, `-04`, `-06`, `-12`, `-14` and `-16` change their content | Awaiting approval |
+| `DEC-A7-001` | Specification clarification | A7 has no specification document. What form does it take? | (a) a new `RULEBOOK-V5.2` + `SCAL-V1.5` superseding v5.1 §3/§4/§5/§9/§10; (b) an in-place amendment of v5.1, the form ADR-081 used; (c) a separate amendment file, the form `OBS-V1.3.1` used | **(a)** | **Measured, and it reverses the cost this row first assumed.** `RULEBOOK-V5.1` is cited by 85 files with **112 section citations** across 52 of them, and **63 of those 112 (56 %) point at sections A7 rewrites** — §3 (19), §4.6 (14, a section that ceases to exist), §5.5 (10), §5 (7), §4.4 (7), §5.1 and §5.4 (3 each). An in-place amendment leaves all 63 silently meaning something else. A new version invalidates none, because this repository **never re-points citations**: `SUPERSEDED` is a first-class status in `docs/project_index.md`'s own vocabulary, v5.0→v5.1 and v4.12→v4.13 are both full-version precedents, and v4.7 is still cited by name in 25 live `src/`/`tests/` files | **Approved 2026-09-10** |
+| `DEC-A7-002` | Specification deviation | `w₅`, the weight on `K4` | 0.15 / 0.25 / any value in the derived window | **`w₅ = 0.15`** | See §6.1. Costs the expert **0.265** reward units per episode | **Approved 2026-09-10** |
+| `DEC-A7-003` | Specification deviation | `φ`, the shared absolute tie-breaker | remove (`φ = 0`) / keep 0.25 | **remove** | See §6.2, with its falsifier in `M1`. The braking criterion is pinned in its strict form, `a_req^max > 9 m/s²`, which 10.96 clears by 22 % | **Approved 2026-09-10** |
+| `DEC-A7-004` | Consequence, not a gate | `η` and `λ₆`, and the `L6` level that carries `λ₆` | — | **removed** | **This is entailed by the approved architecture and was wrongly listed as open.** A7 *is* five channels, so `L6` is gone by the block the user approved, and `w₅` replaces `η` as `K4`'s weight — that substitution is the mechanism that distinguishes A7 from A6. Recorded as a consequence in §6.3, with the argument restated on measurement rather than on the shipped specification's own admission | **Not a gate** |
+| `DEC-A7-005` | Specification clarification | The budgets `τ₁`–`τ₄` have no values, **and no agreed object** | rule: (a) the panel maximum with declared exclusions; (b) a quantile; (c) defer to `D1`. Object: undiscounted realized `X_i` / per-span `X_i/Q` / discounted expected `E[Σ γ^t c_k]` | **(a) on all three objects**, criterion in §6.4, values filled in by `M1` | **Revised: the first draft of this row pre-registered p99 of `X_i/Q`, which contradicted its own criterion and silently decided a question this plan puts out of scope.** A budget that fails to admit the human is falsified, and that implies the maximum, not a quantile. And `I1b` proves the three objects do not coincide, while `D1` — which object a threshold applies to — is out of scope, so `M1` emits all three and A7 declares the requirement on the undiscounted realized form | **Rule approved 2026-09-10; values await `M1`** |
+| `DEC-A7-006` | Mandatory test change | `tests/test_scal_v14.py` changes substantially | amend / delete and rewrite / leave and add a second file | **amend in place**, itemised in §6.5 | It is a mandatory test and `AGENTS.md` requires recorded approval. One test (`test_l6_reaches_only_the_last_term`) has no A7 counterpart and is **deleted**, not weakened | **Approved 2026-09-10** |
+| `DEC-A7-007` | Mandatory test change | The `O1`–`O6` fixtures change, and they carry `V4` | amend for A7 only / amend and parametrise over both weight pairs / amend and read the shipped pair from the configuration | **amend and parametrise over both pairs**, closing `V4` in the same change | The fixtures assert at `a = 2.2, σ = 0`, which production has not used since ADR-081. Every ordering was checked to hold at the shipped pair (O3 excepted, the known `D15` failure), so this is a verification gap, not a behavioural one — but A7 rewrites these fixtures anyway, so folding it in costs one change instead of two | **Approved 2026-09-10** |
+| `DEC-A7-008` | Specification clarification | `AB-LEARN`'s arm B is pre-registered on the reward A7 replaces | (a) amend the pre-registration explicitly and re-register arm B against A7 before any run; (b) run the screening on the old reward first, then A7; (c) leave `AB-LEARN` untouched and let it drift | **(a)**, and `DEC-AB-005` **survives** | See §6.6. The screening still freezes: approving the A7 specification freezes the *contract*, the screening freezes the *question of optimizability*. Without that second freeze nothing stops an A8 | **Approved 2026-09-10** |
+| `DEC-A7-009` | Scope | Two ExecPlans for one reward | (a) A7 supersedes `RB51` downstream of the hierarchy, `RB51` closes as `IMPLEMENTED` with its residue named; (b) A7 becomes a milestone of `RB51`; (c) A7 sequences behind `RB51`'s `M8`/`M9` | **(a)**, with §9.3 carrying two columns | See §6.7. §9.3 states each criterion's **arrival state under v5.1** beside its disposition under A7, so the table is the reconciliation `RB51` never got rather than only a transition | **Approved 2026-09-10** |
+| `DEC-A7-010` | Consequence, not a gate | `λ₄` | keep 2.0 / reduce to 1.9 / reduce to 1.25 | **keep 2.0** | Decided when `λ₄` was approved and not reopened here. §6.8 pre-registers what would reopen it, **before** `M1` produces the two numbers, so their reading cannot be post-hoc | **Not a gate** |
+| `DEC-A7-011` | Specification clarification | The recorded vocabulary and the checkpoint identity both break | declare both / preserve the old channel names / emit both schemas | **declare both, and add one guard** | **Narrowed and strengthened.** It is a break of *vocabulary*, not of schema: `CSVRecorder.SCHEMAS` has no column built from `MacroRule`, so no header moves and no reader raises. And it is **not** the same class as `DEC-RB51-005`: that rename changed every channel name, so a stale consumer failed visibly, while A7 keeps four of five names, so a stale consumer produces a populated and wrong table. `_build_condition_id` (`analysis/aggregate/aggregate_runs.py:184-204`) buckets by `rulebook_config` and never by `vector_schema_id`, so pre- and post-A7 runs can pool silently. The guard: `vector_schema_id` joins `condition_id` | **Approved 2026-09-10** |
+| `DEC-A7-012` | Consequence, not a gate | Nine of the seventeen `AC-RB5.1-*` criteria stop applying or change meaning | — | **restate**, table in §9.3 | A mechanical consequence of the ratified weights: once `η`, `λ₆` and `φ` are gone, `AC-RB5.1-10`, `-13`, `-15` and `-17` have no referent. Recorded rather than signed | **Not a gate** |
+| `DEC-A7-013` | Specification clarification | **`K2 ≻ K3` is the only step in the hierarchy whose sole surviving argument is this repository's own specification** | keep the order and declare it unsupported / reorder / defer | **keep, declare, and measure it in `M1`** | See §6.9. `AGENTS.md`'s Scientific Argument Standards require this to be said out loud, and A7 is the moment the hierarchy is rewritten — freezing an unpriced order a second time makes the third time harder. The measurement that would price it, `K2`/`K3` co-occurrence, does not exist and is free in the run `M1` already needs | **Approved 2026-09-10** |
+| `DEC-A7-014` | Blocking technical issue | **A7 re-bases the `ACL-SN-EMA-001` v2.0 contract, and no document records the coupling** | write ACL revision 4 now / record a re-base gate here / ignore it | **record the gate here; do not write revision 4 now** | See §6.10. ACL v2.0 §3.2 treats six level margins as *fatal if absent* — true today, false after `M5`, so **the ACL as written cannot run on an A7 rulebook**. This plan's own Files table already modifies `curriculum/scenario_acl/usefulness.py`, whose weight map is keyed on `progress_rate` (`:37`), while §4.5 named only `AB-LEARN` and `RB51`. Writing revision 4 now is blocked anyway: the A7 specification does not exist yet | **Approved 2026-09-10** |
 
 ### 6.1 `w₅ = 0.15` — criterion, derivation, value, cost
 
@@ -485,6 +535,18 @@ breaks no longer exists — at the cost of `a_req^max` falling from **12.43** to
 which is the margin by which the reward's local gradient still points toward
 braking in the hardest conflict a vehicle could resolve.
 
+**The criterion is pinned in its strict form, `a_req^max > 9 m/s²`, and that is a
+decision rather than a convenience.** `φ = 0` spends about a third of the margin
+ADR-081 bought over the physical limit, so the strict form is what makes the
+choice admissible and it should not be adopted silently. The reason it is the
+right form: 9 m/s² is already peak braking on dry asphalt, the worst case rather
+than the typical one, so margin *above* that number protects against nothing
+physical — only against uncertainty in the number itself. And if margin is later
+wanted back, the lever is `σ`, not `φ`: `σ` scales with each level's own weight
+while `φ` is absolute, which is why `φ` is 5.1 % of the severity slope at `k=1`
+and 25.0 % at `k=3` — the most important level is the flattest, the very shape
+ADR-081 criticised.
+
 **Falsified before recommending, and falsifiable after.** Over the ten-ordering
 battery at both discounts no ordering changes sign and no reward-hacking probe
 changes verdict; the largest movement is O5 (waiting at a red) from +9.075 to
@@ -494,16 +556,38 @@ family, whose rows cannot be read across. **The falsifier is one grid member at
 `φ = 0` in `M1`'s run**: if `fraction_below_standstill` breaches 7.45 %, revert to
 0.25 and accept the 1.0975 margin.
 
-### 6.3 Removing `η` and `λ₆`
+### 6.3 Removing `η` and `λ₆` — a consequence, argued on measurement
 
-- **`η`** is, by the shipped specification's own admission, the one weight the
-  expert panel cannot discriminate, because the logged human almost never relaxes.
-  A weight that no measurement can fix is a weight chosen by taste.
-- **`λ₆`** carries a level whose cost fires on **99.4024 %** of expert steps at
-  `p50 = 0.884` and is a pointwise function of the progress channel — the only
-  channel whose return distribution carries nothing beyond its mean once progress
-  is known, which is precisely what the distributional component cannot use. Its
-  value is an open decision (`D15`).
+Not a gate (`DEC-A7-004`): A7 *is* five channels, so `L6` goes with the block the
+user approved, and `w₅` replaces `η` as `K4`'s weight. What this section owes is
+therefore not a justification for a choice but an argument that survives without
+citing the document being replaced — and the first draft of it did not, so it is
+restated here on measurement.
+
+- **`η`.** The earlier wording — "by the shipped specification's own admission,
+  the one weight the expert panel cannot discriminate" — cites the specification,
+  which `AGENTS.md` forbids as evidence. The measured statement is both available
+  and stronger: **it is not that the panel fails to measure `η`, it is that
+  nothing pins it.** Across `η ∈ [0, 5]` the expert's mean episode return moves by
+  **less than 0.1 on ≈70**, because the logged human almost never relaxes a lane
+  rule; and the window in which `η` could buy ordering O3 back is **0.193 %** of
+  the admissible range, so fixing it there would be fitting a weight to a single
+  constructed fixture. A parameter that neither a measurement nor an ordering
+  determines is a parameter that should not exist. Its job passes to `w₅`, which
+  an ordering *does* determine — a window of 65.9 % to 72.1 % (§6.1).
+- **`λ₆` and the `L6` level.** Four independent statements, none of them the
+  specification. *Its justification has expired*: ADR-076 rested on `γ = 1`, which
+  ADR-081 removed **eighteen days later**. *It duplicates a preference already
+  expressed above it*: at `γ < 1` the discount supplies **90.5 %** of the time
+  preference (79.7 % at `γ = 0.9982`) and supplies it at a higher priority than
+  `L6`, so `L6` is a minority duplicate of something the hierarchy already says.
+  *It carries no independent information*: `c_L6 = 1 − clip(Δq, 0, 1)` is a
+  pointwise function of the progress channel, so the six-channel vector has **rank
+  five**, and it is the only channel whose return distribution carries nothing
+  beyond its mean once progress is known — precisely what the distributional
+  component cannot use. *Its zero point is unreachable*: that zero sits at the
+  engine cap, **4.9×** the expert's mean speed, so the channel fires on
+  **99.4024 %** of expert steps at `p50 = 0.884`.
 - **Deleting `L6` deletes the `Δt/T_REF` normalization entirely**, so the reward
   stops carrying two different per-step scalings.
 
@@ -511,7 +595,8 @@ family, whose rows cannot be read across. **The falsifier is one grid member at
 below-standstill: the criterion moves from `R₀ < −λ₆·(Δt/T_REF)·Σ Δq⁺ = −0.81` to
 `R₀ < 0`, so the count can only **rise**, by the mass in a 0.81-wide band, which
 the local density between p5 and p10 bounds at **0.53 pp** — `4.55 % → ≈5.1 %`,
-and `≈5.2 %` once the `w₅` indicator's own ≈0.27 reward units of expert cost are
+and `≈5.2 %` once the `w₅` indicator's own **0.265** reward units of expert cost per
+episode are
 added, against the 7.45 % ceiling. This is the one acceptance column no algebra
 derives, and `M1` measures it instead of projecting it. Second, the completion
 incentive: closing the mission rather than covering 99 % of it and idling is worth
@@ -534,45 +619,95 @@ safety channel, so it can cause no regression there and fixes nothing either. Th
 diagnostic that would reopen it is the fraction of evaluation episodes reaching
 ≥95 % route completion without a gate crossing, which nothing currently reports.
 
-### 6.4 The budget criterion — stated now, valued by `M1`
+### 6.4 The budget criterion — rule approved, values from `M1`
 
-Three requirements on any budget `τ_i`, in this order:
+**This section was rewritten after an adversarial review found the first draft
+wrong in two independent ways**: it pre-registered a quantile that contradicted
+its own stated criterion, and it silently fixed the *object* a threshold applies
+to — a question this plan declares out of scope.
 
-1. **It must admit the logged competent driver.** A budget quantified over
+#### The object, which has to be named before a number means anything
+
+Three candidate objects exist for `τ_i`, and `I1b` proves they do not coincide:
+
+| object | where it comes from | who would consume it |
+|---|---|---|
+| `X_i` — undiscounted realized per-episode exposure | the behavioural specification's own quantities | Lexicographic REINFORCE, which compares an accumulated episodic return |
+| `X_i/Q` — the same, per unit of mission span | the behavioural specification's "budget units" note | the same, made comparable across a panel spanning 13–247 m |
+| `E[Σ γ^t c_k]` — discounted expected channel return | the only form a per-state absolute threshold can hold | an absolute-thresholding mechanism on Q-values |
+
+The third is not interchangeable with the first two, and the reason is a
+mechanism rather than a preference: **a realized budget would require the
+accumulated exposure in the policy's input**, which is an `OBS-V1.3.x` amendment
+and is forbidden here. Tercan & Prabhu's Appendix D.3 states it directly for this
+exact case — "the corresponding discounted threshold **actually depends on the
+trajectory**". Meanwhile the policy-gradient route accumulates its episodic return
+**undiscounted, from a single sampled episode**, so it consumes the first object,
+not the third.
+
+**Which object `τ` lives on is `D1`'s decision, and `D1` is out of this plan's
+scope** (§2). So A7 does two things and not a third: it **declares the requirement
+on the undiscounted realized form**, which is the altitude a behavioural budget
+belongs at, and it has `M1` **emit all three**, because they are the same
+accumulator under three weightings and cost nothing extra in the same run. What
+A7 does not do is choose the mechanism by choosing a number's units.
+
+#### The rule, and why it is the maximum rather than a quantile
+
+Two requirements, in this order:
+
+1. **The budget must admit the logged competent driver.** A budget quantified over
    zero-exposure completions describes no trajectory the agent can produce: the
    expert accrues interaction cost on 0.3978 % of steps and non-negotiable
    compliance cost on 0.6418 %. `τ₃ = 0` is therefore falsified **by the panel**,
    not by preference.
-2. **It must be denominated per unit of mission span**, `X_i/Q`, because `Q` is a
-   scenario constant the agent cannot influence, so the budget is
-   duration-invariant, immune to dilution by dawdling, and comparable across
-   missions spanning 13–247 m. This is not a route-length normalization of the
-   *reward*, which was measured and rejected; the per-step vector is untouched and
-   only the budget's units change.
-3. **The quantile must be chosen before the numbers are seen**, or the budget is
-   fitted to the distribution it is supposed to be tested against.
+2. **The rule must be fixed before the numbers are seen**, or the budget is fitted
+   to the distribution it is supposed to be tested against.
 
-**Pre-registered rule.** `τ_i = p99` of the logged expert's per-episode `X_i/Q`
-distribution on the frozen Waymo `train` panel, with the maximum reported beside
-it and **the excluded episodes listed per record**. Rationale, and the cost in the
-same sentence: p99 admits all but the expert's worst 1 % — about 11 of 1100
-records — at the cost of rejecting eleven human episodes, which is only defensible
-if they can be inspected, so the rule is void unless the per-record rows are
-emitted. If those episodes are not attributable to a declared panel defect, the
-value moves to the maximum; that is a decision on `M1`'s evidence, pre-registered
-here as a rule rather than taken later as a preference. The maximum alone is
-rejected as the primary rule for the reason the reward's own history gives: a
-single outlier record then dictates a parameter for every other record.
+**Rule, approved 2026-09-10.** `τ_i` = the **maximum** of the logged expert's
+per-episode value on the frozen Waymo `train` panel, minus any episode
+attributable to a **declared** panel defect, with the excluded episodes **listed
+per record**; p99 and p95 reported beside it as sensitivity.
 
-**`τ₁ = 0`, conditionally and measurably.** At-fault impact is non-zero on at most
-one step (ADR-071), and a non-colliding trajectory has `K1 = 0` exactly, so a zero
-budget is what makes the ordered arms prefer enduring 200 steps of interaction
-violation to colliding at fault — measured at `K1 = 0.0000` against `0.5788`,
-where the scalar arm prefers colliding by 1092.8. `τ₁ = 0` is admissible **iff the
-logged expert records no at-fault impact on the panel**, which is not yet
-measured. `M1` emits `X_imp`'s per-episode distribution for exactly that reason;
-if it is non-zero anywhere, `τ₁` follows rule (1) like the others and the finding
-is reported.
+The first draft pre-registered p99 instead, and that was wrong on its own terms:
+requirement (1) says a budget that fails to admit the human is falsified, and p99
+excludes about eleven human episodes while asserting that excluding a human
+episode falsifies the budget. The two do not hold together. The objection that
+sent the draft to a quantile — that one outlier record would dictate a parameter
+for every other — was imported from a different situation, the route-length
+normalization in which the shortest route in the panel set the bound for all of
+them; here the budget is per-episode and the outlier is a trajectory a competent
+human actually produced, so a budget that excludes it is a budget asserting the
+human was incompetent there.
+
+**The cost, in the same sentence:** the maximum is the loosest budget that stays
+falsifiable, so in the feasible regime the thresholded arm does not constrain that
+channel at all for a policy at or below human exposure, and its differentiation
+from the scalar control on that channel comes from the *ordering* alone. The rule
+is void unless the per-record rows are emitted — an aggregate that cannot be
+audited per record is an assertion — which is why `M1` carries them.
+
+#### `τ₁ = 0`, conditionally and measurably
+
+At-fault impact is non-zero on at most one step (ADR-071), and a non-colliding
+trajectory has `K1 = 0` exactly, so a zero budget is what makes the ordered arms
+prefer enduring 200 steps of interaction violation to colliding at fault —
+measured at `K1 = 0.0000` against `0.5788`, where the scalar arm prefers colliding
+by 1092.8. `τ₁ = 0` is admissible **iff the logged expert records no at-fault
+impact on the panel**, which is not yet measured. `M1` emits `X_imp`'s per-episode
+distribution for exactly that reason; if it is non-zero anywhere, `τ₁` follows the
+rule above like the others and the finding is reported.
+
+#### One implementation note that changed a bench's conclusions
+
+In the thresholded comparison the clip for a **cost** channel is `max(c, τ)`, not
+`min(c, τ)`; for the progress channel it is `min(v, τ)`, because there higher is
+better. Getting it backwards makes a collision tie with a non-collision and
+inverts the reading of the progress channel — it was found and fixed in the
+review's own bench, where it had changed conclusions. It follows that **`τ₁ = 0`
+means zero tolerance, i.e. strict lexicographic comparison on that channel** — not
+"everything ties". This belongs in the A7 specification's threshold section so the
+eventual thresholded arm cannot re-invert it.
 
 ### 6.5 What changes in `tests/test_scal_v14.py`
 
@@ -621,6 +756,14 @@ Recommended amendment, as a new `DEC-AB-008` in that plan:
   `AB-LEARN` §7.5 applies to the ACL: the specification is approved and the
   implementation verified first, and the screening then *measures* the reward
   rather than gating it.
+- **`DEC-AB-005` survives, and saying so is load-bearing.** Approving the A7
+  specification freezes the *contract* — what the reward is. The screening freezes
+  a different thing, the *question of optimizability*, and it is the only
+  instrument that has ever attacked this reward with an optimizer. Without that
+  second freeze restated explicitly, nothing stops an A8: `RULEBOOK-V5.1` was also
+  approved before `AB-LEARN`, and A7 exists precisely because the reward was
+  revised after that approval. What would license the freeze is unchanged —
+  `H1` and `H3` holding at the screening budget, escalated per `DEC-AB-005`.
 
 `DEC-AB-004`, GPU authorization, is untouched and remains the user's.
 
@@ -673,6 +816,81 @@ prices 77 + 16 members, so three more at the production pair is noise against a
 45-minute budget. **They are measurements, not proposals.** The recommendation
 stays `λ₄ = 2.0`, and the point of measuring is that the next person to ask reads
 a number instead of an extrapolation.
+
+**Pre-registered, before `M1` produces those two numbers.** `λ₄` reopens **only**
+if `M1` measures A7's below-standstill at `λ₄ = 2.0` above the 7.45 % ceiling, and
+in that case the first lever is **1.9**, not 1.25. Two reasons, and the second is
+the one that has not been written down before. 1.9 also buys back A7's §5.4 margin
+and costs roughly 0.2 pp against 1.25's ~1.9 pp. And **1.25 buys an option that
+cannot be exercised**: its purpose is to admit a `w₅` opposing an off-corridor
+drive at clip pace, but under A7 the channel that would have to fire is `K4`, and
+an ego on a legal parallel carriageway violates none of its three sub-rules —
+`offroad` is zero by construction over the union of vertically compatible lanes,
+and `wrong_carriageway` charges only opposing surface. Firing would need a new
+"off the assigned corridor" sub-rule, which needs a runtime lateral envelope,
+which is the third of the three remedy shapes
+`driving_mission_v1.1_specification.md:104` withdrew (§15). So the 1.9 pp would
+purchase a capability the approved specification forecloses.
+
+### 6.9 `K2 ≻ K3` is the hierarchy's least-supported step, and it is a finding
+
+Every other adjacency in A7 rests on a mechanism or a measurement. `K1 ≻ K2` rests
+on outcome-versus-indicator, and merging them is measured to halve the mitigation
+gradient (`P8` margin 2.82 → 1.22). `K3 ≻ K4` is the negotiable/non-negotiable
+distinction, i.e. the semantic core of minimum-violation (Castro, Tumova, Karaman,
+Frazzoli & Rus), and merging them is measured to fail three orderings on the
+scalar arm (O2, O4 at −23.08, O5 at −0.15). `K4 ≻ K5` has three independent
+grounds (§6.1, and the literature in §3).
+
+**`K2 ≻ K3` has none of that.** The only derivation that exists is `rulebook_v4.7`'s
+— without an interaction level, a near-miss legally in lane could be preferred to a
+brief illegal deviation with wide margin — v5.0 asserted the order without
+restating it, and v5.1 inherited it. **The measurement that would price it, the
+co-occurrence of the two channels, does not exist**; the review that scored the
+candidate architectures says so in its own "what I did not verify" section, and
+scored `A2a`'s merge on constructed fixtures alone for the same reason.
+
+By `AGENTS.md`'s Scientific Argument Standards this has to be said out loud rather
+than carried: **it is the one place in the hierarchy where the only argument is
+this repository's own specification.** The recommendation is nevertheless to keep
+the order — reordering on no evidence would replace an unsupported claim with a
+different unsupported claim — but to record it in the A7 specification as the
+least-supported step and to **measure it in `M1`**, which needs the run anyway. The
+cost of not measuring it: A7 freezes an unpriced ordering for the second time, and
+a third freeze is harder to reopen than a second.
+
+### 6.10 A7 re-bases the ACL contract, and no document recorded it
+
+`ACL-SN-EMA-001` v2.0 §3.2 treats **six level margins as a property that is fatal
+if absent**. That is true today — `MACRO_RULE_ORDER` has six entries — and false
+after `M5`. **The ACL as written therefore cannot run on an A7 rulebook**, by its
+own design rather than by an oversight.
+
+The gap was in *this* plan: §4.5 listed only `AB-LEARN` and `RB51` among the
+collisions, while §13's Files table already modifies
+`curriculum/scenario_acl/usefulness.py`, whose weight map is keyed on
+`progress_rate` (`:37`) — the level A7 deletes. A plan that edits a file without
+naming the plan that owns it is the same failure `DEC-A7-009` exists to prevent,
+committed one plan further along.
+
+Two further consequences, both recorded rather than resolved here:
+
+- **`DEC-206`'s ordering is reopened without prejudice.** It chose `L1→L2→L3→T→L5`
+  and rejected `…→L5→T` for one stated reason: that the latter "would invert
+  ADR-072". Applying its own `REQ-001` principle to the A7 order yields the
+  rejected form — and the reason it was rejected was a citation of an ADR of this
+  repository, which `AGENTS.md` does not admit as evidence. So reopening it leaves
+  it **open with no guarantee in either direction**, which is the honest state.
+- **`REQ-002` is *not* touched.** A7 preserves the sub-rule names, the membership,
+  `K4`'s fixed denominator of 3, the at-fault gate and the atomic vector.
+
+**What this plan does, and deliberately does not do.** It records the re-base as a
+gate and blocks ACL work that depends on the six-margin property behind A7's `M5`.
+It does **not** write an ACL revision now: the A7 specification does not exist yet
+(`DEC-A7-001`, `M2`), and this plan forbids implementation before that approval, so
+a revision written now would be drafted against a contract that is not yet
+authoritative. The ACL plan's own `M1` is invariant to A7 — it reads channels by
+name — and may proceed; the ordering boundary is at its `M0`/`M2`.
 
 ---
 
@@ -875,6 +1093,7 @@ falsification evidence survives it intact.
 | `TEST-A7-19` | Numerical | Sub-tolerance margins clamp to exactly zero and the indicator does not fire | `−1e-9` and `−1e-6` at `K3` | clamped case earns `λ₄`; `−1e-6` does not | `REQ-A7-06` |
 | `TEST-A7-20` | Smoke | End-to-end training under the A7 reward | `make smoke` | exit 0, no NaN | all |
 | `TEST-A7-21` | Regression | The full suite is green and no test is skipped, weakened or xfailed | `make gate` | `PASS · FULL` | all |
+| `TEST-A7-22` | Regression | Two runs whose scalarization vector schemas differ never share a `condition_id` | two synthetic run metadata records differing only in `vector_schema_id` | distinct `condition_id`s | `REQ-A7-11`, `DEC-A7-011` |
 
 `TEST-A7-14` is the load-bearing one, for the reason `RB51`'s `T-RB51-12` was: it
 converts A7's published numbers from claims about a script into claims about
@@ -888,28 +1107,38 @@ is `RB51`'s `M0` discipline, which caught exactly this.
 
 ### 9.3 Disposition of `RULEBOOK-V5.1`'s acceptance criteria
 
-Recorded here so `DEC-A7-012` is a decision on a table rather than on a
-principle.
+Recorded here so `DEC-A7-012` is a table rather than a principle. **Two columns,
+not one** (`DEC-A7-009`): the first states each criterion's *arrival state under
+`RULEBOOK-V5.1`* — the reconciliation `RB51` closes without ever having written —
+and the second its disposition under A7. With only the second column this would
+be a transition table, and v5.1's own criteria would be settled nowhere.
 
-| Criterion | Under A7 |
-|---|---|
-| `AC-RB5.1-01` O1–O6 on the §10 fixtures | **Changes.** O3 holds again on the scalar arm at both discounts (+0.581 / +2.458). Restated as `AC-A7-13` |
-| `AC-RB5.1-02` O1–O6 under strict lex, or each failure reported | **Changes.** A7's strict-lex arm loses O2 where A0's passes it — but A0's pass is a zero-traffic artefact: add one `K2` step in forty at the 0.05 residual the repository's own test uses and A0 fails O2 too. Once the residual any real trajectory accrues is present, A7 is no worse on every ordering and strictly better on O3 |
-| `AC-RB5.1-03` expert mean return positive | **Carries.** Re-measured in `M1` |
-| `AC-RB5.1-04` below standstill ≤ 7.45 % | **Carries as the binding cost.** `AC-A7-11`, measured not projected |
-| `AC-RB5.1-05` the §4.1 clip binds on no step the agent can produce | **Carries as `NOT ESTABLISHED`.** The engine-force cap bounds travel, not projection. `l4_clip_binding_steps` makes it measurable |
-| `AC-RB5.1-06` the selected weights satisfy §5.4 for every `k` | **Changes** to the A7 tail. `AC-A7-08`; margins in §5.1 |
-| `AC-RB5.1-07` `Σ Δq` telescopes | **Carries.** `AC-A7-04`. Inexact where the clip binds, which is `C50`/`C51`'s territory and unchanged by A7 |
-| `AC-RB5.1-08` every atomic cost exposed | **Carries unchanged.** `AC-A7-02` |
-| `AC-RB5.1-09` validation and test splits consulted by no calibration | **Carries unchanged** |
-| `AC-RB5.1-10` `η` reaches only `L5` | **`NOT_APPLICABLE`** — `η` is deleted |
-| `AC-RB5.1-11` v5.1 not worse than v5.0 on five columns | **Carries, re-measured** in `M1` |
-| `AC-RB5.1-12` O3 against the §4.6 reference shortcut in both arms | **Changes** — this is A7's headline gain |
-| `AC-RB5.1-13` `λ₆` strictly below its O3 bound | **`NOT_APPLICABLE`** — `λ₆` is deleted |
-| `AC-RB5.1-14` the predicate admits `(λ₄, η, λ₆)` and rejects an inadmissible `λ₆` | **Changes** to `(λ₄, w₅)` |
-| `AC-RB5.1-15` the below-standstill baseline is `−λ₆·(Δt/T_REF)·T` | **`NOT_APPLICABLE`** — with `L6` gone the baseline returns to exactly 0, which is what makes the count rise (§6.3) |
-| `AC-RB5.1-16` one shared discount above the 199-step horizon | **Changes**: `γ = 0.9982` above the **measured 500-step** horizon. `AC-A7-09` |
-| `AC-RB5.1-17` `L6` refines only ties | **`NOT_APPLICABLE`** — `L6` is deleted. The premise was itself undiscounted |
+| Criterion | Arrival state under v5.1 | Under A7 |
+|---|---|---|
+| `AC-RB5.1-01` O1–O6 on the §10 fixtures | `PASS` undiscounted; **O3 fails at the shipped `γ = 0.996`** (`D15`) | **Changes.** O3 holds again on the scalar arm at both discounts (+0.581 / +2.458). Restated as `AC-A7-13` |
+| `AC-RB5.1-02` O1–O6 under strict lex, or each failure reported | `PASS` undiscounted; O1 fails at L2 and the failure is reported, as the criterion allows | **Changes.** A7's strict-lex arm loses O2 where A0's passes it — but A0's pass is a zero-traffic artefact: add one `K2` step in forty at the 0.05 residual the repository's own test uses and A0 fails O2 too. Once that residual is present, A7 is no worse on every ordering and strictly better on O3 |
+| `AC-RB5.1-03` expert mean episode return positive | `PASS` — **+70.70** at `a = 2.2, σ = 0` | **Carries.** Re-measured under A7 in `M1` |
+| `AC-RB5.1-04` below standstill ≤ 7.45 % | `PASS` — 3.36 % at the calibration pair, 4.55 % at the shipped one | **Carries as the binding cost.** `AC-A7-11`, measured not projected |
+| `AC-RB5.1-05` the §4.1 clip binds on no step the agent can produce | **`NOT ESTABLISHED`**, and it stays so: the engine-force cap bounds the ego's travel, not its projection | **Carries as `NOT ESTABLISHED`.** `l4_clip_binding_steps` is what makes it measurable rather than deduced |
+| `AC-RB5.1-06` the selected weights satisfy §5.4 for every `k` | `PASS` — thinnest margin 1.1121 at `k=2` | **Changes** to the A7 tail: thinnest 1.1390 at `k=3`. `AC-A7-08`; margins in §5.1 |
+| `AC-RB5.1-07` `Σ Δq` telescopes | `PASS` for agent trajectories; inexact on the expert panel where the clip binds | **Carries.** `AC-A7-04`. The residual is `C50`/`C51`'s territory and A7 does not touch it |
+| `AC-RB5.1-08` every atomic cost exposed | `PASS` | **Carries unchanged.** `AC-A7-02` |
+| `AC-RB5.1-09` validation and test splits consulted by no calibration | `PASS` | **Carries unchanged** |
+| `AC-RB5.1-10` `η` reaches only `L5` | `PASS` — p1 and p5 identical across `η ∈ [0, 5]`, which is also why nothing pins `η` | **`NOT_APPLICABLE`** — `η` is deleted |
+| `AC-RB5.1-11` v5.1 not worse than v5.0 on five columns | `PASS` — dominates on all five | **Carries, re-measured** in `M1` |
+| `AC-RB5.1-12` O3 against the §4.6 reference shortcut in both arms | `PASS` undiscounted, margin +0.2000 decided at L5; **fails at the shipped discount** | **Changes** — this is A7's headline gain, and the ordering is decided at `K4` rather than never reached |
+| `AC-RB5.1-13` `λ₆` strictly below its O3 bound | `PASS` — 0.2 < 0.25 | **`NOT_APPLICABLE`** — `λ₆` is deleted |
+| `AC-RB5.1-14` the predicate admits `(λ₄, η, λ₆)` and rejects an inadmissible `λ₆` | `PASS` — 2.12 < 2.5 after ADR-081 | **Changes** to `(λ₄, w₅)`, same predicate shape |
+| `AC-RB5.1-15` the below-standstill baseline is `−λ₆·(Δt/T_REF)·T` | `PASS` — `v51_standstill_return` | **`NOT_APPLICABLE`** — with `L6` gone the baseline returns to exactly 0, which is what makes the count rise (§6.3) |
+| `AC-RB5.1-16` one shared discount above the horizon | `PASS` **as written**, and the criterion was wrong: it names the 199-step Waymo-only horizon, and `C49` shows the real one is 500 | **Changes**: `γ = 0.9982` above the **measured 500-step** horizon, with the verdict asserted. `AC-A7-09` |
+| `AC-RB5.1-17` `L6` refines only ties | `PASS` undiscounted; the premise is itself undiscounted | **`NOT_APPLICABLE`** — `L6` is deleted |
+
+**One arrival state is worth reading twice.** `AC-RB5.1-16` passed while being
+false about the quantity it names — the guard asserted a horizon nobody had
+measured, under a docstring claiming it was measured. That is the shape `C49`
+records, and it is why `AC-A7-09` asserts the criterion's **verdict** and not only
+its inputs.
+
 
 ### 9.4 Commands
 
@@ -960,11 +1189,15 @@ several §6 gates are decided on.
   1. **Per-episode exposure distributions** for `X_int = Σ max(c_ttc, c_clearance,
      c_rss_lateral)`, `X_hard = Σ max(c_offroad, c_signal, c_stop, c_crosswalk,
      c_vehicle_yield, c_speed_limit)`, `X_soft = Σ (c_solid_line +
-     c_wrong_carriageway + c_dashed_line)/3` and `X_imp`, **both raw and divided
-     by the mission span `Q`**, with quantiles and the per-record rows of the top
-     1 %. The per-step values already exist at `:2543-2550`; the addition is four
-     episode accumulators reset at episode start and appended at episode end, in
-     the same shape as `v51_telescoping_residuals` already uses.
+     c_wrong_carriageway + c_dashed_line)/3` and `X_imp`, on **all three objects
+     of §6.4**: raw `X_i`, `X_i/Q`, and the discounted `Σ γ^t c_k` at
+     `γ = 0.9982`. Quantiles plus **the full per-record rows of the top 1 %**,
+     because §6.4's rule is void without them. The per-step values already exist
+     at `:2543-2550`; the addition is four episode accumulators reset at episode
+     start and appended at episode end, in the same shape as
+     `v51_telescoping_residuals` already uses, carrying three running sums each
+     instead of one. Emitting all three is what stops `D1`'s eventual choice of
+     mechanism from costing a second 45-minute run.
   2. **`a7_reward(...)` and `a7_is_rank_preserving(...)`**, transcribed from §5.1
      independently of production, beside the existing `v51_*` pair — the oracle
      discipline that made `T-RB51-12` possible.
@@ -986,18 +1219,29 @@ several §6 gates are decided on.
      the argmax at all.
   5. **Two `λ₄` members at the production pair** (task 3), which is the free
      output §6.8 exists to justify.
+  6. **`K2`/`K3` co-occurrence** (`DEC-A7-013`): on how many steps, and on how
+     many episodes, both channels are non-zero at once, with the joint
+     distribution of `(c_K2, c_K3)` on those steps. It is the measurement that
+     would price the hierarchy's least-supported adjacency, it does not exist, and
+     the accumulators of task 1 already compute both channels per step — so it is
+     two counters and a small joint histogram.
 - Tests: instrument unit tests for the four accumulators against a hand-built
-  episode; `a7_reward` against §5.1 term by term; the argmax counter against a
-  fixture where the argmax is known.
+  episode, asserting all three objects separately so a weighting error cannot hide
+  behind a matching total; `a7_reward` against §5.1 term by term; the argmax
+  counter and the co-occurrence counter against fixtures where the answer is known
+  by construction.
 - Commands: `make check`, then the 45-minute panel run, then
   `make gate GATE_ARGS="tests/test_expert_rulebook_transition_instrument.py"`.
 - Completion evidence: the run's JSON report committed to a dated audit directory
   (summaries and the tail rows, not the megabyte-wide per-record files, which are
   regenerable — the convention the two 2026-09-09 audits already follow), plus the
   six-member table.
-- Decision dependencies: none. Its outputs feed `DEC-A7-002`, `-003`, `-005`.
+- Decision dependencies: none — every gate is resolved. Its outputs supply the
+  **values** `DEC-A7-005` leaves open, the falsifier `DEC-A7-003` is conditional
+  on, the co-occurrence `DEC-A7-013` requires, and the two `λ₄` figures `DEC-A7-010`
+  pre-registers a reading for.
 
-### `M2` — The specification document and the ADR — **blocked on `DEC-A7-001`**
+### `M2` — The specification document and the ADR — **blocked on `M1`**
 
 - [ ] Objective: the approved contract A7 is implemented against.
 - Files: `docs/specifications/rulebook_v5.2_specification.md` (name subject to
@@ -1009,7 +1253,14 @@ several §6 gates are decided on.
   `docs/specifications/` at that point. **No production code before this is
   approved** — `AGENTS.md` is explicit that an `UNDER_REVIEW` specification is not
   an implementation contract.
-- Decision dependencies: `DEC-A7-001` through `-005`, `-011`, `-012`.
+- The specification also carries three things the review of §6 added: the
+  threshold *object* and the `max(c, τ)` / `min(v, τ)` clip convention (§6.4),
+  `K2 ≻ K3` declared as the least-supported adjacency with `M1`'s co-occurrence
+  beside it (§6.9), and the three identifier conventions this repository already
+  uses recorded in one place, so a future search knows what to look for rather
+  than discovering it by missing something.
+- Decision dependencies: all gates resolved 2026-09-10; blocked only on `M1`'s
+  values for the budgets and on the user's approval of the document itself.
 
 ### `M3` — The frozen test matrix — **blocked on `M2`**
 
@@ -1034,7 +1285,13 @@ several §6 gates are decided on.
   the mirror-image change: `subrule_diagnostics`, the ACL `usefulness` weights,
   `video_diagnostics`, `analysis/tables/make_rulebook_tables.py`,
   `contracts/reward_semantics.py`.
-- Tests: `TEST-A7-01`, `-02`, `-03`, `-04`, `-06`.
+- [ ] **The pooling guard of `DEC-A7-011`**: `vector_schema_id` joins
+  `_build_condition_id` (`analysis/aggregate/aggregate_runs.py:184-204`). One
+  longer tuple, and it is what makes a pre-A7 and a post-A7 run impossible to
+  average together rather than merely unlikely to be — necessary here and not
+  under `RB51` because A7 keeps four of five channel names, so a stale consumer
+  produces a populated wrong table instead of an empty one.
+- Tests: `TEST-A7-01`, `-02`, `-03`, `-04`, `-06`, `-22`.
 - Expect a ripple of the same class as `RB51`'s 50 tests (§4.4). A test that
   encoded the old contract is migrated; a test that encoded a *behaviour* is a
   finding and stops the milestone.
@@ -1060,11 +1317,16 @@ several §6 gates are decided on.
 
 ### `M8` — Reconciliation of the surrounding documents — **blocked on `M7`**
 
-- [ ] `AB-LEARN` amended per `DEC-A7-008`, including its stale `γ` line, and
-  `TEST-A7-17` executed. `RB51` closed per `DEC-A7-009`, and its `M9` detached.
-  `docs/project_index.md:232` corrected and A7's own row added.
-  `docs/open_items.md`: `C49` closed, `V4` closed, `D15` addressed, `C50`/`D14`
-  restated as A7's declared limitations, `V1` updated.
+- [ ] `AB-LEARN` amended per `DEC-A7-008`, including its stale `γ` line and the
+  explicit survival of `DEC-AB-005`, and `TEST-A7-17` executed. `RB51` closed per
+  `DEC-A7-009`, and its `M9` detached. A7's own row added to
+  `docs/project_index.md`, whose `RB51` row was already corrected when this plan
+  was registered. `docs/open_items.md`: `C49` closed, `V4` closed, `D15`
+  addressed, `C50`/`D14` restated as A7's declared limitations, `V1` updated.
+- [ ] **`ACL-PROG-004` reconciled per `DEC-A7-014`** (§6.10): the re-base recorded
+  in that plan and in the index, `DEC-206` marked reopened without prejudice, and
+  the six-margin *fatal if absent* property of `ACL-SN-EMA-001` v2.0 §3.2 named as
+  what `M5` invalidates. No ACL revision is written here.
 
 ### `M9` — Adversarial review and the gate — **blocked on `M8`**
 
@@ -1143,6 +1405,60 @@ start now.
 
 ---
 
+**2026-09-10 — every gate ratified, and an adversarial review of §6 changed four
+things.** The user ratified `DEC-A7-002`, `-003` and the budget rule, signed the
+two mandatory-test changes, and recorded no dissent on the specification form, the
+`AB-LEARN` amendment, the `RB51` disposition or the vocabulary break. Status
+`AWAITING_DECISIONS` → `APPROVED`.
+
+*Three rows were withdrawn as gates, because they were never decisions.*
+`DEC-A7-004` is entailed by the approved architecture — A7 *is* five channels, so
+`L6` goes with the block that was approved and `w₅` replaces `η` by the same
+mechanism that distinguishes A7 from A6. `DEC-A7-010` was decided when `λ₄` was
+approved. `DEC-A7-012` is a mechanical consequence of the ratified weights.
+Presenting all three as open inflated a plan that was already motivated, and the
+inflation was the method's: a design-tree interrogation applied *after* a plan is
+written manufactures questions where choices are already made.
+
+*One recommendation of this plan was wrong and is reversed.* §6.4 pre-registered
+`τ_i = p99` of `X_i/Q`. It contradicted its own criterion — a budget that fails to
+admit the human is falsified, and p99 excludes about eleven human episodes — and
+the objection that produced it (one outlier dictating a parameter for all) was
+imported from the route-length normalization, where the shortest route set the
+bound for every record. Corrected to the panel maximum with declared exclusions
+and per-record rows. This is the only reversal in the plan; nothing else changed
+direction.
+
+*Two decisions were missing and are added.* `DEC-A7-013`: `K2 ≻ K3` is the one
+adjacency in the hierarchy whose sole surviving argument is this repository's own
+specification, which `AGENTS.md` requires be said out loud, and the co-occurrence
+that would price it does not exist — so it becomes `M1`'s sixth output.
+`DEC-A7-014`: A7 re-bases the `ACL-SN-EMA-001` v2.0 contract, whose §3.2 treats six
+level margins as *fatal if absent*, and §4.5 had named only two colliding plans
+while §13 was already editing `curriculum/scenario_acl/usefulness.py`, keyed on
+`progress_rate` at `:37`. The same failure `DEC-A7-009` exists to prevent,
+committed one plan further along.
+
+*One question the plan had answered too narrowly.* The budgets have three
+candidate **objects**, not one, and `I1b` proves they do not coincide; which one a
+threshold lives on is `D1`'s decision, which this plan puts out of scope. `M1` now
+emits all three, so that decision costs no second run.
+
+*Two figures re-derived, one measurement commissioned, one defect found.* The
+§5.4 margins and the discount table reproduce (§14). `DEC-A7-001`'s cost was
+measured rather than assumed: 112 section citations across 52 files, **63 of them
+pointing at sections A7 rewrites**, against a repository that never re-points
+citations — which reverses the argument from "a changelog is ugly" to "an in-place
+amendment silently invalidates 56 % of them". And
+`analysis/tables/make_rulebook_tables.py:18` was found comparing a **v1** rule name
+against a v2 recorded value since `DEC-RB51-005`'s rename, producing an empty table
+and a wrong average in silence; classified and routed to its own fix ahead of `M5`
+(§4.6).
+
+**Next step:** `M1`. Every gate is resolved and it depends on none of them.
+
+---
+
 ## 12. Deviations
 
 | ID | Original contract | Actual or proposed change | Reason | Approval | Affected tests/docs |
@@ -1152,6 +1468,7 @@ start now.
 | `DEV-A7-003` | ADR-081 / `AC-RB5.1-16`: `γ = 0.996` with the criterion evaluated at `L = 199` | `γ = 0.9982` with the criterion evaluated at the measured `L = 500` | `C49`; §5.2 | Approved 2026-09-09 | the six algorithm configs, `tests/test_hydra_agent_presets.py` |
 | `DEV-A7-004` | ADR-072: the relaxable lane rules sit below progress | Reverted for those three sub-rules | v5.0's pathology was the **price**, not the placement: v5.0 charged them at `a = 2.2` per violated step, so standing still won past **37** relaxed steps against a mean Waymo mission. At `w₅ = 0.15`, 14.7× less, standing still wins only past **416** relaxed steps at full severity — twice the Waymo episode, and 848 against a mean PG mission over a 500-step episode. Re-derived today | `DEC-A7-002` | ADR-083 records the reversal |
 | `DEV-A7-005` | `AB-LEARN` `REQ-AB-009`: the reward under test is v5.1 + `SCAL-V1.4` | The reward under test becomes A7 + `SCAL-V1.5` | §6.6 | `DEC-A7-008` | `AB-LEARN` §3, §5, §7.1, §14 |
+| `DEV-A7-006` | `ACL-SN-EMA-001` v2.0 §3.2: six level margins are a property that is fatal if absent, and `DEC-206`'s ordering | The property becomes false after `M5`, so the ACL cannot run on an A7 rulebook until it is re-based; `DEC-206` is reopened without prejudice, its stated reason having been a citation of ADR-072 | §6.10 | `DEC-A7-014` | `ACL-PROG-004`; `curriculum/scenario_acl/usefulness.py`; the ACL plan's `M0`/`M2` boundary |
 
 ---
 
@@ -1173,6 +1490,8 @@ start now.
 | `src/thesis_rl/runtime/io/video_diagnostics.py` | Planned modification | Level labels |
 | `src/thesis_rl/analysis/tables/make_rulebook_tables.py` | Planned modification | Recorded channel names |
 | `src/thesis_rl/contracts/reward_semantics.py` | Planned modification | The checkpoint identity |
+| `src/thesis_rl/analysis/aggregate/aggregate_runs.py` | Planned modification | `DEC-A7-011`'s pooling guard: `vector_schema_id` joins `_build_condition_id` |
+| `docs/implementation/automatic_curriculum_learning_v2.0_exec_plan.md` | Planned modification | `DEC-A7-014`: the re-base recorded, `DEC-206` reopened |
 | `conf/scalarization/default.yaml` | Planned modification | The A7 mode and weight set |
 | `conf/agent/planner/algorithm/{ppo,ppo_sb3,sac,sac_sb3,td3,td3_sb3}.yaml` | Planned modification | `γ = 0.9982` and its shaping twin |
 | `tests/test_scal_v14.py` | Planned modification | `DEC-A7-006` |
@@ -1196,6 +1515,7 @@ start now.
 | `git fetch origin` and branch check | `PASS` | 2026-09-09 | `main` at `3e58ce0`, level with `origin/main`, tree clean |
 | `make check` | `NOT_RUN` | — | This change adds one document and no code path, so there is nothing for the suite to exercise. It is run at the head of `M1`, which is the first milestone that touches a file the suite reads |
 | `make gate` | `PASS` | 2026-09-09 | `gate: PASS (2 not applicable: whitespace/pending, whitespace/untracked) \| FULL \| 450492d (worktree-a7-execplan, tree clean) \| 20260909T210257Z` — **1927 passed, 5 skipped** in 4m05s, the same count `main` reports at `3e58ce0`, so this change moves nothing in the suite. Run on `450492d`, which is this plan and the register row; the `§14` row itself was added afterwards. **The first run of the same gate on the same tree failed 16 tests** — `test_pg_validation`, `test_scenario_waymo`, three in `test_scenario_catalog_build`, two in `test_scenarionet_smoke`, `test_forced_rule_scenarios`, `test_rulebook_v2_live_integration` and seven in `test_rulebook_synthetic_scenarios` — every one of them reading the bundled Waymo assets or building a catalog from them. That is the first-run race between the sixteen `pytest-xdist` workers over state the assets generate on first read, documented at `docs/workflows/agent_operations.md` §"Running checks from a git worktree" item 4 after `git submodule update` in a fresh worktree. Classified per `AGENTS.md` Completion as **missing on the project machine**, not a repository defect: the relaunch was unchanged and green. The log lives inside the worktree and dies with it, so `M9` relaunches the gate from `main` after the merge |
+| `make gate` | `PASS` | 2026-09-10 | The ratification pass. `gate: PASS (2 not applicable: whitespace/pending, whitespace/untracked) \| FULL \| 9374b24 (worktree-a7-ratified, tree clean) \| 20260909T220910Z` — **1927 passed, 5 skipped** in 4m14s, the same count as the previous run and as `main`, so ratifying the gates and adding `DEC-A7-013`/`-014` moves nothing in the suite. Green on the first attempt this time: the worktree's submodules were already initialised, which is the condition whose absence produced the 16 first-run failures recorded in the row above |
 | `TEST-A7-01` … `TEST-A7-21` | `NOT_RUN` | — | Defined in §9.2 before any production change, as `AGENTS.md` requires. Each is scheduled on the milestone that implements its requirement |
 | `make smoke` | `NOT_RUN` | — | `M7`. It has not been run since the discount changed (`V1`), and this plan changes the discount again |
 
@@ -1301,7 +1621,8 @@ no milestone has started.
    substantially different rulebooks. Pooled reporting stays prohibited.
 9. **A7's projected below-standstill is a projection until `M1` runs.** ≈5.2 %
    against 7.45 %, built from a measured 4.55 %, a bounded +0.53 pp from deleting
-   `λ₆`, and ≈0.27 reward units of `w₅` indicator cost. `M1`'s grid member is what
+   `λ₆`, and 0.265 reward units of `w₅` indicator cost per episode. `M1`'s grid
+   member is what
    replaces the word "projected" with a number.
 10. **`φ = 0`'s effect on the expert's mean return under the six-level reward is
     unmeasured**, and its falsifier is one grid member in the same run (§6.2).
