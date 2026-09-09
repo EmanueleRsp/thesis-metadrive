@@ -54,7 +54,7 @@ should not redo.
 | the episode runs it out | `src/thesis_rl/envs/thesis_scenario_env.py:47,1003` — truncation at `episode_steps >= scenario_length - 1 + extra`, with `extra_steps_after_scenario: 0` and `horizon: null` (`conf/env/scenarionet.yaml:16,69`) |
 | so the longest training **episode** is 500 control steps | max `length` over `train` = 501 |
 | at `a = 2.5`, `γ = 0.996` the break-even is 228.6 steps | `ln(2.5)/−ln(0.996)` |
-| **596 of 2200 training records = 27.09 %** exceed it | train/pg p50 **241**, p95 **501**, 54.2 % over; train/waymo 0.0 % over |
+| **591 of 2200 training records = 26.86 %** exceed it | train/pg p50 **241**, p95 **501**; train/waymo 0.0 % over. *Corrected*: this row read 596 / 27.09 %, which compared the scenario `length` with the break-even. The criterion is over control steps and an episode is `length − 1`, so the five records with `length = 229` — 228 steps, below the 228.6 break-even — do not belong in the count |
 | the guard encodes the same error | `tests/test_hydra_agent_presets.py:257` hardcodes `horizon_steps = 199` under a docstring reading "The horizon is measured, not assumed" |
 
 Classification per `AGENTS.md`: **a defect of the repository.** It holds for any
@@ -80,7 +80,7 @@ reopened; only `L` is corrected.
 | **A. raise `γ`** | `γ ≥ 0.4^(1/500) = 0.998169` | effective horizon `1/(1−γ)` **250 → 556 steps (25.0 s → 55.6 s)**, ×2.2; whole-episode damping of a bootstrapped constant `0.135 → 0.406` |
 | B. raise `a` at `γ = 0.996` | `a ≥ 7.419` | `a³` 15.6 → 408, **×26 on the critic's dynamic range**; drags `σ`, `λ₄` and the 217,189-transition grid, and ADR-081 already measured and rejected `a = 3.0` in both directions |
 | C. cap the horizon | cap ≤ 229 | truncates **53.7 %** of PG train records; PG mean route 183.81 m is 405 steps at the expert's 4.535 m/s, so any cap below ~410 makes the median PG mission structurally incompletable |
-| D. do nothing | — | for 27.09 % of training records the hierarchy inverts inside the episode, which is the property `γ` was chosen for; and the guard stays green |
+| D. do nothing | — | for 26.86 % of training records the hierarchy inverts inside the episode, which is the property `γ` was chosen for; and the guard stays green |
 
 **What exit A does *not* cost, and this is the load-bearing fact:** the
 217,189-transition calibration is an **undiscounted** sum
@@ -105,11 +105,18 @@ the O3 margin improves from **−3.5789 to −1.9934** (still negative; only `γ
 restores it, and `I1` in the behavioural specification proves why), and the
 discount's share of the time preference falls from 90.5 % to 79.7 %.
 
-**Also required, and it is the durable half of the fix:**
-`tests/test_hydra_agent_presets.py` must compute `L` from
-`data/scenarionet/frozen/scenario_selection_index.json` — which is committed —
-instead of hardcoding 199, so the docstring's claim becomes true and a future
-panel change fails the guard instead of passing it.
+**Also required, and it is the durable half of the fix — done 2026-09-09:**
+`tests/test_hydra_agent_presets.py` computes `L` from
+`data/scenarionet/frozen/scenario_selection_index.json` instead of hardcoding
+199, so the docstring's claim is now true and a future panel change fails the
+guard instead of passing it. The fixture pins **the requirement rather than the
+state** — `γ ≥ exp(−ln a / 500) = 0.998169`, a function of `a` and the measured
+`L` alone — and deliberately asserts neither a discount nor the criterion's
+verdict, both of which belong beside the approved value. Note the margin is a
+property of the frozen index and not of the code: `γ = 0.9982` gives a break-even
+of 508.6 against a longest training episode of 500, so **8.6 steps**, and one
+510-step scenario in a regenerated index would put the criterion back in deficit.
+`horizon_steps == 500` is the assertion that would say so.
 
 ---
 
