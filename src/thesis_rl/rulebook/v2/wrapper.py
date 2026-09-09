@@ -143,6 +143,12 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
         self._l5_reached_steps = 0
         self._ego_speed_sum_mps = 0.0
         self._ego_speed_steps = 0
+        self._route_outside_sum = 0.0
+        self._route_outside_evaluated_steps = 0
+        self._route_outside_steps = 0
+        self._route_fully_outside_steps = 0
+        self._route_fully_outside_run = 0
+        self._route_fully_outside_max_run = 0
 
     def _level_diagnostics(self, result: RulebookResult) -> dict[str, Any]:
         """RULEBOOK-V5.1 §7's two counters, plus the ego speed for §7's third.
@@ -202,11 +208,73 @@ class RulebookV2MonitorWrapper(gym.Wrapper):
             speed = math.hypot(*self._pre_snapshot.ego.velocity_xy)
         self._ego_speed_sum_mps += speed
         self._ego_speed_steps += 1
-        return {
+        diagnostics: dict[str, Any] = {
             "l4_clip_binding_steps": self._l4_clip_binding_steps,
             "l5_reached_steps": self._l5_reached_steps,
             "ego_speed_mps": speed,
             "mean_ego_speed_mps": self._ego_speed_sum_mps / max(self._ego_speed_steps, 1),
+        }
+        diagnostics.update(self._route_adherence_diagnostics(result))
+        return diagnostics
+
+    # `route_outside_fraction` is an area fraction the progress component clamps
+    # to [0, 1], so "the footprint shares no area with the assigned corridor" is
+    # the value 1.0. This is a numerical-equality tolerance, not a modelling
+    # threshold: there is no judgement in it to calibrate.
+    _FULLY_OUTSIDE_TOLERANCE = 1.0e-9
+
+    def _route_adherence_diagnostics(self, result: RulebookResult) -> dict[str, Any]:
+        """Per-episode aggregation of `REQ-EF-15`'s corridor diagnostic.
+
+        `route_outside_fraction` is the ego footprint's area fraction outside the
+        union of the **assigned** route lanes. It has been computed on every step
+        since `REQ-EF-15` and read by nothing, which is open item `D14`: the
+        quantity that would say whether a policy drives off its assigned corridor
+        existed, and no run ever reported it.
+
+        The aggregate that answers the question is **`route_fully_outside_max_run`**,
+        the longest consecutive run of steps with the footprint entirely off the
+        corridor. The mean cannot separate the two cases that matter — clipping
+        the inside of a corner for three steps and driving a parallel carriageway
+        for eighty steps can produce the same mean — and only the second is a
+        mission the reward is paying for without the gate being reachable.
+
+        `route_outside_evaluated_steps` is reported alongside because the
+        component omits the diagnostic when it has no ego footprint or no
+        corridor. Without it a zero would be ambiguous between "never left the
+        corridor" and "never measured", and a check that read nothing must not be
+        recorded as a check that passed.
+        """
+
+        progress = result.components.get("progress")
+        outside = None if progress is None else progress.diagnostics.get("route_outside_fraction")
+        if outside is not None:
+            value = float(outside)
+            self._route_outside_evaluated_steps += 1
+            self._route_outside_sum += value
+            if value > 0.0:
+                self._route_outside_steps += 1
+            if value >= 1.0 - self._FULLY_OUTSIDE_TOLERANCE:
+                self._route_fully_outside_steps += 1
+                self._route_fully_outside_run += 1
+                self._route_fully_outside_max_run = max(
+                    self._route_fully_outside_max_run, self._route_fully_outside_run
+                )
+            else:
+                self._route_fully_outside_run = 0
+
+        evaluated = self._route_outside_evaluated_steps
+        return {
+            "route_outside_evaluated_steps": evaluated,
+            "route_outside_steps": self._route_outside_steps,
+            "route_fully_outside_steps": self._route_fully_outside_steps,
+            "route_fully_outside_max_run": self._route_fully_outside_max_run,
+            "mean_route_outside_fraction": (
+                self._route_outside_sum / evaluated if evaluated else None
+            ),
+            "mean_route_adherence": (
+                1.0 - self._route_outside_sum / evaluated if evaluated else None
+            ),
         }
 
     @property

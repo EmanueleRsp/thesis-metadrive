@@ -8,6 +8,9 @@ from thesis_rl.runtime.comfort_diagnostics import (
     COMFORT_AGGREGATE_COLUMNS,
     COMFORT_EPISODE_COLUMNS,
 )
+from thesis_rl.runtime.route_adherence_diagnostics import (
+    ROUTE_ADHERENCE_EPISODE_COLUMNS,
+)
 
 
 class CSVRecorder:
@@ -202,6 +205,10 @@ class CSVRecorder:
             # cell means the channel was undefined for that episode, which is
             # not the same as comfortable (`REQ-CMF-07`).
             *COMFORT_EPISODE_COLUMNS,
+            # `REQ-EF-15` / `D14` and RULEBOOK-V5.1 §7: reported, never priced.
+            # `route_fully_outside_max_run` is the one to read -- a mean cannot
+            # separate a clipped corner from driving the wrong carriageway.
+            *ROUTE_ADHERENCE_EPISODE_COLUMNS,
         ],
         "promotions.csv": [
             "algorithm",
