@@ -341,6 +341,19 @@ requirement to the cap is `λ₄ / (a − λ₄·ΔQ_MAX)`, in which `σ` cancel
 gap is therefore a property of how close `λ₄` sits to `a`, not of a severity
 choice — which is worth knowing, because it means no re-tuning of `σ` reaches it.
 
+**And that denominator is the §5.4 tail**, the whole budget left below the
+non-negotiable level once progress has taken its maximum step. So the identity
+reads `ratio = λ₄ / tail = 0.80 / 0.20`, and *"no admissible `w₅` opposes a fast
+off-route drive, by a factor of four"* is the same statement as *"progress
+consumes four fifths of the per-step budget"* — the review's own headroom
+diagnosis, in behavioural units instead of weight-allocation ones. It also names
+the only thing that would move it: not `σ`, not `w₅`, but `λ₄` relative to `a`.
+That makes a `λ₄` change the one remedy in this whole family that §8 does **not**
+foreclose, because it is a weight decision rather than a specification one — the
+A7 ExecPlan session prices it at about 1.1 pp of below-standstill per 0.5 of
+`λ₄`, which is their figure and not re-derived here. Neither session proposes it;
+`λ₄ = 2.0` stands. Reading contributed by that session on top of the identity.
+
 *Independent corroboration of the relayed pace*: 40.58 channel units per mean
 mission at `Δq = 0.204089` implies 198.8 steps, against a median episode of 199.
 That figure comes from the `C51` row and not from the bench that produced the
