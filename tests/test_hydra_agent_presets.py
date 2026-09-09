@@ -290,11 +290,11 @@ def test_every_algorithm_shares_one_hierarchy_preserving_discount() -> None:
     hardcoded under a docstring reading "the horizon is measured, not assumed".
     It was not measured, and `199` is the wrong number: `RULEBOOK-V5.1` §4.6's
     p5/p50/p95 of 197/199/200 is the **1100 Waymo train records only**, while the
-    training mixture is half procedurally generated. That property now lives in
-    `test_the_hierarchy_preserving_horizon_is_measured_from_the_frozen_index`,
-    where the horizon is read from the committed index instead of asserted, and
-    where the shortfall this exposes (`C49`) is recorded rather than hidden by a
-    guard that passed for the wrong reason.
+    training mixture is half procedurally generated. The horizon is now read from
+    the committed index by
+    `test_the_hierarchy_preserving_horizon_is_measured_from_the_frozen_index`, and
+    the criterion's verdict lands with the approved `gamma = 0.9982` rather than
+    here, next to the value that makes it hold (`C49`).
 
     `gamma = 1` satisfied the second property trivially and failed something
     ADR-075 did not weigh: with two thirds of episodes ending in a bootstrapped
@@ -332,7 +332,7 @@ def test_every_algorithm_shares_one_hierarchy_preserving_discount() -> None:
 
 @pytest.mark.integration
 def test_the_hierarchy_preserving_horizon_is_measured_from_the_frozen_index() -> None:
-    """`C49`. ADR-081's own criterion, evaluated at the horizon it is about.
+    """`C49`. The horizon ADR-081's criterion is about, measured instead of assumed.
 
     The criterion is `Delta = ln(a) / -ln(gamma) > L`: a future violation at level
     `k` outranks a present one at `k+1` only while the discount has not damped the
@@ -342,31 +342,35 @@ def test_the_hierarchy_preserving_horizon_is_measured_from_the_frozen_index() ->
     contraction argument wants `gamma**L` small and its hierarchy argument wants
     it at least `1 / a`.
 
-    **The horizon is now read rather than asserted.** `_measured_training_horizon_steps`
-    documents the chain; the maximum training episode is 500 control steps, not
-    the 199 that used to be hardcoded here, because `199` is the Waymo-only
-    figure and half the training mixture is procedurally generated.
+    **`L` is the half this fixture owns, and it is now read rather than asserted.**
+    `_measured_training_horizon_steps` documents the chain: the longest training
+    episode is 500 control steps, not the 199 that used to be hardcoded here under
+    a docstring claiming the horizon was measured. `199` is `RULEBOOK-V5.1` §4.6's
+    figure for the 1100 Waymo `train` records, and half the training mixture is
+    procedurally generated.
 
-    **At the shipped parameters the criterion does not hold, and this fixture
-    records that rather than concealing it.** That follows the convention
-    `tests/test_rulebook_v51_orderings.py::test_o3_does_not_survive_the_shipped_discount`
-    already sets for a measured failure whose remedy is a decision: the candidate
-    remedies here — raise `gamma`, raise `priority_base`, cap the episode, or
-    accept and report the exposure — trade against ADR-081's contraction argument
-    and against every calibrated weight, so none of them is a test's to make.
+    **The value of `gamma` is not this fixture's to pin, and neither is the
+    criterion's verdict.** `gamma = 0.9982` and the A7 architecture were approved
+    on 2026-09-09 and land with that change, which is where the verdict assertion
+    — `break_even_steps > horizon_steps` — belongs, next to the value that makes
+    it true. Asserting a discount here would either duplicate that decision or
+    contradict it for as long as the two changes are unmerged, and asserting the
+    verdict against a discount this fixture does not own would do both.
 
-    Every quantity is pinned to a literal, so any change to `priority_base`,
-    to `gamma`, or to the frozen index's episode lengths fails here — which is
-    the protection the previous formulation was meant to give and did not, since
-    it compared against a horizon that could not move.
+    So what is pinned is the requirement, which is a function of `priority_base`
+    and the measured horizon alone: at `a = 2.5` over 500 control steps the
+    criterion needs `gamma >= 0.998169`. Any change to `priority_base`, or a
+    regenerated frozen index whose episodes run longer, moves that number and
+    fails here — which is the protection the old formulation was meant to give and
+    could not, comparing against a horizon that could not move. Note the margin is
+    thin and is a property of the current frozen index rather than of the code:
+    one 510-step scenario would raise the requirement above the approved value,
+    and `horizon_steps == 500` below is what would say so.
     """
 
     priority_base = float(OmegaConf.load(CONF_DIR / "scalarization" / "default.yaml").priority_base)
-    gamma = _shipped_discount()
     horizon_steps, episodes = _measured_training_horizon_steps()
 
-    assert priority_base == pytest.approx(2.5)
-    assert gamma == pytest.approx(0.996)
     assert horizon_steps == 500
     assert len(episodes) == 2200
 
@@ -376,16 +380,12 @@ def test_the_hierarchy_preserving_horizon_is_measured_from_the_frozen_index() ->
     assert env_config.config.horizon is None
     assert int(env_config.episode_control.extra_steps_after_scenario) == 0
 
-    break_even_steps = math.log(priority_base) / -math.log(gamma)
-    assert break_even_steps == pytest.approx(228.6, abs=0.1)
+    # Exercised so that arms disagreeing on the discount fails here too, without
+    # pinning which discount they agree on.
+    assert 0.0 < _shipped_discount() <= 1.0
 
-    # The recorded shortfall. Positive means the hierarchy inverts before the
-    # longest training episode ends.
-    assert break_even_steps < horizon_steps
-    past = sum(1 for steps in episodes if steps > break_even_steps)
-    assert past == 591
-    assert past / len(episodes) == pytest.approx(0.2686, abs=5.0e-4)
-
-    # What would satisfy the criterion at this `priority_base`, so the decision
-    # has its number here rather than in prose.
-    assert math.exp(-math.log(priority_base) / horizon_steps) == pytest.approx(0.998169, abs=1.0e-6)
+    # The requirement the measured horizon imposes, independent of the configured
+    # discount: `gamma**L >= 1 / a` rearranged.
+    required_gamma = math.exp(-math.log(priority_base) / horizon_steps)
+    assert required_gamma == pytest.approx(0.998169, abs=1.0e-6)
+    assert required_gamma**horizon_steps == pytest.approx(1.0 / priority_base)

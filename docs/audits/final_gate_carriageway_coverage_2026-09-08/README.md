@@ -94,6 +94,16 @@ establish that an ego could drive it while still banking the `R4` budget. That
 requires walking the route backwards from `s_goal` and testing lateral offset
 stability at each station — designed, not run.
 
+**Run on 2026-09-09**, as this instrument's `--walk-spacing-m` mode, so that the
+walk inherits the reconciliation against the frozen gate rather than re-deriving
+it. The default is unchanged and the figures above are unaffected. It found that
+the surface does accompany the mission on a minority of records and by a wide
+margin where it does: in the band where the ego crosses at most one of its own
+widths of non-drivable surface to enter, **318 records (9.1 %)** carry such a
+corridor and **130 (3.7 %)** carry one covering at least half the route, two of
+them the whole route. Figures, the entry-gap bands and the spacing control are in
+`docs/audits/progress_channel_integrity_2026-09-09/README.md`; the row is `D14`.
+
 It also says nothing about whether a trained policy ever goes there. The
 diagnostic that would answer that, `route_outside_fraction`, is computed every
 step and aggregated nowhere (`D14`).

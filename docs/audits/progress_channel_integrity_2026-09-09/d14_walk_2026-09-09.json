@@ -1,0 +1,292 @@
+{
+  "d_ref_m": 2.2222,
+  "date": "2026-09-09",
+  "ego_width_m": 1.852,
+  "frozen_index": "data/scenarionet/frozen/scenario_selection_index.json",
+  "instrument": "scripts/measure_final_gate_carriageway_coverage.py --walk-spacing-m",
+  "mean_mission_channel_units": 40.58,
+  "measurement": "D14 backwards route walk over the frozen index",
+  "records": 3500,
+  "spacing_1m": {
+    "one_ego_width_band": {
+      "corridor_is_assigned_route_lane": 1,
+      "corridor_m": {
+        "max": 158.58552101585366,
+        "p50": 15.0,
+        "p95": 56.0
+      },
+      "covering_at_least_half_the_route": {
+        "by_source": {
+          "waymo": 130
+        },
+        "by_split": {
+          "test": 46,
+          "train": 69,
+          "validation": 15
+        },
+        "fraction_of_index": 0.037142857142857144,
+        "records": 130
+      },
+      "fraction_of_index": 0.09085714285714286,
+      "r4_channel_units": {
+        "max": 71.36419809911514,
+        "p50": 6.750067500675007
+      },
+      "records": 318,
+      "share_of_route": {
+        "max": 1.0006027453790158,
+        "p50": 0.2815351816719944,
+        "p95": 0.9990966772569742
+      }
+    },
+    "summary": {
+      "by_entry_gap": {
+        "any": {
+          "bike_lane_only": 0,
+          "corridor_to_goal_m": {
+            "max": 535.4300260200802,
+            "median": 28.0382559721155,
+            "min": 0.0,
+            "p05": 0.0,
+            "p25": 12.0,
+            "p75": 57.668088372399765,
+            "p95": 143.0
+          },
+          "fraction_of_walked": 0.3617142857142857,
+          "is_a_route_lane": 7,
+          "longest_m": 535.4300260200802,
+          "records": 1266
+        },
+        "le_0p05m_representation_artefact": {
+          "bike_lane_only": 0,
+          "corridor_to_goal_m": {
+            "max": 93.0,
+            "median": 2.0,
+            "min": 0.0,
+            "p05": 0.0,
+            "p25": 0.0,
+            "p75": 32.0,
+            "p95": 56.0
+          },
+          "fraction_of_walked": 0.026857142857142857,
+          "is_a_route_lane": 0,
+          "longest_m": 93.0,
+          "records": 94
+        },
+        "le_0p5m": {
+          "bike_lane_only": 0,
+          "corridor_to_goal_m": {
+            "max": 93.0,
+            "median": 12.0,
+            "min": 0.0,
+            "p05": 0.0,
+            "p25": 0.0,
+            "p75": 33.0,
+            "p95": 68.0
+          },
+          "fraction_of_walked": 0.047142857142857146,
+          "is_a_route_lane": 1,
+          "longest_m": 93.0,
+          "records": 165
+        },
+        "le_one_ego_width": {
+          "bike_lane_only": 0,
+          "corridor_to_goal_m": {
+            "max": 158.58552101585366,
+            "median": 15.0,
+            "min": 0.0,
+            "p05": 0.0,
+            "p25": 1.0,
+            "p75": 33.0,
+            "p95": 56.0
+          },
+          "fraction_of_walked": 0.09085714285714286,
+          "is_a_route_lane": 1,
+          "longest_m": 158.58552101585366,
+          "records": 318
+        }
+      },
+      "corridor_entry_gap_m": {
+        "max": 96.46412291998898,
+        "median": 43.62812377813568,
+        "min": 0.010057922083902326,
+        "p05": 0.02229126575970497,
+        "p25": 1.8388279181851885,
+        "p75": 73.84254582628425,
+        "p95": 90.51839967782185
+      },
+      "corridor_offset_m": {
+        "max": 98.99035170484701,
+        "median": 55.11789820224212,
+        "min": 3.112430886152552,
+        "p05": 7.0500606831218136,
+        "p25": 15.806317611811053,
+        "p75": 82.79418843102803,
+        "p95": 95.45620275954134
+      },
+      "corridor_to_goal_m": {
+        "max": 535.4300260200802,
+        "median": 28.0382559721155,
+        "min": 0.0,
+        "p05": 0.0,
+        "p25": 12.0,
+        "p75": 57.668088372399765,
+        "p95": 143.0
+      },
+      "fraction_with_corridor_to_goal": 0.3617142857142857,
+      "records_walked": 3500,
+      "records_with_corridor_to_goal": 1266,
+      "records_with_unusable_station": 0,
+      "stations_per_record": {
+        "max": 537.0,
+        "median": 1.0,
+        "min": 1.0,
+        "p05": 1.0,
+        "p25": 1.0,
+        "p75": 17.0,
+        "p95": 87.0
+      }
+    }
+  },
+  "spacing_5m": {
+    "one_ego_width_band": {
+      "corridor_is_assigned_route_lane": 1,
+      "corridor_m": {
+        "max": 158.58552101585366,
+        "p50": 15.0,
+        "p95": 60.0
+      },
+      "covering_at_least_half_the_route": {
+        "by_source": {
+          "waymo": 124
+        },
+        "by_split": {
+          "test": 43,
+          "train": 67,
+          "validation": 14
+        },
+        "fraction_of_index": 0.03542857142857143,
+        "records": 124
+      },
+      "fraction_of_index": 0.08657142857142858,
+      "r4_channel_units": {
+        "max": 71.36419809911514,
+        "p50": 6.750067500675007
+      },
+      "records": 303,
+      "share_of_route": {
+        "max": 1.0006027453790158,
+        "p50": 0.25516814275182537,
+        "p95": 0.9991151597750861
+      }
+    },
+    "summary": {
+      "by_entry_gap": {
+        "any": {
+          "bike_lane_only": 0,
+          "corridor_to_goal_m": {
+            "max": 535.4300260200802,
+            "median": 27.372011804634518,
+            "min": 0.0,
+            "p05": 0.0,
+            "p25": 10.368791372199508,
+            "p75": 57.668088372399765,
+            "p95": 140.3306809757908
+          },
+          "fraction_of_walked": 0.3617142857142857,
+          "is_a_route_lane": 5,
+          "longest_m": 535.4300260200802,
+          "records": 1266
+        },
+        "le_0p05m_representation_artefact": {
+          "bike_lane_only": 0,
+          "corridor_to_goal_m": {
+            "max": 70.0,
+            "median": 0.0,
+            "min": 0.0,
+            "p05": 0.0,
+            "p25": 0.0,
+            "p75": 5.0,
+            "p95": 35.0
+          },
+          "fraction_of_walked": 0.025142857142857144,
+          "is_a_route_lane": 0,
+          "longest_m": 70.0,
+          "records": 88
+        },
+        "le_0p5m": {
+          "bike_lane_only": 0,
+          "corridor_to_goal_m": {
+            "max": 90.0,
+            "median": 5.0,
+            "min": 0.0,
+            "p05": 0.0,
+            "p25": 0.0,
+            "p75": 30.0,
+            "p95": 55.0
+          },
+          "fraction_of_walked": 0.042,
+          "is_a_route_lane": 1,
+          "longest_m": 90.0,
+          "records": 147
+        },
+        "le_one_ego_width": {
+          "bike_lane_only": 0,
+          "corridor_to_goal_m": {
+            "max": 158.58552101585366,
+            "median": 15.0,
+            "min": 0.0,
+            "p05": 0.0,
+            "p25": 0.0,
+            "p75": 30.19522375874612,
+            "p95": 60.0
+          },
+          "fraction_of_walked": 0.08657142857142858,
+          "is_a_route_lane": 1,
+          "longest_m": 158.58552101585366,
+          "records": 303
+        }
+      },
+      "corridor_entry_gap_m": {
+        "max": 95.97470385631064,
+        "median": 43.10030619177786,
+        "min": 0.010057922083902326,
+        "p05": 0.028122355068518345,
+        "p25": 2.9692330456287124,
+        "p75": 71.9039773709817,
+        "p95": 88.2902610215406
+      },
+      "corridor_offset_m": {
+        "max": 99.02443646349865,
+        "median": 55.000649816010814,
+        "min": 3.112430886152552,
+        "p05": 7.0500606831218136,
+        "p25": 15.780028288020311,
+        "p75": 82.27931085822877,
+        "p95": 95.48122332109138
+      },
+      "corridor_to_goal_m": {
+        "max": 535.4300260200802,
+        "median": 27.372011804634518,
+        "min": 0.0,
+        "p05": 0.0,
+        "p25": 10.368791372199508,
+        "p75": 57.668088372399765,
+        "p95": 140.3306809757908
+      },
+      "fraction_with_corridor_to_goal": 0.3617142857142857,
+      "records_walked": 3500,
+      "records_with_corridor_to_goal": 1266,
+      "records_with_unusable_station": 0,
+      "stations_per_record": {
+        "max": 109.0,
+        "median": 1.0,
+        "min": 1.0,
+        "p05": 1.0,
+        "p25": 1.0,
+        "p75": 5.0,
+        "p95": 19.0
+      }
+    }
+  }
+}

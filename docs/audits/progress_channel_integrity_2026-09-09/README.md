@@ -4,18 +4,24 @@ Continues `docs/audits/rulebook_architecture_2026-09-09/`, whose §8 opened the
 three defects of the mission-progress channel. This directory holds what closed
 them and the decision brief for the one that did not.
 
-**Status.** `V3` and `C51` are closed, `C49`'s guard half is closed and its `γ`
-half is not, `C50` is a decision. No approved behaviour changed: the reward, the
-projection and the mission station are exactly what they were.
+**Status.** `V3` and `C51` are closed. `C49`'s measured-horizon half is closed
+here; its discount was **approved on 2026-09-09 at `γ = 0.9982`** together with
+the A7 architecture, and lands with the A7 ExecPlan change rather than with this
+one. `C50` is a decision and `D14` is now measured. No approved behaviour changed
+here: the reward, the projection and the mission station are exactly what they
+were, and neither `γ` nor any weight is touched by this change.
 
 | file | what it holds |
 |---|---|
-| `README.md` | this: the `V3` result, and the `C50` decision brief with its three candidates priced |
+| `README.md` | this: the `V3` result, the `C50` decision brief with its three candidates priced, and `D14`'s backwards route walk |
 | `run_2026-09-09.txt` | the `V3` audit's output over the current frozen index, verbatim |
+| `d14_walk_2026-09-09.json` | the walk's summary at both station spacings, without the per-record rows |
 
-The instrument itself is `scripts/audit_route_near_revisits.py`, with acceptance
-tests in `tests/test_route_near_revisit_audit.py`. The per-route JSON is 4 MB and
-is regenerated with `--output`, so it is not committed.
+The instruments are `scripts/audit_route_near_revisits.py`, with acceptance tests
+in `tests/test_route_near_revisit_audit.py`, and the `--walk-spacing-m` mode
+added to `scripts/measure_final_gate_carriageway_coverage.py`. Both write
+per-record JSON that is megabytes wide and regenerable with `--output`, so only
+the summaries are committed.
 
 ## What the near-revisit audit found
 
@@ -146,6 +152,16 @@ mission station *means*, so it is a `DRIVING-MISSION-V1.1` amendment and a user
 decision, not an implementation choice. The lag is zero for a policy that stays
 near the centerline and grows with lateral offset; the table above bounds it.
 
+**And the approved specification already rejected this shape.**
+`DRIVING-MISSION-V1.1` §8 lists
+**"continuity/clamp/freeze/recovery/accumulated-travel/HMM protocols"** among the
+obsolete elements to remove, and a station cursor bounded per step is a
+continuity protocol by any reading. So `A′` does not merely redefine the station:
+it re-introduces a mechanism that document withdrew. That is worth knowing before
+"the clip becomes the identity" decides anything — the argument for `A′` is strong
+on mechanism, and it is arguing against an approved removal rather than into a
+gap.
+
 ### B — remove the negative clip
 
 Closes the ratchet algebraically too — `Σ Δq ≤ (s_T - s_0)/D_REF` with equality
@@ -177,7 +193,130 @@ If `C50` is to be closed algebraically rather than by population property, `A′
 is the candidate: it is the only one that removes a mechanism instead of adding
 one, it makes an acceptance criterion exact instead of approximate, and its
 central objection — that `k = 1` deprioritizes legitimate motion — is the one
-this audit measured and found to be worth 6.2 cm.
+this audit measured and found to be worth 6.2 cm. But it is a **re-introduction
+of something `DRIVING-MISSION-V1.1` §8 removed**, not a gap-filling change, and
+that is the cost to weigh against the elegance rather than after it.
+
+## `D14`: the backwards route walk, executed
+
+`D14` has recorded since 2026-09-08 that the carriageway-coverage measurement
+"covers the goal cross-section only, so it does **not** show that an ego could
+drive such surface *while banking the `R4` budget* — that needs the backwards
+route walk, which is designed but not run". It has now been run.
+
+**It is the same instrument, not a new one.** `--walk-spacing-m` calls the
+builder's own cross-section decomposition at stations along the route instead of
+only at the goal, so the walk inherits the reconciliation against the frozen gate
+that instrument already performs — a record whose host component disagrees with
+the frozen segment is refused before any of it is measured. 3,500 records walked,
+**zero unusable stations**.
+
+**What it looks for.** Starting at the goal cross-section, a *corridor* is
+same-direction drivable surface outside the route's own carriageway, at least one
+ego width wide, containing a position from which the ego misses the finite final
+gate. The walk then follows it backwards while consecutive cross-sections still
+offer an overlapping component. `offroad` is zero on it by construction, because
+the drivable surface is the union of every vertically compatible lane, and
+`wrong_carriageway` is zero because it charges only opposing surface. What the
+corridor costs to *enter* is reported separately, as the gap of non-drivable
+surface between it and the route's own carriageway.
+
+**Reported in entry-gap bands rather than against a threshold**, for the reason
+the near-revisit audit reports proximity bands: a cut-off here would be a choice
+of how much `offroad` an ego may pay to enter, which is a parameter this work is
+not allowed to add. Figures below are the 1 m walk; the 5 m walk is the
+spacing control.
+
+| entry gap | records | share of index | corridor p50 | p95 | max |
+|---|---:|---:|---:|---:|---:|
+| ≤ 0.05 m — map representation only | 94 | 2.7 % | 2.0 m | 56 m | 93 m |
+| ≤ 0.50 m | 165 | 4.7 % | 12.0 m | 68 m | 93 m |
+| **≤ one ego width (1.852 m)** | **318** | **9.1 %** | **15.0 m** | **56 m** | **158.6 m** |
+| any | 1266 | 36.2 % | 28.0 m | 143 m | 535 m |
+
+The `any` row is the one to distrust: its median corridor sits at 55 m of lateral
+offset across a median 43 m of non-drivable surface, so it is mostly other
+streets that happen to run parallel somewhere inside the ±100 m cross-section.
+That is the same remoteness the 2026-09-08 run reported at the goal.
+
+**The band that matters is the third, and it establishes what `D14` said was
+not established.** In it the median corridor offset is 10.70 m — about three
+lanes — and exactly **1 of 318** corridors is part of the assigned route, so
+these are not the ego's own carriageway seen twice.
+
+* **130 records, 3.7 % of the index, have such a corridor covering at least half
+  the mission.** All 130 are Waymo; by split, 67 train, 43 test, 14 validation,
+  so it is present in evaluation and not only in training.
+* **Two records have one covering the whole route**: 158.6 m at an offset of
+  −26.0 m and 139.7 m at +22.0 m, entered across gaps of 0.888 m and 0.872 m.
+* In channel units the corridor is worth `length / D_REF`: median **6.75**,
+  maximum **71.36**, against a mean mission of **40.58**. On the worst record an
+  ego can bank more than a whole average mission's progress on a legal parallel
+  street and arrive outside the gate.
+
+**Spacing control.** A coarse walk could bridge a gap shorter than its spacing
+and over-report. Refining 5 m to 1 m moves the figures the *other* way: the band
+grows from 303 to 318 records and the at-least-half subset from 124 to 130, with
+120 of the 124 kept, 4 lost and 10 gained, a median length ratio of 1.000 and an
+unchanged maximum of 158.6 m. The 5 m figure was therefore a mild under-report,
+not an artefact of bridging.
+
+**A preliminary reading of this measurement was wrong and is withdrawn.** On the
+first 60 records every corridor was `LANE_SURFACE_UNSTRUCTURE` — the interior of
+a PG junction — and a station-by-station trace of one of them showed the corridor
+ending because the surface ended, 15 m back, where the route leaves the junction
+and becomes a 6.4 m street. The conclusion drawn from that, that the parallel
+surface is junction interior with nothing to bank on, holds for **PG and not for
+Waymo**: over the full index 1,137 of 1,266 corridors are `LANE_SURFACE_STREET`
+and the at-least-half subset is entirely Waymo. The first 60 records are sorted
+by `scenario_uid` and were PG-heavy, and a sample chosen by sort order is not a
+sample.
+
+**What this does not show.** Geometry, not behaviour: whether a trained policy
+goes there is what `route_fully_outside_max_run` answers, and no
+`eval_episodes.csv` exists on disk. The continuity test is a lower bound in two
+ways — a component must fit an ego width at every sampled station, and
+consecutive components must overlap — so the true exposure is at least this.
+
+**The remedy remains a user decision and a specification amendment, and the
+hierarchy is not what blocks it.** An earlier version of this paragraph argued
+that a sub-rule below progress provably cannot oppose it — which `D14`
+establishes by weight arithmetic and is true — and then that A7 "leaves nothing
+below L4 at all", so the only remedy shape left was the one that does not work.
+**That second step is wrong and the A7 ExecPlan session was right to dispute
+it.** The remedy does not want to sit below progress; it wants to sit above it,
+and A7 is the architecture that puts it there. Under the shipped six-level order
+the natural home for an off-corridor rule is L5, relaxable lane compliance, which
+is *below* L4: the off-route trajectory banks the larger L4 total, wins there, and
+L5 is never consulted. Under A7 the same channel is `K4`, *above* `K5`, so in the
+ordered arms an in-corridor trajectory has `K4 = 0` exactly and wins before
+progress is compared at all — the same mechanism as the collide-to-escape result.
+A7 does not shrink the remedy space; it makes visible that the space was already
+empty under the shipped order.
+
+**What blocks the remedy is the specification, in two clauses rather than one.**
+`D14`'s own exit (b) is attenuating positive `Δq` outside the route corridor, and
+`DRIVING-MISSION-V1.1` §1 says the mission is "not … a way to put legality,
+heading, or lateral offset into `R4`". A `K4` rule avoids that clause by not
+touching `R4` — but any such rule needs a lateral envelope at runtime, and §8
+lists **"runtime authority of any final lateral envelope"** among the elements to
+remove, beside off-route `R4` zeroing, approved after `DEC-EF-06` took the
+measure-then-decide option. So both shapes are foreclosed by the same approved
+document, and unforeclosing either is a user decision.
+
+**And the scalar arm cannot be fixed this way at any admissible weight**, which
+the A7 session priced and I am relaying rather than reproducing: an off-corridor
+indicator in `K4` needs `w₅ > 0.314` to outweigh progress at the expert's mean
+pace of 0.4535 m per step — inside §5.4's cap of 0.3846 — but `w₅ > 1.538` at the
+clip, four times that cap. A weight could therefore be found that opposes a *slow*
+off-route drive and none that opposes a *fast* one, which is the wrong way round,
+since speed is what banks the exposure sooner. That makes this a third measured
+asymmetry in the same direction as the collision one: the ordered arms can express
+a constraint no admissible scalarization can.
+
+What this measurement changes is that the decision now has its magnitude:
+3.7 % of missions, up to a whole mission's worth of progress banked off the
+assigned route.
 
 ## What this did not verify
 
@@ -186,10 +325,11 @@ this audit measured and found to be worth 6.2 cm.
   `route_fully_outside_max_run` would answer, and no `eval_episodes.csv` exists on
   disk. `C51`'s signed statistic is now the detector, but it has not been run over
   a panel since the change.
-* **The off-route reach is not shown to be drivable.** The bands above are
-  labelled by lateral excursion, not by whether an ego may legally sit there;
-  that is `D14`, and the backwards route walk it needs is still designed and
-  unrun.
+* **The off-route reach in the `C50` bands is not shown to be drivable.** Those
+  bands are labelled by lateral excursion, not by whether an ego may legally sit
+  there. `D14`'s walk below answers the adjacent question — whether legal
+  same-direction surface runs *beside* the route — but not this one, which is
+  whether the specific surface between two folds of one route is drivable.
 * **`A′`'s station lag is bounded, not measured on a trajectory.** The table
   bounds the per-step truncation from geometry; the accumulated lag over an
   episode depends on the policy's lateral behaviour.
