@@ -19,7 +19,7 @@ scratch filesystem is an analysis that will eventually be gone.
 
 | file | what it establishes | needs |
 |---|---|---|
-| `REVIEW.md` | the review: the discount decision, the candidate table, the recommendation, the scalarization realignment, the threshold mechanism against the TLO literature, and §7 listing what was **not** verified | — |
+| `REVIEW.md` | the review: the discount decision, the candidate table, the recommendation, the scalarization realignment, the threshold mechanism against the TLO literature, §7 listing what was **not** verified, and **§8, added after the review and superseding two statements inside it** | — |
 | `BEHAVIOURAL-SPEC-DRAFT.md` | **DRAFT, unapproved.** `P1`–`P14` stated over trajectory pairs without presupposing a hierarchy, the impossibility results `I1`–`I5`, and a table naming the measurement that fixes each free quantity. This is the artefact the candidates were scored against | — |
 | `g1_discount.py` | re-verifies the training horizon against the frozen index and the truncation rule; restates the discount criterion as `γ^L ≥ 1/a`; prices every exit; shows the calibration grid is undiscounted | reads the frozen index; takes the repository root as `argv[1]` |
 | `g2_bench.py` | the bench: seven architectures as (channels, scalar adapter) pairs, plus strict-lexicographic and thresholded comparison rules. Transcribes `v51_reward` faithfully | standard library |
@@ -76,6 +76,13 @@ restating it per-step.
 closed loop over a hairpin whose legs are one lane apart pays **+36 channel units
 = +72 reward units per lap at zero net displacement**, linear in the number of
 laps, because the −84.03 m return jump is charged −1. Recorded as an open item.
+
+**Two questions closed without work** (`REVIEW.md` §8.4, §8.5). Collide-to-escape
+is an artefact of the scalar arm alone — the ordered arms compare the collision
+channel first and the non-colliding trajectory has `K1 = 0` exactly — so it is a
+result to report rather than a defect to fix. And a terminal completion bonus
+should not be added: the minimum value that would make the last stretch worth a
+risky manoeuvre is the value that puts arrival before safety.
 
 **The telescoping error is an under-payment, not an exploit.** `behind_peak`
 reports `max_m = 0.053` against a clip threshold of 2.2222 m, so the negative clip

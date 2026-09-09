@@ -1,12 +1,19 @@
 # Rulebook architecture review — findings, candidates, recommendation
 
-**Status: nothing here is approved and no repository file has been changed.**
-`main` = `origin/main` at `8b9f6aa`, working tree clean at the start and end of
-this session. Written 2026-09-09.
+**Status: nothing recommended here is approved.** Written 2026-09-09 against
+`main` at `8b9f6aa`, with no source, configuration or test change; the review and
+its scripts were committed afterwards so the evidence would survive. No ADR, no
+specification amendment and no ExecPlan exists for §4's recommendation.
 
 Reproducible arithmetic: `g1_discount.py`, `g2_bench.py`, `g3_battery.py`,
-`g4_hacking.py`, `g5_w5.py` in this directory. Standard library only; `g1` reads
-the frozen selection index by path.
+`g4_hacking.py`, `g5_w5.py` and `g6_ratchet.py` in this directory. Standard
+library only, except that `g1` reads the frozen selection index by path and
+`g6` imports the repository — see the directory README for its command.
+
+**§8 was added after the review** and supersedes two statements inside it; the
+places affected point forward to it. It also records what a working continuation
+should not redo. That continuation is `handoff-progress-channel-2026-09-09.md`,
+which lives outside the repository beside the working notes.
 
 ---
 
@@ -159,7 +166,7 @@ was an artefact of that mixture; it is not producible at any single setting.
 |---|---|
 | sprint 40 % of the mission then idle | loses under every candidate (A0 −25.1, A7 −24.9) |
 | complete then overshoot past the goal | **refuted as a hazard**: the tracker freezes on the directed gate crossing (`mission/tracker.py:260`) and the episode terminates, so no credit is collectable past the goal. (The residual is `D14`'s route/gate gap, explicitly out of scope.) |
-| one clipped route-projection jump with no motion | **pays under every candidate**: +1.345 under A1, A1c, A2a, A2b and A7, and +1.358 under A0 and A6 — the two that keep L6, whose honest standing-still baseline is −2.757 rather than 0.000. `P11` is currently violated. The audit's `telescoping_max_error = 62.294` channel units = **124.6 reward units**, i.e. *more than a whole mean mission* (80.59), so this is the largest single number in the system and it dwarfs every ordering margin. Architecture-independent; must be fixed regardless (`F14`) |
+| one clipped route-projection jump with no motion | **pays under every candidate**: +1.345 under A1, A1c, A2a, A2b and A7, and +1.358 under A0 and A6 — the two that keep L6, whose honest standing-still baseline is −2.757 rather than 0.000. `P11` is currently violated. **The reading of `telescoping_max_error = 62.294` that stood here — "the largest single number in the system", treated as a reward-hacking exposure — is withdrawn; see §8.1.** It is a *deficit*: the clip under-pays. The exposure is on the other side of the same clip (§8.2) |
 | collide at fault to end a losing episode | **pays.** Break-even measured: **2.2–2.5 steps** of fully-violated interaction, or **5.3–6.2 steps** of non-negotiable violation, cost more than one at-fault collision at impact 0.6. Architecture-independent — it is `I4` again, and ADR-081 already settled the claim by restating it per-step. Belongs in the limitations, and in `P10` |
 | creep along a marking for a whole episode | loses under every candidate, but by **−1.810 under A0** and **−19.988 under A7**: A7's deterrent is **11.0×** stronger. (The ratio is 19.4× at `w₅ = 0.25`, and it is 11.0× at both discounts — it does not depend on `γ`.) |
 | relax for 30 steps with no benefit | **−0.944 under A0, −4.673 under A7** — 4.9× stronger |
@@ -529,7 +536,9 @@ which the calibration rejects).
 |---|---|---|
 | per-episode distributions of `X_int`, `X_hard`, `X_soft` on the expert panel | every threshold in A7 is calibrated from them, by limitation 1's own argument for `d₂`; the instrument currently emits only per-step marginals and the mean reward contribution | a small addition to the existing accumulator, one 45-minute run |
 | one grid member at `w₅` under the A7 reward | `fraction_below_standstill` is the one column `F7`'s algebra cannot derive | same run |
-| fix `P11` — the route-projection jump | `telescoping_max_error = 62.294` channel units = 124.6 reward units, larger than a whole mission, and in A7's thresholded regime L4 is the *only* gradient inside budget, so it is the entire signal | separate change; `mission/tracker.py::project` runs "without a jump envelope or clamp" by documented design, so this is a decision, not a bug fix |
+| **the negative-clip ratchet** (§8.2, `C50`) | +72 reward units per closed lap at zero net displacement, unbounded, and in A7's thresholded regime L4 is the *only* gradient inside budget, so it is the entire signal. Blocked today by a property of the frozen population, not by the reward | **a prerequisite of A7.** `ROUTE_CONTINUITY_JUMP_FACTOR` already exists and ADR-035 documents it as a preference rather than a gate, so promoting it adds no level, weight or observation field |
+| emit `telescoping_max_error` signed (§8.1, `C51`) | published as `abs(...)`, so a surplus is indistinguishable from a deficit — it is the detector for the row above | one line |
+| write the near-revisit re-audit script (`V3`) | a standing constraint requires it on any regenerated index and it does not exist; its 15 m threshold would not cover what the ratchet needs anyway | small, read-only, and it decides the priority of the row above |
 | the guard test reads `L` from the frozen index | `F9` | small |
 | update `tests/test_scal_v14.py` | it writes §5.1 out independently of the implementation with `ETA = 1.0`, `LAMBDA6 = 0.2` and `DT_RATIO = 0.1` hardcoded, and parametrises the inadmissible-weight cases on `relaxable_weight` and `progress_rate_weight`; all of those change | small, but it is a mandatory test and the change needs approval |
 | argmax-within-level instrumentation | `F12`: under `max`, a sub-rule that is never the argmax contributes nothing, and `clearance`'s max cost 0.7094 against 1.0 for the other two may make it inert. `worst_named` already exists and is discarded at `scripts/measure_expert_rulebook_transition.py:2455-2456` | small, same run |
@@ -633,3 +642,108 @@ error `§7` of the handoff warns about, committed by this document.
   with below-standstill 8.8 / 6.1 / 4.5 / 3.4 / 3.2 % at `a=2.2, σ=0`. The handoff
   and §4 both say `λ₄` cannot be reduced without saying that the reduction is
   measured and what it costs. It is, and it costs about 1.1 pp per 0.5 of `λ₄`.
+
+---
+
+## 8. After the review — three questions asked of it, and what they found
+
+Recorded here rather than left in a conversation, because two of the three close
+without work and the third grew. All three concern the progress channel or the
+degenerate policies §4 claims A7 removes. Working continuation:
+`handoff-progress-channel-2026-09-09.md`.
+
+### 8.1 The telescoping error is an under-payment — the earlier reading is withdrawn
+
+§3's probe table used to call `telescoping_max_error = 62.294` "the largest single
+number in the system" and treat it as a reward-hacking exposure. **That is wrong.**
+
+Mechanism: a forward projection jump of `Δs = 3.609 m` gives `Δq_raw = 1.624`,
+clipped to `1.0`, so the channel **loses** 0.624 units of credit. The clip can only
+reduce the sum on the forward side. And the backward side does not compensate on
+the expert panel: `result.rulebook_v51.behind_peak` reports `max_m = 0.053` and
+`steps_beyond_1m = 0`, so the largest backward step over 217,189 transitions is
+**5.3 cm** against a clip threshold of 2.2222 m — the negative clip never binds
+there. All 62.294 units are deficit, over 1298 clipped steps (0.60 %). On the
+expert panel this is an accuracy problem, not a hazard.
+
+**But the statistic cannot say so**, because it is computed as
+`abs(v51_episode_delta_q − v51_episode_delta_s / V51_REFERENCE_ADVANCE_M)`
+(`scripts/measure_expert_rulebook_transition.py:2637-2639`) — the sign is
+discarded, so a surplus and a deficit are indistinguishable. Emitting it signed is
+one line and it is the detector for §8.2. Filed as `C51`.
+
+### 8.2 The negative clip is an unbounded ratchet — executed
+
+The clip is symmetric; the magnitudes it bounds are not. Forward, vehicle physics
+already caps `Δs` at `v_max·Δt = 2.2222 m`. Backward, a projection branch jump is
+unbounded and is charged `−1`.
+
+`g6_ratchet.py`, real `RoutePolyline`, hairpin of 84.03 m whose legs are one lane
+apart, 1 m per step, projecting sequentially as the tracker does:
+
+| trajectory | paid | telescoped | worst single `Δs` |
+|---|---:|---:|---:|
+| honest — the whole route once | 37.81 | 37.81 | 0.00 m |
+| **closed loop ×1, net displacement zero** | **+36.00** | 0.00 | **−84.03 m** |
+| closed loop ×2 | +72.00 | 0.00 | −84.03 m |
+| closed loop ×3 | +108.00 | 0.00 | −84.03 m |
+
+**+36 channel units = +72 reward units at `λ₄ = 2.0` per lap, linear in laps.**
+
+What blocks it today is the geometry of the frozen panels, not the reward: the
+2026-09-05 read-only audit over all 3,500 missions found zero routes with two
+portions of `|Δs| > 15 m` closer than 6 m in plane. That is a property of the
+population; its own standing constraint requires a re-audit on any regenerated
+index; the re-audit script does not exist (`V3`); and the 15 m threshold does not
+cover revisits between one clip width and 15 m, which is all the ratchet needs.
+`ROUTE_CONTINUITY_JUMP_FACTOR = 2.0` already gives the projection a plausibility
+bound that ADR-035 documents as "a preference, not a gate". Filed as `C50`.
+
+### 8.3 The parallel road is not excluded, and A7 makes it matter more
+
+Measured 2026-09-08 over all 3,500 records: uncovered same-direction surface at the
+**goal cross-section** in 1534/3500 (43.8 %), at a median gap of 16.55 m against a
+median gate length of 10.26 m; 426 (12.2 %) within one ego width; residual real
+exposure 289 records (8.3 %). The audit's own README has a section titled "What it
+does not establish", and `D14` repeats it: the measurement covers the goal
+cross-section only, so it does **not** show that an ego could drive such surface
+while banking the `R4` budget, nor whether a trained policy goes there.
+
+Three verified facts compose badly with progress last and unthresholded: no cost
+opposes it (`offroad` is the union of every vertically compatible lane and
+`wrong_carriageway` charges only opposing surface), no termination opposes it
+(ADR-053 removed it by design, naming parallel carriageways), and no cost *below*
+L4 can oppose it — and under A7 there is nothing below L4. The obvious remedy is
+`D14`'s exit (b), which `DRIVING-MISSION-V1.1` §1 and §8 forbid, so it is a
+specification amendment and a user decision.
+
+### 8.4 Collide-to-escape is a scalar-arm artefact — a result, not a defect
+
+A trajectory enduring 200 steps of interaction violation at `c = 0.9` against one
+colliding at fault on step 20, under A7 at `γ = 0.9982`, `w₅ = 0.15`, `φ = 0`:
+
+| | scalar | ordered |
+|---|---:|---|
+| endure | −1265.96 | `K1 = 0.0000` |
+| collide | −173.14 | `K1 = 0.5788` |
+| verdict | **prefers colliding by 1092.8** | **the endurer wins at `K1`** |
+
+The ordered arms compare the collision channel first and the non-colliding
+trajectory has `K1 = 0` exactly, so the collider loses at any `τ₁ < 0.5788` — and
+the recommended `τ₁` is 0, under strict lex and thresholded alike. **This is the
+mirror image of `I5`:** there a scalarization is structurally better than any
+ordered arm, here an ordered arm is structurally better than the control, and both
+magnitudes are measured. `I4` says no bounded scalar sum can do better. No fix; it
+belongs in the write-up as a result.
+
+### 8.5 A terminal completion bonus should not be added
+
+A bonus `B` on the gate crossing is worth `γ^T·B`, a time preference at the
+*outcome* level, so it pushes where O3 and O5 pull against. At `γ = 0.9982`: O3
+holds while `B < 47.2`, O5 while `B < 303.7`, and making the last stretch worth one
+fully-violated interaction step (8.125) needs `B ≥ 9.7`. The window is non-empty —
+**but the minimum value that fixes the stated problem is the value that puts
+arrival before safety.** In the ordered arms `B` lives entirely inside `K5`, below
+every safety channel, so it can cause no regression there and fixes nothing either.
+Not recommended. The diagnostic that would reopen it: the fraction of evaluation
+episodes reaching ≥95 % route completion without a gate crossing.
