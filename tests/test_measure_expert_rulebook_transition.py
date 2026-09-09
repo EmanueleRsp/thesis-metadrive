@@ -736,3 +736,404 @@ def test_the_telescoping_residual_publishes_its_per_episode_distribution() -> No
     assert reported["episodes"] == 200
     assert reported["total_absolute"] == pytest.approx(124.588)
     assert combined.v51_telescoping_max_deficit == pytest.approx(-62.294)
+
+
+def _default_scalarization_yaml_values() -> dict[str, float]:
+    """Plain-line parse of `conf/scalarization/default.yaml`, the same style
+    `test_rulebook_v51_orderings.py`'s `_shipped_gamma` uses: a fixture that
+    hardcoded these values would keep asserting the old configuration after
+    it moved, which is exactly the failure being guarded against.
+    """
+
+    config_path = Path(__file__).parents[1] / "conf" / "scalarization" / "default.yaml"
+    values: dict[str, float] = {}
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.split("#", 1)[0].strip()
+        if not stripped or ":" not in stripped:
+            continue
+        key, _, raw_value = stripped.partition(":")
+        key = key.strip()
+        raw_value = raw_value.strip()
+        if key in {
+            "priority_base",
+            "severity",
+            "flat_tie_breaker",
+            "progress_weight",
+            "relaxable_weight",
+            "progress_rate_weight",
+        }:
+            values[key] = float(raw_value)
+    return values
+
+
+def test_production_scalarization_config_matches_the_shipped_configuration() -> None:
+    """Regression: `production_scalarization_config()` must construct without
+    raising and must match `conf/scalarization/default.yaml`, read directly
+    rather than duplicated as a second hardcoded literal.
+
+    `production_scalarization`'s `priority_base` carried the literal `2.2` --
+    correct when written 2026-09-01 -- until ADR-081 moved the six-level
+    mode's required base to `2.5` on 2026-09-07 (`SIX_LEVEL_PRIORITY_BASE`)
+    without this call site following it. `ScalarizationConfig.__post_init__`
+    then raised `ScalarizationConfigurationError` on construction, for every
+    one of the 1100 `train` records, and the replay's own handler counted
+    each as a skipped scenario: `scenarios_measured` read `0`, silently,
+    exactly the failure shape a comment already on this line documented for
+    an earlier, different cause. Confirmed pre-fix: a full run against the
+    unmodified tree reported `scenarios_measured: 0` and
+    `scenarios_skipped: {"error:ScalarizationConfigurationError": 1100}`,
+    with every sampled message reading
+    "Mode 'six_level_priority_weighted_rank' requires priority_base=2.5,
+    got 2.2." (`outputs/a7_m1/a7-m1-run.log`, 2026-09-10).
+    """
+
+    module = load_measurement_module()
+    config = module.production_scalarization_config()
+    assert config.mode == "six_level_priority_weighted_rank"
+
+    shipped = _default_scalarization_yaml_values()
+    assert config.priority_base == pytest.approx(shipped["priority_base"])
+    assert config.severity == pytest.approx(shipped["severity"])
+    assert config.flat_tie_breaker == pytest.approx(shipped["flat_tie_breaker"])
+    assert config.progress_weight == pytest.approx(shipped["progress_weight"])
+    assert config.relaxable_weight == pytest.approx(shipped["relaxable_weight"])
+    assert config.progress_rate_weight == pytest.approx(shipped["progress_rate_weight"])
+
+
+def test_a7_reward_matches_the_plan_ss5_1_term_by_term() -> None:
+    """A7 ExecPlan SS5.1: `a7_reward` is transcribed independently, so it is
+    checked against a from-scratch reimplementation rather than against
+    remembered numbers -- the same discipline `v51_reward` is held to.
+    """
+
+    module = load_measurement_module()
+
+    def reference(l1, l2, l3, l4, delta_q, w5, phi, lam4, base, severity):
+        total = 0.0
+        for weight, cost in zip((base**3, base**2, base), (l1, l2, l3)):
+            margin = -cost
+            satisfied = 1.0 if margin == 0.0 else 0.0
+            total += weight * ((satisfied - 1.0) + severity * margin) + phi * margin
+        m5 = -l4
+        satisfied5 = 1.0 if m5 == 0.0 else 0.0
+        total += w5 * ((satisfied5 - 1.0) + severity * m5)
+        total += lam4 * delta_q
+        return total
+
+    cases = [
+        dict(
+            l1=0.0,
+            l2=0.0,
+            l3=0.0,
+            l4=0.0,
+            delta_q=0.0,
+            w5=0.15,
+            phi=0.0,
+            lam4=2.0,
+            base=2.5,
+            severity=0.30,
+        ),
+        dict(
+            l1=0.3,
+            l2=0.0,
+            l3=0.0,
+            l4=0.0,
+            delta_q=0.2,
+            w5=0.15,
+            phi=0.25,
+            lam4=2.0,
+            base=2.5,
+            severity=0.30,
+        ),
+        dict(
+            l1=0.0,
+            l2=1.0,
+            l3=0.0,
+            l4=1.0,
+            delta_q=-1.0,
+            w5=0.25,
+            phi=0.0,
+            lam4=1.9,
+            base=2.5,
+            severity=0.30,
+        ),
+    ]
+    for case in cases:
+        assert module.a7_reward(**case) == pytest.approx(reference(**case))
+
+    # ExecPlan SS6.3's own worked figure: a fully-violated K2 step costs
+    # exactly 8.125 at `phi=0` and 8.375 at `phi=0.25` retained, at the
+    # production pair -- the number the plan derives `w5`'s upper bound from.
+    for phi, expected in ((0.0, -8.125), (0.25, -8.375)):
+        reward = module.a7_reward(
+            l1=0.0,
+            l2=1.0,
+            l3=0.0,
+            l4=0.0,
+            delta_q=0.0,
+            w5=0.15,
+            phi=phi,
+            lam4=2.0,
+            base=2.5,
+            severity=0.30,
+        )
+        assert reward == pytest.approx(expected)
+
+
+def test_a7_rank_preservation_reproduces_the_plans_worked_margins() -> None:
+    """ExecPlan SS5.1: `phi` must reach only K1-K3, not K4 (`w5`).
+
+    The plan records one transcription that got this backwards: letting
+    `phi` count K4's own level as one more "lower priority level" moves the
+    thinnest margin from k=2 to k=3 and changes every ratio. The correct
+    implementation is checked against the plan's own worked figures at
+    `a=2.5, sigma=0.30, lam4=2.0, w5=0.15`; the wrong one is shown to
+    disagree, reproducing the plan's own regression figures exactly.
+    """
+
+    module = load_measurement_module()
+    base, severity, w5, lam4 = 2.5, 0.30, 0.15, 2.0
+    weights = module.family_weights(base)
+
+    def ratio(phi: float, index: int) -> float:
+        lower = weights[index + 1 :]
+        tail = w5 * (1.0 + severity) + lam4 * module.A7_DELTA_Q_MAX
+        bound = (1.0 + severity) * sum(lower) + phi * len(lower) + tail
+        return weights[index] / bound
+
+    for phi, expected in ((0.0, (1.1514, 1.1478, 1.1390)), (0.25, (1.1105, 1.0975, 1.1390))):
+        for index, value in enumerate(expected):
+            assert ratio(phi, index) == pytest.approx(value, abs=5e-5)
+        assert module.a7_is_rank_preserving(base, severity, phi, w5, lam4) is True
+
+    def wrong_ratio(phi: float, index: int) -> float:
+        # The trap: `w5` folded into the "lower" sum subject to `(1 + sigma)`,
+        # and `phi` counting K4 as one more lower priority level.
+        lower = weights[index + 1 :]
+        tail = lam4 * module.A7_DELTA_Q_MAX
+        bound = (1.0 + severity) * (sum(lower) + w5) + phi * (len(lower) + 1) + tail
+        return weights[index] / bound
+
+    wrong = [round(wrong_ratio(0.25, index), 4) for index in range(3)]
+    assert wrong == [1.0911, 1.0513, 1.0225]
+    assert min(range(3), key=lambda index: wrong[index]) == 2, (
+        "the trap moves the thinnest margin to k=3"
+    )
+
+    # A member below the bound must be rejected: `w5` alone above its cap.
+    assert not module.a7_is_rank_preserving(base, severity, 0.0, 0.384616, lam4)
+    assert module.a7_is_rank_preserving(base, severity, 0.0, 0.38460, lam4)
+
+
+def test_a7_grid_has_six_admissible_members_at_the_production_pair() -> None:
+    """ExecPlan SS10/`M1` task 3: `w5 x phi` at the approved `lam4 = 2.0`
+    (four members), plus `DEC-A7-010`'s two pre-registered `lam4`
+    alternatives at the approved `(w5, phi)` (two more) -- six members,
+    every one rank-preserving, none silently dropped or duplicated.
+    """
+
+    module = load_measurement_module()
+    grid = module.a7_grid()
+    labels = [label for label, _, _, _ in grid]
+    assert len(labels) == 6
+    assert len(set(labels)) == 6
+    for _, w5, phi, lam4 in grid:
+        assert module.a7_is_rank_preserving(module.A7_BASE, module.A7_SEVERITY, phi, w5, lam4)
+    assert {(w5, phi, lam4) for _, w5, phi, lam4 in grid} == {
+        (0.15, 0.0, 2.0),
+        (0.15, 0.25, 2.0),
+        (0.25, 0.0, 2.0),
+        (0.25, 0.25, 2.0),
+        (0.15, 0.0, 1.25),
+        (0.15, 0.0, 1.9),
+    }
+    names = module.all_variant_names()
+    assert all(f"a7_{label}" in names for label in labels)
+
+
+def test_a7_standstill_baseline_is_exactly_zero() -> None:
+    """The trap the plan records at ExecPlan SS10/`M1` task 3: A7 deletes
+    `L6` entirely, so a stopped in-lane ego violates nothing under any A7
+    grid member -- unlike every six-level variant, whose baseline is
+    `-lambda6 * (dt / T_REF) * T`. Checked explicitly rather than trusting
+    this function's trailing fallback, which exists for unmatched names, not
+    because it happens to be the right value here.
+    """
+
+    module = load_measurement_module()
+    for label, _w5, _phi, _lam4 in module.a7_grid():
+        for steps in (0, 1, 500):
+            assert module.v51_standstill_return(f"a7_{label}", steps) == 0.0
+
+
+def test_a7_grid_variants_fraction_below_standstill_uses_the_zero_baseline() -> None:
+    """Integration point for the standstill trap: the generic
+    `counterfactual_rulebooks` report must compare A7 variants against 0,
+    the baseline above pins directly, not against the six-level
+    `-lambda6 * (dt / T_REF) * T` form every `v51_*`/`v51cal_*` variant uses.
+    """
+
+    module = load_measurement_module()
+    measurement = module.Measurement()
+    label = next(iter(module.a7_grid()))[0]
+    variant = f"a7_{label}"
+    measurement.episode_returns = [-1.0, 0.5, -0.2, 3.0]
+    measurement.episode_steps = [10, 10, 10, 10]
+    measurement.variant_returns[variant] = [-1.0, 0.5, -0.2, 3.0]
+
+    reported = measurement.summary()["counterfactual_rulebooks"][variant]
+    assert reported["fraction_below_standstill"] == pytest.approx(2 / 4)
+
+
+def test_a7_exposure_reports_three_objects_and_the_budget_rule() -> None:
+    """`M1` task 1: raw, per-span and discounted exposure must be reported
+    separately, and SS6.4's `tau_i` rule -- the undiscounted realized
+    maximum, minus any DECLARED panel-defect exclusion, with the exclusions
+    listed per record -- must be computed on `raw` alone, not silently mixed
+    with the other two objects `D1`'s eventual choice may still need.
+    """
+
+    module = load_measurement_module()
+    measurement = module.Measurement()
+
+    # "e1": the higher-exposure record, with a positive route length.
+    measurement.observe_a7_exposure(
+        "e1",
+        {"X_imp": 0.0, "X_int": 4.0, "X_hard": 1.0, "X_soft": 0.6},
+        {"X_imp": 0.0, "X_int": 2.0, "X_hard": 0.5, "X_soft": 0.3},
+        {"X_imp": 0.0, "X_int": 3.5, "X_hard": 0.9, "X_soft": 0.55},
+    )
+    # "e2": a zero-length route, which must contribute no `per_span` sample
+    # rather than a division artifact -- the same guard `v51_q` already uses.
+    measurement.observe_a7_exposure(
+        "e2",
+        {"X_imp": 1.0, "X_int": 1.0, "X_hard": 0.2, "X_soft": 0.1},
+        None,
+        {"X_imp": 0.9, "X_int": 0.9, "X_hard": 0.18, "X_soft": 0.09},
+    )
+
+    reported = measurement.summary()["a7_measurement"]["exposure_by_channel"]
+
+    raw_int = reported["raw"]["X_int"]
+    assert raw_int["episodes"] == 2
+    assert raw_int["max"] == pytest.approx(4.0)
+    assert raw_int["max_scenario_uid"] == "e1"
+    assert raw_int["tau_i"] == pytest.approx(4.0)
+    assert raw_int["declared_panel_defect_exclusions"] == []
+    assert raw_int["top_1pct_records"] == [{"scenario_uid": "e1", "value": 4.0}]
+
+    per_span_int = reported["per_span"]["X_int"]
+    assert per_span_int["episodes"] == 1
+    assert per_span_int["max"] == pytest.approx(2.0)
+    assert "tau_i" not in per_span_int
+
+    discounted_imp = reported["discounted_gamma_0_9982"]["X_imp"]
+    assert discounted_imp["episodes"] == 2
+    assert discounted_imp["max"] == pytest.approx(0.9)
+    assert "tau_i" not in discounted_imp
+
+    # `X_imp` is `tau_1`'s evidence (ExecPlan SS6.4): a nonzero raw maximum
+    # falsifies `tau_1 = 0` directly rather than by assumption.
+    assert reported["raw"]["X_imp"]["max"] == pytest.approx(1.0)
+
+    empty = module.Measurement().summary()["a7_measurement"]["exposure_by_channel"]
+    assert empty["raw"]["X_int"] == {"episodes": 0}
+
+
+def test_a7_measurement_fields_merge_order_independently() -> None:
+    """The parallel replay reaches the report only through `merge`, so every
+    A7 `M1` accumulator must combine additively regardless of worker order --
+    the same guarantee `test_measurement_merge_is_order_independent` pins for
+    the pre-existing accumulators.
+    """
+
+    module = load_measurement_module()
+
+    first = module.Measurement()
+    first.observe_a7_exposure(
+        "e1",
+        {"X_imp": 0.0, "X_int": 1.0, "X_hard": 0.0, "X_soft": 0.05},
+        {"X_imp": 0.0, "X_int": 0.5, "X_hard": 0.0, "X_soft": 0.02},
+        {"X_imp": 0.0, "X_int": 0.9, "X_hard": 0.0, "X_soft": 0.04},
+    )
+    first.a7_k2_argmax["ttc"] += 5
+    first.a7_k3_argmax["offroad"] += 2
+    first.a7_k2_k3_cooccurring_steps = 1
+    first.a7_k2_k3_cooccurring_episodes = 1
+    first.a7_k2_k3_joint_samples.append((0.3, 0.4))
+
+    second = module.Measurement()
+    second.observe_a7_exposure(
+        "e2",
+        {"X_imp": 0.2, "X_int": 4.0, "X_hard": 0.1, "X_soft": 0.0},
+        {"X_imp": 0.1, "X_int": 2.0, "X_hard": 0.05, "X_soft": 0.0},
+        {"X_imp": 0.18, "X_int": 3.6, "X_hard": 0.09, "X_soft": 0.0},
+    )
+    second.a7_k2_argmax["clearance"] += 3
+    second.a7_k2_k3_cooccurring_steps = 2
+    second.a7_k2_k3_cooccurring_episodes = 1
+    second.a7_k2_k3_joint_samples.append((0.6, 0.1))
+
+    forward, backward = module.Measurement(), module.Measurement()
+    forward.merge(first)
+    forward.merge(second)
+    backward.merge(second)
+    backward.merge(first)
+
+    assert forward.summary()["a7_measurement"] == backward.summary()["a7_measurement"]
+    reported = forward.summary()["a7_measurement"]["exposure_by_channel"]["raw"]["X_int"]
+    assert reported["episodes"] == 2
+    assert reported["max"] == pytest.approx(4.0)
+    assert forward.a7_k2_k3_cooccurring_steps == 3
+    assert forward.a7_k2_k3_cooccurring_episodes == 2
+    assert sum(forward.a7_k2_argmax.values()) == 8
+
+
+def test_a7_argmax_counts_frequency_not_mass() -> None:
+    """`M1` task 4, `F12`: whether `clearance` is ever the argmax at all is a
+    frequency question reward mass cannot answer -- a rarely-winning,
+    low-cost sub-rule and a never-winning one both contribute negligible
+    mass, and only a frequency count tells them apart.
+    """
+
+    module = load_measurement_module()
+    measurement = module.Measurement()
+    measurement.a7_k2_argmax.update({"ttc": 97, "rss_lateral": 2, "none": 900})
+
+    reported = measurement.summary()["a7_measurement"]["argmax_within_level"]["k2_interaction_risk"]
+    assert reported["applicable_steps"] == 999
+    assert "clearance" not in reported["by_sub_rule"]
+    assert reported["by_sub_rule"]["ttc"]["steps"] == 97
+    assert reported["by_sub_rule"]["ttc"]["frequency"] == pytest.approx(97 / 999, abs=1e-6)
+    assert reported["by_sub_rule"]["none"]["frequency"] == pytest.approx(900 / 999, abs=1e-6)
+
+    empty = module.Measurement().summary()["a7_measurement"]["argmax_within_level"][
+        "k3_non_negotiable_compliance"
+    ]
+    assert empty == {"applicable_steps": 0, "by_sub_rule": {}}
+
+
+def test_a7_k2_k3_cooccurrence_measures_joint_steps_and_episodes() -> None:
+    """`DEC-A7-013`: prices the hierarchy's least-supported adjacency
+    directly, as the steps and episodes where K2 and K3 are non-zero
+    together, plus their joint distribution on exactly those steps.
+    """
+
+    module = load_measurement_module()
+    measurement = module.Measurement()
+    measurement.total_steps = 1000
+    measurement.a7_k2_k3_cooccurring_steps = 3
+    measurement.a7_k2_k3_cooccurring_episodes = 2
+    measurement.a7_k2_k3_joint_samples.extend([(0.2, 0.5), (0.4, 0.5), (0.9, 0.1)])
+
+    reported = measurement.summary()["a7_measurement"]["k2_k3_cooccurrence"]
+    assert reported["steps_both_nonzero"] == 3
+    assert reported["steps_both_nonzero_pct_of_all_steps"] == pytest.approx(0.3)
+    assert reported["episodes_both_nonzero"] == 2
+    joint = reported["joint_distribution_on_those_steps"]
+    assert joint["k2_p50"] == pytest.approx(0.4)
+    assert joint["k3_p50"] == pytest.approx(0.5)
+
+    empty = module.Measurement().summary()["a7_measurement"]["k2_k3_cooccurrence"]
+    assert empty["steps_both_nonzero"] == 0
+    assert empty["joint_distribution_on_those_steps"] is None

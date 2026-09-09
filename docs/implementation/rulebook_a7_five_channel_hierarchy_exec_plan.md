@@ -9,7 +9,7 @@
 | Authoritative specification for the architecture being replaced | `docs/specifications/rulebook_v5.1_specification.md` (`RULEBOOK-V5.1`, `APPROVED` 2026-08-14, amended 2026-08-20 and 2026-09-07), `SCAL-V1.4` (§5) |
 | Authoritative specification for A7 | **None. It does not exist yet, and writing it is `DEC-A7-001` and milestone `M2` of this plan.** No production implementation may begin before it is approved |
 | Evidence of record | `docs/audits/rulebook_architecture_2026-09-09/` (the candidate bench, the impossibility results, the recommendation and its derivations) and `docs/audits/progress_channel_integrity_2026-09-09/` (authoritative wherever the two disagree) |
-| Status | `APPROVED` — every gate in §6 resolved 2026-09-10. `M1` may begin; `M3` onward wait on the `M2` specification being written and approved |
+| Status | `APPROVED` — every gate in §6 resolved 2026-09-10. `M1` executed 2026-09-10 (§10, §11, §14); `M3` onward wait on the `M2` specification being written and approved |
 | Created | 2026-09-09 |
 | Last updated | 2026-09-10 |
 | Branch | `worktree-a7-execplan`, from `main` at `3e58ce0` |
@@ -23,10 +23,16 @@ specification form, the `AB-LEARN` amendment, the `RB51` disposition and the
 vocabulary break with its pooling guard — plus the two decisions an adversarial
 review of §6 added, `DEC-A7-013` and `DEC-A7-014`.
 
-**What is still open is a measurement, not a decision.** The budget *values*
-`τ₁`–`τ₄` come from `M1`, under a rule fixed before the numbers are seen (§6.4);
-`φ = 0` carries a falsifier in the same run; and `DEC-A7-010` pre-registers what
-would reopen `λ₄`.
+**`M1` measured what was still open, on 2026-09-10, and nothing it found reopens
+a decision.** `τ₁ = 0.000`, `τ₂ = 110.3798`, `τ₃ = 21.2874`, `τ₄ = 23.3865`
+(undiscounted realized maxima, no panel-defect exclusion declared; §6.4). `φ = 0`'s
+falsifier did not trip: `fraction_below_standstill` is **4.64 %** at `φ = 0` against
+**4.73 %** at `φ = 0.25`, both under the 7.45 % ceiling (§6.2). `DEC-A7-010`'s two
+alternatives measured **6.45 %** at `λ₄ = 1.25` and **4.91 %** at `λ₄ = 1.9` against
+`λ₄ = 2.0`'s **4.64 %** — confirming the pre-registered reading order (§6.8).
+`DEC-A7-013`'s co-occurrence measured **15 of 217,189 steps (0.0069 %)** across
+**5 of 1100 episodes**, near-zero correlation (§6.9). Full evidence in
+`docs/audits/a7_m1_measurement_2026-09-10/`.
 
 **`λ₄ = 2.0` stands** and is not proposed for change (§6, `DEC-A7-010`).
 
@@ -447,7 +453,7 @@ deficit, which is what `horizon_steps == 500` in the guard exists to say.
 | `DEC-A7-002` | Specification deviation | `w₅`, the weight on `K4` | 0.15 / 0.25 / any value in the derived window | **`w₅ = 0.15`** | See §6.1. Costs the expert **0.265** reward units per episode | **Approved 2026-09-10** |
 | `DEC-A7-003` | Specification deviation | `φ`, the shared absolute tie-breaker | remove (`φ = 0`) / keep 0.25 | **remove** | See §6.2, with its falsifier in `M1`. The braking criterion is pinned in its strict form, `a_req^max > 9 m/s²`, which 10.96 clears by 22 % | **Approved 2026-09-10** |
 | `DEC-A7-004` | Consequence, not a gate | `η` and `λ₆`, and the `L6` level that carries `λ₆` | — | **removed** | **This is entailed by the approved architecture and was wrongly listed as open.** A7 *is* five channels, so `L6` is gone by the block the user approved, and `w₅` replaces `η` as `K4`'s weight — that substitution is the mechanism that distinguishes A7 from A6. Recorded as a consequence in §6.3, with the argument restated on measurement rather than on the shipped specification's own admission | **Not a gate** |
-| `DEC-A7-005` | Specification clarification | The budgets `τ₁`–`τ₄` have no values, **and no agreed object** | rule: (a) the panel maximum with declared exclusions; (b) a quantile; (c) defer to `D1`. Object: undiscounted realized `X_i` / per-span `X_i/Q` / discounted expected `E[Σ γ^t c_k]` | **(a) on all three objects**, criterion in §6.4, values filled in by `M1` | **Revised: the first draft of this row pre-registered p99 of `X_i/Q`, which contradicted its own criterion and silently decided a question this plan puts out of scope.** A budget that fails to admit the human is falsified, and that implies the maximum, not a quantile. And `I1b` proves the three objects do not coincide, while `D1` — which object a threshold applies to — is out of scope, so `M1` emits all three and A7 declares the requirement on the undiscounted realized form | **Rule approved 2026-09-10; values await `M1`** |
+| `DEC-A7-005` | Specification clarification | The budgets `τ₁`–`τ₄` have no values, **and no agreed object** | rule: (a) the panel maximum with declared exclusions; (b) a quantile; (c) defer to `D1`. Object: undiscounted realized `X_i` / per-span `X_i/Q` / discounted expected `E[Σ γ^t c_k]` | **(a) on all three objects**, criterion in §6.4, values filled in by `M1` | **Revised: the first draft of this row pre-registered p99 of `X_i/Q`, which contradicted its own criterion and silently decided a question this plan puts out of scope.** A budget that fails to admit the human is falsified, and that implies the maximum, not a quantile. And `I1b` proves the three objects do not coincide, while `D1` — which object a threshold applies to — is out of scope, so `M1` emits all three and A7 declares the requirement on the undiscounted realized form | **Rule approved 2026-09-10; measured by `M1` 2026-09-10**: `τ₁ = 0.000`, `τ₂ = 110.3798`, `τ₃ = 21.2874`, `τ₄ = 23.3865`, no exclusion declared (§6.4) |
 | `DEC-A7-006` | Mandatory test change | `tests/test_scal_v14.py` changes substantially | amend / delete and rewrite / leave and add a second file | **amend in place**, itemised in §6.5 | It is a mandatory test and `AGENTS.md` requires recorded approval. One test (`test_l6_reaches_only_the_last_term`) has no A7 counterpart and is **deleted**, not weakened | **Approved 2026-09-10** |
 | `DEC-A7-007` | Mandatory test change | The `O1`–`O6` fixtures change, and they carry `V4` | amend for A7 only / amend and parametrise over both weight pairs / amend and read the shipped pair from the configuration | **amend and parametrise over both pairs**, closing `V4` in the same change | The fixtures assert at `a = 2.2, σ = 0`, which production has not used since ADR-081. Every ordering was checked to hold at the shipped pair (O3 excepted, the known `D15` failure), so this is a verification gap, not a behavioural one — but A7 rewrites these fixtures anyway, so folding it in costs one change instead of two | **Approved 2026-09-10** |
 | `DEC-A7-008` | Specification clarification | `AB-LEARN`'s arm B is pre-registered on the reward A7 replaces | (a) amend the pre-registration explicitly and re-register arm B against A7 before any run; (b) run the screening on the old reward first, then A7; (c) leave `AB-LEARN` untouched and let it drift | **(a)**, and `DEC-AB-005` **survives** | See §6.6. The screening still freezes: approving the A7 specification freezes the *contract*, the screening freezes the *question of optimizability*. Without that second freeze nothing stops an A8 | **Approved 2026-09-10** |
@@ -555,6 +561,15 @@ under the *six-level* reward is unmeasured — it was priced only on the four-le
 family, whose rows cannot be read across. **The falsifier is one grid member at
 `φ = 0` in `M1`'s run**: if `fraction_below_standstill` breaches 7.45 %, revert to
 0.25 and accept the 1.0975 margin.
+
+**Measured, 2026-09-10: not falsified.** At the production pair
+(`a = 2.5, σ = 0.30, λ₄ = 2.0, w₅ = 0.15`), `fraction_below_standstill` under the
+A7 reward on the full 1100-episode `train` panel is **4.64 %** at `φ = 0` against
+**4.73 %** at `φ = 0.25` retained — both far under the 7.45 % ceiling, and the
+movement (**+0.09 pp**) is a fraction of the ceiling's remaining headroom
+(2.81 pp at `φ = 0`). `φ = 0` stands. The residual risk this falsifier existed to
+close is closed: the six-level-reward figure this section could not price before
+is now measured directly under the five-channel one it actually governs.
 
 ### 6.3 Removing `η` and `λ₆` — a consequence, argued on measurement
 
@@ -709,6 +724,44 @@ means zero tolerance, i.e. strict lexicographic comparison on that channel** —
 "everything ties". This belongs in the A7 specification's threshold section so the
 eventual thresholded arm cannot re-invert it.
 
+#### Measured, 2026-09-10: the four values, on all three objects
+
+`M1` ran the rule above against the full frozen Waymo `train` panel — **1100
+records, 217,189 transitions, 0 skipped** — and applied it as approved: the
+per-episode maximum, no episode excluded (no panel defect is declared for this
+run), with the excluded-record list therefore empty rather than omitted. Full
+per-record top-1 % rows and the per-episode distributions are committed at
+`docs/audits/a7_m1_measurement_2026-09-10/`.
+
+| `τ_i` | channel | undiscounted realized max (`τ_i`) | per-span max | discounted (`γ=0.9982`) max | `p99` (realized) |
+|---|---|---:|---:|---:|---:|
+| `τ₁` | `X_imp` — K1 at-fault impact | **0.000000** | 0.000000 | 0.000000 | 0.000000 |
+| `τ₂` | `X_int` — K2 interaction risk | **110.379799** | 0.720226 | 98.733955 | 8.067951 |
+| `τ₃` | `X_hard` — K3 non-negotiable compliance | **21.287443** | 0.264242 | 19.613411 | 3.323886 |
+| `τ₄` | `X_soft` — K4 negotiable lane compliance | **23.386514** | 0.514168 | 20.197176 | 2.737476 |
+
+**`τ₁ = 0` is admissible, measured rather than assumed.** `X_imp` is exactly
+`0.000000` for every one of the 1100 episodes, on all three objects: the logged
+expert records no at-fault impact anywhere on the panel. The conditional §6.4
+above stated is satisfied, not asserted.
+
+**`τ₂`'s and `τ₃`'s maxima sit far above their own `p99`** (110.38 against 8.07
+for `X_int`; 21.29 against 3.32 for `X_hard`), which is the shape the rule
+anticipated — the panel's per-episode exposure is heavy-tailed, and the rule is
+the maximum precisely because a competent human produced that outlier episode.
+The single record setting each maximum (`waymo:training_20s:71344f609367eace`
+for `X_int`, `waymo:training_20s:5f8217a5da0b24ff` for `X_hard`,
+`waymo:training_20s:1ef1a62b6bebe06` for `X_soft`) is named in the committed
+top-1 % rows for exactly this reason: **no panel defect is declared against any
+of them here**, so the rule's maximum stands unmodified, and a future session
+with grounds to declare one has the per-record evidence to act on rather than an
+aggregate to take on faith.
+
+**`p95`/`p99` reported as the required sensitivity**, not as the rule: had the
+rule instead been "p99", `τ₂` would read 8.07 against the panel maximum's
+110.38 — the exact eleven-human-episode exclusion §6.4 already rejected on its
+own criterion, now with a number attached rather than only an argument.
+
 ### 6.5 What changes in `tests/test_scal_v14.py`
 
 Itemised, so the approval is informed rather than blanket:
@@ -832,6 +885,17 @@ which is the third of the three remedy shapes
 `driving_mission_v1.1_specification.md:104` withdrew (§15). So the 1.9 pp would
 purchase a capability the approved specification forecloses.
 
+**Measured, 2026-09-10: the pre-registered reading holds, at the actual figures
+rather than the extrapolation.** On the full 1100-episode panel, at
+`w₅ = 0.15, φ = 0`: `λ₄ = 2.0` (the standing recommendation) gives
+`fraction_below_standstill` **4.64 %**; `λ₄ = 1.9` gives **4.91 %**
+(**+0.27 pp**); `λ₄ = 1.25` gives **6.45 %** (**+1.81 pp**). Both stay under the
+7.45 % ceiling, so neither reopens `λ₄` — the pre-registered trigger condition
+is not met — but the ordering the pre-registration bet on is confirmed at the
+actual weights rather than the `a = 2.2, σ = 0` grid's extrapolation: `1.9`
+costs about a sixth of what `1.25` costs (0.27 against 1.81 pp, against the
+extrapolation's 0.2 against ~1.9), and `2.0` stands.
+
 ### 6.9 `K2 ≻ K3` is the hierarchy's least-supported step, and it is a finding
 
 Every other adjacency in A7 rests on a mechanism or a measurement. `K1 ≻ K2` rests
@@ -858,6 +922,19 @@ different unsupported claim — but to record it in the A7 specification as the
 least-supported step and to **measure it in `M1`**, which needs the run anyway. The
 cost of not measuring it: A7 freezes an unpriced ordering for the second time, and
 a third freeze is harder to reopen than a second.
+
+**Measured, 2026-09-10: rare, and uncorrelated when it happens.** On the full
+1100-episode, 217,189-step panel, `K2` and `K3` are simultaneously non-zero on
+**15 steps (0.0069 %)**, across **5 of 1100 episodes (0.45 %)**. On exactly those
+15 steps the joint distribution shows `K2` at `p50 = 0.2197` and `K3` at
+`p50 = 0.0253` (both reach 1.0 at `p99`, i.e. the tail of this already-rare set
+still touches full severity), with a Pearson correlation of **−0.0161** —
+indistinguishable from zero at this sample size. This is a finding, not a
+resolution: it does not derive `K2 ≻ K3` from a mechanism, but it bounds *how
+often the order could matter at all* on the logged expert, and the answer is
+almost never jointly, which is itself evidence about how much is actually
+staked on this adjacency in practice. The specification (`M2`) records this
+number beside the order, as declared in `M2`'s own scope note above.
 
 ### 6.10 A7 re-bases the ACL contract, and no document recorded it
 
@@ -1175,13 +1252,13 @@ also the machine and not the code.
 
 Each is sized to be independently verifiable and to fit one agent context window.
 
-### `M1` — The measurement — **not started, no gate**
+### `M1` — The measurement — **done, 2026-09-10**
 
 Instrument-only. It changes no approved behaviour, adds no production code path
 and needs no specification, so it can begin immediately and its outputs are what
 several §6 gates are decided on.
 
-- [ ] Objective: emit what A7's budgets and A7's declared cost are read from.
+- [x] Objective: emit what A7's budgets and A7's declared cost are read from.
 - Files: `scripts/measure_expert_rulebook_transition.py`,
   `tests/test_expert_rulebook_transition_instrument.py` (or the existing
   instrument tests), and an audit directory for the outputs.
@@ -1240,6 +1317,20 @@ several §6 gates are decided on.
   **values** `DEC-A7-005` leaves open, the falsifier `DEC-A7-003` is conditional
   on, the co-occurrence `DEC-A7-013` requires, and the two `λ₄` figures `DEC-A7-010`
   pre-registers a reading for.
+
+**Executed 2026-09-10.** All six outputs measured on the full frozen Waymo
+`train` panel (1100 records, 217,189 transitions, 0 skipped) in one run;
+committed evidence at `docs/audits/a7_m1_measurement_2026-09-10/`; values
+reconciled into §6.2 (`φ`), §6.4 (`τ₁`–`τ₄`), §6.8 (`λ₄`) and §6.9
+(co-occurrence) above. **One blocking defect found and fixed on the way**,
+unrelated to A7's design (`C54`, `docs/open_items.md`): the script's
+`production_scalarization` had hard-coded a `priority_base` the six-level mode
+stopped accepting on 2026-09-07 (ADR-081), so every record failed at
+construction and the report silently read `"scenarios_measured": 0` — the run
+could not have produced any of the six outputs before this was fixed. Details,
+regression test and pre-fix evidence in `docs/open_items.md` `C54`. `make check`
+and the focused instrument tests (33 tests, `tests/test_measure_expert_rulebook_transition.py`)
+pass; `make gate` is `M9`'s.
 
 ### `M2` — The specification document and the ADR — **blocked on `M1`**
 
@@ -1459,6 +1550,79 @@ and a wrong average in silence; classified and routed to its own fix ahead of `M
 
 ---
 
+**2026-09-10 — `M1` executed.** In an isolated worktree
+(`worktree-a7-m1-measurement`, from `main` at `48c25ca`). Read in full before
+touching anything: this plan's §4.3, §6.4, §6.8, §6.9 and §10/`M1` — the audits
+under `docs/audits/` were deliberately not reread, because this plan already
+carries their derivations with sources, and rereading the audits directly had
+cost three prior sessions on since-retracted claims.
+
+**One blocking defect found before any of the six outputs could be produced,
+and it is not A7's.** `production_scalarization` in
+`scripts/measure_expert_rulebook_transition.py` constructed
+`ScalarizationConfig(mode="six_level_priority_weighted_rank", priority_base=2.2, ...)`.
+`priority_base=2.2` was correct when that line was written (2026-09-01); ADR-081
+moved the six-level mode's *required* base to 2.5 on 2026-09-07
+(`SIX_LEVEL_PRIORITY_BASE`, `d983c87`) without this call site following it, so
+`ScalarizationConfig.__post_init__` rejected construction on every one of the
+1100 records, the replay's own exception handler counted each as a skipped
+scenario, and the report read `"scenarios_measured": 0` — silently, exactly the
+shape a comment already on that line documents for a different, earlier cause.
+Classified per `AGENTS.md` as a repository defect (would fail identically for
+any contributor, any machine) rather than a local gap, recorded as `C54`
+(`docs/open_items.md`) rather than carried in this plan, per the Proportionality
+rule: a bounded fix that changes no approved behaviour. Fixed by importing
+`SIX_LEVEL_PRIORITY_BASE` instead of restating it as a second literal, so the
+two cannot drift apart again; regression test
+`test_production_scalarization_config_matches_the_shipped_configuration` reads
+`conf/scalarization/default.yaml` directly rather than hardcoding a comparison
+value, the same discipline `_shipped_gamma()` already uses in
+`tests/test_rulebook_v51_orderings.py`. Pre-fix evidence is an executed run, not
+an inference: the unmodified tree, run end to end, reports
+`"scenarios_measured": 0` and `"scenarios_skipped":
+{"error:ScalarizationConfigurationError": 1100}`
+(`outputs/a7_m1/a7-m1-run.log`).
+
+**The six outputs, measured on the fixed tree**, full frozen Waymo `train`
+panel, 1100 records, 217,189 transitions, 0 skipped (`docs/audits/a7_m1_measurement_2026-09-10/`):
+
+1. Per-episode exposure distributions for `X_imp`, `X_int`, `X_hard`, `X_soft`
+   on all three §6.4 objects — reconciled into §6.4 above as `τ₁`–`τ₄`.
+2. `a7_reward(...)` and `a7_is_rank_preserving(...)`, transcribed independently
+   from §5.1 and checked against this plan's own worked figures (1.1514 /
+   1.1478 / 1.1390 at `φ=0`; the fully-violated-K2 costs 8.125 / 8.375) before
+   being trusted for the run — the transcription trap the plan records at §5.1
+   (`φ` reaching K4 as well as K1-K3) was checked for and does not reproduce.
+3. The six-member A7 grid's `fraction_below_standstill` — reconciled into §6.2
+   (`φ`) and §6.8 (`λ₄`) above; every member under the 7.45 % ceiling.
+4. Argmax-within-level frequency: on `K2`, `clearance` wins 96 of 217,189 steps
+   (0.044 %) — rare, but `F12`'s "ever at all" is answered yes; `rss_lateral`
+   615 (0.283 %), `ttc` 153 (0.070 %). On `K3`, `crosswalk` and `speed_limit`
+   never win the argmax on this panel (absent from the count entirely);
+   `offroad` 1285 (0.592 %), `signal` 38 (0.018 %), `vehicle_yield` 55
+   (0.025 %), `stop` 16 (0.007 %). Both levels' non-"none" complements
+   (0.3978 % for `K2`, 0.6418 % for `K3`) reproduce the per-step violation
+   rates §6.4 already cited from an independent source, which cross-checks the
+   new counters against a figure they were not built from.
+5. The two `λ₄` alternatives — reconciled into §6.8 above.
+6. `K2`/`K3` co-occurrence — reconciled into §6.9 above.
+
+**Committed**: `docs/audits/a7_m1_measurement_2026-09-10/` (summaries and the
+per-record top-1 % tail rows the budget rule requires; not the full 217,189-row
+per-record file, which is regenerable from the committed command). `make check`
+green; the focused instrument suite (33 tests,
+`tests/test_measure_expert_rulebook_transition.py`, including 10 new for this
+milestone) green. `M9`'s own gate re-run from `main` after the merge is still
+what closes the plan (its log dies with this worktree), but the full `make
+gate` was also run here before merging this milestone's branch, per
+`AGENTS.md`'s Branching And Pull Requests — `PASS | FULL`, 1937 passed, 5
+skipped, in 4m04s (§14).
+
+**Next step:** `M2` — the A7 specification document, now unblocked with the
+budget values it needed.
+
+---
+
 ## 12. Deviations
 
 | ID | Original contract | Actual or proposed change | Reason | Approval | Affected tests/docs |
@@ -1479,7 +1643,7 @@ and a wrong average in silence; classified and routed to its own fix ahead of `M
 | `docs/implementation/rulebook_a7_five_channel_hierarchy_exec_plan.md` | Added | This plan |
 | `docs/specifications/rulebook_v5.2_specification.md` | Planned addition | `DEC-A7-001`; the contract `M4`–`M7` implement against |
 | `docs/decisions/ADR-083-*.md` | Planned addition | The architecture and the discount |
-| `scripts/measure_expert_rulebook_transition.py` | Planned modification | `M1`: four episode accumulators, `a7_reward`, the A7 grid, the argmax counter, two `λ₄` members |
+| `scripts/measure_expert_rulebook_transition.py` | **Done, `M1`, 2026-09-10** | Four episode exposure accumulators, `a7_reward`/`a7_is_rank_preserving`, the A7 grid, the K2/K3 argmax and co-occurrence counters, and `production_scalarization_config()` (`C54` fix) |
 | `src/thesis_rl/reward/scalarization.py` | Planned modification | The A7 mode, arity **and progress index** as declared data, the weight set, the predicate, the schema id |
 | `src/thesis_rl/rulebook/v2/types.py` | Planned modification | Five channels, five-margin result |
 | `src/thesis_rl/rulebook/v2/registry.py` | Planned modification | Level re-mapping, `advance_shortfall` deregistered |
@@ -1502,8 +1666,9 @@ and a wrong average in silence; classified and routed to its own fix ahead of `M
 | `docs/implementation/reward_learnability_ab_screening_exec_plan.md` | Planned modification | `DEC-A7-008` |
 | `docs/implementation/rulebook_v5.1_six_level_hierarchy_exec_plan.md` | Planned modification | `DEC-A7-009` |
 | `docs/project_index.md` | Planned modification | A7's row, and the correction of `RB51`'s |
-| `docs/open_items.md` | Planned modification | `C49`, `V4`, `D15`, `C50`, `D14`, `V1` |
-| `docs/audits/a7_calibration_2026-09-XX/` | Planned addition | `M1`'s committed evidence |
+| `docs/open_items.md` | Partly done | `C54` added **`M1`, 2026-09-10** (the `production_scalarization` defect found while launching `M1`); `C49`, `V4`, `D15`, `C50`, `D14`, `V1` remain `M8`'s |
+| `docs/audits/a7_m1_measurement_2026-09-10/` | **Done, `M1`, 2026-09-10** | `M1`'s committed evidence: summaries and top-1 % tail rows |
+| `tests/test_measure_expert_rulebook_transition.py` | **Done, `M1`, 2026-09-10** | 10 new tests: `C54`'s regression, `a7_reward`/`a7_is_rank_preserving` term by term and against the transcription trap, the grid, the standstill baseline, the standstill baseline's report-level integration, exposure, merge order-independence, argmax and co-occurrence |
 
 ---
 
@@ -1513,11 +1678,16 @@ and a wrong average in silence; classified and routed to its own fix ahead of `M
 |---|---|---|---|
 | Independent re-derivation of A7's §5.4 margins, the `w₅` cap and crossovers, both grids' admissible member counts, and the discount table (standalone transcription of the predicate, no repository import) | `PASS` | 2026-09-09 | A0 1.1165 / 1.1121 / 1.1792; A7 with `φ=0.25` 1.1105 / **1.0975** / 1.1390; A7 with `φ=0` 1.1514 / 1.1478 / **1.1390**. Cap 0.384615; crossovers 0.313983 and 1.538462; ratio exactly 4.0; `a/2 = 1.25`. `v51_weight_grid` **77 of 100** admissible, `v51_calibration_grid` **16 of 36**, and **exactly one** member at `a = 2.5, σ = 0.30`. `γ = 0.9982`: break-even **508.6** against `L = 500`, `γ^L = 0.4062` against `1/a = 0.4`, effective horizon **556**; `γ = 0.996`: break-even **228.6**, `γ^L = 0.1348`, horizon 250; required `γ = 0.998169`. `λ₄ ∈ {1.25, 1.9}` admissible under the A7 tail at the production pair. One fully-violated interaction step costs **8.125** at `φ = 0` and **8.375** at `φ = 0.25`. Standing still wins past **416** relaxed steps at `w₅ = 0.15` against a mean Waymo mission and **848** against a mean PG one, versus **37** at v5.0's `a = 2.2`. Every figure agrees with the audit except the two recorded in §11 |
 | `git fetch origin` and branch check | `PASS` | 2026-09-09 | `main` at `3e58ce0`, level with `origin/main`, tree clean |
-| `make check` | `NOT_RUN` | — | This change adds one document and no code path, so there is nothing for the suite to exercise. It is run at the head of `M1`, which is the first milestone that touches a file the suite reads |
 | `make gate` | `PASS` | 2026-09-09 | `gate: PASS (2 not applicable: whitespace/pending, whitespace/untracked) \| FULL \| 450492d (worktree-a7-execplan, tree clean) \| 20260909T210257Z` — **1927 passed, 5 skipped** in 4m05s, the same count `main` reports at `3e58ce0`, so this change moves nothing in the suite. Run on `450492d`, which is this plan and the register row; the `§14` row itself was added afterwards. **The first run of the same gate on the same tree failed 16 tests** — `test_pg_validation`, `test_scenario_waymo`, three in `test_scenario_catalog_build`, two in `test_scenarionet_smoke`, `test_forced_rule_scenarios`, `test_rulebook_v2_live_integration` and seven in `test_rulebook_synthetic_scenarios` — every one of them reading the bundled Waymo assets or building a catalog from them. That is the first-run race between the sixteen `pytest-xdist` workers over state the assets generate on first read, documented at `docs/workflows/agent_operations.md` §"Running checks from a git worktree" item 4 after `git submodule update` in a fresh worktree. Classified per `AGENTS.md` Completion as **missing on the project machine**, not a repository defect: the relaunch was unchanged and green. The log lives inside the worktree and dies with it, so `M9` relaunches the gate from `main` after the merge |
 | `make gate` | `PASS` | 2026-09-10 | The ratification pass. `gate: PASS (2 not applicable: whitespace/pending, whitespace/untracked) \| FULL \| 9374b24 (worktree-a7-ratified, tree clean) \| 20260909T220910Z` — **1927 passed, 5 skipped** in 4m14s, the same count as the previous run and as `main`, so ratifying the gates and adding `DEC-A7-013`/`-014` moves nothing in the suite. Green on the first attempt this time: the worktree's submodules were already initialised, which is the condition whose absence produced the 16 first-run failures recorded in the row above |
 | `TEST-A7-01` … `TEST-A7-21` | `NOT_RUN` | — | Defined in §9.2 before any production change, as `AGENTS.md` requires. Each is scheduled on the milestone that implements its requirement |
 | `make smoke` | `NOT_RUN` | — | `M7`. It has not been run since the discount changed (`V1`), and this plan changes the discount again |
+| Focused instrument tests, `tests/test_measure_expert_rulebook_transition.py` | `PASS` | 2026-09-10 | **33 passed** (10 new for `M1`): the four exposure accumulators against a hand-built episode on all three objects separately; `a7_reward`/`a7_is_rank_preserving` against §5.1 term by term and against this plan's own worked figures, including a reconstruction of the `φ`-reaches-K4 transcription trap that reproduces the plan's own wrong numbers (1.0911/1.0513/1.0225) so the right ones are checked against a known-wrong alternative, not only against themselves; the grid's six admissible members; the standstill baseline explicitly at 0 for every `a7_*` name and its report-level integration; the argmax and co-occurrence counters against fixtures with a known answer; merge order-independence; and `C54`'s regression (`production_scalarization_config()` against `conf/scalarization/default.yaml`, read directly) |
+| `production_scalarization_config()` pre-fix reproduction | `FAIL` (expected) | 2026-09-10 | The unmodified tree, run end to end against the full panel: `"scenarios_measured": 0`, `"scenarios_skipped": {"error:ScalarizationConfigurationError": 1100}`, every sampled message `"Mode 'six_level_priority_weighted_rank' requires priority_base=2.5, got 2.2."`. `C54`'s pre-fix evidence; log at `outputs/a7_m1/a7-m1-run.log` (not committed — regenerable, and the shared `/scratch` output path is per-session) |
+| `make check` | `PASS` | 2026-09-10 | `gate: PASS (2 not applicable: whitespace/untracked, whitespace/range) \| PARTIAL (pytest args: -m not integration) \| 48c25ca (worktree-a7-m1-measurement, tree dirty) \| 20260909T224528Z` — **1925 passed, 6 skipped** in 2m14s. First attempt after `git submodule update` in the fresh worktree failed the same two bundled-Waymo-fixture tests `docs/workflows/agent_operations.md` documents (`test_pg_validation.py::test_bundled_export_validation_can_be_read`, `test_scenario_features.py::test_bundled_waymo_feature_extraction_is_route_aware`); unchanged relaunch was green, so not chased, per this plan's own constraint |
+| Focused `ruff check`/`ruff format --check`, `scripts/measure_expert_rulebook_transition.py tests/test_measure_expert_rulebook_transition.py` | `PASS` | 2026-09-10 | Both clean after one `ruff format` pass on the two files (whitespace only; no logic changed, confirmed by rerunning the focused test suite unchanged after formatting) |
+| The `M1` panel run: `python scripts/measure_expert_rulebook_transition.py --data-root /workspace/data/scenarionet --frozen-index /workspace/thesis-metadrive/data/scenarionet/frozen/scenario_selection_index.json --split train --source waymo --workers 24 --output /workspace/outputs/a7_m1_measurement_waymo_train_full.json` | `PASS` | 2026-09-10 | **1100/1100 records measured, 0 skipped, 217,189 transitions** — the identical scope `RULEBOOK-V5.1` §5.5 and the 2026-09-01 comfort run were measured on. Run in a named tmux session (`a7-m1-run-v2`) teeing to `outputs/a7_m1/a7-m1-run-v2.log`. The six outputs are reconciled into §6.2, §6.4, §6.8, §6.9 and §11 above; full evidence at `docs/audits/a7_m1_measurement_2026-09-10/` |
+| `make gate` | `PASS` | 2026-09-10 | Before merging this milestone's branch. `gate: PASS (1 not applicable: whitespace/range) \| FULL \| 48c25ca (worktree-a7-m1-measurement, tree dirty (5 files)) \| 20260909T234058Z` — **1937 passed, 5 skipped** in 4m04s, exactly the 2026-09-10 ratification gate's 1927 plus this milestone's 10 new instrument tests. `whitespace/range` is `NOT APPLICABLE` here because `HEAD` is not ahead of `origin/main` on this uncommitted run, unrelated to the pytest count. The log dies with this worktree; `M9` relaunches it from `main` after the merge |
 
 **Nothing above is recorded as passing that was not executed.** The remaining
 risk of the one row that did run is that it re-derives the predicate rather than

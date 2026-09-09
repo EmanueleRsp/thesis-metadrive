@@ -46,6 +46,7 @@ import numpy as np
 
 from thesis_rl.mission.types import MissionSnapshot
 from thesis_rl.reward.scalarization import (
+    SIX_LEVEL_PRIORITY_BASE,
     SIX_LEVEL_VECTOR_SCHEMA_ID,
     ScalarizationConfig,
     scalarize_rulebook_margins,
@@ -463,7 +464,138 @@ def v51_standstill_return(variant: str, episode_steps: int) -> float:
             # `base` and `severity` do not enter: a stopped in-lane ego satisfies
             # L1-L3, and a satisfied level contributes exactly 0 at every base.
             return -lam6 * (V51_STEP_DT_S / V51_T_REF_S) * float(episode_steps)
+    if variant.startswith("a7_"):
+        # A7 deletes `L6` entirely (`REQ-A7-05`): there is no `lambda6` left to
+        # charge a stopped ego, so a stopped in-lane ego violates nothing under
+        # any A7 grid member and the baseline is exactly 0 -- not the
+        # `-lambda6 * (dt / T_REF) * T` form every six-level variant above
+        # inherits. Explicit rather than left to this function's trailing
+        # fallback, because that fallback exists for unmatched names, not
+        # because it happens to be the right value here.
+        return 0.0
     return 0.0
+
+
+# --- A7: the five-channel priority-weighted-rank adapter (ExecPlan SS5.1) ----
+# Transcribed independently of `v51_reward`/`v51_is_rank_preserving` and of
+# production, the same discipline that made `T-RB51-12` possible: an oracle
+# that shares code with what it checks cannot catch a shared mistake.
+#
+# K1-K3 keep the priority block's per-level form; K4 (`w5`) becomes a single
+# sub-unit level below them instead of a normalized tail term; K5 (`lam4`) is
+# the bare, already-clipped signed advance, with no `eta`/`lam6`/`dt / T_REF`
+# term left to remove. `phi` multiplies only the margin of a K1-K3 level, the
+# same place `v51_reward`'s `FINAL_FLAT_TIE_BREAKER` sits -- not K4, which
+# reaches every level through `tail` alone. Re-derived and checked against the
+# plan's own worked example (ExecPlan SS5.1, SS6.3): a fully-violated K2 step
+# at `phi=0` costs exactly 8.125, and 8.375 at `phi=0.25`.
+A7_EXPOSURE_CHANNELS = ("X_imp", "X_int", "X_hard", "X_soft")
+A7_DISCOUNT_GAMMA = 0.9982
+A7_DELTA_Q_MAX = V51_DELTA_Q_MAX
+# The production pair (ADR-081), which is also the pair `M1`'s grid prices.
+A7_BASE = 2.5
+A7_SEVERITY = 0.30
+A7_LAMBDA4_APPROVED = 2.0
+# `DEC-A7-002`/`DEC-A7-003`: the two weights `M1`'s falsifier grid crosses.
+A7_W5_GRID = (0.15, 0.25)
+A7_PHI_GRID = (0.0, 0.25)
+# `DEC-A7-010`: the two alternatives pre-registered before `M1` runs, priced
+# at the approved `(w5, phi)` -- measurements, not proposals (ExecPlan SS6.8).
+A7_LAMBDA4_ALTERNATIVES = (1.25, 1.9)
+
+
+def a7_reward(
+    *,
+    l1: float,
+    l2: float,
+    l3: float,
+    l4: float,
+    delta_q: float,
+    w5: float,
+    lam4: float,
+    phi: float = 0.0,
+    base: float = A7_BASE,
+    severity: float = A7_SEVERITY,
+) -> float:
+    """One step's reward under the A7 five-channel adapter (ExecPlan SS5.1).
+
+    ``l1``, ``l2``, ``l3`` are K1-K3's costs (collision safety, interaction
+    risk, non-negotiable compliance); ``l4`` is K4's cost (negotiable lane
+    compliance, already the normalized-by-3 form); ``delta_q`` is K5's bare
+    signed advance. All four are costs in ``[0, 1]``, not margins.
+    """
+
+    costs = (l1, l2, l3)
+    canonical = tuple(0.0 if abs(c) <= SCALARIZATION_FAMILY_TOLERANCE else -c for c in costs)
+    total = 0.0
+    for weight, margin in zip(family_weights(base), canonical):
+        satisfied = 1.0 if margin == 0.0 else 0.0
+        total += weight * ((satisfied - 1.0) + severity * margin)
+        total += phi * margin
+    m5 = 0.0 if abs(l4) <= SCALARIZATION_FAMILY_TOLERANCE else -l4
+    satisfied5 = 1.0 if m5 == 0.0 else 0.0
+    total += w5 * ((satisfied5 - 1.0) + severity * m5)
+    total += lam4 * delta_q
+    return total
+
+
+def a7_is_rank_preserving(
+    base: float,
+    severity: float,
+    phi: float,
+    w5: float,
+    lam4: float,
+    delta_q_max: float = A7_DELTA_Q_MAX,
+) -> bool:
+    """ExecPlan SS5.1's rank-preservation condition for the A7 tail.
+
+    ``phi`` multiplies only the count of K1-K3 priority levels strictly below
+    ``k`` -- not K4, which sits below every priority level as a sub-unit
+    level through its own ``w5 * (1 + sigma)`` term in ``tail``. Getting this
+    backwards is the transcription trap the plan records at SS5.1: it moves
+    the thinnest margin from k=3 to k=2. Checked against the plan's own
+    worked figures at `a=2.5, sigma=0.30, lam4=2.0, w5=0.15`: margins
+    1.1514 / 1.1478 / 1.1390 at `phi=0`, and 1.1105 / 1.0975 / 1.1390 (the two
+    agreeing at k=3, where no priority level sits below) at `phi=0.25`.
+    """
+
+    weights = family_weights(base)
+    tail = w5 * (1.0 + severity) + lam4 * delta_q_max
+    for index, weight in enumerate(weights):
+        lower = weights[index + 1 :]
+        bound = (1.0 + severity) * sum(lower) + phi * len(lower) + tail
+        if weight <= bound:
+            return False
+    return True
+
+
+def a7_grid() -> tuple[tuple[str, float, float, float], ...]:
+    """The six-member A7 grid ExecPlan SS10/M1 task 3 prices.
+
+    `DEC-A7-002`/`DEC-A7-003`'s `(w5, phi)` cross at the approved
+    `lam4 = 2.0` (four members), plus `DEC-A7-010`'s two pre-registered
+    `lam4` alternatives at the approved `(w5, phi) = (0.15, 0.0)` (two more).
+    Every member is checked against `a7_is_rank_preserving`, exactly as
+    `v51_weight_grid` refuses non-rank-preserving members: a reward that
+    cannot preserve the ordering is not a cheaper rulebook, it is a
+    different one, and pricing it would misattribute a rank failure to a
+    below-standstill number.
+    """
+
+    approved_w5, approved_phi = A7_W5_GRID[0], A7_PHI_GRID[0]
+    candidates = [
+        (f"w5{w5:g}_phi{phi:g}_l4{A7_LAMBDA4_APPROVED:g}", w5, phi, A7_LAMBDA4_APPROVED)
+        for w5 in A7_W5_GRID
+        for phi in A7_PHI_GRID
+    ] + [
+        (f"w5{approved_w5:g}_phi{approved_phi:g}_l4{lam4:g}", approved_w5, approved_phi, lam4)
+        for lam4 in A7_LAMBDA4_ALTERNATIVES
+    ]
+    return tuple(
+        (label, w5, phi, lam4)
+        for label, w5, phi, lam4 in candidates
+        if a7_is_rank_preserving(A7_BASE, A7_SEVERITY, phi, w5, lam4)
+    )
 
 
 def lane_speed_limits_mps(scenario: Mapping[str, Any]) -> dict[str, float]:
@@ -1341,6 +1473,33 @@ class Measurement:
     # record, so the same question can be asked of them: does a competent human
     # driver satisfy these bounds in *this* simulator's state representation?
     comfort_summaries: list[dict[str, Any]] = field(default_factory=list)
+    # ExecPlan `M1` task 1: per-episode exposure for A7's four constrained
+    # channels, on the three objects `DEC-A7-005` leaves open -- raw `X_i`,
+    # per-span `X_i/Q`, and the A7-discounted `Sigma gamma^t c_k` -- so a
+    # later choice of threshold object (`D1`) costs no second run. Kept as
+    # `(scenario_uid, value)` pairs, not bare floats, because SS6.4's budget
+    # rule is void unless the per-record top tail can be named.
+    a7_exposure_raw: dict[str, list[tuple[str, float]]] = field(
+        default_factory=lambda: {name: [] for name in A7_EXPOSURE_CHANNELS}
+    )
+    a7_exposure_per_span: dict[str, list[tuple[str, float]]] = field(
+        default_factory=lambda: {name: [] for name in A7_EXPOSURE_CHANNELS}
+    )
+    a7_exposure_discounted: dict[str, list[tuple[str, float]]] = field(
+        default_factory=lambda: {name: [] for name in A7_EXPOSURE_CHANNELS}
+    )
+    # `DEC-A7-013`: K2/K3 co-occurrence, the measurement the hierarchy's
+    # least-supported adjacency has never had.
+    a7_k2_k3_cooccurring_steps: int = 0
+    a7_k2_k3_cooccurring_episodes: int = 0
+    a7_k2_k3_joint_samples: list[tuple[float, float]] = field(default_factory=list)
+    # `M1` task 4, `F12`: argmax *frequency* within K2/K3's `max` aggregation,
+    # not reward mass -- a sub-rule with zero mass is indistinguishable from
+    # one that never applies unless frequency is counted separately. Keyed by
+    # the winning sub-rule name, with `"none"` for a step where the level is
+    # fully satisfied (no sub-rule attains a positive cost).
+    a7_k2_argmax: Counter = field(default_factory=Counter)
+    a7_k3_argmax: Counter = field(default_factory=Counter)
 
     def __post_init__(self) -> None:
         for name in (
@@ -1407,6 +1566,26 @@ class Measurement:
         self.v51_telescoping_max_deficit = min(self.v51_telescoping_max_deficit, value)
         self.v51_telescoping_residuals.append(value)
 
+    def observe_a7_exposure(
+        self,
+        scenario_uid: str,
+        raw_totals: dict[str, float],
+        per_span_totals: dict[str, float] | None,
+        discounted_totals: dict[str, float],
+    ) -> None:
+        """Record one episode's exposure on A7's four constrained channels.
+
+        ``per_span_totals`` is ``None`` when the episode's route length is not
+        positive, so that record contributes no ``X_i/Q`` sample rather than a
+        division artifact -- the same guard `v51_q` already applies.
+        """
+
+        for name in A7_EXPOSURE_CHANNELS:
+            self.a7_exposure_raw[name].append((scenario_uid, raw_totals[name]))
+            if per_span_totals is not None:
+                self.a7_exposure_per_span[name].append((scenario_uid, per_span_totals[name]))
+            self.a7_exposure_discounted[name].append((scenario_uid, discounted_totals[name]))
+
     def _telescoping_residual_summary(self) -> dict[str, Any]:
         """The per-episode distribution of `AC-RB5.1-07`'s residual.
 
@@ -1440,6 +1619,121 @@ class Measurement:
             "total_absolute": round(total, 6),
             "concentration_in_worst_episode": (
                 round(max(absolute) / total, 6) if total > 0.0 else None
+            ),
+        }
+
+    def _a7_exposure_object_summary(
+        self, samples_by_channel: dict[str, list[tuple[str, float]]], *, with_tau_rule: bool
+    ) -> dict[str, Any]:
+        """One exposure object's (raw / per-span / discounted) per-channel distribution.
+
+        ``with_tau_rule`` reports SS6.4's budget rule -- the maximum, minus any
+        record excluded for a **declared** panel defect, with that list emitted
+        per record. No exclusion is declared for this run, so the list is empty
+        and the maximum stands unmodified; the rule is void without this list
+        being emitted, empty or not.
+        """
+
+        result: dict[str, Any] = {}
+        for name in A7_EXPOSURE_CHANNELS:
+            pairs = samples_by_channel[name]
+            if not pairs:
+                result[name] = {"episodes": 0}
+                continue
+            ordered = sorted(pairs, key=lambda item: item[1])
+            values = [value for _, value in ordered]
+            top_count = min(len(ordered), max(1, math.ceil(len(ordered) * 0.01)))
+            entry: dict[str, Any] = {
+                "episodes": len(ordered),
+                "max": round(values[-1], 6),
+                "max_scenario_uid": ordered[-1][0],
+                "mean": round(statistics.fmean(values), 6),
+                "p95": round(_percentile(values, 0.95), 6),
+                "p99": round(_percentile(values, 0.99), 6),
+                "top_1pct_records": [
+                    {"scenario_uid": uid, "value": round(value, 6)}
+                    for uid, value in reversed(ordered[-top_count:])
+                ],
+            }
+            if with_tau_rule:
+                entry["declared_panel_defect_exclusions"] = []
+                entry["tau_i"] = entry["max"]
+            result[name] = entry
+        return result
+
+    def _a7_exposure_summary(self) -> dict[str, Any]:
+        """`M1` task 1: the panel's per-episode exposure on all three objects
+        `DEC-A7-005` leaves open. `tau_i`'s rule (SS6.4) is stated on the
+        undiscounted realized form, so only ``raw`` carries it; ``per_span``
+        and ``discounted`` are measured so `D1`'s eventual choice of object
+        costs no second run.
+        """
+
+        return {
+            "raw": self._a7_exposure_object_summary(self.a7_exposure_raw, with_tau_rule=True),
+            "per_span": self._a7_exposure_object_summary(
+                self.a7_exposure_per_span, with_tau_rule=False
+            ),
+            "discounted_gamma_0_9982": self._a7_exposure_object_summary(
+                self.a7_exposure_discounted, with_tau_rule=False
+            ),
+        }
+
+    def _a7_argmax_summary(self) -> dict[str, Any]:
+        """`M1` task 4, `F12`: argmax frequency within K2's and K3's `max`."""
+
+        def _frequency(counter: Counter) -> dict[str, Any]:
+            total = sum(counter.values())
+            return {
+                "applicable_steps": total,
+                "by_sub_rule": {
+                    name: {
+                        "steps": int(count),
+                        "frequency": round(count / total, 6) if total else None,
+                    }
+                    for name, count in sorted(counter.items(), key=lambda item: -item[1])
+                },
+            }
+
+        return {
+            "k2_interaction_risk": _frequency(self.a7_k2_argmax),
+            "k3_non_negotiable_compliance": _frequency(self.a7_k3_argmax),
+        }
+
+    def _a7_cooccurrence_summary(self) -> dict[str, Any]:
+        """`DEC-A7-013`: how often K2 and K3 are non-zero together, and how
+        strongly. Prices the hierarchy's least-supported adjacency (SS6.9)."""
+
+        samples = self.a7_k2_k3_joint_samples
+        k2_values = [k2 for k2, _ in samples]
+        k3_values = [k3 for _, k3 in samples]
+        correlation = None
+        if (
+            len(samples) > 1
+            and statistics.pstdev(k2_values) > 0.0
+            and statistics.pstdev(k3_values) > 0.0
+        ):
+            correlation = float(np.corrcoef(k2_values, k3_values)[0, 1])
+        return {
+            "steps_both_nonzero": self.a7_k2_k3_cooccurring_steps,
+            "steps_both_nonzero_pct_of_all_steps": (
+                round(100.0 * self.a7_k2_k3_cooccurring_steps / self.total_steps, 4)
+                if self.total_steps
+                else None
+            ),
+            "episodes_both_nonzero": self.a7_k2_k3_cooccurring_episodes,
+            "joint_distribution_on_those_steps": (
+                {
+                    "k2_p50": round(_percentile(sorted(k2_values), 0.50), 6),
+                    "k2_p99": round(_percentile(sorted(k2_values), 0.99), 6),
+                    "k3_p50": round(_percentile(sorted(k3_values), 0.50), 6),
+                    "k3_p99": round(_percentile(sorted(k3_values), 0.99), 6),
+                    "pearson_correlation": (
+                        round(correlation, 4) if correlation is not None else None
+                    ),
+                }
+                if samples
+                else None
             ),
         }
 
@@ -1531,6 +1825,15 @@ class Measurement:
         self.final_blame_mass_in_negative.update(other.final_blame_mass_in_negative)
         self.final_blame_mass_at_crawl.update(other.final_blame_mass_at_crawl)
         self.comfort_summaries.extend(other.comfort_summaries)
+        for name in A7_EXPOSURE_CHANNELS:
+            self.a7_exposure_raw[name].extend(other.a7_exposure_raw[name])
+            self.a7_exposure_per_span[name].extend(other.a7_exposure_per_span[name])
+            self.a7_exposure_discounted[name].extend(other.a7_exposure_discounted[name])
+        self.a7_k2_k3_cooccurring_steps += other.a7_k2_k3_cooccurring_steps
+        self.a7_k2_k3_cooccurring_episodes += other.a7_k2_k3_cooccurring_episodes
+        self.a7_k2_k3_joint_samples.extend(other.a7_k2_k3_joint_samples)
+        self.a7_k2_argmax.update(other.a7_k2_argmax)
+        self.a7_k3_argmax.update(other.a7_k3_argmax)
 
     def summary(self) -> dict[str, Any]:
         returns = sorted(self.episode_returns)
@@ -1821,6 +2124,20 @@ class Measurement:
                 }
                 for variant, values in sorted(self.variant_returns.items())
             },
+            # ExecPlan A7, `M1`. `counterfactual_rulebooks` above already carries
+            # the six-member `a7_*` grid's `fraction_below_standstill` (task 3):
+            # `all_variant_names()` registers `a7_grid()`'s labels and
+            # `v51_standstill_return` baselines every one of them at exactly 0
+            # (`L6` is gone). This block adds what has no per-variant home: the
+            # exposure distributions the budgets are read from, argmax
+            # frequency, and the K2/K3 co-occurrence `DEC-A7-013` requires.
+            "a7_measurement": {
+                "reward_and_predicate": "a7_reward()/a7_is_rank_preserving(), ExecPlan SS5.1",
+                "grid_admissible_members": [label for label, _, _, _ in a7_grid()],
+                "exposure_by_channel": self._a7_exposure_summary(),
+                "argmax_within_level": self._a7_argmax_summary(),
+                "k2_k3_cooccurrence": self._a7_cooccurrence_summary(),
+            },
         }
 
 
@@ -1897,6 +2214,7 @@ def all_variant_names() -> tuple[str, ...]:
         *(f"family_{label}" for label, _, _, _ in family_grid()),
         *(f"v51_{label}" for label, _, _, _ in v51_weight_grid()),
         *(f"v51cal_{label}" for label, _, _, _, _, _ in v51_calibration_grid()),
+        *(f"a7_{label}" for label, _, _, _ in a7_grid()),
     )
 
 
@@ -1932,6 +2250,31 @@ def _latch_attribution(name: str, component, measurement: Measurement) -> None:
     measurement.latch_attribution[f"{name}:{branch}"] += 1
 
 
+def production_scalarization_config() -> ScalarizationConfig:
+    """The `SCAL-V1.4` configuration `replay_scenario` scores every step under.
+
+    `priority_base` is `SIX_LEVEL_PRIORITY_BASE`, imported rather than
+    restated as a literal, because a restated literal is exactly what drifted
+    out of sync with production silently once already: this constructor
+    carried `priority_base=2.2` -- correct when written on 2026-09-01 -- until
+    ADR-081 moved the mode's required base to 2.5 on 2026-09-07 without this
+    line following it. `ScalarizationConfig.__post_init__` then rejected the
+    six-level mode's construction on every record, and the failure read as
+    "0 measured" (`error:ScalarizationConfigurationError`) because nobody had
+    run this script since -- the same silent-skip shape the comment at this
+    function's call site already documents for a different cause. Every other
+    field is left at `ScalarizationConfig`'s own default, which is already
+    production's current `severity`/`flat_tie_breaker`/`progress_weight`/
+    `relaxable_weight`/`progress_rate_weight` (`conf/scalarization/default.yaml`).
+    """
+
+    return ScalarizationConfig(
+        mode="six_level_priority_weighted_rank",
+        priority_base=SIX_LEVEL_PRIORITY_BASE,
+        vector_schema_id=SIX_LEVEL_VECTOR_SCHEMA_ID,
+    )
+
+
 def replay_scenario(
     scenario: Mapping[str, Any],
     *,
@@ -1962,11 +2305,7 @@ def replay_scenario(
     # record. The failure was invisible because it is a `ValueError` subclass and
     # the replay's own handler counted it as a skipped scenario -- the report said
     # "0 measured", which nobody read because the script had not been run since.
-    production_scalarization = ScalarizationConfig(
-        mode="six_level_priority_weighted_rank",
-        priority_base=2.2,
-        vector_schema_id=SIX_LEVEL_VECTOR_SCHEMA_ID,
-    )
+    production_scalarization = production_scalarization_config()
 
     static = (
         build_pg_static_adapter_result(scenario, scenario_uid=scenario_uid)
@@ -2067,6 +2406,13 @@ def replay_scenario(
     episode_channels = {"l1": 0.0, "l2": 0.0, "l3": 0.0, "l4": 0.0, "l5": 0.0, "l6": 0.0}
     episode_steps = 0
     variant_totals = {variant: 0.0 for variant in all_variant_names()}
+    # `M1` task 1: three running sums per A7 exposure channel, reset here and
+    # appended at episode end -- the same shape `v51_telescoping_residuals`
+    # already uses for a per-episode accumulator.
+    a7_raw_totals = {name: 0.0 for name in A7_EXPOSURE_CHANNELS}
+    a7_per_span_totals = {name: 0.0 for name in A7_EXPOSURE_CHANNELS}
+    a7_discounted_totals = {name: 0.0 for name in A7_EXPOSURE_CHANNELS}
+    episode_k2_k3_cooccurred = False
     # Blame accounting for the proposed rulebook, in reward units. Under max
     # aggregation one sub-rule sets each channel's cost, so the penalty that
     # channel contributes is wholly attributable to it. Measured by differencing
@@ -2544,8 +2890,36 @@ def replay_scenario(
         v51_q = 0.0 if route_length_m <= 0.0 else min(v51_s_max / route_length_m, 1.0)
         v51_l1 = -float(result.margins[0])
         v51_l2 = final_r2
-        v51_l3 = max(final_control_r3, variant_offroad, final_speed_limit_cost)
+        # `M1` task 4: named exactly like `v51_l3 = max(...)` was, so the value
+        # is unchanged -- `worst_named` starts its own `worst` at 0.0 and only
+        # updates on a strict `>`, which is `max`'s own tie behaviour -- but
+        # now the winning K3 sub-rule is known instead of thrown away.
+        v51_l3, v51_l3_blame = worst_named(
+            (
+                (final_blame_control or "traffic_control", final_control_r3),
+                ("offroad", variant_offroad),
+                ("speed_limit", final_speed_limit_cost),
+            )
+        )
         v51_l5 = (variant_solid + variant_carriageway + final_dashed_cost) / V51_L5_DENOMINATOR
+        # `M1` tasks 1, 4, 6: A7's four constrained channels are exactly
+        # `v51_l1`/`v51_l2`/`v51_l3`/`v51_l5` -- A7 reorders K1-K4, it does not
+        # change their sub-rule membership or aggregation (`REQ-A7-01..03`).
+        a7_step_costs = {"X_imp": v51_l1, "X_int": v51_l2, "X_hard": v51_l3, "X_soft": v51_l5}
+        # `episode_steps` was already incremented for this step above, so
+        # `episode_steps - 1` is its 0-indexed position within the episode.
+        a7_gamma_t = A7_DISCOUNT_GAMMA ** (episode_steps - 1)
+        for name, cost in a7_step_costs.items():
+            a7_raw_totals[name] += cost
+            if route_length_m > 0.0:
+                a7_per_span_totals[name] += cost / route_length_m
+            a7_discounted_totals[name] += a7_gamma_t * cost
+        measurement.a7_k2_argmax[final_blame_r2 or "none"] += 1
+        measurement.a7_k3_argmax[v51_l3_blame or "none"] += 1
+        if v51_l2 > 0.0 and v51_l3 > 0.0:
+            measurement.a7_k2_k3_cooccurring_steps += 1
+            measurement.a7_k2_k3_joint_samples.append((v51_l2, v51_l3))
+            episode_k2_k3_cooccurred = True
         measurement.v51_channel_steps += 1
         if v51_l2 > 0.0:
             measurement.v51_channel_violated["l2"] += 1
@@ -2586,6 +2960,21 @@ def replay_scenario(
                 lam6=lam6,
                 base=base,
                 severity=severity,
+            )
+        # `M1` tasks 3, 5: the six-member A7 grid, priced with the same K1-K4
+        # step costs the exposure accumulators above already computed. K5's
+        # argument is `v51_l4`, the bare signed advance -- A7 keeps no time
+        # cost at K5 for `v51_l6` to represent.
+        for label, w5, phi, lam4 in a7_grid():
+            variant_totals[f"a7_{label}"] += a7_reward(
+                l1=v51_l1,
+                l2=v51_l2,
+                l3=v51_l3,
+                l4=v51_l5,
+                delta_q=v51_l4,
+                w5=w5,
+                phi=phi,
+                lam4=lam4,
             )
         final_margins = (float(result.margins[0]), -final_r2, -final_r3, progress_margin)
         final_reward = family_reward(
@@ -2730,6 +3119,16 @@ def replay_scenario(
     measurement.observe_telescoping_residual(
         v51_episode_delta_q - v51_episode_delta_s / V51_REFERENCE_ADVANCE_M
     )
+    # `M1` task 1, `DEC-A7-013`: append this episode's exposure and
+    # co-occurrence, in the same place the telescoping residual is appended.
+    measurement.observe_a7_exposure(
+        scenario_uid,
+        a7_raw_totals,
+        a7_per_span_totals if route_length_m > 0.0 else None,
+        a7_discounted_totals,
+    )
+    if episode_k2_k3_cooccurred:
+        measurement.a7_k2_k3_cooccurring_episodes += 1
     if v51_episode_behind_peak:
         measurement.v51_behind_peak_episodes += 1
     measurement.v51_q_start.append(v51_q_start)
