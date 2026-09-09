@@ -143,6 +143,19 @@ A fresh worktree lacks three things the main checkout has:
 
 With those in place a focused suite of about 100 tests takes roughly 20 s.
 
+4. **The first full run after `git submodule update` can fail three tests, and the
+   second passes.** Observed 2026-09-09 on a docs-only branch: with a freshly
+   cloned `third_party/metadrive`, `make gate` reported
+   `test_pg_validation.py::test_bundled_export_validation_can_be_read`,
+   `test_scenario_catalog_build.py::test_waymo_loader_deduplicates_reprocessed_batch_uid`
+   and `test_scenarionet_smoke.py::test_bundled_waymo_fixture_accepts_random_policy`
+   as failures. All three read the bundled Waymo assets, all three **pass when run
+   serially**, and re-running `make gate` unchanged gave `PASS | FULL`,
+   1909 passed. It is a first-run race between the sixteen `pytest-xdist` workers
+   over state the assets generate on first read, which the main checkout already
+   has. **A local gap, not a repository defect** — but do not read the first
+   verdict as one, and do not chase it: run the gate again.
+
 ## Heavy jobs run on the GPU
 
 Smokes, training runs and evaluations use the GPU overlay and `device=cuda`:
