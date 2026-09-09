@@ -1,0 +1,70 @@
+frozen index      data/scenarionet/frozen/scenario_selection_index.json
+records audited   3500  (3500 usable, 0 rejected)
+D_REF             2.2222 m  = 22.2222 m/s * 0.1 s
+longest segment   2.0000 m  (bounds the planar over-report on a crossing pair; see docstring)
+
+Cross-validation against the 2026-09-05 run
+  criterion: two portions more than 15 m apart in arc length,
+             closer than the stated planar separation
+    within  3.50 m       0 routes
+    within  6.00 m       0 routes
+    routes with any such pair 3367, closest approach 10.581 m
+
+Under-charge  a/D_REF - max(1, ceil(d/D_REF))  in channel units, by planar band
+  a positive value is arc-length change the clipped channel cannot express
+    <=  2.22 m   routes  3500   positive     1   p50   -0.100  p90   -0.016  p99   -0.002  max   +0.028
+    <=  3.50 m   routes  3500   positive     1   p50   -0.100  p90   -0.016  p99   -0.002  max   +0.028
+    <=  6.00 m   routes  3500   positive   145   p50   -0.035  p90   -0.000  p99   +0.016  max   +0.200
+    <= 10.00 m   routes  3500   positive   372   p50   -0.017  p90   +0.003  p99   +0.433  max   +1.024
+           any   routes  3500   positive  1601   p50   +0.000  p90  +27.642  p99  +80.823  max +128.751
+
+Fold excess  a - d  in metres, by planar band, and the branch-switch cost it buys
+  an ego near the medial axis between two portions changes branch in one step,
+  so the whole arc separation is charged once; the price is the lateral excursion
+  and the fold excess is what distinguishes a fold from ordinary curvature
+          band    excursion       p50       p99       max      at a     at d  a/D_REF-1
+    <=  2.22 m       1.11 m     0.000     0.013     0.061     2.284    2.222      0.028
+    <=  3.50 m       1.75 m     0.000     0.071     0.247     3.726    3.479      0.677
+    <=  6.00 m       3.00 m     0.000     0.357     1.017     6.824    5.807      2.071
+    <= 10.00 m       5.00 m     0.000     1.565     3.226    13.209    9.983      4.944
+           any  whole route     0.002   180.489   287.035   403.297  116.263    180.484
+
+At one step of planar travel (d <= D_REF), arc separation in clip widths
+  pair counts, summed over routes; the ADR-035 continuity factor is 2.0
+    a >   1.0 * D_REF   pairs         1   routes     1
+    a >   2.0 * D_REF   pairs         0   routes     0
+    a >   3.0 * D_REF   pairs         0   routes     0
+    a >   5.0 * D_REF   pairs         0   routes     0
+    a >  10.0 * D_REF   pairs         0   routes     0
+
+Worst one-step under-charge by source
+  pg           routes  1695  positive     0  p50   -0.100  p90   -0.043  p99   -0.003  max   -0.000
+  waymo        routes  1805  positive     1  p50   -0.059  p90   -0.010  p99   -0.001  max   +0.028
+
+Worst one-step under-charge by split
+  test         routes  1000  positive     1  p50   -0.100  p90   -0.017  p99   -0.002  max   +0.028
+  train        routes  2200  positive     0  p50   -0.100  p90   -0.016  p99   -0.002  max   -0.000
+  validation   routes   300  positive     0  p50   -0.100  p90   -0.016  p99   -0.001  max   -0.000
+
+Top 20 routes by one-step under-charge
+  scenario_uid                                 source  split          under     arc_m     d_m    len_m
+  waymo:training_20s:ecc817537d69b48b          waymo   test          +0.028     2.284   2.222    19.55
+  pg:scenarionet_v1:PGMap-6000004              pg      validation    -0.000     2.222   2.222   165.87
+  pg:scenarionet_v1:PGMap-14920021             pg      train         -0.000     2.222   2.220   162.51
+  waymo:training_20s:674ea9be83e75b5f          waymo   test          -0.000     2.222   2.222   100.47
+  waymo:training_20s:14139de6bce54874          waymo   test          -0.000     2.222   2.222    96.77
+  pg:scenarionet_v1:PGMap-7920273              pg      test          -0.000     2.221   2.221   218.06
+  waymo:training_20s:46a59bbe016f884c          waymo   train         -0.000     2.221   2.221    86.93
+  waymo:training_20s:4e0fdc15378c799b          waymo   train         -0.001     2.221   2.221    76.77
+  waymo:training_20s:2669da4e792f628f          waymo   train         -0.001     2.221   2.221   167.42
+  waymo:training_20s:f1cf2275e8236678          waymo   train         -0.001     2.221   2.221    52.34
+  waymo:training_20s:7561170378480f98          waymo   train         -0.001     2.221   2.221    87.97
+  waymo:training_20s:973874e2c9b7971c          waymo   test          -0.001     2.221   2.221   340.26
+  waymo:training_20s:d3a19cd153daf538          waymo   train         -0.001     2.221   2.221   100.21
+  waymo:training_20s:9acd71a7ae2ba360          waymo   train         -0.001     2.221   2.221    19.48
+  pg:scenarionet_v1:PGMap-2000345              pg      validation    -0.001     2.220   2.220   193.42
+  waymo:training_20s:506494adca3f3c79          waymo   train         -0.001     2.220   2.220    56.96
+  pg:scenarionet_v1:PGMap-12920050             pg      train         -0.001     2.220   2.220   248.00
+  waymo:training_20s:bf5a5bcee7dd2883          waymo   test          -0.001     2.220   2.220   307.46
+  waymo:training_20s:4593faee87e1505           waymo   test          -0.001     2.220   2.217    27.15
+  waymo:training_20s:baaf446990ce96bd          waymo   test          -0.001     2.220   2.220   116.46

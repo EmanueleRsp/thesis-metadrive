@@ -641,3 +641,98 @@ def test_every_priced_variant_is_registered_by_the_accumulator() -> None:
     # column is a structural error rather than an empty percentile.
     reported = module.Measurement().summary()["counterfactual_rulebooks"]
     assert set(reported) == set(names)
+
+
+def test_the_telescoping_residual_keeps_both_signs_apart() -> None:
+    """TEST-RSEC-029: regression for `C51`.
+
+    The residual was accumulated as ``abs(...)`` into one maximum, so an
+    over-payment and an under-payment were indistinguishable in the report. The
+    two have opposite meanings: a deficit is the forward clip truncating advance
+    the ego earned, a surplus is advance credited that the ego never made — the
+    ratchet `C50` executes. On the expert panel the deficit is 62.294, so any
+    reduction to a single number, absolute or by magnitude, would have hidden a
+    surplus behind it. This pins that both survive, through the merge as well,
+    because the parallel replay reaches the report only through `merge`.
+    """
+
+    module = load_measurement_module()
+
+    measurement = module.Measurement()
+    assert measurement.v51_telescoping_max_surplus == 0.0
+    assert measurement.v51_telescoping_max_deficit == 0.0
+
+    # A large deficit must not conceal a smaller surplus, which is the failure
+    # the absolute form had.
+    measurement.observe_telescoping_residual(-62.294)
+    measurement.observe_telescoping_residual(+0.75)
+    measurement.observe_telescoping_residual(-1.5)
+    assert measurement.v51_telescoping_max_surplus == pytest.approx(0.75)
+    assert measurement.v51_telescoping_max_deficit == pytest.approx(-62.294)
+
+    # Each worker reports its own extremes and the merge must keep both sides.
+    worker = module.Measurement()
+    worker.observe_telescoping_residual(+9.5)
+    worker.observe_telescoping_residual(-3.0)
+    measurement.merge(worker)
+    assert measurement.v51_telescoping_max_surplus == pytest.approx(9.5)
+    assert measurement.v51_telescoping_max_deficit == pytest.approx(-62.294)
+
+    reported = measurement.summary()["rulebook_v51"]
+    assert reported["telescoping_max_surplus"] == pytest.approx(9.5)
+    assert reported["telescoping_max_deficit"] == pytest.approx(-62.294)
+    # The absolute figure earlier revisions published is recoverable, so a run
+    # against this report stays comparable with the 2026-09-07 calibration.
+    assert max(
+        reported["telescoping_max_surplus"], -reported["telescoping_max_deficit"]
+    ) == pytest.approx(62.294)
+
+
+def test_the_telescoping_residual_publishes_its_per_episode_distribution() -> None:
+    """TEST-RSEC-030: `F14`'s "only the maximum is recorded" is closed.
+
+    Two extremes say how large the worst episode is and nothing about how many
+    episodes carry the defect. That distinction is not decorative: the expert
+    panel's mean deficit is a fraction of a channel unit against a maximum of
+    62.294, so the distribution is violently skewed, and a bottom-tail statistic
+    such as `fraction_below_standstill` is measured exactly where such skew
+    bites. `concentration_in_worst_episode` is the scalar that separates one
+    outlier from a spread defect, and this pins both readings of it.
+    """
+
+    module = load_measurement_module()
+
+    empty = module.Measurement().summary()["rulebook_v51"]["telescoping_residual"]
+    assert empty == {"episodes": 0}
+
+    # One outlier against many clean episodes: concentration near 1.
+    outlier = module.Measurement()
+    for _ in range(99):
+        outlier.observe_telescoping_residual(0.0)
+    outlier.observe_telescoping_residual(-62.294)
+    reported = outlier.summary()["rulebook_v51"]["telescoping_residual"]
+    assert reported["episodes"] == 100
+    assert reported["episodes_with_residual"] == 1
+    assert reported["p50"] == pytest.approx(0.0)
+    assert reported["concentration_in_worst_episode"] == pytest.approx(1.0)
+
+    # The same total spread over every episode: concentration near zero, and the
+    # two extremes alone would not have told these two populations apart.
+    spread = module.Measurement()
+    for _ in range(100):
+        spread.observe_telescoping_residual(-0.62294)
+    reported = spread.summary()["rulebook_v51"]["telescoping_residual"]
+    assert reported["episodes"] == 100
+    assert reported["episodes_with_residual"] == 100
+    assert reported["total_absolute"] == pytest.approx(62.294)
+    assert reported["concentration_in_worst_episode"] == pytest.approx(0.01)
+
+    # The merge must carry episodes, not just extremes, or the parallel replay
+    # would report the distribution of one worker.
+    combined = module.Measurement()
+    combined.merge(outlier)
+    combined.merge(spread)
+    reported = combined.summary()["rulebook_v51"]["telescoping_residual"]
+    assert reported["episodes"] == 200
+    assert reported["total_absolute"] == pytest.approx(124.588)
+    assert combined.v51_telescoping_max_deficit == pytest.approx(-62.294)

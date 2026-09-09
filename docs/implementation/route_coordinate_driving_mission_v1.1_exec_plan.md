@@ -274,6 +274,16 @@ one lane width) before the runtime is trusted on it; if any route fails the
 audit, the contiguous cursor must be implemented and `AC-RCM-003` extended
 with a self-intersecting/U-turn case before that index is used.
 
+The audit is executable as of 2026-09-09:
+`scripts/audit_route_near_revisits.py`, read-only over the frozen index, with
+acceptance tests in `tests/test_route_near_revisit_audit.py`. It reproduces
+the 15 m figures above and additionally reports at **one clip width**
+(`D_REF = 2.2222 m`), because that is where the `R4` clip starts mis-stating
+the arc-length change and the interval between the two thresholds — tight
+hairpins, roundabout entries — is what the 15 m criterion leaves uncovered.
+The 2026-09-09 run over the current index is clean at that threshold; the
+figures and their reading are in `docs/open_items.md` rows `V3` and `C50`.
+
 ### 11.2 Builder choices not covered by ADR-055 (recorded 2026-09-05)
 
 See ADR-055 §"Implementation notes recorded 2026-09-05" for the FORWARD

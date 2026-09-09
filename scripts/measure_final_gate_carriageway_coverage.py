@@ -23,6 +23,14 @@ tolerance, so a reconstruction error is reported rather than silently counted.
 
 Nothing is simulated and no policy is involved: this is a property of the frozen
 map and the frozen mission record.
+
+`--walk-spacing-m` adds `D14`'s backwards route walk, which the question above
+deliberately does not answer: whether that uncovered surface is **continuous back
+along the route**, so that an ego could drive it while `R4` credits the advance of
+its projection. It calls the same decomposition at stations along the route rather
+than only at the goal, so it inherits the reconciliation against the frozen gate
+above. Omitted by default, and the goal cross-section figures are unaffected by
+it. See `_walk_backwards`.
 """
 
 from __future__ import annotations
@@ -36,7 +44,7 @@ import statistics
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 
 from shapely.geometry import LineString, Point
 
@@ -45,6 +53,9 @@ from shapely.geometry import LineString, Point
 from thesis_rl.mission.builder import FINAL_GATE_BUILDER_EPSILON_M, _line_parts
 from thesis_rl.mission.types import DrivingMissionRecord
 from thesis_rl.rulebook.v2.geometry.drivable import DIRECTION_ALIGNMENT_COS_THRESHOLD
+
+if TYPE_CHECKING:
+    from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
 
 # MetaDrive `DefaultVehicle`: the swept front bumper is a band of full vehicle
 # width, so an ego centred at lateral offset `d` presents `[d - w/2, d + w/2]`
@@ -76,6 +87,20 @@ class RecordResult:
     nearest_is_route_lane: bool = False
     lane_change_left_crosses: bool | None = None
     lane_change_right_crosses: bool | None = None
+    # `D14`'s backwards route walk, populated only when `--walk-spacing-m` is
+    # given. Everything above is the goal cross-section alone and is unchanged.
+    walk_stations: int = 0
+    walk_unusable_stations: int = 0
+    walk_span_m: float | None = None
+    # The corridor that reaches the goal cross-section, walked backwards from it:
+    # same-direction drivable surface outside the route's own carriageway, wide
+    # enough for the ego, continuous station to station.
+    corridor_to_goal_m: float | None = None
+    corridor_to_goal_offset_m: float | None = None
+    corridor_to_goal_clears_gate: bool | None = None
+    corridor_entry_gap_m: float | None = None
+    corridor_to_goal_is_route_lane: bool = False
+    corridor_to_goal_lane_types: tuple[str, ...] = ()
 
 
 def _lane_record(source: str, lane_id: str, lane: Mapping[str, Any], z_origin_m: float):
@@ -151,6 +176,190 @@ def _decompose(
     return _merge(intervals)
 
 
+def _walk_backwards(
+    *,
+    route: "RoutePolyline",
+    s_goal_m: float,
+    spacing_m: float,
+    gate_lo: float,
+    gate_hi: float,
+    lanes: Mapping[str, Any],
+    lane_types: Mapping[str, str],
+    route_lane_ids: set[str],
+) -> dict[str, Any]:
+    """Walk the route backwards from the goal, following parallel surface.
+
+    `D14` records that the goal cross-section measurement "does not show that an
+    ego could drive such surface *while banking the `R4` budget* — that needs the
+    backwards route walk, which is designed but not run". This is that walk.
+
+    The question it answers is not whether uncovered surface exists at the goal —
+    that is already measured — but whether it is **continuous back along the
+    route**, because `R4` credits the arc-length advance of the projection and an
+    ego on a parallel carriageway projects onto the route and advances. A corridor
+    that runs `X` metres and ends outside the final gate is `X / D_REF` channel
+    units an ego can bank and still fail the mission, with `offroad = 0` because
+    the drivable surface is the union of every vertically compatible lane, and
+    `wrong_carriageway = 0` because it charges only opposing surface.
+
+    Continuity is the crux, and each of its two conditions makes the reported
+    corridor a **lower** bound rather than an upper one. A station contributes
+    only if its component is at least one ego width wide, since a corridor the ego
+    does not fit in is not one it can drive; and consecutive components must
+    **overlap** in offset, which is what makes them the same physical carriageway
+    rather than two unrelated strips at similar distances.
+
+    Every qualifying candidate at the goal is walked, not only the nearest one,
+    and the longest corridor wins. Taking the nearest would have been cheaper and
+    would have under-reported: a corridor one lane out that stops after 5 m would
+    hide one three lanes out that runs the length of the route. Under-reporting is
+    the wrong direction for an audit, and it is also why a candidate qualifies on
+    containing a position from which the ego misses the gate rather than on its
+    centre being such a position.
+
+    `corridor_entry_gap_m` is the separation between the corridor and the route's
+    own carriageway at the station the walk stops at. Zero means the ego changes
+    into it for free; positive means it must cross surface that is not drivable,
+    which `offroad` does charge, so the exposure is priced rather than free. That
+    distinction is the one neither the goal cross-section measurement nor `D14`
+    could make.
+    """
+
+    cache: dict[float, list[list[Any]] | None] = {}
+
+    def at(station_m: float) -> list[list[Any]] | None:
+        """Same-direction components at one station, or None if unusable."""
+
+        if station_m in cache:
+            return cache[station_m]
+        point = route.point_at(station_m)
+        try:
+            projection = route.project((point[0], point[1]), position_z=point[2])
+            components = _decompose(
+                goal_xyz=(float(point[0]), float(point[1]), float(point[2])),
+                tangent=projection.tangent_xy,
+                lanes=lanes,
+                lane_types=lane_types,
+                # No override: along the walk the reference direction is the
+                # route polyline's own tangent, and the alignment filter does the
+                # rest. The goal cross-section keeps the gate's static tangent.
+                final_route_lane_id="",
+                cos_threshold=DIRECTION_ALIGNMENT_COS_THRESHOLD,
+            )
+        except Exception:  # noqa: BLE001 - counted by the caller, not raised
+            cache[station_m] = None
+            return None
+        cache[station_m] = components
+        return components
+
+    def host_of(components: list[list[Any]]) -> list[Any] | None:
+        hosts = [
+            item
+            for item in components
+            if item[0] - FINAL_GATE_BUILDER_EPSILON_M
+            <= 0.0
+            <= item[1] + FINAL_GATE_BUILDER_EPSILON_M
+        ]
+        return hosts[0] if len(hosts) == 1 else None
+
+    def drivable_others(components: list[list[Any]], host: list[Any]) -> list[list[Any]]:
+        return [
+            item for item in components if item is not host and item[1] - item[0] >= EGO_WIDTH_M
+        ]
+
+    stations_visited: set[float] = set()
+    unusable = 0
+
+    goal_components = at(s_goal_m)
+    if goal_components is None:
+        return {
+            "walk_stations": 0,
+            "walk_unusable_stations": 1,
+            "walk_span_m": s_goal_m,
+        }
+    stations_visited.add(s_goal_m)
+    goal_host = host_of(goal_components)
+    candidates: list[list[Any]] = []
+    if goal_host is not None:
+        candidates = [
+            item
+            for item in drivable_others(goal_components, goal_host)
+            # A corridor is an exposure only if it CONTAINS a position from which
+            # the ego misses the gate. Testing the component's centre instead
+            # would under-report: a wide component whose centre still sweeps the
+            # gate can have an end that does not. An ego centred at `d` presents
+            # `[d - w/2, d + w/2]`, and `d` must itself lie a half-width inside
+            # the component, so such a position exists exactly when the component
+            # runs a full ego width past either end of the gate.
+            if item[1] > gate_hi + EGO_WIDTH_M or item[0] < gate_lo - EGO_WIDTH_M
+        ]
+
+    best: dict[str, Any] | None = None
+    for candidate in candidates:
+        previous = candidate
+        previous_station = s_goal_m
+        length_m = 0.0
+        station = max(0.0, s_goal_m - spacing_m)
+        while previous_station > 0.0:
+            components = at(station)
+            stations_visited.add(station)
+            if components is None:
+                unusable += 1
+                break
+            host = host_of(components)
+            if host is None:
+                unusable += 1
+                break
+            overlapping = [
+                item
+                for item in drivable_others(components, host)
+                if item[0] <= previous[1] and previous[0] <= item[1]
+            ]
+            if not overlapping:
+                break
+            centre = (previous[0] + previous[1]) / 2.0
+            chosen = min(overlapping, key=lambda item: abs((item[0] + item[1]) / 2.0 - centre))
+            length_m += previous_station - station
+            previous = chosen
+            previous_station = station
+            if station == 0.0:
+                break
+            station = max(0.0, station - spacing_m)
+
+        # The gap is read where the corridor ends, because that is where the ego
+        # would have to enter it.
+        end_components = cache.get(previous_station)
+        entry_gap: float | None = None
+        if end_components is not None:
+            end_host = host_of(end_components)
+            if end_host is not None:
+                gap = (
+                    previous[0] - end_host[1]
+                    if previous[0] > end_host[1]
+                    else end_host[0] - previous[1]
+                )
+                entry_gap = max(0.0, gap)
+        summary = {
+            "corridor_to_goal_m": length_m,
+            "corridor_to_goal_offset_m": (candidate[0] + candidate[1]) / 2.0,
+            "corridor_to_goal_clears_gate": True,
+            "corridor_entry_gap_m": entry_gap,
+            "corridor_to_goal_is_route_lane": bool(route_lane_ids.intersection(candidate[2])),
+            "corridor_to_goal_lane_types": tuple(sorted(set(candidate[3]))),
+        }
+        if best is None or length_m > float(best["corridor_to_goal_m"]):
+            best = summary
+
+    result: dict[str, Any] = {
+        "walk_stations": len(stations_visited),
+        "walk_unusable_stations": unusable,
+        "walk_span_m": s_goal_m,
+    }
+    if best is not None:
+        result.update(best)
+    return result
+
+
 def _crosses(d: float, gate_lo: float, gate_hi: float) -> bool:
     """Can an ego centred at lateral offset ``d`` sweep the finite gate segment?"""
 
@@ -158,7 +367,9 @@ def _crosses(d: float, gate_lo: float, gate_hi: float) -> bool:
     return not (near > gate_hi or far < gate_lo)
 
 
-def evaluate_record(data_root: Path, record: Mapping[str, Any]) -> RecordResult:
+def evaluate_record(
+    data_root: Path, record: Mapping[str, Any], *, walk_spacing_m: float | None = None
+) -> RecordResult:
     uid = str(record.get("scenario_uid", ""))
     source = str(record.get("source", ""))
     split = str(record.get("split", ""))
@@ -297,15 +508,46 @@ def evaluate_record(data_root: Path, record: Mapping[str, Any]) -> RecordResult:
         result.nearest_interval = (nearest[0], nearest[1])
         result.nearest_lane_types = tuple(sorted(set(nearest[3])))
         result.nearest_is_route_lane = bool(route_ids.intersection(nearest[2]))
+
+    if walk_spacing_m is not None:
+        from thesis_rl.rulebook.v2.geometry.route import RoutePolyline
+
+        # The walk runs only after the host component has been reconciled with
+        # the frozen gate above, so a record whose reconstruction is wrong is
+        # refused before any of it is measured.
+        route = RoutePolyline(
+            points_xyz=tuple(
+                tuple(float(value) for value in point)
+                for point in mission.canonical_route_points_xyz
+            )
+        )
+        try:
+            walked = _walk_backwards(
+                route=route,
+                s_goal_m=route.length_m,
+                spacing_m=float(walk_spacing_m),
+                gate_lo=gate_lo,
+                gate_hi=gate_hi,
+                lanes=lanes,
+                lane_types=lane_types,
+                route_lane_ids=set(route_ids),
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            result.detail = f"walk failed: {type(exc).__name__}: {exc}"
+            return result
+        for name, value in walked.items():
+            setattr(result, name, value)
     return result
 
 
 _DATA_ROOT: Path | None = None
+_WALK_SPACING_M: float | None = None
 
 
-def _init_worker(data_root: str) -> None:
-    global _DATA_ROOT
+def _init_worker(data_root: str, walk_spacing_m: float | None = None) -> None:
+    global _DATA_ROOT, _WALK_SPACING_M
     _DATA_ROOT = Path(data_root)
+    _WALK_SPACING_M = walk_spacing_m
     # Shapely is single-threaded; every record is independent, so keep BLAS from
     # oversubscribing the pool. Same reasoning as the expert replay instrument.
     for variable in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -315,7 +557,7 @@ def _init_worker(data_root: str) -> None:
 def _work(record: Mapping[str, Any]) -> RecordResult:
     assert _DATA_ROOT is not None
     try:
-        return evaluate_record(_DATA_ROOT, record)
+        return evaluate_record(_DATA_ROOT, record, walk_spacing_m=_WALK_SPACING_M)
     except Exception as exc:  # noqa: BLE001 - a crash must not lose the pass
         return RecordResult(
             str(record.get("scenario_uid", "")),
@@ -400,25 +642,115 @@ def summarize(results: Sequence[RecordResult]) -> dict[str, Any]:
                 lambda r: r.nearest_gap_m is not None and r.nearest_gap_m <= EGO_LENGTH_M
             ),
             "bike_lane_only": count(
-                lambda r: bool(r.nearest_lane_types)
-                and all("BIKE" in t for t in r.nearest_lane_types)
+                lambda r: (
+                    bool(r.nearest_lane_types) and all("BIKE" in t for t in r.nearest_lane_types)
+                )
             ),
             "is_a_route_lane": count(lambda r: r.nearest_is_route_lane),
         },
         "gate_narrower_than_carriageway": {
             "one_lane_change_either_side_leaves_gate": count(
-                lambda r: r.lane_change_left_crosses is False
-                and r.lane_change_right_crosses is False
+                lambda r: (
+                    r.lane_change_left_crosses is False and r.lane_change_right_crosses is False
+                )
             ),
             "one_lane_change_some_side_leaves_gate": count(
-                lambda r: r.lane_change_left_crosses is False
-                or r.lane_change_right_crosses is False
+                lambda r: (
+                    r.lane_change_left_crosses is False or r.lane_change_right_crosses is False
+                )
             ),
         },
         "component_counts": {
             "forward_cone_gt_0": _quantiles([float(r.components_forward) for r in ok]),
             "aligned_cone_ge_0p5": _quantiles([float(r.components_aligned) for r in ok]),
         },
+        "backwards_route_walk": _summarize_walk(ok),
+    }
+
+
+def _summarize_walk(ok: Sequence[RecordResult]) -> dict[str, Any]:
+    """`D14`: is the parallel surface at the goal *continuous back along the route*?
+
+    Only present when `--walk-spacing-m` ran. The statistic the decision needs is
+    `corridor_to_goal_m`: the arc length over which an ego could drive
+    same-direction surface outside its own carriageway and still be outside the
+    final gate when it gets there. Divided by `D_REF = 2.2222 m` it is the `R4`
+    budget bankable on a trajectory that fails the mission, and reported beside
+    it is `corridor_entry_gap_m`, which says whether reaching that corridor costs
+    `offroad` or is free.
+    """
+
+    walked = [result for result in ok if result.walk_stations > 0]
+    if not walked:
+        return {"records_walked": 0}
+    with_corridor = [result for result in walked if result.corridor_to_goal_m is not None]
+    lengths = [
+        result.corridor_to_goal_m
+        for result in with_corridor
+        if result.corridor_to_goal_m is not None
+    ]
+    # Reported in bands rather than against one threshold, for the reason V3's
+    # audit reports its proximity bands: choosing a cut-off here would be
+    # choosing how much `offroad` an ego is allowed to pay to enter the corridor,
+    # which is a parameter this work is not allowed to add and would not want to.
+    # 0.05 m is below every lane-merge artefact the 2026-09-08 run found (the
+    # tightest were 0.010-0.011 m, filed as `C48`), so that band is surface the
+    # map representation separates and physical geometry does not.
+    entry_bands: dict[str, Any] = {}
+    for label, bound in (
+        ("le_0p05m_representation_artefact", 0.05),
+        ("le_0p5m", 0.5),
+        ("le_one_ego_width", EGO_WIDTH_M),
+        ("any", float("inf")),
+    ):
+        banded = [
+            result
+            for result in with_corridor
+            if result.corridor_entry_gap_m is not None and result.corridor_entry_gap_m <= bound
+        ]
+        banded_lengths = [
+            result.corridor_to_goal_m for result in banded if result.corridor_to_goal_m is not None
+        ]
+        entry_bands[label] = {
+            "records": len(banded),
+            "fraction_of_walked": len(banded) / len(walked),
+            "corridor_to_goal_m": _quantiles(banded_lengths),
+            "longest_m": max(banded_lengths) if banded_lengths else None,
+            "bike_lane_only": sum(
+                1
+                for result in banded
+                if result.corridor_to_goal_lane_types
+                and all("BIKE" in kind for kind in result.corridor_to_goal_lane_types)
+            ),
+            "is_a_route_lane": sum(1 for result in banded if result.corridor_to_goal_is_route_lane),
+        }
+    return {
+        "records_walked": len(walked),
+        "stations_per_record": _quantiles([float(r.walk_stations) for r in walked]),
+        "records_with_unusable_station": sum(
+            1 for result in walked if result.walk_unusable_stations > 0
+        ),
+        "records_with_corridor_to_goal": len(with_corridor),
+        "fraction_with_corridor_to_goal": len(with_corridor) / len(walked),
+        "corridor_to_goal_m": _quantiles(lengths),
+        "corridor_offset_m": _quantiles(
+            [
+                abs(result.corridor_to_goal_offset_m)
+                for result in with_corridor
+                if result.corridor_to_goal_offset_m is not None
+            ]
+        ),
+        "corridor_entry_gap_m": _quantiles(
+            [
+                result.corridor_entry_gap_m
+                for result in with_corridor
+                if result.corridor_entry_gap_m is not None
+            ]
+        ),
+        # How much `offroad` entering the corridor costs, as bands rather than a
+        # verdict. The first band is surface only the map representation
+        # separates; the last is every corridor however far the median is.
+        "by_entry_gap": entry_bands,
     }
 
 
@@ -431,14 +763,22 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--source", default="all")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--workers", type=int, default=min(32, os.cpu_count() or 1))
+    parser.add_argument(
+        "--walk-spacing-m",
+        type=float,
+        default=None,
+        help=(
+            "run D14's backwards route walk at this station spacing. Omitted by "
+            "default, so the goal cross-section measurement this instrument was "
+            "built for is unchanged. 5.0 m is about one and a half vehicle lengths"
+        ),
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     payload = json.loads(args.frozen_index.read_text(encoding="utf-8"))
     if payload.get("schema") != "scenarionet_frozen_selection_v1":
         raise SystemExit(f"unexpected frozen index schema: {payload.get('schema')!r}")
-    records = selected_records(
-        payload, split=args.split, source=args.source, limit=args.limit
-    )
+    records = selected_records(payload, split=args.split, source=args.source, limit=args.limit)
     if not records:
         raise SystemExit("no records selected; the measurement would be vacuous")
     print(f"evaluating {len(records)} records on {args.workers} workers", flush=True)
@@ -446,7 +786,9 @@ def main(argv: Iterable[str] | None = None) -> int:
     results: list[RecordResult] = []
     context = multiprocessing.get_context("fork")
     with context.Pool(
-        processes=args.workers, initializer=_init_worker, initargs=(str(args.data_root),)
+        processes=args.workers,
+        initializer=_init_worker,
+        initargs=(str(args.data_root), args.walk_spacing_m),
     ) as pool:
         for index, result in enumerate(pool.imap_unordered(_work, records, chunksize=2), 1):
             results.append(result)
@@ -495,6 +837,14 @@ def main(argv: Iterable[str] | None = None) -> int:
                             "nearest_is_route_lane": result.nearest_is_route_lane,
                             "lane_change_left_crosses": result.lane_change_left_crosses,
                             "lane_change_right_crosses": result.lane_change_right_crosses,
+                            "walk_stations": result.walk_stations,
+                            "walk_unusable_stations": result.walk_unusable_stations,
+                            "walk_span_m": result.walk_span_m,
+                            "corridor_to_goal_m": result.corridor_to_goal_m,
+                            "corridor_to_goal_offset_m": result.corridor_to_goal_offset_m,
+                            "corridor_entry_gap_m": result.corridor_entry_gap_m,
+                            "corridor_to_goal_is_route_lane": result.corridor_to_goal_is_route_lane,
+                            "corridor_to_goal_lane_types": list(result.corridor_to_goal_lane_types),
                         }
                         for result in sorted(results, key=lambda item: item.scenario_uid)
                     ],
