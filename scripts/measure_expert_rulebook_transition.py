@@ -972,6 +972,12 @@ def time_headway_costs(
     return resolved
 
 
+# Below this an episode's telescoping residual is numerical noise rather than a
+# clip that bound: one millionth of a channel unit is 2.2 micrometres of arc
+# length, far under the 1 mm precision grid the polyline is consolidated on.
+V51_TELESCOPING_RESIDUAL_TOLERANCE = 1.0e-6
+
+
 def _percentile(sorted_values: Sequence[float], quantile: float) -> float:
     if not sorted_values:
         return float("nan")
@@ -1295,6 +1301,15 @@ class Measurement:
     # a surplus behind it, and the surplus is the one worth detecting.
     v51_telescoping_max_surplus: float = 0.0
     v51_telescoping_max_deficit: float = 0.0
+    # One residual per episode, kept because the two extremes above answer "how
+    # large" and not "how concentrated", and `F14` records that only the maximum
+    # was ever published so the distribution is unknown. Reducing a population to
+    # one extremum hides its shape the same way `abs()` hid the sign — the same
+    # defect one level up. It matters because a mean deficit near 0.24 channel
+    # units against a recorded maximum of 62.294 is violently skewed, and a
+    # bottom-tail statistic like `fraction_below_standstill` is measured exactly
+    # where skew of that kind bites.
+    v51_telescoping_residuals: list[float] = field(default_factory=list)
     # `T-RB51-12`. Until `RB51`/`M3`-`M5` this script *reimplemented* the
     # redefined sub-rules as variants, because production still charged the old
     # ones. Production now implements them natively, so the two must agree to
@@ -1390,6 +1405,43 @@ class Measurement:
         value = float(residual)
         self.v51_telescoping_max_surplus = max(self.v51_telescoping_max_surplus, value)
         self.v51_telescoping_max_deficit = min(self.v51_telescoping_max_deficit, value)
+        self.v51_telescoping_residuals.append(value)
+
+    def _telescoping_residual_summary(self) -> dict[str, Any]:
+        """The per-episode distribution of `AC-RB5.1-07`'s residual.
+
+        Two extremes say how large the worst episode is; they cannot say whether
+        the mass sits on one episode or on fifty, and that is the question a
+        bottom-tail statistic such as `fraction_below_standstill` is sensitive
+        to. `concentration_in_worst_episode` answers it directly: the worst
+        episode's share of the total absolute residual. Near 1 the defect is one
+        outlier and a trimmed statistic is unaffected; well below it the defect
+        is spread and every episode carries some.
+        """
+
+        residuals = self.v51_telescoping_residuals
+        if not residuals:
+            return {"episodes": 0}
+        ordered = sorted(residuals)
+        absolute = [abs(value) for value in residuals]
+        total = sum(absolute)
+        return {
+            "episodes": len(residuals),
+            "episodes_with_residual": sum(
+                1 for value in absolute if value > V51_TELESCOPING_RESIDUAL_TOLERANCE
+            ),
+            "p01": round(_percentile(ordered, 0.01), 6),
+            "p10": round(_percentile(ordered, 0.10), 6),
+            "p50": round(_percentile(ordered, 0.50), 6),
+            "p90": round(_percentile(ordered, 0.90), 6),
+            "p99": round(_percentile(ordered, 0.99), 6),
+            "mean": round(statistics.fmean(residuals), 6),
+            "mean_absolute": round(statistics.fmean(absolute), 6),
+            "total_absolute": round(total, 6),
+            "concentration_in_worst_episode": (
+                round(max(absolute) / total, 6) if total > 0.0 else None
+            ),
+        }
 
     def merge(self, other: "Measurement") -> None:
         """Absorb one worker's partial accumulator; every field is additive.
@@ -1457,8 +1509,16 @@ class Measurement:
         self.v51_behind_peak_episodes += other.v51_behind_peak_episodes
         self.v51_q_start.extend(other.v51_q_start)
         self.v51_q_end.extend(other.v51_q_end)
-        self.observe_telescoping_residual(other.v51_telescoping_max_surplus)
-        self.observe_telescoping_residual(other.v51_telescoping_max_deficit)
+        # Extended rather than re-observed: routing the other worker's extremes
+        # through `observe_telescoping_residual` would append them a second time
+        # and count two episodes that do not exist.
+        self.v51_telescoping_residuals.extend(other.v51_telescoping_residuals)
+        self.v51_telescoping_max_surplus = max(
+            self.v51_telescoping_max_surplus, other.v51_telescoping_max_surplus
+        )
+        self.v51_telescoping_max_deficit = min(
+            self.v51_telescoping_max_deficit, other.v51_telescoping_max_deficit
+        )
         self.final_negative_episodes += other.final_negative_episodes
         for crawl, mass in other.final_negative_mass_total.items():
             self.final_negative_mass_total[crawl] = (
@@ -1650,6 +1710,7 @@ class Measurement:
                 # `telescoping_max_deficit` with its sign restored.
                 "telescoping_max_surplus": round(self.v51_telescoping_max_surplus, 12),
                 "telescoping_max_deficit": round(self.v51_telescoping_max_deficit, 12),
+                "telescoping_residual": self._telescoping_residual_summary(),
             },
             "final_rulebook_blame": {
                 "reward_units_by_sub_rule": {

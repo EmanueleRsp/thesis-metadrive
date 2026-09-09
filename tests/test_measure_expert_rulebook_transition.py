@@ -686,3 +686,53 @@ def test_the_telescoping_residual_keeps_both_signs_apart() -> None:
     assert max(
         reported["telescoping_max_surplus"], -reported["telescoping_max_deficit"]
     ) == pytest.approx(62.294)
+
+
+def test_the_telescoping_residual_publishes_its_per_episode_distribution() -> None:
+    """TEST-RSEC-030: `F14`'s "only the maximum is recorded" is closed.
+
+    Two extremes say how large the worst episode is and nothing about how many
+    episodes carry the defect. That distinction is not decorative: the expert
+    panel's mean deficit is a fraction of a channel unit against a maximum of
+    62.294, so the distribution is violently skewed, and a bottom-tail statistic
+    such as `fraction_below_standstill` is measured exactly where such skew
+    bites. `concentration_in_worst_episode` is the scalar that separates one
+    outlier from a spread defect, and this pins both readings of it.
+    """
+
+    module = load_measurement_module()
+
+    empty = module.Measurement().summary()["rulebook_v51"]["telescoping_residual"]
+    assert empty == {"episodes": 0}
+
+    # One outlier against many clean episodes: concentration near 1.
+    outlier = module.Measurement()
+    for _ in range(99):
+        outlier.observe_telescoping_residual(0.0)
+    outlier.observe_telescoping_residual(-62.294)
+    reported = outlier.summary()["rulebook_v51"]["telescoping_residual"]
+    assert reported["episodes"] == 100
+    assert reported["episodes_with_residual"] == 1
+    assert reported["p50"] == pytest.approx(0.0)
+    assert reported["concentration_in_worst_episode"] == pytest.approx(1.0)
+
+    # The same total spread over every episode: concentration near zero, and the
+    # two extremes alone would not have told these two populations apart.
+    spread = module.Measurement()
+    for _ in range(100):
+        spread.observe_telescoping_residual(-0.62294)
+    reported = spread.summary()["rulebook_v51"]["telescoping_residual"]
+    assert reported["episodes"] == 100
+    assert reported["episodes_with_residual"] == 100
+    assert reported["total_absolute"] == pytest.approx(62.294)
+    assert reported["concentration_in_worst_episode"] == pytest.approx(0.01)
+
+    # The merge must carry episodes, not just extremes, or the parallel replay
+    # would report the distribution of one worker.
+    combined = module.Measurement()
+    combined.merge(outlier)
+    combined.merge(spread)
+    reported = combined.summary()["rulebook_v51"]["telescoping_residual"]
+    assert reported["episodes"] == 200
+    assert reported["total_absolute"] == pytest.approx(124.588)
+    assert combined.v51_telescoping_max_deficit == pytest.approx(-62.294)
