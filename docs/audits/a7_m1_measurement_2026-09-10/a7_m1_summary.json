@@ -1,0 +1,814 @@
+{
+  "a7_grid_counterfactual_rulebooks": {
+    "a7_w50.15_phi0.25_l42": {
+      "episode_return_mean": 71.2,
+      "episode_return_p1": -110.65,
+      "episode_return_p10": 11.3,
+      "episode_return_p25": 21.92,
+      "episode_return_p5": 3.53,
+      "episode_return_p50": 53.69,
+      "episode_return_p90": 163.01,
+      "fraction_below_standstill": 0.0473,
+      "r2_violated_fraction_of_all_steps": 0.0,
+      "r3_violated_fraction_of_all_steps": 0.0
+    },
+    "a7_w50.15_phi0_l41.25": {
+      "episode_return_mean": 41.12,
+      "episode_return_p1": -130.65,
+      "episode_return_p10": 6.5,
+      "episode_return_p25": 12.75,
+      "episode_return_p5": -13.8,
+      "episode_return_p50": 32.53,
+      "episode_return_p90": 100.47,
+      "fraction_below_standstill": 0.0645,
+      "r2_violated_fraction_of_all_steps": 0.0,
+      "r3_violated_fraction_of_all_steps": 0.0
+    },
+    "a7_w50.15_phi0_l41.9": {
+      "episode_return_mean": 67.32,
+      "episode_return_p1": -110.09,
+      "episode_return_p10": 10.74,
+      "episode_return_p25": 20.77,
+      "episode_return_p5": 3.2,
+      "episode_return_p50": 50.87,
+      "episode_return_p90": 154.78,
+      "fraction_below_standstill": 0.0491,
+      "r2_violated_fraction_of_all_steps": 0.0,
+      "r3_violated_fraction_of_all_steps": 0.0
+    },
+    "a7_w50.15_phi0_l42": {
+      "episode_return_mean": 71.34,
+      "episode_return_p1": -108.81,
+      "episode_return_p10": 11.3,
+      "episode_return_p25": 21.99,
+      "episode_return_p5": 3.75,
+      "episode_return_p50": 53.96,
+      "episode_return_p90": 163.01,
+      "fraction_below_standstill": 0.0464,
+      "r2_violated_fraction_of_all_steps": 0.0,
+      "r3_violated_fraction_of_all_steps": 0.0
+    },
+    "a7_w50.25_phi0.25_l42": {
+      "episode_return_mean": 71.02,
+      "episode_return_p1": -111.73,
+      "episode_return_p10": 11.3,
+      "episode_return_p25": 21.86,
+      "episode_return_p5": 3.03,
+      "episode_return_p50": 53.69,
+      "episode_return_p90": 162.93,
+      "fraction_below_standstill": 0.0491,
+      "r2_violated_fraction_of_all_steps": 0.0,
+      "r3_violated_fraction_of_all_steps": 0.0
+    },
+    "a7_w50.25_phi0_l42": {
+      "episode_return_mean": 71.17,
+      "episode_return_p1": -108.81,
+      "episode_return_p10": 11.3,
+      "episode_return_p25": 21.92,
+      "episode_return_p5": 3.44,
+      "episode_return_p50": 53.96,
+      "episode_return_p90": 162.93,
+      "fraction_below_standstill": 0.0482,
+      "r2_violated_fraction_of_all_steps": 0.0,
+      "r3_violated_fraction_of_all_steps": 0.0
+    }
+  },
+  "a7_measurement": {
+    "argmax_within_level": {
+      "k2_interaction_risk": {
+        "applicable_steps": 217189,
+        "by_sub_rule": {
+          "clearance": {
+            "frequency": 0.000442,
+            "steps": 96
+          },
+          "none": {
+            "frequency": 0.996022,
+            "steps": 216325
+          },
+          "rss_lateral": {
+            "frequency": 0.002832,
+            "steps": 615
+          },
+          "ttc": {
+            "frequency": 0.000704,
+            "steps": 153
+          }
+        }
+      },
+      "k3_non_negotiable_compliance": {
+        "applicable_steps": 217189,
+        "by_sub_rule": {
+          "none": {
+            "frequency": 0.993582,
+            "steps": 215795
+          },
+          "offroad": {
+            "frequency": 0.005917,
+            "steps": 1285
+          },
+          "signal": {
+            "frequency": 0.000175,
+            "steps": 38
+          },
+          "stop": {
+            "frequency": 7.4e-05,
+            "steps": 16
+          },
+          "vehicle_yield": {
+            "frequency": 0.000253,
+            "steps": 55
+          }
+        }
+      }
+    },
+    "exposure_by_channel": {
+      "discounted_gamma_0_9982": {
+        "X_hard": {
+          "episodes": 1100,
+          "max": 19.613411,
+          "max_scenario_uid": "waymo:training_20s:5f8217a5da0b24ff",
+          "mean": 0.129478,
+          "p95": 0.543063,
+          "p99": 2.445743,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:5f8217a5da0b24ff",
+              "value": 19.613411
+            },
+            {
+              "scenario_uid": "waymo:training_20s:220c463556717162",
+              "value": 12.586971
+            },
+            {
+              "scenario_uid": "waymo:training_20s:4fc774efaefc2a1f",
+              "value": 11.037095
+            },
+            {
+              "scenario_uid": "waymo:training_20s:1ef1a62b6bebe06",
+              "value": 10.529684
+            },
+            {
+              "scenario_uid": "waymo:training_20s:2e47c5c66dd31e88",
+              "value": 7.974894
+            },
+            {
+              "scenario_uid": "waymo:training_20s:d2ae10f6ad2f872c",
+              "value": 4.595306
+            },
+            {
+              "scenario_uid": "waymo:training_20s:13b1e0acfacea8d1",
+              "value": 3.840313
+            },
+            {
+              "scenario_uid": "waymo:training_20s:bf25b7f379af1077",
+              "value": 3.840186
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ebeae316e1816898",
+              "value": 3.189417
+            },
+            {
+              "scenario_uid": "waymo:training_20s:386fc2fc57795fb5",
+              "value": 3.06846
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ccf8381e51d25374",
+              "value": 2.807694
+            }
+          ]
+        },
+        "X_imp": {
+          "episodes": 1100,
+          "max": 0.0,
+          "max_scenario_uid": "waymo:training_20s:fd53cccbb6f56778",
+          "mean": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:fd53cccbb6f56778",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd43fefac95ff7a4",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ff5ce0794c0be672",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ff1f81eafb006cbf",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd159a092694ce39",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd105b6951afc5fc",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ff063034b73aaa36",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fe6141aeb4061824",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fddd7dd8a70fbd8d",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd5886f20920c791",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd2cf7541b253a6d",
+              "value": 0.0
+            }
+          ]
+        },
+        "X_int": {
+          "episodes": 1100,
+          "max": 98.733955,
+          "max_scenario_uid": "waymo:training_20s:71344f609367eace",
+          "mean": 0.35795,
+          "p95": 0.868828,
+          "p99": 7.203108,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:71344f609367eace",
+              "value": 98.733955
+            },
+            {
+              "scenario_uid": "waymo:training_20s:b5a08c05e5a98c09",
+              "value": 31.435538
+            },
+            {
+              "scenario_uid": "waymo:training_20s:c3c2ae7cb2682175",
+              "value": 23.277893
+            },
+            {
+              "scenario_uid": "waymo:training_20s:541cf0d621e5ca91",
+              "value": 15.506307
+            },
+            {
+              "scenario_uid": "waymo:training_20s:f73e4867f5aaba45",
+              "value": 14.602404
+            },
+            {
+              "scenario_uid": "waymo:training_20s:8f499f6c23bcbe3f",
+              "value": 14.208361
+            },
+            {
+              "scenario_uid": "waymo:training_20s:9ba11b6a5302d38f",
+              "value": 10.889905
+            },
+            {
+              "scenario_uid": "waymo:training_20s:3665ccbb7fbea355",
+              "value": 9.264529
+            },
+            {
+              "scenario_uid": "waymo:training_20s:3ce9343e2f9d4c42",
+              "value": 8.82642
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ebeae316e1816898",
+              "value": 8.33327
+            },
+            {
+              "scenario_uid": "waymo:training_20s:11790701a3aba108",
+              "value": 8.272078
+            }
+          ]
+        },
+        "X_soft": {
+          "episodes": 1100,
+          "max": 20.197176,
+          "max_scenario_uid": "waymo:training_20s:1ef1a62b6bebe06",
+          "mean": 0.129386,
+          "p95": 0.000416,
+          "p99": 2.343104,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:1ef1a62b6bebe06",
+              "value": 20.197176
+            },
+            {
+              "scenario_uid": "waymo:training_20s:5f8217a5da0b24ff",
+              "value": 20.173211
+            },
+            {
+              "scenario_uid": "waymo:training_20s:4fc774efaefc2a1f",
+              "value": 19.10274
+            },
+            {
+              "scenario_uid": "waymo:training_20s:220c463556717162",
+              "value": 15.095968
+            },
+            {
+              "scenario_uid": "waymo:training_20s:8374ec9e638b5ecd",
+              "value": 9.934556
+            },
+            {
+              "scenario_uid": "waymo:training_20s:2e47c5c66dd31e88",
+              "value": 8.352655
+            },
+            {
+              "scenario_uid": "waymo:training_20s:3352da2ecbbabeb0",
+              "value": 5.406669
+            },
+            {
+              "scenario_uid": "waymo:training_20s:9d696b189b230cd6",
+              "value": 4.990856
+            },
+            {
+              "scenario_uid": "waymo:training_20s:95bc2bbbb70b2a50",
+              "value": 4.193986
+            },
+            {
+              "scenario_uid": "waymo:training_20s:e13b0c505dfe5440",
+              "value": 3.521586
+            },
+            {
+              "scenario_uid": "waymo:training_20s:11790701a3aba108",
+              "value": 3.08989
+            }
+          ]
+        }
+      },
+      "per_span": {
+        "X_hard": {
+          "episodes": 1100,
+          "max": 0.264242,
+          "max_scenario_uid": "waymo:training_20s:1ef1a62b6bebe06",
+          "mean": 0.001022,
+          "p95": 0.00349,
+          "p99": 0.017109,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:1ef1a62b6bebe06",
+              "value": 0.264242
+            },
+            {
+              "scenario_uid": "waymo:training_20s:5f8217a5da0b24ff",
+              "value": 0.129836
+            },
+            {
+              "scenario_uid": "waymo:training_20s:4fc774efaefc2a1f",
+              "value": 0.06213
+            },
+            {
+              "scenario_uid": "waymo:training_20s:2e47c5c66dd31e88",
+              "value": 0.059165
+            },
+            {
+              "scenario_uid": "waymo:training_20s:220c463556717162",
+              "value": 0.040742
+            },
+            {
+              "scenario_uid": "waymo:training_20s:307fa2143ac885e0",
+              "value": 0.034826
+            },
+            {
+              "scenario_uid": "waymo:training_20s:650ab46f84a51af7",
+              "value": 0.021897
+            },
+            {
+              "scenario_uid": "waymo:training_20s:386fc2fc57795fb5",
+              "value": 0.021135
+            },
+            {
+              "scenario_uid": "waymo:training_20s:3352da2ecbbabeb0",
+              "value": 0.021106
+            },
+            {
+              "scenario_uid": "waymo:training_20s:d30fea214c96e53e",
+              "value": 0.019969
+            },
+            {
+              "scenario_uid": "waymo:training_20s:13b1e0acfacea8d1",
+              "value": 0.018433
+            }
+          ]
+        },
+        "X_imp": {
+          "episodes": 1100,
+          "max": 0.0,
+          "max_scenario_uid": "waymo:training_20s:fd53cccbb6f56778",
+          "mean": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:fd53cccbb6f56778",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd43fefac95ff7a4",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ff5ce0794c0be672",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ff1f81eafb006cbf",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd159a092694ce39",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd105b6951afc5fc",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ff063034b73aaa36",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fe6141aeb4061824",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fddd7dd8a70fbd8d",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd5886f20920c791",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd2cf7541b253a6d",
+              "value": 0.0
+            }
+          ]
+        },
+        "X_int": {
+          "episodes": 1100,
+          "max": 0.720226,
+          "max_scenario_uid": "waymo:training_20s:71344f609367eace",
+          "mean": 0.00328,
+          "p95": 0.007484,
+          "p99": 0.085611,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:71344f609367eace",
+              "value": 0.720226
+            },
+            {
+              "scenario_uid": "waymo:training_20s:8f499f6c23bcbe3f",
+              "value": 0.316133
+            },
+            {
+              "scenario_uid": "waymo:training_20s:9ba11b6a5302d38f",
+              "value": 0.238873
+            },
+            {
+              "scenario_uid": "waymo:training_20s:b5a08c05e5a98c09",
+              "value": 0.177845
+            },
+            {
+              "scenario_uid": "waymo:training_20s:c3c2ae7cb2682175",
+              "value": 0.174287
+            },
+            {
+              "scenario_uid": "waymo:training_20s:e2ec5b79e47766f5",
+              "value": 0.161781
+            },
+            {
+              "scenario_uid": "waymo:training_20s:b97a4f88f8a50f62",
+              "value": 0.155447
+            },
+            {
+              "scenario_uid": "waymo:training_20s:11790701a3aba108",
+              "value": 0.116015
+            },
+            {
+              "scenario_uid": "waymo:training_20s:8374ec9e638b5ecd",
+              "value": 0.111446
+            },
+            {
+              "scenario_uid": "waymo:training_20s:f73e4867f5aaba45",
+              "value": 0.104754
+            },
+            {
+              "scenario_uid": "waymo:training_20s:541cf0d621e5ca91",
+              "value": 0.102049
+            }
+          ]
+        },
+        "X_soft": {
+          "episodes": 1100,
+          "max": 0.514168,
+          "max_scenario_uid": "waymo:training_20s:1ef1a62b6bebe06",
+          "mean": 0.001325,
+          "p95": 4e-06,
+          "p99": 0.024607,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:1ef1a62b6bebe06",
+              "value": 0.514168
+            },
+            {
+              "scenario_uid": "waymo:training_20s:8374ec9e638b5ecd",
+              "value": 0.1894
+            },
+            {
+              "scenario_uid": "waymo:training_20s:5f8217a5da0b24ff",
+              "value": 0.135105
+            },
+            {
+              "scenario_uid": "waymo:training_20s:4fc774efaefc2a1f",
+              "value": 0.107821
+            },
+            {
+              "scenario_uid": "waymo:training_20s:2e47c5c66dd31e88",
+              "value": 0.061971
+            },
+            {
+              "scenario_uid": "waymo:training_20s:220c463556717162",
+              "value": 0.049074
+            },
+            {
+              "scenario_uid": "waymo:training_20s:3352da2ecbbabeb0",
+              "value": 0.046076
+            },
+            {
+              "scenario_uid": "waymo:training_20s:11790701a3aba108",
+              "value": 0.039579
+            },
+            {
+              "scenario_uid": "waymo:training_20s:61241dec97301c74",
+              "value": 0.032164
+            },
+            {
+              "scenario_uid": "waymo:training_20s:95bc2bbbb70b2a50",
+              "value": 0.025583
+            },
+            {
+              "scenario_uid": "waymo:training_20s:a14a12a86fe9800b",
+              "value": 0.025108
+            }
+          ]
+        }
+      },
+      "raw": {
+        "X_hard": {
+          "declared_panel_defect_exclusions": [],
+          "episodes": 1100,
+          "max": 21.287443,
+          "max_scenario_uid": "waymo:training_20s:5f8217a5da0b24ff",
+          "mean": 0.150709,
+          "p95": 0.640988,
+          "p99": 3.323886,
+          "tau_i": 21.287443,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:5f8217a5da0b24ff",
+              "value": 21.287443
+            },
+            {
+              "scenario_uid": "waymo:training_20s:220c463556717162",
+              "value": 13.299515
+            },
+            {
+              "scenario_uid": "waymo:training_20s:4fc774efaefc2a1f",
+              "value": 12.751518
+            },
+            {
+              "scenario_uid": "waymo:training_20s:1ef1a62b6bebe06",
+              "value": 12.018818
+            },
+            {
+              "scenario_uid": "waymo:training_20s:2e47c5c66dd31e88",
+              "value": 10.857776
+            },
+            {
+              "scenario_uid": "waymo:training_20s:d2ae10f6ad2f872c",
+              "value": 5.14218
+            },
+            {
+              "scenario_uid": "waymo:training_20s:bf25b7f379af1077",
+              "value": 5.123751
+            },
+            {
+              "scenario_uid": "waymo:training_20s:13b1e0acfacea8d1",
+              "value": 4.366447
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ccf8381e51d25374",
+              "value": 3.479964
+            },
+            {
+              "scenario_uid": "waymo:training_20s:3352da2ecbbabeb0",
+              "value": 3.372025
+            },
+            {
+              "scenario_uid": "waymo:training_20s:386fc2fc57795fb5",
+              "value": 3.370786
+            }
+          ]
+        },
+        "X_imp": {
+          "declared_panel_defect_exclusions": [],
+          "episodes": 1100,
+          "max": 0.0,
+          "max_scenario_uid": "waymo:training_20s:fd53cccbb6f56778",
+          "mean": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "tau_i": 0.0,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:fd53cccbb6f56778",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd43fefac95ff7a4",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ff5ce0794c0be672",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ff1f81eafb006cbf",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd159a092694ce39",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd105b6951afc5fc",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ff063034b73aaa36",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fe6141aeb4061824",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fddd7dd8a70fbd8d",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd5886f20920c791",
+              "value": 0.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:fd2cf7541b253a6d",
+              "value": 0.0
+            }
+          ]
+        },
+        "X_int": {
+          "declared_panel_defect_exclusions": [],
+          "episodes": 1100,
+          "max": 110.379799,
+          "max_scenario_uid": "waymo:training_20s:71344f609367eace",
+          "mean": 0.422618,
+          "p95": 1.132411,
+          "p99": 8.067951,
+          "tau_i": 110.379799,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:71344f609367eace",
+              "value": 110.379799
+            },
+            {
+              "scenario_uid": "waymo:training_20s:b5a08c05e5a98c09",
+              "value": 39.130773
+            },
+            {
+              "scenario_uid": "waymo:training_20s:c3c2ae7cb2682175",
+              "value": 27.302946
+            },
+            {
+              "scenario_uid": "waymo:training_20s:541cf0d621e5ca91",
+              "value": 20.803746
+            },
+            {
+              "scenario_uid": "waymo:training_20s:8f499f6c23bcbe3f",
+              "value": 17.600215
+            },
+            {
+              "scenario_uid": "waymo:training_20s:f73e4867f5aaba45",
+              "value": 16.839443
+            },
+            {
+              "scenario_uid": "waymo:training_20s:3ce9343e2f9d4c42",
+              "value": 12.0
+            },
+            {
+              "scenario_uid": "waymo:training_20s:9ba11b6a5302d38f",
+              "value": 11.662469
+            },
+            {
+              "scenario_uid": "waymo:training_20s:11790701a3aba108",
+              "value": 10.762832
+            },
+            {
+              "scenario_uid": "waymo:training_20s:ebeae316e1816898",
+              "value": 9.460435
+            },
+            {
+              "scenario_uid": "waymo:training_20s:3665ccbb7fbea355",
+              "value": 9.374107
+            }
+          ]
+        },
+        "X_soft": {
+          "declared_panel_defect_exclusions": [],
+          "episodes": 1100,
+          "max": 23.386514,
+          "max_scenario_uid": "waymo:training_20s:1ef1a62b6bebe06",
+          "mean": 0.151088,
+          "p95": 0.000425,
+          "p99": 2.737476,
+          "tau_i": 23.386514,
+          "top_1pct_records": [
+            {
+              "scenario_uid": "waymo:training_20s:1ef1a62b6bebe06",
+              "value": 23.386514
+            },
+            {
+              "scenario_uid": "waymo:training_20s:5f8217a5da0b24ff",
+              "value": 22.151326
+            },
+            {
+              "scenario_uid": "waymo:training_20s:4fc774efaefc2a1f",
+              "value": 22.129122
+            },
+            {
+              "scenario_uid": "waymo:training_20s:220c463556717162",
+              "value": 16.019438
+            },
+            {
+              "scenario_uid": "waymo:training_20s:8374ec9e638b5ecd",
+              "value": 11.776941
+            },
+            {
+              "scenario_uid": "waymo:training_20s:2e47c5c66dd31e88",
+              "value": 11.372822
+            },
+            {
+              "scenario_uid": "waymo:training_20s:3352da2ecbbabeb0",
+              "value": 7.361437
+            },
+            {
+              "scenario_uid": "waymo:training_20s:9d696b189b230cd6",
+              "value": 6.681095
+            },
+            {
+              "scenario_uid": "waymo:training_20s:95bc2bbbb70b2a50",
+              "value": 5.08716
+            },
+            {
+              "scenario_uid": "waymo:training_20s:e13b0c505dfe5440",
+              "value": 3.931486
+            },
+            {
+              "scenario_uid": "waymo:training_20s:11790701a3aba108",
+              "value": 3.671795
+            }
+          ]
+        }
+      }
+    },
+    "grid_admissible_members": [
+      "w50.15_phi0_l42",
+      "w50.15_phi0.25_l42",
+      "w50.25_phi0_l42",
+      "w50.25_phi0.25_l42",
+      "w50.15_phi0_l41.25",
+      "w50.15_phi0_l41.9"
+    ],
+    "k2_k3_cooccurrence": {
+      "episodes_both_nonzero": 5,
+      "joint_distribution_on_those_steps": {
+        "k2_p50": 0.2197,
+        "k2_p99": 1.0,
+        "k3_p50": 0.025313,
+        "k3_p99": 1.0,
+        "pearson_correlation": -0.0161
+      },
+      "steps_both_nonzero": 15,
+      "steps_both_nonzero_pct_of_all_steps": 0.0069
+    },
+    "reward_and_predicate": "a7_reward()/a7_is_rank_preserving(), ExecPlan SS5.1"
+  },
+  "measured_steps": 217189,
+  "scenarios_measured": 1100,
+  "scenarios_skipped": {}
+}
