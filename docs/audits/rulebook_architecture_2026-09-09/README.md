@@ -4,10 +4,18 @@ Seven candidate rulebook architectures scored against fourteen behavioural
 properties under three comparison rules, at two discounts; one verified defect of
 the shipped discount; one executed reward-channel exploit; and a recommendation.
 
-**Status.** The **measurements and the impossibility results are results**. The
-**recommendation is a proposal and nothing in it is approved**: no ADR, no
-specification amendment and no ExecPlan exists for it, and no repository
-behaviour has changed. `REVIEW.md` §4 and `BEHAVIOURAL-SPEC-DRAFT.md` are kept
+**Status, updated 2026-09-09.** The **measurements and the impossibility results
+are results**, and **A7 and `γ = 0.9982` are now approved**. No ExecPlan exists
+for them yet.
+
+> **Four statements in this directory were falsified by the instruments its own
+> §6 asked for.** They are marked inline in `REVIEW.md` and carried in full, with
+> evidence, in **`docs/audits/progress_channel_integrity_2026-09-09/README.md`**,
+> which is authoritative wherever the two disagree: `ROUTE_CONTINUITY_JUMP_FACTOR`
+> does not exist in any Python file; the ratchet's "not armed" verdict is
+> withdrawn; the `D14` backwards walk has been run and its first headline was
+> flattered by a share-of-route normalisation; and `F9`'s 596 / 27.09 % is
+> 591 / 26.86 %. `REVIEW.md` §4 and `BEHAVIOURAL-SPEC-DRAFT.md` are kept
 here because the evidence the eventual decision will rest on has to survive, and
 because several findings hold whether or not the recommendation is ever adopted.
 
@@ -76,6 +84,15 @@ restating it per-step.
 closed loop over a hairpin whose legs are one lane apart pays **+36 channel units
 = +72 reward units per lap at zero net displacement**, linear in the number of
 laps, because the −84.03 m return jump is charged −1. Recorded as an open item.
+**Its remedy is not what this directory proposed** — `ROUTE_CONTINUITY_JUMP_FACTOR`
+does not exist in any Python file, and at ADR-035's factor of 2.0 a re-introduced
+bound would leave about +18.8 per lap rather than closing it. Decided 2026-09-09:
+change nothing in the reward.
+
+**The near-revisit re-audit exists** as of 2026-09-09,
+`scripts/audit_route_near_revisits.py`, so §11.1's standing constraint in the
+driving-mission ExecPlan is executable for the first time. It reports at one clip
+width as well as at 15 m and carries the `g6` hairpin as a positive control.
 
 **Two questions closed without work** (`REVIEW.md` §8.4, §8.5). Collide-to-escape
 is an artefact of the scalar arm alone — the ordered arms compare the collision
@@ -89,7 +106,8 @@ reports `max_m = 0.053` against a clip threshold of 2.2222 m, so the negative cl
 never binds on the expert panel and all of `telescoping_max_error = 62.294` is
 deficit from the forward clip over 1298 steps (0.60 %). The statistic is
 published as `abs(...)`, so it cannot distinguish a surplus from a deficit —
-which is what would detect the ratchet. Recorded as an open item.
+which is what would detect the ratchet. **Done 2026-09-09**: emitted on both
+signs, with the per-episode distribution two extremes cannot give.
 
 ## Cross-validation
 

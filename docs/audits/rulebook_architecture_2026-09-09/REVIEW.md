@@ -12,8 +12,34 @@ library only, except that `g1` reads the frozen selection index by path and
 
 **§8 was added after the review** and supersedes two statements inside it; the
 places affected point forward to it. It also records what a working continuation
-should not redo. That continuation is `handoff-progress-channel-2026-09-09.md`,
-which lives outside the repository beside the working notes.
+should not redo.
+
+> **SUPERSEDED IN FOUR PLACES, 2026-09-09 — read this before §6 or §8.**
+> The instruments §6 asks for were then built and run, and they falsified four
+> statements in this document. Every one is marked inline where it stands, and
+> all four are carried with their evidence in
+> **`docs/audits/progress_channel_integrity_2026-09-09/README.md`**, which is
+> authoritative wherever it disagrees with this file.
+>
+> 1. **`ROUTE_CONTINUITY_JUMP_FACTOR` does not exist** in any Python file, so
+>    "promoting it adds no level, weight or observation field, because the
+>    constant is already there" is false. The bound was wired into
+>    `evaluate_progress` on 2026-07-30 and `e63e0bf` removed it on 2026-08-03.
+>    Affects §6's table and §8.2.
+> 2. **The clip ratchet's "not armed" verdict is withdrawn.** The figure it
+>    rested on is a monotone function of lateral reach, not a bound, and nothing
+>    in the runtime bounds the reach. Affects §8.2.
+> 3. **The `D14` backwards walk has been run**, and the headline drawn from it
+>    was flattered by a share-of-route normalisation. Affects §8.3.
+> 4. **`telescoping_max_error` is emitted signed**, with a per-episode
+>    distribution. Affects §8.1 and §6's table.
+>
+> Also corrected: `F9`'s **596 / 27.09 %** is **591 / 26.86 %** — the original
+> compared the scenario `length` with the break-even, and the criterion is over
+> control steps, so an episode is `length − 1`. Conclusion unchanged.
+>
+> **A7 and `γ = 0.9982` were approved on 2026-09-09.** This document's own
+> status line above predates that.
 
 ---
 
@@ -536,10 +562,10 @@ which the calibration rejects).
 |---|---|---|
 | per-episode distributions of `X_int`, `X_hard`, `X_soft` on the expert panel | every threshold in A7 is calibrated from them, by limitation 1's own argument for `d₂`; the instrument currently emits only per-step marginals and the mean reward contribution | a small addition to the existing accumulator, one 45-minute run |
 | one grid member at `w₅` under the A7 reward | `fraction_below_standstill` is the one column `F7`'s algebra cannot derive | same run |
-| **the negative-clip ratchet** (§8.2, `C50`) | +72 reward units per closed lap at zero net displacement, unbounded, and in A7's thresholded regime L4 is the *only* gradient inside budget, so it is the entire signal. Blocked today by a property of the frozen population, not by the reward | **a prerequisite of A7.** `ROUTE_CONTINUITY_JUMP_FACTOR` already exists and ADR-035 documents it as a preference rather than a gate, so promoting it adds no level, weight or observation field |
-| emit `telescoping_max_error` signed (§8.1, `C51`) | published as `abs(...)`, so a surplus is indistinguishable from a deficit — it is the detector for the row above | one line |
-| write the near-revisit re-audit script (`V3`) | a standing constraint requires it on any regenerated index and it does not exist; its 15 m threshold would not cover what the ratchet needs anyway | small, read-only, and it decides the priority of the row above |
-| the guard test reads `L` from the frozen index | `F9` | small |
+| **the negative-clip ratchet** (§8.2, `C50`) | +72 reward units per closed lap at zero net displacement, unbounded, and in A7's thresholded regime L4 is the *only* gradient inside budget, so it is the entire signal | **RESOLVED AS A DECISION, 2026-09-09: change nothing in the reward.** The remedy named in the cell that stood here was wrong twice. `ROUTE_CONTINUITY_JUMP_FACTOR` **does not exist** in any Python file — the bound was in production and `e63e0bf` removed it on 2026-08-03 — so nothing can be "promoted"; and at ADR-035's factor of 2.0 it would not close the ratchet anyway, since the cursor could move 4.44 m in a step while `Δq` saturates at 2.2222 m, leaving about +18.8 per lap instead of +36. The bound that closes it is one clip width exactly, which `DRIVING-MISSION-V1.1` §8 withdrew as a "continuity/clamp" protocol. See the 2026-09-09 audit |
+| ~~emit `telescoping_max_error` signed~~ (§8.1, `C51`) | published as `abs(...)`, so a surplus is indistinguishable from a deficit | **DONE 2026-09-09.** Emitted on both signs, plus the per-episode distribution with `concentration_in_worst_episode`, because two extremes cannot say whether the mass sits on one episode or fifty |
+| ~~write the near-revisit re-audit script~~ (`V3`) | a standing constraint requires it on any regenerated index and it did not exist | **DONE 2026-09-09.** `scripts/audit_route_near_revisits.py` with five acceptance tests, reporting at one clip width and emitting a distribution. Reproduces the 2026-09-05 run exactly and carries the `g6` hairpin as a positive control |
+| ~~the guard test reads `L` from the frozen index~~ | `F9` | **DONE 2026-09-09.** Reads 500 control steps from the committed index and pins the *requirement* (`γ ≥ 0.998169` at `a = 2.5`), not any discount and not the criterion's verdict, which land with the A7 change |
 | update `tests/test_scal_v14.py` | it writes §5.1 out independently of the implementation with `ETA = 1.0`, `LAMBDA6 = 0.2` and `DT_RATIO = 0.1` hardcoded, and parametrises the inadmissible-weight cases on `relaxable_weight` and `progress_rate_weight`; all of those change | small, but it is a mandatory test and the change needs approval |
 | argmax-within-level instrumentation | `F12`: under `max`, a sub-rule that is never the argmax contributes nothing, and `clearance`'s max cost 0.7094 against 1.0 for the other two may make it inert. `worst_named` already exists and is discarded at `scripts/measure_expert_rulebook_transition.py:2455-2456` | small, same run |
 
@@ -670,7 +696,13 @@ expert panel this is an accuracy problem, not a hazard.
 `abs(v51_episode_delta_q − v51_episode_delta_s / V51_REFERENCE_ADVANCE_M)`
 (`scripts/measure_expert_rulebook_transition.py:2637-2639`) — the sign is
 discarded, so a surplus and a deficit are indistinguishable. Emitting it signed is
-one line and it is the detector for §8.2. Filed as `C51`.
+one line and it is the detector for §8.2. Filed as `C51`, and **done on
+2026-09-09**: emitted on both signs as `telescoping_max_surplus` and
+`telescoping_max_deficit`, plus the per-episode distribution with
+`concentration_in_worst_episode` — because two extremes say how large the worst
+episode is and nothing about whether the mass sits on one episode or fifty, and a
+bottom-tail statistic like `fraction_below_standstill` is measured exactly where
+that distinction bites.
 
 ### 8.2 The negative clip is an unbounded ratchet — executed
 
@@ -694,10 +726,44 @@ What blocks it today is the geometry of the frozen panels, not the reward: the
 2026-09-05 read-only audit over all 3,500 missions found zero routes with two
 portions of `|Δs| > 15 m` closer than 6 m in plane. That is a property of the
 population; its own standing constraint requires a re-audit on any regenerated
-index; the re-audit script does not exist (`V3`); and the 15 m threshold does not
-cover revisits between one clip width and 15 m, which is all the ratchet needs.
-`ROUTE_CONTINUITY_JUMP_FACTOR = 2.0` already gives the projection a plausibility
-bound that ADR-035 documents as "a preference, not a gate". Filed as `C50`.
+index; and the 15 m threshold does not cover revisits between one clip width and
+15 m, which is all the ratchet needs. Filed as `C50`.
+
+> **Two claims that stood here are withdrawn, 2026-09-09.**
+>
+> *"`ROUTE_CONTINUITY_JUMP_FACTOR = 2.0` already gives the projection a
+> plausibility bound … promoting it adds no level, weight or observation field,
+> because the constant is already there."* **The constant does not exist in any
+> Python file.** It survives in ADR-035's prose and two docstrings citing it by
+> name. The bound *was* wired into `evaluate_progress` on 2026-07-30 and
+> **`e63e0bf` removed it on 2026-08-03** with the driving-mission v1.1 refactor:
+> `mission/tracker.py::project` now documents itself as projecting "without a
+> jump envelope or clamp", and no production call site passes `max_s_jump_m`.
+> ADR-035 still asserts the bound in the present tense (`C52`). And at factor
+> 2.0 it would not close the ratchet: the cursor could move 4.44 m in a step
+> while `Δq` saturates at 2.2222 m, leaving about +18.8 per lap.
+>
+> *"The re-audit script does not exist (`V3`)."* It exists:
+> `scripts/audit_route_near_revisits.py`. It reproduces the 2026-05 figures and
+> reports additionally at **one clip width**, with the `g6` hairpin as a positive
+> control.
+>
+> *And the verdict that first run produced — "the exposure is not armed" — is
+> itself withdrawn.* It cited 0.247 m of fold excess, which is **a monotone
+> function of lateral reach evaluated at an arbitrary radius, not a bound**: the
+> same table gives 3.226 m at 5 m of reach, 13× more, and nothing in the runtime
+> bounds the reach (`out_of_route_done: false`, `relax_out_of_road_done: false`,
+> and `is_physically_out_of_road` degrades for route drift by ADR-053's design).
+> The same committed run already carried the contradiction — unbounded band,
+> on-route under-charge **max +128.751 with 1601 of 3,500 routes positive**, and
+> a branch-switch of **180.484 channel units** at 58 m of lateral excursion,
+> about five `g6` laps in one jump. The defensible claim is "not armed **within
+> 5 m of lateral reach**".
+>
+> The recommendation survives on a narrower reason: nobody has shown a policy
+> drives ~40 m off its route, and every algebraic closure spends a specification
+> amendment. Full account, including the first per-record join of this audit with
+> `D14`'s, in `docs/audits/progress_channel_integrity_2026-09-09/README.md`.
 
 ### 8.3 The parallel road is not excluded, and A7 makes it matter more
 
@@ -713,9 +779,35 @@ Three verified facts compose badly with progress last and unthresholded: no cost
 opposes it (`offroad` is the union of every vertically compatible lane and
 `wrong_carriageway` charges only opposing surface), no termination opposes it
 (ADR-053 removed it by design, naming parallel carriageways), and no cost *below*
-L4 can oppose it — and under A7 there is nothing below L4. The obvious remedy is
-`D14`'s exit (b), which `DRIVING-MISSION-V1.1` §1 and §8 forbid, so it is a
-specification amendment and a user decision.
+L4 can oppose it. The obvious remedy is `D14`'s exit (b), which
+`DRIVING-MISSION-V1.1` §1 and §8 forbid, so it is a specification amendment and a
+user decision.
+
+> **The walk has been run, and two things here are corrected, 2026-09-09.**
+>
+> *"and under A7 there is nothing below L4"*, offered as closing the last remedy
+> shape, **is the wrong conclusion.** The remedy wants to sit *above* progress,
+> and A7 is the architecture that puts it there: in the shipped order an
+> off-corridor rule's natural home is L5, *below* L4, so the off-route trajectory
+> banks the larger L4 total and L5 is never consulted. Under A7 the same channel
+> is `K4`, above `K5`, where an in-corridor trajectory has `K4 = 0` exactly and
+> wins before progress is compared. A7 does not shrink the remedy space; it shows
+> the space was already empty in the shipped order. What forecloses the remedy is
+> the specification, and `driving_mission_v1.1_specification.md:104` forecloses
+> **three different remedies in one sentence** — continuity/clamp protocols, off-route
+> `R4` zeroing, and runtime authority of any final lateral envelope.
+>
+> *The measurement it says is missing now exists*, as that instrument's own
+> `--walk-spacing-m` mode: 3,500 records, zero unusable stations. Reported in
+> **metres**, because the share-of-route framing first drawn from it was flattered
+> by short routes (median route length 29.1 m against the index's 113.6 m, with
+> 123 of 130 below the index median): **6 records (0.17 %)** carry a corridor
+> worth a whole mean mission, and **7 (0.20 %)** have a route even of median
+> length. The mechanism is junction geometry — 199 of the 318 in the band are
+> `topology=intersection`, over-represented 12.2 % against 3.4 % for `simple`.
+> **Decision, 2026-09-09: no remedy, recorded as an observation.** The 318 records
+> are committed per row in
+> `docs/audits/progress_channel_integrity_2026-09-09/d14_corridor_records.csv`.
 
 ### 8.4 Collide-to-escape is a scalar-arm artefact — a result, not a defect
 
