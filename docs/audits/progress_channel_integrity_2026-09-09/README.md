@@ -304,15 +304,50 @@ remove, beside off-route `R4` zeroing, approved after `DEC-EF-06` took the
 measure-then-decide option. So both shapes are foreclosed by the same approved
 document, and unforeclosing either is a user decision.
 
-**And the scalar arm cannot be fixed this way at any admissible weight**, which
-the A7 session priced and I am relaying rather than reproducing: an off-corridor
-indicator in `K4` needs `w₅ > 0.314` to outweigh progress at the expert's mean
-pace of 0.4535 m per step — inside §5.4's cap of 0.3846 — but `w₅ > 1.538` at the
-clip, four times that cap. A weight could therefore be found that opposes a *slow*
-off-route drive and none that opposes a *fast* one, which is the wrong way round,
-since speed is what banks the exposure sooner. That makes this a third measured
-asymmetry in the same direction as the collision one: the ordered arms can express
-a constraint no admissible scalarization can.
+**All three remedy shapes are foreclosed by one sentence, which is the finding.**
+`driving_mission_v1.1_specification.md:104` is a single list of obsolete elements,
+and it contains, in order, *"continuity/clamp/freeze/recovery/accumulated-travel/
+HMM protocols"*, *"off-route `R4` zeroing"*, and *"runtime authority of any final
+lateral envelope"*. The first forecloses `C50`'s cursor bound, the second `D14`'s
+exit (b), the third the `K4` shape. So the position is not that no remedy has been
+found: **every shape of remedy that would work was withdrawn by one approved
+document**, and what it leaves is measured at 3.7 % of the index. `AGENTS.md`'s
+Scientific Argument Standards has the case exactly — when the only argument
+against something is the specification, that is a finding, and usually the
+specification is the thing to fix. Framing adjudicated with the A7 ExecPlan
+session, which read the clause independently.
+
+**And the scalar arm cannot be fixed this way at any admissible weight.** Priced
+by the A7 session and **verified independently here** from the A7 block and
+`_validate_six_level_weights` rather than relayed. A violated `K4` step costs
+`w₅·(1 + σ)` and a step of progress earns `λ₄·Δq`, so the crossover is
+`w₅ = λ₄·Δq / (1 + σ)`, and §5.4 caps `w₅` at `(a − λ₄·ΔQ_MAX) / (1 + σ)` because
+`K3` must dominate everything below it.
+
+| | value |
+|---|---:|
+| §5.4 cap on `w₅` | **0.384615** |
+| crossover at the expert's mean pace (`Δq = 0.204089`) | **0.313983** — admissible |
+| crossover at the clip (`Δq = 1`) | **1.538462** — inadmissible |
+
+So a weight exists that opposes a *slow* off-route drive and none that opposes a
+*fast* one, which is the wrong way round, since speed is what banks the exposure
+sooner. At the recommended `w₅ = 0.15` a fully violated step costs 0.195 against
+2.000 of progress at the clip, so it opposes nothing at any pace.
+
+**The factor of four is algebraic, not numerical.** The ratio of the clip-pace
+requirement to the cap is `λ₄ / (a − λ₄·ΔQ_MAX)`, in which `σ` cancels: at
+`a = 2.5, λ₄ = 2.0` it is exactly 4, and it stays 4 for every admissible `σ`. The
+gap is therefore a property of how close `λ₄` sits to `a`, not of a severity
+choice — which is worth knowing, because it means no re-tuning of `σ` reaches it.
+
+*Independent corroboration of the relayed pace*: 40.58 channel units per mean
+mission at `Δq = 0.204089` implies 198.8 steps, against a median episode of 199.
+That figure comes from the `C51` row and not from the bench that produced the
+pace, so the two agree without sharing a source.
+
+That makes this a third measured asymmetry in the same direction as the collision
+one: the ordered arms can express a constraint no admissible scalarization can.
 
 What this measurement changes is that the decision now has its magnitude:
 3.7 % of missions, up to a whole mission's worth of progress banked off the
