@@ -9,9 +9,9 @@
 | Authoritative specification for the architecture being replaced | `docs/specifications/rulebook_v5.1_specification.md` (`RULEBOOK-V5.1`, `APPROVED` 2026-08-14, amended 2026-08-20 and 2026-09-07), `SCAL-V1.4` (§5) |
 | Authoritative specification for A7 | **None. It does not exist yet, and writing it is `DEC-A7-001` and milestone `M2` of this plan.** No production implementation may begin before it is approved |
 | Evidence of record | `docs/audits/rulebook_architecture_2026-09-09/` (the candidate bench, the impossibility results, the recommendation and its derivations) and `docs/audits/progress_channel_integrity_2026-09-09/` (authoritative wherever the two disagree) |
-| Status | `APPROVED` — every gate in §6 resolved 2026-09-10. `M1` executed 2026-09-10 (§10, §11, §14); `M3` onward wait on the `M2` specification being written and approved |
+| Status | `APPROVED` — every gate in §6 resolved 2026-09-10. `M1` executed 2026-09-10 (§10, §11, §14); **`M2` written 2026-09-11 and awaiting the user's approval of `RULEBOOK-V5.2` and `ADR-083`** (§10, §11, §14); `M3` onward wait on that approval |
 | Created | 2026-09-09 |
-| Last updated | 2026-09-10 |
+| Last updated | 2026-09-11 |
 | Branch | `worktree-a7-execplan`, from `main` at `3e58ce0` |
 | Related ADRs | ADR-072 (partly reverted: the negotiable lane rules return above progress), ADR-076 (`L6`, deleted), ADR-075 and ADR-081 (the discount), ADR-063…ADR-071 (the sub-rules, untouched), ADR-035 and ADR-053 (context for `C50`/`D14`). **A new ADR is required** for the architecture and the discount; the next free number is `ADR-083` |
 | Owner | Single maintainer; there is no reviewer to assign (`AGENTS.md`, Branching And Pull Requests) |
@@ -1332,11 +1332,16 @@ regression test and pre-fix evidence in `docs/open_items.md` `C54`. `make check`
 and the focused instrument tests (33 tests, `tests/test_measure_expert_rulebook_transition.py`)
 pass; `make gate` is `M9`'s.
 
-### `M2` — The specification document and the ADR — **blocked on `M1`**
+### `M2` — The specification document and the ADR — **written 2026-09-11, awaiting approval**
 
-- [ ] Objective: the approved contract A7 is implemented against.
-- Files: `docs/specifications/rulebook_v5.2_specification.md` (name subject to
-  `DEC-A7-001`), `docs/decisions/ADR-083-*.md`, `docs/project_index.md`.
+- [x] Objective: the contract A7 is implemented against — **written**; it becomes
+  the *approved* contract only on the user's approval, which is what `M3` waits
+  for.
+- Files: `docs/specifications/rulebook_v5.2_UNDER_REVIEW_specification.md`
+  (`DEC-A7-001`; the `_UNDER_REVIEW` suffix follows `AGENTS.md` and the
+  `rulebook_v5.0_UNDER_REVIEW_specification.md` precedent, and is dropped on
+  approval), `docs/decisions/ADR-083-progress-last-and-the-discount-at-the-measured-horizon.md`,
+  `docs/project_index.md`.
 - Tasks: write §2–§5 (channels, aggregation, `K5`, the adapter, the predicate),
   §9 (the acceptance criteria of §9.3), §10 (the fixtures), and the budgets from
   `M1`; record the approval evidence and date; set `APPROVED` /
@@ -1352,6 +1357,40 @@ pass; `make gate` is `M9`'s.
   than discovering it by missing something.
 - Decision dependencies: all gates resolved 2026-09-10; blocked only on `M1`'s
   values for the budgets and on the user's approval of the document itself.
+
+**Written 2026-09-11**, in an isolated worktree, with **no production file
+touched** — the whole milestone is three documents. What it produced, against the
+five bullets above:
+
+- **`RULEBOOK-V5.2`** (`UNDER_REVIEW`, `Authoritative: NO`): §1 with the O1–O6
+  orderings and the two rows that change; §3 the five channels, their membership,
+  their aggregation and the three normative placement decisions, plus §3.6
+  (`K2 ≻ K3` declared as the least-supported adjacency with `M1`'s co-occurrence
+  beside it) and §3.7 (the three identifier conventions already in use, with
+  file-and-line citations, and the fourth this document adds); §4 `K5`, the
+  deletion of `L6`, the discount with its verdict, and §4.5 the budgets with the
+  three objects, the rule, the measured values and the `max(c, τ)` / `min(v, τ)`
+  clip convention; §5 `SCAL-V1.5`, its form, its §5.4 predicate and the selected
+  weights; §9 the acceptance criteria plus the two-column disposition of
+  `AC-RB5.1-01`…`-17`; §10 the frozen test matrix and the O1–O6 fixtures; §11 the
+  fourteen declared limitations; §14 the open decisions and the derivation record.
+- **`ADR-083`** (`Proposed`): the architecture and the discount, the reason the
+  ADR-072 reversal is not a return to v5.0 (priced, not argued), `w₅`, `φ = 0`,
+  the budgets, the falsified alternatives, and the consequences including both
+  re-based contracts.
+- **`docs/project_index.md`**: one row in Scientific And Functional Documents
+  registering `RULEBOOK-V5.2` as **`CANDIDATE`** — which is what the index exists
+  for, since its stated purpose is to stop an apparently newer document from being
+  mistaken for an approved contract — and one row in Decisions for `ADR-083` as
+  `PROPOSED`. The v5.1 row is **not** moved to `SUPERSEDED` and A7's ExecPlan
+  Registry row is **not** rewritten: the first is only true on approval and the
+  second is `M8`'s.
+
+Three deviations from the letter of this section, each decided rather than
+assumed, and all three recorded in §12:
+`DEV-A7-007` (the `_UNDER_REVIEW` filename), `DEV-A7-008` (`ADR-083` is
+`Proposed`, not `Approved`) and `DEV-A7-009` (one added acceptance-criterion id,
+`AC-A7-16`, and the `TEST-A7-15a`…`-15g` fixture decomposition).
 
 ### `M3` — The frozen test matrix — **blocked on `M2`**
 
@@ -1623,6 +1662,72 @@ budget values it needed.
 
 ---
 
+**2026-09-11 — `M2` written.** In an isolated worktree
+(`worktree-a7-m2-specification`, from `main` at `7f8860e`, level with
+`origin/main`). Read in full before writing: `AGENTS.md`, this plan end to end
+(because `M2` has to reconcile §3, §5, §6.4, §6.9 and §9 against each other),
+`docs/audits/a7_m1_measurement_2026-09-10/` (README and `a7_m1_summary.json`),
+`RULEBOOK-V5.1` §1–§5, §9, §10 and §12, `rulebook_v5.0_UNDER_REVIEW_specification.md`
+§12, `ADR-081` for the ADR form, and `docs/project_index.md`'s vocabulary and
+maintenance rules. The two 2026-09-09 audit directories were deliberately **not**
+reread, for the reason `M1` gives: this plan already carries their derivations
+with sources, and those documents contain retracted claims.
+
+**No production file is touched.** The milestone is three documents, and
+`AGENTS.md` forbids production implementation while the specification is
+`UNDER_REVIEW`.
+
+**Every formula and value was reproduced before being written down, not
+transcribed.** A standalone script importing nothing from this repository
+recomputed the §5.4 predicate from its derivation, the margins in all four
+configurations, the `w₅` cap and both crossovers, the factor of exactly 4,
+`λ₄ ≤ a/2`, the per-step costs, the discount table and the required `γ`, and the
+standing-still crossover of `DEV-A7-004`. **The transcription trap of §5.1 was
+reconstructed and reproduces this plan's own wrong figures** (1.0911 / 1.0513 /
+1.0225 with the thinnest margin at `k=3`), so the right ones are checked against
+a known-wrong alternative rather than only against themselves. The shipped
+predicate and scalar form were also read in
+`src/thesis_rl/reward/scalarization.py:147-196, 393-425` to confirm the term
+placement the arithmetic assumes — `φ` multiplies only the priority levels below
+`k`, and `w₅` enters once with `(1+σ)` because `K4` now carries an indicator and
+a severity slope where `η` carried neither. Every budget, grid and co-occurrence
+figure was read back out of `a7_m1_summary.json` rather than copied from §6.
+
+**One figure of this plan does not reproduce, and the specification carries the
+reproduced one.** §6.1 states that `w₅ = 0.15` asks a learner for "**1.83 m/s**
+of extra route advance". The same criterion — a fully violated `K4` step costs
+`w₅·(1+σ) = 0.195`, and the progress that pays for it is
+`Δq = 0.195/λ₄ = 0.0975`, i.e. `0.2167 m` per step at `D_REF = 2.2222 m` and
+`Δt = 0.1 s` — gives **2.17 m/s**, and no reading of §5.1 that was tried produces
+1.83. `RULEBOOK-V5.2` §5.5 states 2.17 m/s with the one-line derivation beside
+it. The quantity is a physical reading of `w₅`, not a normative constant, so
+nothing in the contract moves either way; §6.1 should be corrected on the next
+pass through this plan. Recorded in `RULEBOOK-V5.2` §14.2.
+
+**Two figures are carried rather than reproduced, and are labelled as such in the
+specification** (§8 and §14.2): O3's scalar margins +0.581 / +2.458, and `w₅`'s
+lower bounds 0.1313 / 0.0736. Both come from constructed fixtures whose full
+geometry this plan does not restate, and `TEST-A7-15c` is what turns them into
+executed evidence.
+
+**One citation is incomplete and is flagged in the document rather than dropped.**
+Pineda, Wray & Zilberstein supply two load-bearing results for the thresholded
+arm's limitations (Lemma 1's NP-hardness, and the measured null result of
+per-state slack), and no full bibliographic entry for them exists anywhere in
+this repository — only this plan's §7.4. `RULEBOOK-V5.2` §12 carries the citation
+marked as incomplete and to be completed before approval.
+
+**Three deviations decided in this milestone**, all reported rather than silent:
+`DEV-A7-007` (the `_UNDER_REVIEW` filename), `DEV-A7-008` (`ADR-083` is
+`Proposed`, since the decisions are approved but this wording is not) and
+`DEV-A7-009` (`AC-A7-16` added, because §9.2 maps `TEST-A7-22` to a requirement
+that does not cover it; plus the `TEST-A7-15a`…`-15g` fixture decomposition).
+
+**Next step:** the user's approval of `RULEBOOK-V5.2` and `ADR-083`. `M3` is
+blocked on it, and so is every milestone after it.
+
+---
+
 ## 12. Deviations
 
 | ID | Original contract | Actual or proposed change | Reason | Approval | Affected tests/docs |
@@ -1632,6 +1737,9 @@ budget values it needed.
 | `DEV-A7-003` | ADR-081 / `AC-RB5.1-16`: `γ = 0.996` with the criterion evaluated at `L = 199` | `γ = 0.9982` with the criterion evaluated at the measured `L = 500` | `C49`; §5.2 | Approved 2026-09-09 | the six algorithm configs, `tests/test_hydra_agent_presets.py` |
 | `DEV-A7-004` | ADR-072: the relaxable lane rules sit below progress | Reverted for those three sub-rules | v5.0's pathology was the **price**, not the placement: v5.0 charged them at `a = 2.2` per violated step, so standing still won past **37** relaxed steps against a mean Waymo mission. At `w₅ = 0.15`, 14.7× less, standing still wins only past **416** relaxed steps at full severity — twice the Waymo episode, and 848 against a mean PG mission over a 500-step episode. Re-derived today | `DEC-A7-002` | ADR-083 records the reversal |
 | `DEV-A7-005` | `AB-LEARN` `REQ-AB-009`: the reward under test is v5.1 + `SCAL-V1.4` | The reward under test becomes A7 + `SCAL-V1.5` | §6.6 | `DEC-A7-008` | `AB-LEARN` §3, §5, §7.1, §14 |
+| `DEV-A7-007` | This plan's §10/`M2` and §13 name the specification file `docs/specifications/rulebook_v5.2_specification.md` | It is written as `docs/specifications/rulebook_v5.2_UNDER_REVIEW_specification.md`, and the suffix is dropped on approval | `AGENTS.md` requires the canonical filename to carry `_UNDER_REVIEW` until approval, and `rulebook_v5.0_UNDER_REVIEW_specification.md` is the precedent for keeping such a file *in* `docs/specifications/` meanwhile. This plan's own `M2` text agrees in substance — it says to "move it into `docs/specifications/` at that point" — so the two readings differ only in the filename | Decided in `M2`, 2026-09-11; reported for approval | `docs/project_index.md`; every citation of the specification path |
+| `DEV-A7-008` | §13 lists `ADR-083` as the record of "the architecture and the discount", both approved 2026-09-09/-10, which would make it `Approved` on arrival | `ADR-083` is written with status **`Proposed`** | The decisions it records are approved; **its text is not** — the user has not seen it, and marking a new document `Approved` would attribute an approval that was never given to this wording. The status line states exactly which parts carry a signature and which do not, so no evidence is lost | Decided in `M2`, 2026-09-11; reported for approval | `docs/project_index.md` Decisions row |
+| `DEV-A7-009` | §9.1 defines `AC-A7-01`…`-15` and §9.2 defines `TEST-A7-01`…`-22`, with `TEST-A7-22` mapped to `REQ-A7-11` | The specification adds one criterion, `AC-A7-16`, and decomposes the ordering fixtures as `TEST-A7-15a`…`-15g` | `REQ-A7-11` is the below-standstill ceiling and does not cover the pooling guard, so `TEST-A7-22` had no criterion to be reconciled against — a test that no acceptance criterion claims cannot close a requirement. The fixture decomposition follows the sub-case convention `RULEBOOK-V5.1` §10 already uses (`TEST-RB5.1-15b`, `-16b`, `-16c`) | Decided in `M2`, 2026-09-11; reported for approval | `RULEBOOK-V5.2` §9, §10; this plan's §8 traceability on the next pass |
 | `DEV-A7-006` | `ACL-SN-EMA-001` v2.0 §3.2: six level margins are a property that is fatal if absent, and `DEC-206`'s ordering | The property becomes false after `M5`, so the ACL cannot run on an A7 rulebook until it is re-based; `DEC-206` is reopened without prejudice, its stated reason having been a citation of ADR-072 | §6.10 | `DEC-A7-014` | `ACL-PROG-004`; `curriculum/scenario_acl/usefulness.py`; the ACL plan's `M0`/`M2` boundary |
 
 ---
@@ -1641,8 +1749,8 @@ budget values it needed.
 | Path | Action | Purpose |
 |---|---|---|
 | `docs/implementation/rulebook_a7_five_channel_hierarchy_exec_plan.md` | Added | This plan |
-| `docs/specifications/rulebook_v5.2_specification.md` | Planned addition | `DEC-A7-001`; the contract `M4`–`M7` implement against |
-| `docs/decisions/ADR-083-*.md` | Planned addition | The architecture and the discount |
+| `docs/specifications/rulebook_v5.2_UNDER_REVIEW_specification.md` | **Done, `M2`, 2026-09-11** | `DEC-A7-001`; the contract `M4`–`M7` implement against, `UNDER_REVIEW` and not authoritative until approved (`DEV-A7-007`) |
+| `docs/decisions/ADR-083-progress-last-and-the-discount-at-the-measured-horizon.md` | **Done, `M2`, 2026-09-11** | The architecture and the discount; status `Proposed` (`DEV-A7-008`) |
 | `scripts/measure_expert_rulebook_transition.py` | **Done, `M1`, 2026-09-10** | Four episode exposure accumulators, `a7_reward`/`a7_is_rank_preserving`, the A7 grid, the K2/K3 argmax and co-occurrence counters, and `production_scalarization_config()` (`C54` fix) |
 | `src/thesis_rl/reward/scalarization.py` | Planned modification | The A7 mode, arity **and progress index** as declared data, the weight set, the predicate, the schema id |
 | `src/thesis_rl/rulebook/v2/types.py` | Planned modification | Five channels, five-margin result |
@@ -1665,7 +1773,7 @@ budget values it needed.
 | `tests/test_rulebook_v51_levels.py`, `test_rulebook_v2_{monitor,wrapper,transition}.py`, `test_rulebook_v51_diagnostics.py`, `test_audit_block_b_reward_identity.py`, `test_analysis_optional_ci_and_r4_split.py`, `test_hydra_preset_run_configs.py`, `test_rulebook_provenance_identity.py` | Planned modification | The measured ripple (§4.4) |
 | `docs/implementation/reward_learnability_ab_screening_exec_plan.md` | Planned modification | `DEC-A7-008` |
 | `docs/implementation/rulebook_v5.1_six_level_hierarchy_exec_plan.md` | Planned modification | `DEC-A7-009` |
-| `docs/project_index.md` | Planned modification | A7's row, and the correction of `RB51`'s |
+| `docs/project_index.md` | **Partly done, `M2`, 2026-09-11** | `M2` added the `RULEBOOK-V5.2` row (`CANDIDATE`) and the `ADR-083` row (`PROPOSED`). Still `M8`'s: moving the v5.1 row to `SUPERSEDED` for §3/§4/§5/§9/§10 **on approval**, and rewriting A7's own ExecPlan Registry row, which still reads `AWAITING_DECISIONS` from 2026-09-09 |
 | `docs/open_items.md` | Partly done | `C54` added **`M1`, 2026-09-10** (the `production_scalarization` defect found while launching `M1`); `C49`, `V4`, `D15`, `C50`, `D14`, `V1` remain `M8`'s |
 | `docs/audits/a7_m1_measurement_2026-09-10/` | **Done, `M1`, 2026-09-10** | `M1`'s committed evidence: summaries and top-1 % tail rows |
 | `tests/test_measure_expert_rulebook_transition.py` | **Done, `M1`, 2026-09-10** | 10 new tests: `C54`'s regression, `a7_reward`/`a7_is_rank_preserving` term by term and against the transcription trap, the grid, the standstill baseline, the standstill baseline's report-level integration, exposure, merge order-independence, argmax and co-occurrence |
@@ -1688,6 +1796,11 @@ budget values it needed.
 | Focused `ruff check`/`ruff format --check`, `scripts/measure_expert_rulebook_transition.py tests/test_measure_expert_rulebook_transition.py` | `PASS` | 2026-09-10 | Both clean after one `ruff format` pass on the two files (whitespace only; no logic changed, confirmed by rerunning the focused test suite unchanged after formatting) |
 | The `M1` panel run: `python scripts/measure_expert_rulebook_transition.py --data-root /workspace/data/scenarionet --frozen-index /workspace/thesis-metadrive/data/scenarionet/frozen/scenario_selection_index.json --split train --source waymo --workers 24 --output /workspace/outputs/a7_m1_measurement_waymo_train_full.json` | `PASS` | 2026-09-10 | **1100/1100 records measured, 0 skipped, 217,189 transitions** — the identical scope `RULEBOOK-V5.1` §5.5 and the 2026-09-01 comfort run were measured on. Run in a named tmux session (`a7-m1-run-v2`) teeing to `outputs/a7_m1/a7-m1-run-v2.log`. The six outputs are reconciled into §6.2, §6.4, §6.8, §6.9 and §11 above; full evidence at `docs/audits/a7_m1_measurement_2026-09-10/` |
 | `make gate` | `PASS` | 2026-09-10 | Before merging this milestone's branch. `gate: PASS (1 not applicable: whitespace/range) \| FULL \| 48c25ca (worktree-a7-m1-measurement, tree dirty (5 files)) \| 20260909T234058Z` — **1937 passed, 5 skipped** in 4m04s, exactly the 2026-09-10 ratification gate's 1927 plus this milestone's 10 new instrument tests. `whitespace/range` is `NOT APPLICABLE` here because `HEAD` is not ahead of `origin/main` on this uncommitted run, unrelated to the pytest count. The log dies with this worktree; `M9` relaunches it from `main` after the merge |
+
+| Independent re-derivation for `M2`: the §5.4 predicate from its own derivation, the margins in four configurations including the transcription trap, the `w₅` cap and crossovers, the factor 4, `λ₄ ≤ a/2`, the per-step costs, the discount table, the required `γ`, `λ₄ ∈ {1.9, 1.25}`'s admissibility and `DEV-A7-004`'s standing-still crossover (standalone script, no repository import) | `PASS` with **one disagreement** | 2026-09-11 | Every figure reproduces: A7 `φ=0` **1.1514 / 1.1478 / 1.1390**; `φ=0.25` **1.1105 / 1.0975 / 1.1390**; A0 **1.1165 / 1.1121 / 1.1792**; the trap **1.0911 / 1.0513 / 1.0225**; cap **0.384615**; crossovers **0.313983** and **1.538462**; ratio **exactly 4.0**; `a/2 = 1.25`; `K4` full **0.195**, `K2` full **8.125**/**8.375**; break-even **228.6** and **508.6**, `γ^500` **0.1348** and **0.4062**, horizons **250** and **555.6**, required `γ` **0.998169**; `λ₄=1.9` **1.1600 / 1.1693 / 1.1933** and `λ₄=1.25` **1.2188 / 1.3312 / 1.7301**; `N*` **416** at `Q ≈ 90 m`, **848** at `Q ≈ 184 m`, **37** at v5.0's price. **The disagreement**: §6.1's "1.83 m/s" does not reproduce — the same criterion gives **2.17 m/s** (§11, 2026-09-11). Term placement confirmed against `reward/scalarization.py:147-196, 393-425` |
+| `M1`'s published values read back from the committed evidence rather than from §6 (`docs/audits/a7_m1_measurement_2026-09-10/a7_m1_summary.json`) | `PASS` | 2026-09-11 | `τ₁`–`τ₄` on all three objects, `p95`/`p99`, the max-setting record uids, the six-member grid's `fraction_below_standstill` and mean returns, and the `K2`/`K3` co-occurrence all agree with §6.4/§6.8/§6.9 to the published precision. `scenarios_measured: 1100`, `measured_steps: 217189`, `scenarios_skipped: {}`, `declared_panel_defect_exclusions: []` on every channel — so the "0 exclusions declared" claim is read off the artifact, not restated |
+| `git diff --check` | `PASS` | 2026-09-11 | `M2`'s three documents plus this plan; no whitespace error |
+| `make gate` / `make check` for `M2` | `NOT APPLICABLE` | 2026-09-11 | `M2` touches no Python, no configuration and no test: three Markdown documents and this plan. There is nothing in the diff for Ruff or pytest to inspect, and recording a green suite here would be recording that `M1`'s tree is still green, which `M1` already established. `M3` is the next milestone with a test surface, and `M9` re-runs the gate from `main` after the merge |
 
 **Nothing above is recorded as passing that was not executed.** The remaining
 risk of the one row that did run is that it re-derives the predicate rather than
