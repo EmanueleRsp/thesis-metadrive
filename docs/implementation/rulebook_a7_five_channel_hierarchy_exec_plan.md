@@ -1799,9 +1799,58 @@ carrying it; `AC-A7-15` has no test anywhere; and `REQ-A7-10`'s "13–247 m" spa
 figure does not reproduce against the frozen index (Waymo `train` measures
 10.0–578.4 m).
 
-**Next step:** the user's decision on question 1 of `RULEBOOK-V5.2` §14.1, then
-approval of `RULEBOOK-V5.2` and `ADR-083`. `M3` is blocked on that approval, and
-so is every milestone after it.
+**2026-09-11 — question 1 priced, and a recommendation.** Nine further agent
+sessions investigated the blast radius, how negative `Δq` can actually go, the
+solution space, and whether an expert-measured bound is admissible evidence for a
+contract that must hold for a learned policy. Every load-bearing figure below was
+re-verified by hand.
+
+**The defect is real and its practical reach is narrow.** The binding break-even
+is at `K3`: the compliant trajectory must lose **0.3389 m of station in one
+0.1 s step** (3.39 m/s of backward projection) before the ordering inverts;
+`K2` needs 0.89 m and `K1` needs 2.28 m, i.e. **the collision channel is not
+purchasable even at the clip** (break-even `−1.0275` against a clip of `−1`).
+The logged expert never comes close — `behind_peak.max_m = 0.053 m` over 217,189
+steps, committed at `docs/audits/reward_calibration_2026-09-07/`, a factor 6.4
+— and no policy can *choose* to lose that station, because two actions available
+in one state differ by 0.025–0.045 of `Δq` in a 0.1 s step. **But the predicate
+claims far more than that**, and the counterexample needs no knife-edge: `K3`
+violated at **full** severity with `Δq = +1` scores −1.2500 against −2.0000 for a
+clean trajectory with `Δq = −1`.
+
+**The halving was deliberate and is recorded in code, though never justified.**
+`scripts/measure_expert_rulebook_transition.py` carries both forms ninety lines
+apart: `is_rank_preserving` (`:816`) is two-sided with the symmetric derivation
+and both anchors in its docstring, and `v51_is_rank_preserving` (`:903`) is
+one-sided with a docstring saying "v5.0's progress channel swung over `[-1, 1]`
+and contributed `2 * lambda`, while here the tail is … roughly twenty times
+smaller, which is exactly why eta comes out unconstrained". That records a
+consequence, not a justification.
+
+**Recommendation, priced in `RULEBOOK-V5.2` §14.3**: generalise the swing to
+`λ₄·(ΔQ_MAX − ΔQ_MIN)`, declare `ΔQ_MIN = −1` because one clip expression
+produces both bounds, and restate §5.4 as a **conditional guarantee plus a
+runtime falsifier** rather than as an unconditional theorem — the condition being
+`Δq ≥ −0.1525` on the compliant trajectory, with a per-episode counter on the
+diagnostic path that already exists. No weight moves, no measured figure decays,
+no run is needed, and the reading of that counter is pre-registered in §14.3 with
+its fallback (`λ₄ ≤ 1.1525`, measured at 6.45 % below-standstill and a mean of
+41.12 at the nearest measured point).
+
+**Two corrections to this plan's own record of the finding**, both verified: the
+one-sided form's anchor is `a > 1.8393` (binding at `k = 1`; `a > 1` is the
+`k = 3` slice alone), and under the two-sided form at `σ = φ = 0` all three
+levels bind at exactly 2.0. **Three further consequences for other documents**,
+recorded rather than acted on: ADR-081's five-row decision table (`:245-251`) is
+computed against the one-sided predicate and no row survives the generalised
+form; `docs/open_items.md` `C50`'s alternative remedy (removing the negative
+clip) would make the predicate unsatisfiable rather than merely unchanged; and
+`tests/test_scal_v14.py:179-201`, the test that should have caught this, pins
+`Δq = 0` on the compliant side — it assumes exactly what is in question.
+
+**Next step:** the user's decision on question 1 of `RULEBOOK-V5.2` §14.1 — the
+recommendation is §14.3's first row — then approval of `RULEBOOK-V5.2` and
+`ADR-083`. `M3` is blocked on that approval, and so is every milestone after it.
 
 ---
 

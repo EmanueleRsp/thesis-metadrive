@@ -806,10 +806,28 @@ consume §3.4's vector directly and never evaluate this expression.
 > The two-sided form reproduces **both** published anchors v5.0 checks it
 > against — `a > 2` at `σ = φ = 0, λ = 1`, which is Veer et al.'s own condition,
 > and `a ≥ 2.92` at `σ = 1, λ = 1` (reproduced: 2.9196) — and the one-sided form
-> reproduces **neither** (it gives `a > 1` and `a ≥ 2.83`). At the weights of
-> §5.5 a two-state counterexample refutes the "iff" as written: `K3` violated as
-> `m₃ → 0⁻` with `Δq = +1` scores **−0.5000**, while nothing violated with
-> `Δq = −1` scores **−2.0000**, so the scalarization prefers the violation.
+> reproduces **neither** (reproduced: **1.8393**, the tribonacci constant, and
+> 2.8312; the binding level is `k = 1` in both, and the `a > 1` that an earlier
+> revision of this note quoted is the `k = 3` slice alone). Under the two-sided
+> form at `σ = φ = 0` all three levels bind at exactly 2.0, which is the
+> coincidence a correct condition produces and the one-sided form does not.
+> At the weights of §5.5 a two-state counterexample refutes the "iff" as written,
+> and it does **not** need a knife-edge violation: `K3` violated at **full**
+> severity with `Δq = +1` scores **−1.2500**, while nothing violated at all with
+> `Δq = −1` scores **−2.0000**, so the scalarization prefers a completely
+> violated non-negotiable channel, by 0.75 reward units.
+>
+> **The halving is recorded in the instrument's own code as deliberate, and its
+> consequence with it.** `scripts/measure_expert_rulebook_transition.py` carries
+> *both* forms ninety lines apart: `is_rank_preserving` (`:816`) is two-sided
+> (`+ 2.0 * progress_weight`) and its docstring states the symmetric derivation
+> and both anchors, while `v51_is_rank_preserving` (`:903`) is one-sided and its
+> docstring says "v5.0's progress channel swung over `[-1, 1]` and contributed
+> `2 * lambda`, while here the tail is … roughly twenty times smaller, **which is
+> exactly why eta comes out unconstrained**". So the change was seen and its
+> effect was written down — but what is written is a *consequence*, not a
+> justification, and "only the tail differs" conceals that what differs is how
+> many times the progress channel enters.
 > Under the two-sided form `λ₄ = 2.0` is **inadmissible** at `k = 2` and `k = 3`
 > (and the six-level weight set in production today fails at `k = 1` as well),
 > and the corollary `λ₄ ≤ a/2 = 1.25` that §5.5 attributes to a different
@@ -1478,7 +1496,7 @@ does not. Question 1 blocks approval of §5.4 and §5.5.
 
 | # | question | status, and what each answer changes |
 |---|---|---|
-| **1** | **Does the §5.4 predicate count the progress swing once (`λ₄·ΔQ_MAX`, as written here, as `RULEBOOK-V5.1` §5.4 states it, and as `reward/scalarization.py` enforces) or twice (`2λ₄·ΔQ_MAX`, as `rulebook_v5.0` §6.3 derives it)?** | **BLOCKING.** The two-sided form reproduces both published anchors v5.0 checks itself against — `a > 2` (Veer et al.) and `a ≥ 2.92` at `σ = 1` — and the one-sided form reproduces neither (`a > 1`, `a ≥ 2.83`); a two-state counterexample refutes the "iff" as written at the selected weights. **Two-sided** ⇒ `λ₄ = 2.0` is inadmissible at `a = 2.5` (needs `λ₄ < 1.1525`), the six-level weight set in production today is inadmissible too, and `(a, λ₄)` must be recalibrated — `λ₄ = 1.25` is already measured at +1.81 pp of below-standstill and an expert mean of 41.12, and ADR-081 already measured and rejected `a = 3.0`. **One-sided** ⇒ the assumption that makes it valid (`ΔQ_MIN = 0` for the compared pair, i.e. the compliant trajectory never loses station) must be declared in §5.4 as a named quantity, beside §11.5's measurement of the case where it is false. **Third answer**: swing `= λ₄·(ΔQ_MAX − ΔQ_MIN)` with `ΔQ_MIN` **measured** on the panel — the instrument already computes per-step `Δq`, so it is one accumulator, and it is the only answer that is neither an undeclared assumption nor a recalibration on no evidence |
+| **1** | **Does the §5.4 predicate count the progress swing once (`λ₄·ΔQ_MAX`, as written here, as `RULEBOOK-V5.1` §5.4 states it, and as `reward/scalarization.py` enforces) or twice (`2λ₄·ΔQ_MAX`, as `rulebook_v5.0` §6.3 derives it)?** | **BLOCKING**, and see §5.4's note for the evidence. The recommended answer is the **generalised swing** `λ₄·(ΔQ_MAX − ΔQ_MIN)` with `ΔQ_MIN` a **declared symbol of the contract**, valued at **−1** because that is what §4.1's clip permits — one clip expression produces both bounds, so reading `+1` as normative and the negative side as an empirical convenience is not available. At that value the shipped weights satisfy only `k = 1` (ratios 1.0035 / 0.8395 / 0.5959; today's six-level set fails all three at 0.9769 / 0.8202 / 0.6068), so **§5.4 stops being an unconditional theorem and becomes a declared, falsifiable guarantee**: it holds while the compliant trajectory's `Δq ≥ −0.1525`, i.e. while it loses no more than **0.34 m of station in one 0.1 s step**. That condition is physical, it is 6.4× outside what the logged expert ever does (`behind_peak.max_m = 0.053 m` over 217,189 steps, committed in `docs/audits/reward_calibration_2026-09-07/`), and it is **checkable at runtime** rather than assumed — a per-episode counter of steps with `Δq ≤ −0.1525`, on the diagnostic path that already exists. The alternatives and their prices are in §14.3 |
 | 2 | What model converts 5.0 s of arrival delay into reward units — i.e. where do `w₅ < 0.4477` and `w₅ < 0.2641` come from (§5.5)? | Not reproducible from §4 or §5; six candidate models were tried and none produces the pair, and the required `γ`-dependence lies outside the natural families. `0.2641` is the bound that constrains `w₅` at the adopted discount and is the denominator of the 72.1 % window, so this is not decorative. If it cannot be restated, it joins §14.2's not-reproduced list and the window figures are withdrawn or re-derived |
 | 3 | Which two quantities give the discount's **90.5 % / 79.7 %** share of the time preference (§4.3)? | Not reproducible; the only live version of that comparison (v5.1 §4.6, +2.05 against 0.8) gives **71.9 %** at `γ = 0.996`, and no function with a fixed denominator spans 90.5 → 79.7 across the two discounts. §4.3 now carries three reproducible grounds plus this one flagged, and the deletion of `L6` does not rest on it |
 | 4 | Is the marking placed on the shortcut's **first** 30 steps in the §5.5 reference pair? | Answered affirmatively here, on evidence: it is the only placement at which v5.1 §4.4's whole published table reproduces (§14.2). Recorded because the `γ = 0.996` margin goes **+0.5813 → −0.0141** once the placement starts past step 33, so the "stands whether or not the discount decision is taken" claim is placement-dependent at that discount and unconditional at `γ = 0.9982`. If the placement is meant to be free, the binding lower bound becomes `w₅ > 0.2212`, which `w₅ = 0.15` does not satisfy |
@@ -1513,7 +1531,41 @@ reproduced are named, not omitted.
 | O3's scalar margins at both discounts, and the marking-placement sensitivity | **+0.5813** at `γ = 0.996` and **+2.4579** at `γ = 0.9982`, marking on the shortcut's first 30 steps; +0.0023 at offset 33 and **−0.0141** at offset 34 for `γ = 0.996`, +1.4509 at offset 130 for `γ = 0.9982` | agrees with §1.1's +0.581 / +2.458. **An earlier revision of this row recorded them as "not reproduced"; they do reproduce.** The reconstruction is validated against a figure it was not built from: under the v5.1 form it reproduces **all six entries** of v5.1 §4.4's published margin table (+0.2000 / −1.1396 / −2.9784 / −3.5789 / −4.0198 / −4.7416) to four decimals, and only with the marking on the first 30 steps |
 | `w₅`'s lower bounds from the reference pair | **0.131342** at `γ = 0.996` and **0.073555** at `γ = 0.9982` | agrees with §5.5's 0.1313 / 0.0736. **Also previously recorded as "not reproduced", also wrong**: the pair is fully specified by v5.1 §4.6 plus the first-30-steps placement, so the bound is a bisection on the same reconstruction. At a free placement the binding bound would instead be `w₅ > 0.2212` (§14.1, question 4). The **upper** bounds 0.4477 / 0.2641 remain unreproduced — §14.1, question 2 |
 
-### 14.3 Two identifiers this document adds
+### 14.3 The predicate: options priced, and the reading pre-registered
+
+Every option below was worked out against the code and the committed artifacts,
+and the prices are measured wherever a measurement exists.
+
+| option | keeps the shipped weights? | price |
+|---|---|---|
+| **Generalised swing with `ΔQ_MIN = −1` declared, §5.4 restated as a conditional guarantee plus a runtime falsifier** — *recommended* | **yes** | The specification loses a theorem and gains a declared assumption with a physical reading (0.34 m of station per step) plus a per-episode counter. No weight moves, no measured figure decays, no run is needed. Editorial cost: §5.4, §5.5, §11.3, ADR-081 and ADR-083 where they quote the `w₅` cap and the "exactly 4" ratio, since both become functions of `ΔQ_MIN` |
+| Generalised swing with `ΔQ_MIN` taken from the expert panel (−0.0239) | yes, with the thinnest ratio at 1.1147 — better than today's 1.1121 | **Rejected**: it reads one side of one clip expression as construction and the other as measurement, inside the same inequality. The same artifact that yields 0.053 m backwards also records the *positive* side of that clip binding on 1298 of 217,189 steps at up to 3.609 m — so the projection demonstrably outruns the vehicle, and 0.053 m is a property of a human who took every fold the right way round, not of the mechanism |
+| Adopt the two-sided form and recalibrate now | **no** — needs `λ₄ < 1.1525` at `a = 2.5` | Buys the unconditional theorem for roughly half the expert return: `λ₄ = 1.25` is measured at 6.45 % below-standstill and a mean of 41.12 against 71.34, and `λ₄ ≈ 1.15` extrapolates to ≈6.8 % against the 7.45 % ceiling. Available at any time as the fallback; not something to pay before knowing it is needed |
+| Raise `a` and keep `λ₄ = 2.0` | no | Needs `a ≥ 4.195`, a 68 % move in the quantity ADR-081 calibrated, which already measured and rejected `a = 3.0` |
+| Asymmetric clip `Δq ∈ [−δ, +1]` | yes | Makes `ΔQ_MIN` true by construction and opens a worse exploit: it breaks ADR-073's forward/backward compensation, so an oscillating policy banks `+1` forward and pays only `−δ` back, and it deepens the §11.5 loop |
+| Restrict the predicate to equal-progress pairs (`λ₄` drops out) | yes, with comfortable ratios | Declares out of scope exactly the trade — safety against advance — that the reward exists to price |
+| Quantify over two actions available in one state | yes | The right intuition about *reachability* (two actions differ by 0.025–0.045 of `Δq` in one 0.1 s step, so no policy can *choose* to lose 0.34 m) but the wrong predicate: restricting to one state also shrinks the cost side, so the derivation's supremum is no longer attained and no closed form results. It belongs in the *argument* for the assumption, not in the condition |
+
+**The reading, pre-registered before the number exists.** The runtime counter
+reports, per episode, the number of steps with `Δq ≤ −0.1525` and the fraction of
+episodes carrying at least one. On the first evaluation panel run under A7:
+
+- **zero steps** → the declared condition is corroborated on a trained policy;
+  §5.4 keeps the conditional form, `λ₄ = 2.0` stands, and the counter becomes a
+  permanent regression;
+- **non-zero but under 0.01 % of steps and confined to under 1 % of episodes** →
+  tail geometry rather than behaviour: record it as a limitation naming the
+  records, keep `λ₄`, and §11.5 becomes the primary defect ahead of §5.4;
+- **at or above 0.01 % of steps, or present on over 1 % of episodes** → the
+  assumption is false in practice, and the fallback is recalibration to
+  `λ₄ ≤ 1.1525`, whose price is the third row above.
+
+The 0.01 % threshold is chosen before the number and has a referent: the
+*positive* side of the same clip binds on **0.60 %** of expert steps, so a
+backward rate sixty times rarer is distinguishable from it rather than
+confusable with it.
+
+### 14.4 Two identifiers this document adds
 
 `AC-A7-16` and the fixture decomposition `TEST-A7-15a`…`-15g` are introduced
 here. The `A7` ExecPlan §9.2 assigns `TEST-A7-22` to a requirement that does not
