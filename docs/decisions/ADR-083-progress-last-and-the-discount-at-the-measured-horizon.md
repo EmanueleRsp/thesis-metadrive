@@ -245,8 +245,9 @@ the contraction argument can have without the hierarchy argument failing.**
 
 **The cost, in one sentence:** the effective horizon doubles and 40.6 % rather
 than 13.5 % of a spuriously bootstrapped constant survives to the end of the
-longest episode, weakening ADR-081's own contraction argument by a factor of
-about 2.2 — and it costs nothing in calibration, weights or measurement, because
+longest episode, weakening ADR-081's own contraction argument — by **2.2×** in
+effective horizon and by **3.01×** in `γ^L` at `L = 500`, which is the currency
+ADR-081 argues in (1.55× at the `L = 199` it used) — and it costs nothing in calibration, weights or measurement, because
 the rank-preservation condition is per-step and `γ`-free and the panel
 measurement is an undiscounted sum.
 

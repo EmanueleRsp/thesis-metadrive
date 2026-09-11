@@ -114,7 +114,7 @@ than as a planner.
 `(a, σ, λ₄, w₅)`, one per-step normalization (`Δt/T_REF`) disappears, and the
 number of channels a thresholded arm would have to constrain jointly falls from
 five to four — including the one channel a threshold provably cannot be placed on
-(§4.3).
+(§4.2).
 
 ### 1.1 What this buys, stated as falsifiable orderings
 
@@ -131,12 +131,18 @@ the acceptance criteria of §9 and the fixtures of §10.
 | O5 | waiting at a red ≻ running it to finish | `K3` |
 | O6 | necessary relaxation ≻ gratuitous relaxation | `K4`; the gratuitous violation buys no progress, so it loses at that channel rather than one channel lower |
 
-**What changes relative to `RULEBOOK-V5.1`, and it is exactly two rows.**
+**What changes relative to `RULEBOOK-V5.1`, and it is three rows.**
 
 | | under v5.1 | under A7 |
 |---|---|---|
-| O3, scalar arm | **fails** at the shipped `γ = 0.996` (−3.5789), passes undiscounted (+0.2000) | **passes at both discounts** — +0.581 at `γ = 0.996`, +2.458 at `γ = 0.9982` |
+| O3, scalar arm | **fails** at the shipped `γ = 0.996` (−3.5789), passes undiscounted (+0.2000) | **passes at both discounts** — +0.5813 at `γ = 0.996`, +2.4579 at `γ = 0.9982` (§14.2) |
+| O3, strict lexicographic | **fails** at the shipped `γ`: decided at `L4`, where the shortcut arrives sooner | **passes**: decided at `K4`, above progress |
 | O2, strict lexicographic | passes | **fails** at `K4` (§11.2) |
+
+**O3 under the thresholded comparison is a fourth case and it does *not* change
+in A7's favour at the measured budgets** — the pair ties on every cost channel
+and falls through to progress (§4.5). The gain is on the scalar and strict
+lexicographic arms.
 
 The O3 row is what this restructure is for: it stops being a property of an exact
 undiscounted tie — which §11.9 records as unobtainable for *any* bounded per-step
@@ -315,7 +321,10 @@ are v5.1's, restated because they still apply; the third is new.
    placement most likely to be wrong. **Recorded as a decision, not as a fact.**
 2. **`speed_limit` is non-negotiable (`K3`).** Inapplicable throughout the PG
    panel by ADR-068's provenance gate, so on that half of the training mixture
-   `K3` carries five sub-rules rather than six.
+   `K3` carries fewer sub-rules there. Measured 2026-09-01: **five of the six
+   never apply on any PG record**, so on that half of the mixture `K3` is
+   `offroad` alone (§8, §11.12) — the provenance gate is the reason
+   `speed_limit` is one of them, not the whole story.
 3. **The three negotiable lane rules sit above progress, which reverses ADR-072
    for those sub-rules — and the reversal is not a return to v5.0.** v5.0's
    pathology was the **price**, not the placement: v5.0 charged a relaxable
@@ -471,8 +480,13 @@ at all.
 `RULEBOOK-V5.1` placed a sixth level `L6 progress_rate` below the negotiable lane
 rules to carry a time preference that an undiscounted return removed. That level
 is **deleted**, together with its `advance_shortfall` sub-rule, its weight `λ₆`
-and the `Δt/T_REF` scaling. Four measured statements, none of which is a citation
-of the document being replaced:
+and the `Δt/T_REF` scaling. Four statements, none of which is a citation of the
+document being replaced — **three of them measured and reproducible, the first
+one not**: the 90.5 % / 79.7 % split below does not reproduce from §4's
+definitions, and the only live version of that comparison (v5.1 §4.6, +2.05 of
+discounted progress advantage against 0.8 of `L6` gain) gives **71.9 %** at
+`γ = 0.996`. See §14.1, question 3. The deletion does not rest on it: the other
+three grounds are independent of each other and of the discount.
 
 - **Its justification expired.** It rested on `γ = 1`, which was removed
   eighteen days later. At `γ < 1` the discount supplies **90.5 %** of the time
@@ -545,8 +559,13 @@ and `0.9982` is the first four-decimal value satisfying it.
 
 The cost, stated plainly: the effective horizon doubles and **40.6 % rather than
 13.5 %** of a spuriously bootstrapped constant survives to the end of the longest
-episode, which weakens ADR-081's contraction argument by that same factor of
-about 2.2. It costs nothing in calibration, weights or measurement, because the
+episode, which weakens ADR-081's contraction argument. **The factor depends on
+the currency and both are stated here, because quoting one of them alone
+understates or overstates the cost**: in effective horizon `1/(1−γ)` the
+weakening is **2.2×** (250 → 556 steps), while in `γ^L` — the currency ADR-081
+itself argues in — it is **3.01×** at `L = 500` (0.1348 → 0.4062) and 1.55× at
+the `L = 199` ADR-081 actually used. It costs nothing in calibration, weights or
+measurement, because the
 weight calibration is an undiscounted per-step condition (§5.4) and the panel
 measurement is an undiscounted sum.
 
@@ -677,6 +696,24 @@ recorded here because it changed the conclusions of a bench in which it occurred
 It follows that **`τ₁ = 0` means zero tolerance, i.e. strict lexicographic
 comparison on that channel** — `max(c, 0) = c` — and not that all values collapse.
 
+**One consequence of the budget rule has to be stated here rather than left for a
+reader to discover, because it touches this document's headline claim.** At the
+measured budgets the thresholded comparison does **not** reproduce A7's gain on
+O3. The reference pair of §5.5 accrues `Σ c_K4 = 30 × 1/3 = 10.0` units of
+negotiable exposure against `τ₄ = 23.386514`, so `max(10.0, τ₄) = max(0, τ₄)`:
+the shortcut and the legal route **tie on every cost channel**, the comparison
+falls through to `K5`, and the shortcut wins there by arriving sooner. The
+shortcut would need **70 of its 160 steps** on a marking — 35 % of the episode —
+to leave the budget at all. This is not a defect of the rule; it is the rule's own
+declared cost ("for a policy at or below human exposure the thresholded arm does
+not constrain that channel at all, and its differentiation from the scalar
+control on that channel comes from the *ordering* alone") applied to this
+particular pair. But it means the O3 gain of §1.1 is a property of the **scalar**
+arm and of the **strict lexicographic** arm, and *not* of the thresholded arm at
+these budgets — and §11.1 leans on the thresholded comparison where it helps
+(O1), so the asymmetry must be declared rather than left implicit. Recorded as
+§11.15.
+
 **There is no `τ₅`** (§4.2): not "unspecified", but inadmissible, and the last
 channel is unthresholded by the requirement of the thresholding family this arm
 belongs to. Under **slacking** rather than thresholding the loop runs to the last
@@ -708,7 +745,7 @@ number.**
    level*: it gains a satisfaction indicator and the severity slope, and loses
    the `Δt/T_REF` factor. A satisfied `K4` contributes **exactly 0**; a fully
    violated one costs `w₅·(1+σ)`.
-2. The `L6` term is **deleted** with its level (§4.3).
+2. The `L6` term is **deleted** with its level (§4.2).
 3. The shared absolute tie-breaker `φ` is **removed**, i.e. `φ = 0`, and the term
    `φ·Σ_k m_k` disappears (§5.5).
 
@@ -759,6 +796,33 @@ consume §3.4's vector directly and never evaluate this expression.
 
 ### 5.4 Rank-preservation condition
 
+> **OPEN AND BLOCKING — the progress term is counted once, and v5.0 counted it
+> twice.** The inequality below carries `λ₄·ΔQ_MAX` on the violated side only.
+> `rulebook_v5.0_UNDER_REVIEW_specification.md` §6.3 states the same predicate
+> with `2λ`, derives it symmetrically ("a violation at level `k` scores at best
+> `−w_k + λ`; the same level satisfied scores at worst … `− λ`"), and names the
+> reason: "that is where the asymmetry between the three cost channels (bounded
+> in `[−1, 0]`) and the progress channel (bounded in `[−1, 1]`) is resolved".
+> The two-sided form reproduces **both** published anchors v5.0 checks it
+> against — `a > 2` at `σ = φ = 0, λ = 1`, which is Veer et al.'s own condition,
+> and `a ≥ 2.92` at `σ = 1, λ = 1` (reproduced: 2.9196) — and the one-sided form
+> reproduces **neither** (it gives `a > 1` and `a ≥ 2.83`). At the weights of
+> §5.5 a two-state counterexample refutes the "iff" as written: `K3` violated as
+> `m₃ → 0⁻` with `Δq = +1` scores **−0.5000**, while nothing violated with
+> `Δq = −1` scores **−2.0000**, so the scalarization prefers the violation.
+> Under the two-sided form `λ₄ = 2.0` is **inadmissible** at `k = 2` and `k = 3`
+> (and the six-level weight set in production today fails at `k = 1` as well),
+> and the corollary `λ₄ ≤ a/2 = 1.25` that §5.5 attributes to a different
+> desideratum is *exactly* the two-sided bound at `w₅ = 0` — the same number
+> arriving twice by two routes. **This is not a defect introduced by A7**: the
+> one-sided form is `RULEBOOK-V5.1` §5.4's, it is what
+> `reward/scalarization.py` enforces today, and ADR-081 calibrated `a` and `σ`
+> against it. But A7 is the change that rewrites the predicate, and `AC-A7-08`
+> makes it a constructor gate, so freezing it a third time is a decision rather
+> than an inheritance. **Question 1 of §14.1. The inequality is left exactly as
+> production enforces it until that question is answered** — this document does
+> not silently change a weight bound.
+
 Level `k ∈ {1, 2, 3}` dominates everything below it iff
 
 ```
@@ -771,6 +835,22 @@ attainable score is `−a^(4−k) + λ₄·ΔQ_MAX`, approached as `m_k → 0⁻
 `k` satisfied and every channel below it maximally violated, the worst attainable
 score is `−(1+σ)·Σ_{j>k, j≤3} a^(4−j) − w₅·(1+σ) − φ·(3−k)`. Requiring the second
 to exceed the first gives the condition.
+
+**The asymmetry in that derivation is the open question above, stated plainly so
+it cannot be read past.** "Every channel below it maximally violated" is applied
+to the four cost channels but not to `K5`, which is pinned at `Δq = 0` on the
+satisfied side while the violated side takes `Δq = +ΔQ_MAX`. `K5` is a channel of
+this hierarchy by §3, it is bounded in `[−1, +1]` by §4.1, and its minimum is
+therefore `−ΔQ_MAX` and not 0 — which is what makes the swing `2λ₄·ΔQ_MAX`. The
+one defensible reading of the one-sided form is that the comparison is restricted
+to trajectory pairs in which the compliant one does not *lose* station, i.e. that
+the effective `ΔQ_MIN` is 0 rather than `−1`. That restriction is an assumption
+about the route projection, it is **not stated anywhere**, and §11.5 measures the
+case where it is false: a closed loop over a hairpin banks `+72` reward units at
+zero net displacement, which is negative `Δq` being clipped and re-earned. Either
+the assumption belongs in this section with `ΔQ_MIN` named as a separate declared
+quantity, or the predicate takes the two-sided form and `(a, λ₄)` are
+recalibrated. §14.1, question 1.
 
 **Three placements in that expression are load-bearing, and getting any of them
 wrong produces a plausible-looking wrong predicate.**
@@ -819,9 +899,13 @@ w₅  <  (a − λ₄·ΔQ_MAX) / (1 + σ)  =  0.384615
 ```
 
 and the cap on `λ₄` follows from requiring the cap itself to leave room for a
-`w₅` that opposes an off-corridor drive at clip pace: `2·λ₄·ΔQ_MAX ≤ a`, i.e.
-`λ₄ ≤ a/2 = 1.25`, in which `σ` cancels. The shipped `λ₄ = 2.0` is 1.6× that,
-which is a declared limitation rather than an oversight (§11.3).
+`w₅` that opposes an off-corridor drive at clip pace: `a > 2·λ₄·ΔQ_MAX`, i.e.
+`λ₄ < a/2 = 1.25`, in which `σ` cancels. Both conditions it combines are strict,
+so the combined form is strict too — at `a = 2·λ₄` the admissible window is
+empty, not knife-edge. The shipped `λ₄ = 2.0` is 1.6× that, which is a declared
+limitation rather than an oversight (§11.3) — **and note that this same
+inequality is the two-sided rank-preservation bound at `w₅ = 0`**, which is the
+coincidence the open question of §14.1 turns on.
 
 ### 5.5 Selected weights
 
@@ -839,33 +923,63 @@ in the same physical currency and neither may be a dimensionless preference.
   bound is only comparable across the two architectures if the construction is
   identical: the *cheapest* illegal shortcut saving the *most* time, which over a
   200-step episode saves **40 steps** while riding **one** marking for **30
-  steps** at `c_K4 = 1/3`. Measuring the scalar margin of that pair gives
+  steps** at `c_K4 = 1/3`. **The 30 marking steps are the shortcut's first 30**,
+  and that clause is normative rather than cosmetic: the placement is what the
+  executed v5.1 fixture uses, it is the only placement at which v5.1 §4.4's
+  published margin table reproduces, and the margin is sensitive to it at the
+  superseded discount (below). Measuring the scalar margin of that pair gives
   `w₅ > 0.1313` at `γ = 0.996` and `w₅ > 0.0736` at `γ = 0.9982` — the bound
   loosens at the higher discount because arriving sooner is worth less there.
-  These two figures are **measured**, carried from the `A7` ExecPlan §6.1, and
-  are *not* re-derived in §14: reproducing them needs the full pair geometry,
-  and `TEST-A7-15` is what re-establishes them as executed evidence.
+  **Both figures are reproduced in §14.2** (0.131342 and 0.073555), by a
+  reconstruction validated against all six entries of v5.1 §4.4's published
+  table, so they are checkable rather than carried; `TEST-A7-15c` is what turns
+  them into executed evidence under this document.
 - **Upper bound — crossing a marking must stay cheaper than the manoeuvre it
   replaces.** Stopping from an urban `v = 10 m/s` and returning to it at a
   comfortable `a_c = 2 m/s²` costs `v/a_c = 5.0 s` of delay, and one second of
   marking contact must cost less than that: `w₅ < 0.4477` at `γ = 0.996` and
-  `w₅ < 0.2641` at `γ = 0.9982`.
+  `w₅ < 0.2641` at `γ = 0.9982`. **These two figures do not reproduce from §4's
+  and §5's definitions**, and the model that converts 5.0 s of arrival delay into
+  reward units is stated in no live document — see §14.1, open question 2. They
+  are carried here because the selected `w₅` sits inside them either way, but
+  `0.2641` is the bound that actually constrains `w₅` at the adopted discount and
+  it is the denominator of the 72.1 % window below, so this is not a decorative
+  gap.
 - **Independent cap** from §5.4: `w₅ < 0.384615`.
 
 **The binding bound is the lower one at the superseded discount**, deliberately,
 so that this architecture stands whether or not the discount decision of §4.4 is
 taken: `w₅ > 0.1313`, rounded up to **0.15** for margin, because the reference
-shortcut is a stipulated construction rather than a measurement. Both windows
-contain 0.15 with room — **65.9 %** of its own effective upper bound at
-`γ = 0.996` and **72.1 %** at `γ = 0.9982`, against the **0.193 %** of the
-admissible `η` range within which `SCAL-V1.4` could buy O3 back at all.
+shortcut is a stipulated construction rather than a measurement. **That
+robustness is qualified at `γ = 0.996` and unqualified at `γ = 0.9982`**: the O3
+margin at the superseded discount falls from **+0.5813** with the marking on the
+shortcut's first 30 steps to **−0.0141** once it starts at step 34, so at that
+discount the ordering survives only for placements inside the first ~33 steps,
+while at the adopted `γ = 0.9982` every placement holds (**+2.4579** to
+**+1.4509**). Reproduced in §14.2. Both windows contain 0.15 with room —
+**65.9 %** of its own effective upper bound at `γ = 0.996` and **72.1 %** at
+`γ = 0.9982` (a ratio that mixes two different effective upper bounds; see
+§14.1), against the **0.193 %** of the admissible `η` range within which
+`SCAL-V1.4` could buy O3 back at all.
 
-**What the value means, in units.** A fully violated `K4` step costs
-`w₅·(1+σ) = 0.195`, and the progress that exactly pays for it is
-`Δq = w₅·(1+σ)/λ₄ = 0.0975`, i.e. `0.2167 m` of route advance in one step or a
-sustained **2.17 m/s** of extra advance. So a learner reads `w₅ = 0.15` as: cross
-a marking only if doing so buys about 2.2 m/s of extra route advance while you
-are on it.
+**What the value means, in units — at two severities, because the sentence one
+writes depends on which.** The exchange rate is
+`Δq_break-even = w₅·(1 + σ·c_K4)/λ₄`, i.e. the extra route advance per step that
+exactly pays for carrying `c_K4`:
+
+| `c_K4` | what it is | per-step cost | break-even `Δq` | sustained advance |
+|---|---|---:|---:|---:|
+| `1/3` | **one marking** — the severity of the reference pair | 0.165 | 0.0825 | **1.83 m/s** |
+| `2/3` | two of the three sub-rules | 0.180 | 0.0900 | 2.00 m/s |
+| `1` | the channel **fully** violated | 0.195 | 0.0975 | **2.17 m/s** |
+
+So a learner reads `w₅ = 0.15` as: **cross one marking only if doing so buys
+about 1.8 m/s of extra route advance while you are on it**, rising to 2.2 m/s if
+all three negotiable sub-rules are violated at once. An earlier revision of this
+section quoted only the `c_K4 = 1` figure and attached it to the
+one-marking sentence, which understates what a single marking costs by 18 %; the
+two severities are distinguished here because the reference construction the
+bounds below are measured on uses `c_K4 = 1/3`.
 
 **What `w₅` does not buy, and it belongs in the same paragraph.** No admissible
 `w₅` opposes a **fast** off-corridor drive. The crossover is
@@ -889,9 +1003,11 @@ Four grounds that compound.
    `σ·a^(4−k)` is non-zero at every level and there is no tie left to break.
    Mechanism, not preference.
 2. **Its shape is the one ADR-081 criticised.** Being absolute, its grading is
-   inversely proportional to importance: `φ` is **5.1 %** of the severity slope
-   at `k = 1`, **11.8 %** at `k = 2` and **25.0 %** at `k = 3`. The most important
-   level is the flattest.
+   inversely proportional to importance: `φ` supplies **5.1 %** of the level's
+   total in-violation slope at `k = 1`, **11.8 %** at `k = 2` and **25.0 %** at
+   `k = 3` — i.e. `φ/(σ·a^(4−k) + φ)`; as a fraction of the severity slope alone
+   it is 5.3 / 13.3 / 33.3 %. The most important level is the flattest either
+   way.
 3. **No document derives the value.** 0.25 traces to Veer et al.'s averaged-
    robustness tie-breaker `1/N` with `N = 4`, for *their* four-level schema, here
    summed over three margins. The only argument for `φ = 0.25` in this repository
@@ -940,10 +1056,16 @@ acceptance criterion. Three readings, all of them pre-registered before the run:
 - **Deleting `L6` costs less than the projection.** The projection was ≈5.2 %
   from a measured 4.55 % plus a bounded 0.53 pp; the measurement is 4.64 %.
 
-**The expert mean is positive and higher than the superseded architecture's**:
-71.34 against 70.70 on the identical panel and identical atomic costs, varying
-only the adapter. That is a consistency check rather than a design target
-(§9.2, `AC-A7-03`-equivalent row).
+**The expert mean is positive and higher than the superseded architecture's, and
+the comparison has to name its baseline.** A7 measures **71.34** at the shipped
+`(a, σ) = (2.5, 0.30)`. The v5.1 figure published in that document's §5.5 is
+**70.70**, but it was measured at the *pre-*ADR-081 pair `(2.2, 0)`; at the
+shipped pair the six-level reward measures **68.31**
+(`docs/audits/reward_calibration_2026-09-07/`). So the single-factor statement —
+identical panel, identical atomic costs, varying only the adapter — is
+**71.34 against 68.31**, and the claim holds under either baseline. The 70.70
+comparison is retained only because it is the number the previous specification
+publishes. A consistency check rather than a design target (§9.2).
 
 ---
 
@@ -995,11 +1117,14 @@ its instrument.
 | Orderings O1–O6 and the reward-hacking probes | **constructed** fixtures — replay holds one trajectory per scenario and therefore no counterfactual | **`NOT_RUN` under A7.** Scheduled as `TEST-A7-15`/`-16`; the figures quoted in §1.1 are the `A7` ExecPlan's, from its own bench |
 | Production equals the offline instrument per step | oracle agreement on the frozen panel to `1e-9` | **`NOT_RUN`.** `AC-A7-12` / `TEST-A7-14`, and it is the criterion that converts every figure above from a claim about a script into a claim about production |
 
-Two figures in this document are carried from the `A7` ExecPlan rather than
-re-derived or re-measured here, and are flagged where they appear: the O3 scalar
-margins +0.581 / +2.458 (§1.1) and the `w₅` lower bounds 0.1313 / 0.0736 (§5.5).
-Both are established by constructed fixtures, and `TEST-A7-15` is what turns them
-into executed evidence under this document.
+One figure in this document is carried from the `A7` ExecPlan and reproduces from
+no live source: `w₅`'s **upper** bounds 0.4477 / 0.2641, because the model that
+prices 5.0 s of arrival delay in reward units is stated nowhere (§14.1,
+question 2). The O3 scalar margins and `w₅`'s **lower** bounds, which an earlier
+revision of this document also listed as carried, are reproduced in §14.2 from
+the reference pair — the reconstruction is validated against all six entries of
+v5.1 §4.4's published table. `TEST-A7-15c` is what turns all of them into
+executed evidence under this document.
 
 **One caveat inherited and not reduced.** Every calibration here is **Waymo-only**
 and `train`-only. Five of the six `K3` sub-rules never apply on the procedural
@@ -1142,9 +1267,16 @@ last. Its *pattern* — a weight reaches exactly one channel — survives as
 
 ## 11. Known limitations
 
-`RULEBOOK-V5.1` §11 carries over except where a numbered item below replaces it.
-Each item states its figure, because a limitation without a magnitude is an
-apology rather than a declaration.
+**The list below is renumbered 1–15 and its numbers do not correspond to
+`RULEBOOK-V5.1` §11's.** Carry-over is therefore by *subject*, never by number:
+every v5.1 limitation stays live unless an item below names it and replaces it,
+and v5.1 §11 has two items numbered 12, which makes a by-number mapping
+undefined in any case. What is **not** restated below and stays live includes the
+achievable-success ceiling of the frozen panels and the caveat that the reference
+shortcut is a stipulated construction rather than a measured trajectory — that
+second one is load-bearing for §5.5 and is named here so it cannot lapse. Each
+item states its figure, because a limitation without a magnitude is an apology
+rather than a declaration.
 
 1. **Strict lexicographic ordering still prefers standing still on O1, and no
    hierarchy can avoid it.** Standing still is exactly `(0,0,0,0,0)`, so under a
@@ -1222,7 +1354,7 @@ apology rather than a declaration.
    for one fully violated interaction step. A7's incentive is smaller in magnitude
    and better in kind than its predecessor's — proportional to remaining mission
    *distance*, a property of the task, rather than to the remaining length of the
-   logged episode — and a terminal bonus is **not** recommended (§4.3).
+   logged episode — and a terminal bonus is **not** recommended (§4.2).
 9. **O3 as a dominance is unobtainable.** No Markov, bounded, per-step progress
    channel has a duration-invariant discounted return, so the ordering must be
    stated as a **finite exchange rate**. A7 satisfies it as an exchange rate on
@@ -1263,13 +1395,22 @@ apology rather than a declaration.
     panel maximum, a policy at or below human exposure is unconstrained on that
     channel, and the thresholded arm's differentiation there comes from the
     ordering alone (§4.5). `τ₂`'s maximum is 13.7× its own `p99`.
+15. **A7's gain on O3 does not reach the thresholded arm at these budgets.** The
+    reference pair accrues 10.0 units of `K4` exposure against `τ₄ = 23.386514`,
+    so it ties on every cost channel and the comparison falls through to progress,
+    where the shortcut wins by arriving sooner; the shortcut would need 70 of its
+    160 steps on a marking to leave the budget. The gain is a property of the
+    scalar and strict-lexicographic arms. This is the same fact as item 14 read
+    against the one ordering the restructure was for, and it is declared because
+    §11.1 invokes the thresholded comparison where it favours A7 (O1); the two
+    statements have to be made in the same voice.
 
 ---
 
 ## 12. References
 
 `RULEBOOK-V5.0` §12 refs. 1–16 carry over unchanged and are the references for
-every inherited sub-rule and for the thresholded-lexicographic literature. Four
+every inherited sub-rule and for the thresholded-lexicographic literature. Five
 are load-bearing for *this* document and are restated with what they are used
 for; two are added.
 
@@ -1330,9 +1471,20 @@ rulebook and from the reward, and may be logged as diagnostics only — plus:
 
 ### 14.1 Open
 
-| ID | question | why it is not answered here |
+Three of these were open by design before this document was written. **Six more
+were found by an independent audit of it on 2026-09-11** and are listed beside
+them, because an `UNDER_REVIEW` document that hides them is worse than one that
+does not. Question 1 blocks approval of §5.4 and §5.5.
+
+| # | question | status, and what each answer changes |
 |---|---|---|
-| `D1` | Which of the three objects of §4.5 a threshold is enforced on, and by which mechanism | The three objects do not coincide, and choosing one here would decide the mechanism by choosing a number's units. All three values are measured and recorded so the eventual choice costs no second run |
+| **1** | **Does the §5.4 predicate count the progress swing once (`λ₄·ΔQ_MAX`, as written here, as `RULEBOOK-V5.1` §5.4 states it, and as `reward/scalarization.py` enforces) or twice (`2λ₄·ΔQ_MAX`, as `rulebook_v5.0` §6.3 derives it)?** | **BLOCKING.** The two-sided form reproduces both published anchors v5.0 checks itself against — `a > 2` (Veer et al.) and `a ≥ 2.92` at `σ = 1` — and the one-sided form reproduces neither (`a > 1`, `a ≥ 2.83`); a two-state counterexample refutes the "iff" as written at the selected weights. **Two-sided** ⇒ `λ₄ = 2.0` is inadmissible at `a = 2.5` (needs `λ₄ < 1.1525`), the six-level weight set in production today is inadmissible too, and `(a, λ₄)` must be recalibrated — `λ₄ = 1.25` is already measured at +1.81 pp of below-standstill and an expert mean of 41.12, and ADR-081 already measured and rejected `a = 3.0`. **One-sided** ⇒ the assumption that makes it valid (`ΔQ_MIN = 0` for the compared pair, i.e. the compliant trajectory never loses station) must be declared in §5.4 as a named quantity, beside §11.5's measurement of the case where it is false. **Third answer**: swing `= λ₄·(ΔQ_MAX − ΔQ_MIN)` with `ΔQ_MIN` **measured** on the panel — the instrument already computes per-step `Δq`, so it is one accumulator, and it is the only answer that is neither an undeclared assumption nor a recalibration on no evidence |
+| 2 | What model converts 5.0 s of arrival delay into reward units — i.e. where do `w₅ < 0.4477` and `w₅ < 0.2641` come from (§5.5)? | Not reproducible from §4 or §5; six candidate models were tried and none produces the pair, and the required `γ`-dependence lies outside the natural families. `0.2641` is the bound that constrains `w₅` at the adopted discount and is the denominator of the 72.1 % window, so this is not decorative. If it cannot be restated, it joins §14.2's not-reproduced list and the window figures are withdrawn or re-derived |
+| 3 | Which two quantities give the discount's **90.5 % / 79.7 %** share of the time preference (§4.3)? | Not reproducible; the only live version of that comparison (v5.1 §4.6, +2.05 against 0.8) gives **71.9 %** at `γ = 0.996`, and no function with a fixed denominator spans 90.5 → 79.7 across the two discounts. §4.3 now carries three reproducible grounds plus this one flagged, and the deletion of `L6` does not rest on it |
+| 4 | Is the marking placed on the shortcut's **first** 30 steps in the §5.5 reference pair? | Answered affirmatively here, on evidence: it is the only placement at which v5.1 §4.4's whole published table reproduces (§14.2). Recorded because the `γ = 0.996` margin goes **+0.5813 → −0.0141** once the placement starts past step 33, so the "stands whether or not the discount decision is taken" claim is placement-dependent at that discount and unconditional at `γ = 0.9982`. If the placement is meant to be free, the binding lower bound becomes `w₅ > 0.2212`, which `w₅ = 0.15` does not satisfy |
+| 5 | Do the recorded per-episode columns `l4_clip_binding_steps` and `l5_reached_steps` keep those literal names under A7 (§7)? | "Retained under the `K5` name" admits both readings. Keeping them costs nothing; renaming them adds three source files and four test files to the implementation and needs an acceptance criterion that none currently supplies |
+| 6 | Does `REQ-A7-10`'s "denominated per unit of mission span" survive, given that the approved rule and §4.5 declare the requirement on the **undiscounted realized** form? | The two readings give different numbers (`τ₂` = 110.379799 realized against 0.720226 per-span). §4.5 follows the approved budget rule; the ExecPlan requirement row still says per-span and should be reconciled to it |
+| `D1` | Which of the three objects of §4.5 a threshold is enforced on, and by which mechanism | Open by design. The three objects do not coincide, and choosing one here would decide the mechanism by choosing a number's units. All three values are measured so the eventual choice costs no second run. **Index collision worth recording**: v5.1 §4.6's `τ₄` is the *progress* budget, while this document's `τ₄` is the negotiable-lane budget and there is no `τ₅` (§4.2) — `D1`'s subject moved with the renumbering |
 | `K2 ≻ K3` | Whether the adjacency is right | No mechanism exists in either direction; reordering on no evidence would replace one unsupported claim with another. Declared as §3.6 and §11.13, with the co-occurrence measured |
 | `AC-RB5.1-05` | Whether the `K5` clip binds on a step an agent can produce | The engine-force cap bounds travel, not projection. Now measurable per episode rather than deducible (§4.1, §7) |
 
@@ -1354,12 +1506,12 @@ reproduced are named, not omitted.
 | The discount table of §4.4 and the required `γ` | 228.6 / 0.1348 / 250 and 508.6 / 0.4062 / 555.6; `γ ≥ 0.998169` | agrees |
 | `λ₄ ∈ {1.9, 1.25}` admissible under the A7 tail | 1.1600 / 1.1693 / 1.1933 and 1.2188 / 1.3312 / 1.7301 | agrees |
 | Standing still versus relaxing (§3.5) | `N* = λ₄Q/(D_REF·w₅(1+σ))`: 416 steps at `Q ≈ 90 m`, 848 at `Q ≈ 184 m`, against 37 at v5.0's per-step price | agrees, **with the two spans made explicit**: the `A7` ExecPlan quotes 416 and 848 for "a mean Waymo mission" and "a mean PG mission" without stating either span, and the spans above are what its own formula requires them to be |
-| The exchange rate of `w₅ = 0.15` in physical units | `Δq = 0.0975`, i.e. **2.17 m/s** of sustained extra advance | **disagrees with the `A7` ExecPlan §6.1's "1.83 m/s"**, which does not reproduce under any reading of §5.1 that was tried. The value stated in §5.5 is the reproduced one, and the derivation is written out beside it so the reader can check it in one line rather than trust either figure |
+| The exchange rate of `w₅ = 0.15` in physical units | **1.83 m/s** at `c_K4 = 1/3` and **2.17 m/s** at `c_K4 = 1` | agrees. **An earlier revision of this row was wrong and is corrected here**: it recorded that the `A7` ExecPlan §6.1's "1.83 m/s" did not reproduce. It reproduces exactly, at `c_K4 = 1/3` — one marking, the severity of the reference construction — while 2.17 is the fully-violated-channel figure. The error was attaching the `c = 1` figure to the one-marking sentence; §5.5 now states both severities with the formula |
 | `τ₁`–`τ₄` and every exposure figure of §4.5 | read back from `a7_m1_summary.json` and equal to the values published in the `A7` ExecPlan §6.4 to six decimals | agrees |
 | The `K2`/`K3` co-occurrence of §3.6 | read back from `a7_m1_summary.json`: 15 / 217,189, 5 / 1100, p50 0.2197 and 0.025313, correlation −0.0161 | agrees |
 | The `fraction_below_standstill` grid of §5.5 | read back from `a7_m1_summary.json` for all six members | agrees |
-| O3's scalar margins +0.581 / +2.458 (§1.1) | **not reproduced** | carried from the `A7` ExecPlan; established by constructed fixtures, and `TEST-A7-15c` is what re-establishes them here |
-| `w₅`'s lower bounds 0.1313 / 0.0736 (§5.5) | **not reproduced** | carried from the `A7` ExecPlan §6.1; reproducing them needs the full reference-pair geometry, and `TEST-A7-15c` covers them |
+| O3's scalar margins at both discounts, and the marking-placement sensitivity | **+0.5813** at `γ = 0.996` and **+2.4579** at `γ = 0.9982`, marking on the shortcut's first 30 steps; +0.0023 at offset 33 and **−0.0141** at offset 34 for `γ = 0.996`, +1.4509 at offset 130 for `γ = 0.9982` | agrees with §1.1's +0.581 / +2.458. **An earlier revision of this row recorded them as "not reproduced"; they do reproduce.** The reconstruction is validated against a figure it was not built from: under the v5.1 form it reproduces **all six entries** of v5.1 §4.4's published margin table (+0.2000 / −1.1396 / −2.9784 / −3.5789 / −4.0198 / −4.7416) to four decimals, and only with the marking on the first 30 steps |
+| `w₅`'s lower bounds from the reference pair | **0.131342** at `γ = 0.996` and **0.073555** at `γ = 0.9982` | agrees with §5.5's 0.1313 / 0.0736. **Also previously recorded as "not reproduced", also wrong**: the pair is fully specified by v5.1 §4.6 plus the first-30-steps placement, so the bound is a bisection on the same reconstruction. At a free placement the binding bound would instead be `w₅ > 0.2212` (§14.1, question 4). The **upper** bounds 0.4477 / 0.2641 remain unreproduced — §14.1, question 2 |
 
 ### 14.3 Two identifiers this document adds
 

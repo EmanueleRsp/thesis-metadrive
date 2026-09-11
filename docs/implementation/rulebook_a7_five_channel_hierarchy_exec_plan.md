@@ -1693,22 +1693,29 @@ placement the arithmetic assumes — `φ` multiplies only the priority levels be
 a severity slope where `η` carried neither. Every budget, grid and co-occurrence
 figure was read back out of `a7_m1_summary.json` rather than copied from §6.
 
-**One figure of this plan does not reproduce, and the specification carries the
-reproduced one.** §6.1 states that `w₅ = 0.15` asks a learner for "**1.83 m/s**
-of extra route advance". The same criterion — a fully violated `K4` step costs
-`w₅·(1+σ) = 0.195`, and the progress that pays for it is
-`Δq = 0.195/λ₄ = 0.0975`, i.e. `0.2167 m` per step at `D_REF = 2.2222 m` and
-`Δt = 0.1 s` — gives **2.17 m/s**, and no reading of §5.1 that was tried produces
-1.83. `RULEBOOK-V5.2` §5.5 states 2.17 m/s with the one-line derivation beside
-it. The quantity is a physical reading of `w₅`, not a normative constant, so
-nothing in the contract moves either way; §6.1 should be corrected on the next
-pass through this plan. Recorded in `RULEBOOK-V5.2` §14.2.
+**One figure was reported as not reproducing, and that report was wrong.** This
+log first recorded that §6.1's "**1.83 m/s**" did not reproduce and that
+`RULEBOOK-V5.2` carried 2.17 m/s instead. **§6.1 is right.** The exchange rate is
+`Δq = w₅·(1 + σ·c_K4)/λ₄`, and 1.83 m/s is its value at `c_K4 = 1/3` — one
+marking, which is the severity of the reference construction §6.1's own sentence
+is about — while 2.17 m/s is the value at `c_K4 = 1`, the fully violated channel.
+The error was in the specification, which attached the `c = 1` figure to the
+one-marking sentence; `RULEBOOK-V5.2` §5.5 now states the formula and all three
+severities, and §14.2 records the correction. Nothing in the contract moved
+either way.
 
-**Two figures are carried rather than reproduced, and are labelled as such in the
-specification** (§8 and §14.2): O3's scalar margins +0.581 / +2.458, and `w₅`'s
-lower bounds 0.1313 / 0.0736. Both come from constructed fixtures whose full
-geometry this plan does not restate, and `TEST-A7-15c` is what turns them into
-executed evidence.
+**Two figures were reported as carried rather than reproduced, and they do
+reproduce.** O3's scalar margins and `w₅`'s lower bounds are recomputable from
+v5.1 §4.6's stipulated pair plus one clause this plan does not state — the 30
+marking steps are the shortcut's **first** 30. Reconstructed and validated
+against a figure it was not built from: under the v5.1 form it reproduces **all
+six entries** of v5.1 §4.4's published margin table, and only at that placement.
+A7's margins then come out **+0.5813** at `γ = 0.996` and **+2.4579** at
+`γ = 0.9982`, and the bounds **0.131342** / **0.073555**, against §6.1's printed
+0.1313 / 0.0736. The placement matters and should be stated in §6.1: at
+`γ = 0.996` the margin falls to **−0.0141** once the marking starts past step 33.
+What does **not** reproduce from any live source is `w₅`'s *upper* bounds
+0.4477 / 0.2641 — six candidate models tried, none produces the pair.
 
 **One citation is incomplete and is flagged in the document rather than dropped.**
 Pineda, Wray & Zilberstein supply two load-bearing results for the thresholded
@@ -1723,8 +1730,78 @@ marked as incomplete and to be completed before approval.
 `DEV-A7-009` (`AC-A7-16` added, because §9.2 maps `TEST-A7-22` to a requirement
 that does not cover it; plus the `TEST-A7-15a`…`-15g` fixture decomposition).
 
-**Next step:** the user's approval of `RULEBOOK-V5.2` and `ADR-083`. `M3` is
-blocked on it, and so is every milestone after it.
+**2026-09-11 — an independent audit of `M2`, and one blocking finding.** Thirteen
+agent sessions re-checked six zones against the primary sources (the algebra of
+§5.1/§5.4 against the shipped code; every number against
+`a7_m1_summary.json`; this plan against itself; `RULEBOOK-V5.2` against
+`RULEBOOK-V5.1` and ADR-069/072/073/074/075/076/081; the code against the
+contract; and O1–O6 re-derived from scratch), each zone with an adversarial
+reviewer instructed to refute. Every claim reported below was then re-verified
+by hand before being written down.
+
+**The blocking finding: the §5.4 predicate counts the progress swing once, and
+`rulebook_v5.0` §6.3 counted it twice.** v5.0 states the same predicate with
+`2λ`, derives it symmetrically, and names the reason — the cost channels are
+bounded in `[−1, 0]` while the progress channel is bounded in `[−1, +1]`. The
+two-sided form reproduces **both** anchors v5.0 checks itself against, `a > 2`
+(Veer et al.) and `a ≥ 2.92` at `σ = 1` (reproduced: 2.9196); the one-sided form
+reproduces **neither** (`a > 1`, `a ≥ 2.83`). A two-state counterexample refutes
+the "iff" at the selected weights: `K3` violated as `m₃ → 0⁻` with `Δq = +1`
+scores −0.5000 against −2.0000 for nothing violated with `Δq = −1`. Under the
+two-sided form `λ₄ = 2.0` is inadmissible at `k = 2, 3` — **and the six-level
+weight set in production today fails at `k = 1` as well** — so this is a
+pre-existing defect of `RULEBOOK-V5.1` §5.4 and of ADR-081's calibration, not one
+A7 introduced. But A7 is the change that rewrites the predicate and `AC-A7-08`
+makes it a constructor gate, so freezing it again is a decision. Note the
+corroboration: `λ₄ ≤ a/2 = 1.25`, which §6.8 attributes to an unrelated
+desideratum, **is** the two-sided bound at `w₅ = 0`. Recorded as question 1 of
+`RULEBOOK-V5.2` §14.1 with three candidate answers and their costs; the
+inequality is left exactly as production enforces it until the user decides.
+
+**One further material finding, and it is not an error.** At the budgets §6.4
+fixes, the **thresholded** comparison does not reproduce A7's gain on O3: the
+reference pair accrues `Σ c_K4 = 10.0` against `τ₄ = 23.386514`, so it ties on
+every cost channel and falls through to progress, where the shortcut wins. It
+would need 70 of its 160 steps on a marking to leave the budget. This is §6.4's
+own declared cost of the maximum rule applied to the one ordering the restructure
+was for; `RULEBOOK-V5.2` §4.5 and §11.15 now declare it, because §11.1 invokes
+the thresholded comparison where it favours A7.
+
+**Five further questions for the sessions that agreed these versions**, all in
+`RULEBOOK-V5.2` §14.1: the model behind `w₅`'s upper bounds 0.4477 / 0.2641
+(unreproducible, and 0.2641 is the binding one at the adopted discount); the
+90.5 % / 79.7 % time-preference split of §6.3 (unreproducible; the live version
+in v5.1 §4.6 gives 71.9 %); the marking placement of the reference pair; whether
+`l4_clip_binding_steps` / `l5_reached_steps` keep their literal names; and
+`REQ-A7-10`'s "per unit of mission span", which the approved budget rule and the
+specification both contradict.
+
+**Corrections applied to `M2`'s own documents**, all of them the specification's
+errors rather than this plan's: the exchange-rate severity (above); the two
+"not reproduced" rows of §14.2; `K3` on the PG panel (§3.5 said "five sub-rules
+rather than six" where §8 and §11.12 say `offroad` alone); the expert-mean
+comparison (71.34 against **68.31** at the matched weight pair, not 70.70 at
+`(2.2, 0)`); φ's share of the slope (denominator named); the ADR-081 weakening
+factor (2.2× in effective horizon, **3.01×** in `γ^L`, the currency ADR-081
+argues in); "exactly two rows" → three, plus the thresholded case; §11's
+carry-over rule, which was keyed on item numbers this document renumbers; one
+cross-reference and one reference count.
+
+**Defects of this plan the audit found and `M2` did not fix**, because they are
+the plan's to fix and none changes the contract: §15's opening still says no
+milestone has started; §9.2 maps `TEST-A7-18`, `-19` and `-22` to requirements
+that do not cover them and §8's traceability table stops at `TEST-A7-17`; §14
+records `TEST-A7-01 … -21` as `NOT_RUN` beside the evidence that `-12`, `-13` and
+`-21` ran; §6.4's third budget object is labelled an expectation and measured as a
+realized maximum; the `relaxable_lane_compliance → negotiable_lane_compliance`
+rename appears only inside `AC-A7-01`, with no requirement or decision row
+carrying it; `AC-A7-15` has no test anywhere; and `REQ-A7-10`'s "13–247 m" span
+figure does not reproduce against the frozen index (Waymo `train` measures
+10.0–578.4 m).
+
+**Next step:** the user's decision on question 1 of `RULEBOOK-V5.2` §14.1, then
+approval of `RULEBOOK-V5.2` and `ADR-083`. `M3` is blocked on that approval, and
+so is every milestone after it.
 
 ---
 
@@ -1800,6 +1877,7 @@ blocked on it, and so is every milestone after it.
 | Independent re-derivation for `M2`: the §5.4 predicate from its own derivation, the margins in four configurations including the transcription trap, the `w₅` cap and crossovers, the factor 4, `λ₄ ≤ a/2`, the per-step costs, the discount table, the required `γ`, `λ₄ ∈ {1.9, 1.25}`'s admissibility and `DEV-A7-004`'s standing-still crossover (standalone script, no repository import) | `PASS` with **one disagreement** | 2026-09-11 | Every figure reproduces: A7 `φ=0` **1.1514 / 1.1478 / 1.1390**; `φ=0.25` **1.1105 / 1.0975 / 1.1390**; A0 **1.1165 / 1.1121 / 1.1792**; the trap **1.0911 / 1.0513 / 1.0225**; cap **0.384615**; crossovers **0.313983** and **1.538462**; ratio **exactly 4.0**; `a/2 = 1.25`; `K4` full **0.195**, `K2` full **8.125**/**8.375**; break-even **228.6** and **508.6**, `γ^500` **0.1348** and **0.4062**, horizons **250** and **555.6**, required `γ` **0.998169**; `λ₄=1.9` **1.1600 / 1.1693 / 1.1933** and `λ₄=1.25` **1.2188 / 1.3312 / 1.7301**; `N*` **416** at `Q ≈ 90 m`, **848** at `Q ≈ 184 m`, **37** at v5.0's price. **The disagreement**: §6.1's "1.83 m/s" does not reproduce — the same criterion gives **2.17 m/s** (§11, 2026-09-11). Term placement confirmed against `reward/scalarization.py:147-196, 393-425` |
 | `M1`'s published values read back from the committed evidence rather than from §6 (`docs/audits/a7_m1_measurement_2026-09-10/a7_m1_summary.json`) | `PASS` | 2026-09-11 | `τ₁`–`τ₄` on all three objects, `p95`/`p99`, the max-setting record uids, the six-member grid's `fraction_below_standstill` and mean returns, and the `K2`/`K3` co-occurrence all agree with §6.4/§6.8/§6.9 to the published precision. `scenarios_measured: 1100`, `measured_steps: 217189`, `scenarios_skipped: {}`, `declared_panel_defect_exclusions: []` on every channel — so the "0 exclusions declared" claim is read off the artifact, not restated |
 | `git diff --check` | `PASS` | 2026-09-11 | `M2`'s three documents plus this plan; no whitespace error |
+| Independent adversarial audit of `M2` — six zones, thirteen sessions, each zone refuted by a session that did not find it; every reported claim re-verified by hand afterwards | `PASS with one blocking finding` | 2026-09-11 | **Blocking**: the §5.4 predicate counts the progress swing once where `rulebook_v5.0` §6.3 counts it twice; the two-sided form reproduces both of v5.0's published anchors (`a > 2`; `a ≥ 2.92`, reproduced 2.9196) and the one-sided form reproduces neither (`a > 1`; 2.8312), and a two-state counterexample at the selected weights scores −0.5000 against −2.0000. Under the two-sided form `λ₄ = 2.0` fails at `k = 2, 3` and today's six-level weights fail at `k = 1` too — a pre-existing v5.1/ADR-081 defect, now question 1 of `RULEBOOK-V5.2` §14.1. **Material, not an error**: at `τ₄ = 23.386514` the thresholded comparison ties the O3 pair on every cost channel (exposure 10.0 against the budget) and falls through to progress — declared as §4.5 and §11.15. **Reproduced against a figure they were not built from**: the reference-pair reconstruction returns all six entries of v5.1 §4.4's published table, hence +0.5813 / +2.4579 and 0.131342 / 0.073555. **Unreproducible from any live source**: `w₅`'s upper bounds 0.4477 / 0.2641 and §6.3's 90.5 % / 79.7 %. Five further questions and ten documentation corrections in §11 above |
 | `make gate` / `make check` for `M2` | `NOT APPLICABLE` | 2026-09-11 | `M2` touches no Python, no configuration and no test: three Markdown documents and this plan. There is nothing in the diff for Ruff or pytest to inspect, and recording a green suite here would be recording that `M1`'s tree is still green, which `M1` already established. `M3` is the next milestone with a test surface, and `M9` re-runs the gate from `main` after the merge |
 
 **Nothing above is recorded as passing that was not executed.** The remaining
