@@ -869,7 +869,31 @@ must never be conflated.**
 | symbol | value | what it is |
 |---|---:|---|
 | `ΔQ_MIN_CLIP` | **−1** | what §4.1's clip permits. The channel is signed and one `clip(·, −1, +1)` produces both bounds |
-| `ΔQ_MIN_GUARANTEED` | **−0.1525** | the condition under which the selected weights preserve the ordering. Not a free constant: it is what `(a, σ, λ₄, w₅) = (2.5, 0.30, 2.0, 0.15)` *buys*, and it tightens if any of them moves |
+| `ΔQ_MIN_GUARANTEED` | **−0.10** | the condition this document declares and the value the constructor gate is configured with. Chosen, with the criterion below — **not** the boundary of the admissible set |
+
+**`ΔQ_MIN_GUARANTEED` is a choice, and it is not the supremum.** The selected
+weights satisfy the inequality for every `ΔQ_MIN` in the **open** interval
+`(−0.1525, 0]`: at exactly `−0.1525` the binding level reads `2.5 > 2.5`, which
+is **false**, so the set is refused there. That boundary is a supremum and never
+an admissible value — `rulebook_v5.0` §6.3 makes the strictness deliberate,
+"it rejects knife-edge members that enumeration cannot break" — and declaring it
+as the guarantee would be declaring the one point the predicate is built to
+refuse.
+
+**The criterion for the value, stated before it.** The guarantee has to cover
+what can actually happen, and the only evidence about what happens is the
+expert's measured maximum station loss of **0.053 m** per step. `−0.10` is a
+**4.2× safety factor** over that measurement, it is a round value fixed before
+the arithmetic rather than read off the boundary, and it leaves the binding
+inequality satisfied by **+0.105 reward units** — a real margin, not a numerical
+one.
+
+| `ΔQ_MIN` | ratios `k=1 / k=2 / k=3` | verdict |
+|---:|---|---|
+| −0.0239 (the expert's measured maximum) | 1.1474 / 1.1379 / 1.1147 | admitted |
+| **−0.10 (`ΔQ_MIN_GUARANTEED`)** | **1.1347 / 1.1072 / 1.0438** | **admitted, by +0.105 reward units at `k = 3`** |
+| −0.1525 (the supremum) | 1.1261 / 1.0870 / **1.0000** | **refused** — the inequality is strict |
+| −1 (`ΔQ_MIN_CLIP`) | 1.0035 / 0.8395 / 0.5959 | refused at `k = 2` and `k = 3` |
 
 **At `ΔQ_MIN_CLIP` the selected weights do not satisfy the condition**, and this
 document states it rather than hiding it: the ratios are **1.0035 / 0.8395 /
@@ -881,20 +905,20 @@ and no revision of this specification was ever entitled to state it as one.**
 **What the selected weights do buy is this, and it is the operative statement:**
 
 > The per-step ordering is lexicographic in `K1 ≻ K2 ≻ K3 ≻ K4` **for as long as
-> the compliant trajectory satisfies `Δq ≥ ΔQ_MIN_GUARANTEED = −0.1525`** — that
-> is, for as long as it loses no more than **0.339 m of route station in one
+> the compliant trajectory satisfies `Δq ≥ ΔQ_MIN_GUARANTEED = −0.10`** — that
+> is, for as long as it loses no more than **0.222 m of route station in one
 > 0.1 s step**.
 
 Three facts about that condition, each with its source, because a condition
 without them is an excuse:
 
-- It is **6.4× outside** anything the logged expert does: the station never falls
+- It is **4.2× outside** anything the logged expert does: the station never falls
   more than **0.053 m** below its running maximum over 217,189 steps
   (`behind_peak.max_m` = 0.053, `steps_beyond_1m` = 0, committed in
   `docs/audits/reward_calibration_2026-09-07/rb51_calibration_a_sigma_l4.json`).
 - It is **not reachable by choice**: two actions available in the same state
   differ by 0.025–0.045 of `Δq` in one 0.1 s step, so no policy can *select* a
-  0.339 m station loss. Only route geometry can impose one.
+  0.222 m station loss. Only route geometry can impose one.
 - It is **not vacuous**: §11.5's closed loop is exactly the geometry that
   produces large negative `Δq`, and the *positive* side of the same clip binds on
   0.60 % of expert steps at up to 3.609 m — so the projection demonstrably
@@ -980,19 +1004,19 @@ w₅  <  [ a − λ₄·(ΔQ_MAX − ΔQ_MIN) ] / (1 + σ)
 |---:|---:|---|
 | 0 (the superseded form) | 0.384615 | the figure earlier revisions printed |
 | −0.0239 (expert panel) | 0.3478 | |
-| **−0.1525** (`ΔQ_MIN_GUARANTEED`) | **0.1500** | the selected `w₅ = 0.15` sits exactly on it |
+| **−0.10** (`ΔQ_MIN_GUARANTEED`) | **0.2308** | the selected `w₅ = 0.15` sits **35 % inside** it |
+| −0.1525 (the supremum) | 0.1500 | `w₅ = 0.15` lands exactly on the boundary, i.e. refused |
 | −1 (`ΔQ_MIN_CLIP`) | negative | no `w₅` is admissible |
 
-**That the cap at `ΔQ_MIN_GUARANTEED` equals the selected `w₅` exactly is not a
-coincidence and must not be read as one.** `ΔQ_MIN_GUARANTEED` is *defined* as
-the largest station loss at which the selected weights still satisfy the
-inequality, so the two are two readings of one fact: **at `w₅ = 0.15` the weights
-buy a guarantee down to −0.1525, and raising `w₅` tightens the guarantee.** At
-`w₅ = 0.25`, the alternative §5.5 prices, the guarantee shrinks to `Δq ≥ −0.0875`
-(0.194 m per step), which is still 3.7× outside the expert's measured 0.053 m.
+**The guarantee and `w₅` are coupled, and that is worth stating explicitly.**
+Raising `w₅` spends the same budget the progress swing spends, so it tightens the
+guarantee: at `w₅ = 0.25`, the alternative §5.5 prices, the inequality holds only
+for `Δq > −0.0875`, and the declared `−0.10` would no longer be admissible. A
+change to `w₅` is therefore a change to `ΔQ_MIN_GUARANTEED` and both move
+together or neither moves.
 
 The `λ₄` headroom likewise depends on `ΔQ_MIN`: `λ₄ < a/(ΔQ_MAX − ΔQ_MIN)`, i.e.
-2.5 at `ΔQ_MIN = 0`, **2.1692** at `ΔQ_MIN_GUARANTEED` — which the shipped
+2.5 at `ΔQ_MIN = 0`, **2.2727** at `ΔQ_MIN_GUARANTEED` — which the shipped
 `λ₄ = 2.0` satisfies — and 1.25 at `ΔQ_MIN_CLIP`. The last of those is the
 `λ₄ ≤ a/2` that earlier revisions attributed to an unrelated desideratum: it is
 this inequality at `w₅ = 0` and the full clip, which is why the same number
@@ -1076,15 +1100,15 @@ bounds below are measured on uses `c_K4 = 1/3`.
 `w₅` opposes a **fast** off-corridor drive. The crossover is
 `w₅ = λ₄·Δq/(1+σ)`: **0.313983** at the expert's mean pace `Δq = 0.204089`, which
 is admissible, and **1.538462** at the clip, which is not — against the cap of
-**0.1500** at `ΔQ_MIN_GUARANTEED` (0.384615 under the superseded one-sided form).
+**0.2308** at `ΔQ_MIN_GUARANTEED` (0.384615 under the superseded one-sided form).
 The ratio of the clip-pace requirement to the cap is
 `λ₄/[a − λ₄·(ΔQ_MAX − ΔQ_MIN)]`, in which `σ` cancels, so it is a property of the
-weights and no re-tuning of `σ` reaches it: **10.26** at `ΔQ_MIN_GUARANTEED`,
+weights and no re-tuning of `σ` reaches it: **6.67** at `ΔQ_MIN_GUARANTEED`,
 against the 4.00 the one-sided form reported. That denominator *is* the §5.4
 tail, so "no admissible `w₅` opposes a fast off-route drive" is the same statement
-as "progress consumes **92.2 %** of the `k = 3` per-step budget" (80 % under the
+as "progress consumes **88.0 %** of the `k = 3` per-step budget" (80 % under the
 superseded form). Correcting the predicate therefore does not create this
-limitation — it reveals that it was understated by a factor of 2.6. Declared in
+limitation — it reveals that it was understated. Declared in
 §11.3.
 
 #### `φ = 0`
@@ -1189,7 +1213,7 @@ nothing else:
   sign**, so it does not answer §5.4's question;
 - **one counter is added, and it is the falsifier of §5.4's guarantee**:
   `k5_below_guaranteed_min_steps`, the per-episode count of steps with
-  `Δq ≤ ΔQ_MIN_GUARANTEED = −0.1525`, published on the same per-episode path as
+  `Δq ≤ ΔQ_MIN_GUARANTEED = −0.10`, published on the same per-episode path as
   the counter above. It is signed by construction. `AC-A7-17`, `TEST-A7-23`, and
   the reading rule is pre-registered in §14.3. A signed minimum
   (`k5_min_delta_q`) is published beside it so that a violation can be sized and
@@ -1259,7 +1283,7 @@ prohibited (§11.12).
 | `AC-A7-14` | The `AB-LEARN` pre-registration records the reward change explicitly **before** any screening run under A7, and its resolved-config diff still shows single-factor invariance | `NOT_RUN` — `TEST-A7-17` |
 | `AC-A7-15` | §11 declares the limitations A7 does not remove, each with its figure | **PASS** — §11 |
 | `AC-A7-16` | Two runs whose scalarization vector schemas differ never share one analysis condition identity | `NOT_RUN` — `TEST-A7-22` |
-| `AC-A7-17` | The §5.4 predicate is evaluated at a **configured** `ΔQ_MIN`, not a literal; it admits the selected weights at `ΔQ_MIN_GUARANTEED = −0.1525` and refuses them at `ΔQ_MIN_CLIP = −1`; and every episode publishes `k5_below_guaranteed_min_steps` and `k5_min_delta_q`, so the guarantee of §5.4 is falsifiable by measurement rather than assumed | `NOT_RUN` — `TEST-A7-10`, `TEST-A7-23` |
+| `AC-A7-17` | The §5.4 predicate is evaluated at a **configured** `ΔQ_MIN`, not a literal, and its inequality is **strict**: it admits the selected weights at `ΔQ_MIN_GUARANTEED = −0.10`, and refuses them both at the supremum `−0.1525` (where the binding ratio is exactly 1.0000) and at `ΔQ_MIN_CLIP = −1`. Every episode publishes `k5_below_guaranteed_min_steps` and `k5_min_delta_q`, so §5.4's guarantee is falsifiable by measurement rather than assumed | `NOT_RUN` — `TEST-A7-10`, `TEST-A7-23` |
 
 `AC-A7-13` is deliberately permissive in the same way its predecessor was: a
 strict-lexicographic failure on O1 and O2 is a **result to report**, not a defect
@@ -1318,7 +1342,7 @@ fails on an import is not yet testing anything.
 | `TEST-A7-07` | Unit | The §5.1 form is reproduced term by term, **written out independently of the implementation** | five-entry channel vectors, six cases | exact | `AC-A7-06` |
 | `TEST-A7-08` | Unit | `w₅` reaches only the `K4` term | one vector, two `w₅` values | priority contributions identical; reward differs by `Δw₅·[(1_sat − 1) + σ·m₄]` | `AC-A7-06` |
 | `TEST-A7-09` | Config | The resolved scalarization block is the A7 set | resolved job configuration | exact values and schema id | `AC-A7-07` |
-| `TEST-A7-10` | Unit | The §5.4 predicate is a **constructor** gate, evaluated at a configured `ΔQ_MIN` | the selected set at `ΔQ_MIN_GUARANTEED` and at `ΔQ_MIN_CLIP`, plus five inadmissible sets | admits at −0.1525; **raises at −1**, naming rank preservation; ratios 1.1261 / 1.0870 / 1.0000 and 1.0035 / 0.8395 / 0.5959 | `AC-A7-08`, `AC-A7-17` |
+| `TEST-A7-10` | Unit | The §5.4 predicate is a **constructor** gate, evaluated at a configured `ΔQ_MIN`, and its inequality is **strict** | the selected set at three values of `ΔQ_MIN`, plus five inadmissible weight sets | **admits at −0.10** (ratios 1.1347 / 1.1072 / 1.0438); **raises at −0.1525**, the supremum, where the binding ratio is exactly 1.0000 — the knife-edge case the strictness exists to refuse; **raises at −1** (1.0035 / 0.8395 / 0.5959). Every raise names rank preservation | `AC-A7-08`, `AC-A7-17` |
 | `TEST-A7-23` | Integration | The guarantee's falsifier reaches the per-episode record, signed | an episode with one step at `Δq = −0.2` and one at `Δq = −0.05` | `k5_below_guaranteed_min_steps == 1`, `k5_min_delta_q == −0.2`; the sign-blind clip counter is unchanged | `AC-A7-17` |
 | `TEST-A7-11` | Integration | One shared discount, its shaping twin, **and the criterion's verdict** | the six algorithm configurations and the frozen index | `γ = 0.9982` everywhere; `508.6 > 500` | `AC-A7-09` |
 | `TEST-A7-12` | Measurement | The expert per-episode exposure distributions exist and fix the budgets | the 2026-09-10 panel run | four distributions on three objects, plus per-record tail rows | `AC-A7-10` |
@@ -1398,13 +1422,13 @@ rather than a declaration.
    it too. Once that residual is present, A7 is no worse on any ordering and
    strictly better on O3. Reported by `TEST-A7-16`, not repaired.
 3. **No admissible `w₅` opposes a fast off-corridor drive, by a factor of
-   10.26** (§5.5). At `w₅ = 0.15` a fully violated `K4` step costs **0.195**
+   6.67** (§5.5). At `w₅ = 0.15` a fully violated `K4` step costs **0.195**
    against **2.000** of progress at the clip, so it opposes nothing at any pace,
    and the ratio `λ₄/[a − λ₄·(ΔQ_MAX − ΔQ_MIN)]` is independent of `σ`. Earlier
    revisions reported this as "exactly 4" because they evaluated it at
    `ΔQ_MIN = 0`; correcting §5.4 does not create the limitation, it reveals that
-   it was understated 2.6-fold. Equivalently, progress consumes **92.2 %** of the
-   `k = 3` per-step budget. The only lever
+   it was understated. Equivalently, progress consumes **88.0 %** of the `k = 3`
+   per-step budget. The only lever
    that would move it is `λ₄` relative to `a`, and reducing `λ₄` to the value
    that admits such a `w₅` costs **+1.81 pp** of below-standstill while buying an
    option that **cannot be exercised**: the channel that would have to fire is
@@ -1506,11 +1530,11 @@ rather than a declaration.
     ordering alone (§4.5). `τ₂`'s maximum is 13.7× its own `p99`.
 15. **§5.4's guarantee is conditional, and the condition is not proved — it is
     monitored.** The per-step ordering is lexicographic while the compliant
-    trajectory loses no more than 0.339 m of station per step; at the full clip
+    trajectory loses no more than 0.222 m of station per step; at the full clip
     the selected weights hold only at `K1`. Nothing in the runtime bounds the
     backward projection — the production mission tracker projects without a jump
     envelope — so the condition rests on measurement (0.053 m on the expert
-    panel, 6.4× of margin) and on reachability (two actions in one state differ
+    panel, 4.2× of margin) and on reachability (two actions in one state differ
     by 0.025–0.045 of `Δq`), not on a proof. `AC-A7-17` is what turns it from an
     assumption into a checked invariant, and §14.3 pre-registers what a non-zero
     count means.
@@ -1643,7 +1667,7 @@ wherever a measurement exists.
 
 | option | keeps the shipped weights? | price |
 |---|---|---|
-| **ADOPTED — generalised swing, `ΔQ_MIN` declared with two values, §5.4 restated as a conditional guarantee plus a runtime falsifier** | **yes** | The specification loses an unconditional theorem and gains a declared condition with a physical reading (0.339 m of station per step) plus a per-episode counter. No weight moves, no measured figure decays, no run is needed. Editorial cost, all of it paid in this revision: §4.1 (both bounds declared), §5.4, §5.5, §11.3 and `ADR-083`, since the `w₅` cap and the clip-pace ratio become functions of `ΔQ_MIN` — the ratio was reported as "exactly 4" and is **10.26** at the guarantee, so the §11.3 limitation was understated 2.6-fold. Implementation cost: `ΔQ_MIN` becomes a configured field of the scalarization block, and the diagnostic path gains two per-episode fields |
+| **ADOPTED — generalised swing, `ΔQ_MIN` declared with two values, §5.4 restated as a conditional guarantee plus a runtime falsifier** | **yes** | The specification loses an unconditional theorem and gains a declared condition with a physical reading (0.222 m of station per step) plus a per-episode counter. No weight moves, no measured figure decays, no run is needed. Editorial cost, all of it paid in this revision: §4.1 (both bounds declared), §5.4, §5.5, §11.3 and `ADR-083`, since the `w₅` cap and the clip-pace ratio become functions of `ΔQ_MIN` — the ratio was reported as "exactly 4" and is **10.26** at the guarantee, so the §11.3 limitation was understated 2.6-fold. Implementation cost: `ΔQ_MIN` becomes a configured field of the scalarization block, and the diagnostic path gains two per-episode fields |
 | Generalised swing with `ΔQ_MIN` taken from the expert panel (−0.0239) | yes, with the thinnest ratio at 1.1147 — better than today's 1.1121 | **Rejected**: it reads one side of one clip expression as construction and the other as measurement, inside the same inequality. The same artifact that yields 0.053 m backwards also records the *positive* side of that clip binding on 1298 of 217,189 steps at up to 3.609 m — so the projection demonstrably outruns the vehicle, and 0.053 m is a property of a human who took every fold the right way round, not of the mechanism |
 | Adopt the two-sided form and recalibrate now | **no** — needs `λ₄ < 1.1525` at `a = 2.5` | Buys the unconditional theorem for roughly half the expert return: `λ₄ = 1.25` is measured at 6.45 % below-standstill and a mean of 41.12 against 71.34, and `λ₄ ≈ 1.15` extrapolates to ≈6.8 % against the 7.45 % ceiling. Available at any time as the fallback; not something to pay before knowing it is needed |
 | Raise `a` and keep `λ₄ = 2.0` | no | Needs `a ≥ 4.195`, a 68 % move in the quantity ADR-081 calibrated, which already measured and rejected `a = 3.0` |
@@ -1652,7 +1676,7 @@ wherever a measurement exists.
 | Quantify over two actions available in one state | yes | The right intuition about *reachability* (two actions differ by 0.025–0.045 of `Δq` in one 0.1 s step, so no policy can *choose* to lose 0.34 m) but the wrong predicate: restricting to one state also shrinks the cost side, so the derivation's supremum is no longer attained and no closed form results. It belongs in the *argument* for the assumption, not in the condition |
 
 **The reading, pre-registered before the number exists.** The runtime counter
-reports, per episode, the number of steps with `Δq ≤ −0.1525` and the fraction of
+reports, per episode, the number of steps with `Δq ≤ −0.10` and the fraction of
 episodes carrying at least one. On the first evaluation panel run under A7:
 
 - **zero steps** → the declared condition is corroborated on a trained policy;

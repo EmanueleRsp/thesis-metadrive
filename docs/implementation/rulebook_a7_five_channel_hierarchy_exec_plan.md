@@ -1407,10 +1407,12 @@ assumed, and all three recorded in §12:
   as declared data**, the weight set, `_validate_five_channel_weights`, the schema
   id. The five legacy modes untouched.
 - [ ] **`DEV-A7-010`: the predicate carries `λ₄·(ΔQ_MAX − ΔQ_MIN)` and reads
-  `ΔQ_MIN` from the configuration**, defaulting to `ΔQ_MIN_GUARANTEED = −0.1525`,
+  `ΔQ_MIN` from the configuration**, defaulting to `ΔQ_MIN_GUARANTEED = −0.10`,
   with `delta_q_min` added to `conf/scalarization/default.yaml` and to
   `from_mapping`'s allow-list. The gate must admit the selected weights at that
-  value and **refuse them at −1**; both directions are `TEST-A7-10`. Note for the
+  value, **refuse them at the supremum −0.1525** (binding ratio exactly 1.0000 —
+  the inequality is strict, and `rulebook_v5.0` §6.3 makes that deliberate) and
+  **refuse them at −1**; all three points are `TEST-A7-10`. Note for the
   implementer: the offline oracle
   `scripts/measure_expert_rulebook_transition.py` carries *two* predicates —
   `is_rank_preserving` (`:816`) is already two-sided, `v51_is_rank_preserving`
@@ -1850,7 +1852,7 @@ consequence, not a justification.
 `λ₄·(ΔQ_MAX − ΔQ_MIN)`, declare `ΔQ_MIN = −1` because one clip expression
 produces both bounds, and restate §5.4 as a **conditional guarantee plus a
 runtime falsifier** rather than as an unconditional theorem — the condition being
-`Δq ≥ −0.1525` on the compliant trajectory, with a per-episode counter on the
+`Δq ≥ −0.10` on the compliant trajectory, with a per-episode counter on the
 diagnostic path that already exists. No weight moves, no measured figure decays,
 no run is needed, and the reading of that counter is pre-registered in §14.3 with
 its fallback (`λ₄ ≤ 1.1525`, measured at 6.45 % below-standstill and a mean of
@@ -1876,7 +1878,7 @@ declares both bounds of the progress channel; §5.4 carries
 plainly that the selected weights **fail** at `ΔQ_MIN_CLIP = −1` (ratios
 1.0035 / 0.8395 / 0.5959, and the six-level set in production fails all three),
 and restates the property as a **conditional guarantee**: lexicographic ordering
-holds while the compliant trajectory loses no more than 0.339 m of station per
+holds while the compliant trajectory loses no more than 0.222 m of station per
 step. `AC-A7-17` and `TEST-A7-23` make that condition falsifiable at runtime
 instead of assumed; §14.3 pre-registers the reading. `ADR-083` carries the
 decision and both rejections. **No weight moved, no measured figure decayed, no
@@ -1884,9 +1886,9 @@ run was needed**; `REQ-A7-16` and `DEV-A7-010` record it here.
 
 **Two corollaries changed shape and one limitation got bigger**, which is the
 honest price: the `w₅` cap and the clip-pace ratio are now functions of `ΔQ_MIN`
-(cap **0.1500** at the guarantee against the 0.384615 earlier revisions printed;
-ratio **10.26** against "exactly 4"), so §11.3's limitation was understated
-2.6-fold — progress consumes **92.2 %** of the `k = 3` per-step budget, not 80 %.
+(cap **0.2308** at the guarantee against the 0.384615 earlier revisions printed;
+ratio **6.67** against "exactly 4"), so §11.3's limitation was understated —
+progress consumes **88.0 %** of the `k = 3` per-step budget, not 80 %.
 Correcting the predicate revealed that; it did not cause it.
 
 **Two approved documents are now known to rest on the superseded form**, recorded
@@ -1895,6 +1897,34 @@ row survives the generalised predicate, so `σ = 0.30`'s selection argument need
 revisiting; and `C50`'s alternative remedy (removing the negative clip) would
 make the predicate *unsatisfiable*, not leave it untouched as that row says.
 Both belong to `M8`'s reconciliation.
+
+**2026-09-12, second pass — the declared guarantee was set at the boundary, and
+the boundary is not admissible.** Found before `M4` was written, while reviewing
+an implementation note that proposed admitting the selected weights at
+`ΔQ_MIN = −0.1525` "pur avendo il rapporto vincolante pubblicato come 1.0000".
+The inequality is **strict**, so at that value the binding level reads
+`2.5 > 2.5`, which is false: the predicate **refuses** the set there. The
+admissible region is the **open** interval `(−0.1525, 0]`, and −0.1525 is its
+supremum, never a member. Implementing the note as written would have required
+`>=` or a tolerance, i.e. admitting exactly the knife-edge member
+`rulebook_v5.0` §6.3 makes the strictness to refuse.
+
+**Corrected**: `ΔQ_MIN_GUARANTEED = −0.10`, chosen against a criterion fixed
+before the arithmetic — a **4.2× safety factor** over the expert's measured
+0.053 m maximum station loss — and strictly admissible, the binding inequality
+holding by **+0.105 reward units** rather than by nothing. Ratios
+1.1347 / 1.1072 / 1.0438. Two side effects are improvements: the `w₅` cap becomes
+**0.2308**, so `w₅ = 0.15` sits 35 % inside it instead of exactly on it (the
+earlier coincidence was an artefact of defining the guarantee at the boundary),
+and `TEST-A7-10` now pins **three** points — admit at −0.10, refuse at −0.1525,
+refuse at −1 — which also pins that the inequality is strict. The cost of the
+correction is that the binding ratio is 1.0438, below the 1.1121 the six-level
+set has today: that is the price of declaring a guarantee that covers 4.2× the
+measured worst case, and it is stated in §5.4 rather than hidden.
+
+**`M3` is affected**: whatever it froze for `TEST-A7-10` encodes the boundary
+value and must be re-frozen at the three points above before `M4` implements
+against it.
 
 **Next step:** the user's approval of `RULEBOOK-V5.2` and `ADR-083` as documents.
 `M3` is blocked on that approval, and so is every milestone after it. The
@@ -1912,7 +1942,7 @@ value of a weight and should close before `M4`.
 | `DEV-A7-003` | ADR-081 / `AC-RB5.1-16`: `γ = 0.996` with the criterion evaluated at `L = 199` | `γ = 0.9982` with the criterion evaluated at the measured `L = 500` | `C49`; §5.2 | Approved 2026-09-09 | the six algorithm configs, `tests/test_hydra_agent_presets.py` |
 | `DEV-A7-004` | ADR-072: the relaxable lane rules sit below progress | Reverted for those three sub-rules | v5.0's pathology was the **price**, not the placement: v5.0 charged them at `a = 2.2` per violated step, so standing still won past **37** relaxed steps against a mean Waymo mission. At `w₅ = 0.15`, 14.7× less, standing still wins only past **416** relaxed steps at full severity — twice the Waymo episode, and 848 against a mean PG mission over a 500-step episode. Re-derived today | `DEC-A7-002` | ADR-083 records the reversal |
 | `DEV-A7-005` | `AB-LEARN` `REQ-AB-009`: the reward under test is v5.1 + `SCAL-V1.4` | The reward under test becomes A7 + `SCAL-V1.5` | §6.6 | `DEC-A7-008` | `AB-LEARN` §3, §5, §7.1, §14 |
-| `DEV-A7-010` | §5.1's rank-preservation predicate carries the progress tail once, as `λ₄·ΔQ_MAX` — inherited from `RULEBOOK-V5.1` §5.4 and from what `reward/scalarization.py` enforces | The predicate is generalised to `λ₄·(ΔQ_MAX − ΔQ_MIN)`, `ΔQ_MIN` becomes a declared symbol with two values (`ΔQ_MIN_CLIP = −1`, `ΔQ_MIN_GUARANTEED = −0.1525`), and §5.4 of the specification is restated as a **conditional guarantee with a runtime falsifier** instead of an unconditional theorem. **No weight changes** | `rulebook_v5.0` §6.3 derives the same condition with `2λ` and names the asymmetry that produces it; the two-sided form reproduces both anchors v5.0 validates against (`a > 2`, `a ≥ 2.92`) and the one-sided form reproduces neither (1.8393, 2.8312); and a two-state counterexample refutes the "iff" without a knife-edge (a fully violated `K3` with `Δq = +1` scores −1.2500 against −2.0000 for a clean trajectory at `Δq = −1`). Taking `ΔQ_MIN` from the expert panel was rejected: one clip expression produces both bounds | **User-approved 2026-09-12** ("correggi la doc"), after the practical reach, the alternatives and their prices were reported | `RULEBOOK-V5.2` §4.1, §5.4, §5.5, §7, §9 (`AC-A7-17`), §10 (`TEST-A7-10` extended, `TEST-A7-23` added), §11.3, §11.15, §14.1, §14.3; `ADR-083`; `reward/scalarization.py`; `conf/scalarization/default.yaml`; the diagnostic path; `tests/test_scal_v14.py` |
+| `DEV-A7-010` | §5.1's rank-preservation predicate carries the progress tail once, as `λ₄·ΔQ_MAX` — inherited from `RULEBOOK-V5.1` §5.4 and from what `reward/scalarization.py` enforces | The predicate is generalised to `λ₄·(ΔQ_MAX − ΔQ_MIN)`, `ΔQ_MIN` becomes a declared symbol with two values (`ΔQ_MIN_CLIP = −1`, `ΔQ_MIN_GUARANTEED = −0.10`), and §5.4 of the specification is restated as a **conditional guarantee with a runtime falsifier** instead of an unconditional theorem. **No weight changes** | `rulebook_v5.0` §6.3 derives the same condition with `2λ` and names the asymmetry that produces it; the two-sided form reproduces both anchors v5.0 validates against (`a > 2`, `a ≥ 2.92`) and the one-sided form reproduces neither (1.8393, 2.8312); and a two-state counterexample refutes the "iff" without a knife-edge (a fully violated `K3` with `Δq = +1` scores −1.2500 against −2.0000 for a clean trajectory at `Δq = −1`). Taking `ΔQ_MIN` from the expert panel was rejected: one clip expression produces both bounds | **User-approved 2026-09-12** ("correggi la doc"), after the practical reach, the alternatives and their prices were reported | `RULEBOOK-V5.2` §4.1, §5.4, §5.5, §7, §9 (`AC-A7-17`), §10 (`TEST-A7-10` extended, `TEST-A7-23` added), §11.3, §11.15, §14.1, §14.3; `ADR-083`; `reward/scalarization.py`; `conf/scalarization/default.yaml`; the diagnostic path; `tests/test_scal_v14.py` |
 | `DEV-A7-007` | This plan's §10/`M2` and §13 name the specification file `docs/specifications/rulebook_v5.2_specification.md` | It is written as `docs/specifications/rulebook_v5.2_UNDER_REVIEW_specification.md`, and the suffix is dropped on approval | `AGENTS.md` requires the canonical filename to carry `_UNDER_REVIEW` until approval, and `rulebook_v5.0_UNDER_REVIEW_specification.md` is the precedent for keeping such a file *in* `docs/specifications/` meanwhile. This plan's own `M2` text agrees in substance — it says to "move it into `docs/specifications/` at that point" — so the two readings differ only in the filename | Decided in `M2`, 2026-09-11; reported for approval | `docs/project_index.md`; every citation of the specification path |
 | `DEV-A7-008` | §13 lists `ADR-083` as the record of "the architecture and the discount", both approved 2026-09-09/-10, which would make it `Approved` on arrival | `ADR-083` is written with status **`Proposed`** | The decisions it records are approved; **its text is not** — the user has not seen it, and marking a new document `Approved` would attribute an approval that was never given to this wording. The status line states exactly which parts carry a signature and which do not, so no evidence is lost | Decided in `M2`, 2026-09-11; reported for approval | `docs/project_index.md` Decisions row |
 | `DEV-A7-009` | §9.1 defines `AC-A7-01`…`-15` and §9.2 defines `TEST-A7-01`…`-22`, with `TEST-A7-22` mapped to `REQ-A7-11` | The specification adds one criterion, `AC-A7-16`, and decomposes the ordering fixtures as `TEST-A7-15a`…`-15g` | `REQ-A7-11` is the below-standstill ceiling and does not cover the pooling guard, so `TEST-A7-22` had no criterion to be reconciled against — a test that no acceptance criterion claims cannot close a requirement. The fixture decomposition follows the sub-case convention `RULEBOOK-V5.1` §10 already uses (`TEST-RB5.1-15b`, `-16b`, `-16c`) | Decided in `M2`, 2026-09-11; reported for approval | `RULEBOOK-V5.2` §9, §10; this plan's §8 traceability on the next pass |

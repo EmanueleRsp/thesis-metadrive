@@ -185,10 +185,10 @@ room — 65.9 % and 72.1 % of their own effective upper bounds.
 only if doing so buys about **2.2 m/s** of extra route advance while you are on
 it (`Δq = w₅(1+σ)/λ₄ = 0.0975`, i.e. 2.17 m/s). And **no admissible `w₅` opposes
 a fast off-corridor drive**: the crossover at clip pace is 1.538462 against a cap
-of **0.1500** at the guarantee of the corrected predicate below, a ratio of
-`λ₄/[a − λ₄·(ΔQ_MAX − ΔQ_MIN)] = ` **10.26** in which `σ` cancels, so no
+of **0.2308** at the guarantee of the corrected predicate below, a ratio of
+`λ₄/[a − λ₄·(ΔQ_MAX − ΔQ_MIN)] = ` **6.67** in which `σ` cancels, so no
 re-tuning of the severity reaches it. That denominator *is* the rank-preservation
-tail, so the statement is the same as "progress consumes **92.2 %** of the
+tail, so the statement is the same as "progress consumes **88.0 %** of the
 `k = 3` per-step budget". Earlier revisions of this record printed 4.00 and "four
 fifths" because they evaluated the cap at `ΔQ_MIN = 0`. Declared as a limitation
 rather than fixed.
@@ -292,11 +292,18 @@ consequence, not a justification.
 **Decision.** Neither form. The swing is generalised to
 `λ₄·(ΔQ_MAX − ΔQ_MIN)` with `ΔQ_MIN` a declared symbol taking two values —
 `ΔQ_MIN_CLIP = −1`, what the channel permits, and
-`ΔQ_MIN_GUARANTEED = −0.1525`, what the selected weights buy — and **§5.4 is
+`ΔQ_MIN_GUARANTEED = −0.10`, the declared operating condition — and **§5.4 is
 restated as a conditional guarantee with a runtime falsifier** rather than as an
 unconditional theorem. The guarantee: the per-step ordering is lexicographic for
-as long as the compliant trajectory loses no more than **0.339 m of station in
-one 0.1 s step**. A per-episode counter of steps below that bound
+as long as the compliant trajectory loses no more than **0.222 m of station in
+one 0.1 s step**. That value is a **choice with a criterion, not the boundary of
+the admissible set**: the weights satisfy the inequality on the open interval
+`(−0.1525, 0]`, and at exactly −0.1525 the binding level reads `2.5 > 2.5`, which
+the strict inequality refuses — deliberately, since `rulebook_v5.0` §6.3 makes
+strictness the mechanism that "rejects knife-edge members that enumeration cannot
+break". `−0.10` is a 4.2× safety factor over the expert's measured 0.053 m, fixed
+before the arithmetic, and it leaves the binding inequality satisfied by
+**+0.105 reward units** rather than by nothing. A per-episode counter of steps below that bound
 (`AC-A7-17`) turns the condition from an assumption into a checked invariant, and
 `RULEBOOK-V5.2` §14.3 pre-registers what a non-zero count means before the number
 exists.
@@ -318,8 +325,8 @@ exploit, breaking ADR-073's forward/backward compensation.
 is needed. What is paid is the strength of the claim — the specification states a
 condition where it used to state a theorem — and one correction that makes an
 existing limitation larger: the clip-pace ratio of `RULEBOOK-V5.2` §11.3 is
-**10.26** at the guarantee, not the "exactly 4" earlier revisions reported, so
-progress consumes 92.2 % rather than 80 % of the `k = 3` per-step budget.
+**6.67** at the guarantee, not the "exactly 4" earlier revisions reported, so
+progress consumes 88.0 % rather than 80 % of the `k = 3` per-step budget.
 Correcting the predicate did not create that; it revealed it was understated.
 
 **Consequences for two documents already approved**, recorded rather than acted
