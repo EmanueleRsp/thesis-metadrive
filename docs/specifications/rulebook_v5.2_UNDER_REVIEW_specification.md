@@ -427,8 +427,14 @@ polyline and
 
 ```
 Δq_t  = clip( (s_{t+1} − s_t) / D_REF , −1, +1 ),   D_REF = v_ref · Δt = 2.2222 m
-K5_t  = Δq_t                                        ΔQ_MAX = 1
+K5_t  = Δq_t                                        ΔQ_MAX = +1,  ΔQ_MIN_CLIP = −1
 ```
+
+**Both bounds are declared, and they come from one expression.** Earlier
+revisions of this channel named only `ΔQ_MAX`, which invited the reading that the
+negative side is a detail rather than a bound; §5.4's predicate depends on both,
+and a specification that names one of them is a specification that will be
+quantified over the other by accident.
 
 with `v_ref = MISSION_PROGRESS_REFERENCE_SPEED_MPS = 22.2222 m/s` and
 `Δt = 0.1 s`. **The channel is the bare signed advance.** Nothing new is
@@ -712,7 +718,7 @@ particular pair. But it means the O3 gain of §1.1 is a property of the **scalar
 arm and of the **strict lexicographic** arm, and *not* of the thresholded arm at
 these budgets — and §11.1 leans on the thresholded comparison where it helps
 (O1), so the asymmetry must be declared rather than left implicit. Recorded as
-§11.15.
+§11.16.
 
 **There is no `τ₅`** (§4.2): not "unspecified", but inadmissible, and the last
 channel is unthresholded by the requirement of the thresholding family this arm
@@ -796,8 +802,11 @@ consume §3.4's vector directly and never evaluate this expression.
 
 ### 5.4 Rank-preservation condition
 
-> **OPEN AND BLOCKING — the progress term is counted once, and v5.0 counted it
-> twice.** The inequality below carries `λ₄·ΔQ_MAX` on the violated side only.
+> **RESOLVED 2026-09-12 — the progress term is counted on both sides, and the
+> guarantee is stated as conditional.** What follows records why, because the
+> correction is not cosmetic and it changes what §5.4 claims.
+>
+> `RULEBOOK-V5.1` §5.4 carried `λ₄·ΔQ_MAX` on the violated side only.
 > `rulebook_v5.0_UNDER_REVIEW_specification.md` §6.3 states the same predicate
 > with `2λ`, derives it symmetrically ("a violation at level `k` scores at best
 > `−w_k + λ`; the same level satisfied scores at worst … `− λ`"), and names the
@@ -830,22 +839,78 @@ consume §3.4's vector directly and never evaluate this expression.
 > many times the progress channel enters.
 > Under the two-sided form `λ₄ = 2.0` is **inadmissible** at `k = 2` and `k = 3`
 > (and the six-level weight set in production today fails at `k = 1` as well),
-> and the corollary `λ₄ ≤ a/2 = 1.25` that §5.5 attributes to a different
-> desideratum is *exactly* the two-sided bound at `w₅ = 0` — the same number
-> arriving twice by two routes. **This is not a defect introduced by A7**: the
-> one-sided form is `RULEBOOK-V5.1` §5.4's, it is what
+> and the corollary `λ₄ ≤ a/2 = 1.25` that an earlier revision attributed to a
+> different desideratum is *exactly* the two-sided bound at `w₅ = 0` — the same
+> number arriving twice by two routes. **This is not a defect introduced by A7**:
+> the one-sided form is `RULEBOOK-V5.1` §5.4's, it is what
 > `reward/scalarization.py` enforces today, and ADR-081 calibrated `a` and `σ`
-> against it. But A7 is the change that rewrites the predicate, and `AC-A7-08`
-> makes it a constructor gate, so freezing it a third time is a decision rather
-> than an inheritance. **Question 1 of §14.1. The inequality is left exactly as
-> production enforces it until that question is answered** — this document does
-> not silently change a weight bound.
+> against it. But A7 is the change that rewrites the predicate, so carrying it
+> forward unexamined would have frozen it a third time.
+>
+> **The correction adopted here** is neither of the two forms: it is the
+> generalised one, `λ₄·(ΔQ_MAX − ΔQ_MIN)`, with `ΔQ_MIN` a declared symbol.
+> Taking `ΔQ_MIN` from the expert panel (`−0.0239`, which would leave a thinnest
+> ratio of 1.1147 and cost nothing) was considered and **rejected on principle**:
+> one clip expression produces both bounds (§4.1), so reading `+1` as normative
+> construction and the negative side as an empirical convenience — inside the
+> same inequality — is not available. The price is stated below and in §14.3:
+> this document loses an unconditional theorem and gains a **conditional
+> guarantee with a runtime falsifier**. No weight moves.
 
 Level `k ∈ {1, 2, 3}` dominates everything below it iff
 
 ```
-a^(4−k)  >  (1 + σ) · Σ_{j>k, j≤3} a^(4−j)  +  w₅ · (1 + σ)  +  φ · (3 − k)  +  λ₄ · ΔQ_MAX
+a^(4−k)  >  (1 + σ) · Σ_{j>k, j≤3} a^(4−j)  +  w₅ · (1 + σ)  +  φ · (3 − k)  +  λ₄ · (ΔQ_MAX − ΔQ_MIN)
 ```
+
+**`ΔQ_MIN` is a declared quantity of this contract and it takes two values that
+must never be conflated.**
+
+| symbol | value | what it is |
+|---|---:|---|
+| `ΔQ_MIN_CLIP` | **−1** | what §4.1's clip permits. The channel is signed and one `clip(·, −1, +1)` produces both bounds |
+| `ΔQ_MIN_GUARANTEED` | **−0.1525** | the condition under which the selected weights preserve the ordering. Not a free constant: it is what `(a, σ, λ₄, w₅) = (2.5, 0.30, 2.0, 0.15)` *buys*, and it tightens if any of them moves |
+
+**At `ΔQ_MIN_CLIP` the selected weights do not satisfy the condition**, and this
+document states it rather than hiding it: the ratios are **1.0035 / 0.8395 /
+0.5959**, so only `k = 1` holds — the collision channel, which cannot be bought
+even at the clip. The six-level set running under `SCAL-V1.4` fails all three
+(0.9769 / 0.8202 / 0.6068). **§5.4 is therefore not an unconditional theorem,
+and no revision of this specification was ever entitled to state it as one.**
+
+**What the selected weights do buy is this, and it is the operative statement:**
+
+> The per-step ordering is lexicographic in `K1 ≻ K2 ≻ K3 ≻ K4` **for as long as
+> the compliant trajectory satisfies `Δq ≥ ΔQ_MIN_GUARANTEED = −0.1525`** — that
+> is, for as long as it loses no more than **0.339 m of route station in one
+> 0.1 s step**.
+
+Three facts about that condition, each with its source, because a condition
+without them is an excuse:
+
+- It is **6.4× outside** anything the logged expert does: the station never falls
+  more than **0.053 m** below its running maximum over 217,189 steps
+  (`behind_peak.max_m` = 0.053, `steps_beyond_1m` = 0, committed in
+  `docs/audits/reward_calibration_2026-09-07/rb51_calibration_a_sigma_l4.json`).
+- It is **not reachable by choice**: two actions available in the same state
+  differ by 0.025–0.045 of `Δq` in one 0.1 s step, so no policy can *select* a
+  0.339 m station loss. Only route geometry can impose one.
+- It is **not vacuous**: §11.5's closed loop is exactly the geometry that
+  produces large negative `Δq`, and the *positive* side of the same clip binds on
+  0.60 % of expert steps at up to 3.609 m — so the projection demonstrably
+  outruns the vehicle, and there is no reason to assume it does so in one
+  direction only.
+
+**The guarantee is falsified at runtime rather than assumed.** `AC-A7-17`
+requires a per-episode count of steps with `Δq ≤ ΔQ_MIN_GUARANTEED`, published on
+the diagnostic path that already carries `l4_clip_binding_steps`. A non-zero count
+is a measured violation of a declared condition, read by the rule pre-registered
+in §14.3.
+
+**The constructor gate evaluates the inequality at the `ΔQ_MIN` it is given**,
+which is therefore configured rather than a literal. Given `ΔQ_MIN_GUARANTEED` it
+admits the selected weights; given `ΔQ_MIN_CLIP` it refuses them, which is the
+correct behaviour for that input. `TEST-A7-10` pins both directions.
 
 **Derivation**, in the same structure as v5.1 §5.4 and re-derived independently
 for this document rather than transcribed. With level `k` violated, the best
@@ -854,21 +919,13 @@ attainable score is `−a^(4−k) + λ₄·ΔQ_MAX`, approached as `m_k → 0⁻
 score is `−(1+σ)·Σ_{j>k, j≤3} a^(4−j) − w₅·(1+σ) − φ·(3−k)`. Requiring the second
 to exceed the first gives the condition.
 
-**The asymmetry in that derivation is the open question above, stated plainly so
-it cannot be read past.** "Every channel below it maximally violated" is applied
-to the four cost channels but not to `K5`, which is pinned at `Δq = 0` on the
-satisfied side while the violated side takes `Δq = +ΔQ_MAX`. `K5` is a channel of
-this hierarchy by §3, it is bounded in `[−1, +1]` by §4.1, and its minimum is
-therefore `−ΔQ_MAX` and not 0 — which is what makes the swing `2λ₄·ΔQ_MAX`. The
-one defensible reading of the one-sided form is that the comparison is restricted
-to trajectory pairs in which the compliant one does not *lose* station, i.e. that
-the effective `ΔQ_MIN` is 0 rather than `−1`. That restriction is an assumption
-about the route projection, it is **not stated anywhere**, and §11.5 measures the
-case where it is false: a closed loop over a hairpin banks `+72` reward units at
-zero net displacement, which is negative `Δq` being clipped and re-earned. Either
-the assumption belongs in this section with `ΔQ_MIN` named as a separate declared
-quantity, or the predicate takes the two-sided form and `(a, λ₄)` are
-recalibrated. §14.1, question 1.
+**The symmetry in that derivation is the whole correction.** "Every channel below
+it maximally violated" now applies to `K5` as well: the violated side takes
+`Δq = +ΔQ_MAX` and the satisfied side `Δq = ΔQ_MIN`, so the progress channel
+contributes its whole swing `λ₄·(ΔQ_MAX − ΔQ_MIN)` instead of half of it. The
+superseded form pinned the satisfied side at `Δq = 0`, which is an assumption
+about the route projection — that the compliant trajectory never loses station —
+stated nowhere and false in the geometry §11.5 measures.
 
 **Three placements in that expression are load-bearing, and getting any of them
 wrong produces a plausible-looking wrong predicate.**
@@ -910,20 +967,34 @@ weights stop being an ordering. `AC-A7-08` and `TEST-A7-10` pin that it is a
 constructor gate.
 
 **The cap on `w₅` follows from the same inequality**, at its binding level
-`k = 3` where the lower-level sum is empty:
+`k = 3` where the lower-level sum is empty, and it is now a **function of
+`ΔQ_MIN`** rather than a constant:
 
 ```
-w₅  <  (a − λ₄·ΔQ_MAX) / (1 + σ)  =  0.384615
+w₅  <  [ a − λ₄·(ΔQ_MAX − ΔQ_MIN) ] / (1 + σ)
 ```
 
-and the cap on `λ₄` follows from requiring the cap itself to leave room for a
-`w₅` that opposes an off-corridor drive at clip pace: `a > 2·λ₄·ΔQ_MAX`, i.e.
-`λ₄ < a/2 = 1.25`, in which `σ` cancels. Both conditions it combines are strict,
-so the combined form is strict too — at `a = 2·λ₄` the admissible window is
-empty, not knife-edge. The shipped `λ₄ = 2.0` is 1.6× that, which is a declared
-limitation rather than an oversight (§11.3) — **and note that this same
-inequality is the two-sided rank-preservation bound at `w₅ = 0`**, which is the
-coincidence the open question of §14.1 turns on.
+| `ΔQ_MIN` | cap on `w₅` | note |
+|---:|---:|---|
+| 0 (the superseded form) | 0.384615 | the figure earlier revisions printed |
+| −0.0239 (expert panel) | 0.3478 | |
+| **−0.1525** (`ΔQ_MIN_GUARANTEED`) | **0.1500** | the selected `w₅ = 0.15` sits exactly on it |
+| −1 (`ΔQ_MIN_CLIP`) | negative | no `w₅` is admissible |
+
+**That the cap at `ΔQ_MIN_GUARANTEED` equals the selected `w₅` exactly is not a
+coincidence and must not be read as one.** `ΔQ_MIN_GUARANTEED` is *defined* as
+the largest station loss at which the selected weights still satisfy the
+inequality, so the two are two readings of one fact: **at `w₅ = 0.15` the weights
+buy a guarantee down to −0.1525, and raising `w₅` tightens the guarantee.** At
+`w₅ = 0.25`, the alternative §5.5 prices, the guarantee shrinks to `Δq ≥ −0.0875`
+(0.194 m per step), which is still 3.7× outside the expert's measured 0.053 m.
+
+The `λ₄` headroom likewise depends on `ΔQ_MIN`: `λ₄ < a/(ΔQ_MAX − ΔQ_MIN)`, i.e.
+2.5 at `ΔQ_MIN = 0`, **2.1692** at `ΔQ_MIN_GUARANTEED` — which the shipped
+`λ₄ = 2.0` satisfies — and 1.25 at `ΔQ_MIN_CLIP`. The last of those is the
+`λ₄ ≤ a/2` that earlier revisions attributed to an unrelated desideratum: it is
+this inequality at `w₅ = 0` and the full clip, which is why the same number
+arrived twice by two routes.
 
 ### 5.5 Selected weights
 
@@ -1003,12 +1074,16 @@ bounds below are measured on uses `c_K4 = 1/3`.
 `w₅` opposes a **fast** off-corridor drive. The crossover is
 `w₅ = λ₄·Δq/(1+σ)`: **0.313983** at the expert's mean pace `Δq = 0.204089`, which
 is admissible, and **1.538462** at the clip, which is not — against the cap of
-0.384615. The ratio of the clip-pace requirement to the cap is
-`λ₄/(a − λ₄·ΔQ_MAX)`, in which `σ` cancels, so it is **exactly 4** for every
-admissible severity and no re-tuning of `σ` reaches it. That denominator *is* the
-§5.4 tail, so "no admissible `w₅` opposes a fast off-route drive, by a factor of
-four" is the same statement as "progress consumes four fifths of the per-step
-budget". Declared in §11.3.
+**0.1500** at `ΔQ_MIN_GUARANTEED` (0.384615 under the superseded one-sided form).
+The ratio of the clip-pace requirement to the cap is
+`λ₄/[a − λ₄·(ΔQ_MAX − ΔQ_MIN)]`, in which `σ` cancels, so it is a property of the
+weights and no re-tuning of `σ` reaches it: **10.26** at `ΔQ_MIN_GUARANTEED`,
+against the 4.00 the one-sided form reported. That denominator *is* the §5.4
+tail, so "no admissible `w₅` opposes a fast off-route drive" is the same statement
+as "progress consumes **92.2 %** of the `k = 3` per-step budget" (80 % under the
+superseded form). Correcting the predicate therefore does not create this
+limitation — it reveals that it was understated by a factor of 2.6. Declared in
+§11.3.
 
 #### `φ = 0`
 
@@ -1108,7 +1183,15 @@ nothing else:
   §3; `advance_shortfall` disappears from every diagnostic surface;
 - `l4_clip_binding_steps` is retained under the `K5` name and is what makes
   `AC-RB5.1-05`'s open question measurable on agent trajectories rather than
-  deducible (§9.2);
+  deducible (§9.2). Note that it counts `|Δq| ≥ 1 − ε`, i.e. it is **blind to the
+  sign**, so it does not answer §5.4's question;
+- **one counter is added, and it is the falsifier of §5.4's guarantee**:
+  `k5_below_guaranteed_min_steps`, the per-episode count of steps with
+  `Δq ≤ ΔQ_MIN_GUARANTEED = −0.1525`, published on the same per-episode path as
+  the counter above. It is signed by construction. `AC-A7-17`, `TEST-A7-23`, and
+  the reading rule is pre-registered in §14.3. A signed minimum
+  (`k5_min_delta_q`) is published beside it so that a violation can be sized and
+  not merely detected;
 - **one guard is added**, because a stale consumer of A7 output fails
   *invisibly*. Four of five channel names survive A7, so a consumer written for
   the six-level vocabulary produces a **populated and wrong** table rather than
@@ -1174,6 +1257,7 @@ prohibited (§11.12).
 | `AC-A7-14` | The `AB-LEARN` pre-registration records the reward change explicitly **before** any screening run under A7, and its resolved-config diff still shows single-factor invariance | `NOT_RUN` — `TEST-A7-17` |
 | `AC-A7-15` | §11 declares the limitations A7 does not remove, each with its figure | **PASS** — §11 |
 | `AC-A7-16` | Two runs whose scalarization vector schemas differ never share one analysis condition identity | `NOT_RUN` — `TEST-A7-22` |
+| `AC-A7-17` | The §5.4 predicate is evaluated at a **configured** `ΔQ_MIN`, not a literal; it admits the selected weights at `ΔQ_MIN_GUARANTEED = −0.1525` and refuses them at `ΔQ_MIN_CLIP = −1`; and every episode publishes `k5_below_guaranteed_min_steps` and `k5_min_delta_q`, so the guarantee of §5.4 is falsifiable by measurement rather than assumed | `NOT_RUN` — `TEST-A7-10`, `TEST-A7-23` |
 
 `AC-A7-13` is deliberately permissive in the same way its predecessor was: a
 strict-lexicographic failure on O1 and O2 is a **result to report**, not a defect
@@ -1232,7 +1316,8 @@ fails on an import is not yet testing anything.
 | `TEST-A7-07` | Unit | The §5.1 form is reproduced term by term, **written out independently of the implementation** | five-entry channel vectors, six cases | exact | `AC-A7-06` |
 | `TEST-A7-08` | Unit | `w₅` reaches only the `K4` term | one vector, two `w₅` values | priority contributions identical; reward differs by `Δw₅·[(1_sat − 1) + σ·m₄]` | `AC-A7-06` |
 | `TEST-A7-09` | Config | The resolved scalarization block is the A7 set | resolved job configuration | exact values and schema id | `AC-A7-07` |
-| `TEST-A7-10` | Unit | The §5.4 predicate is a **constructor** gate | the selected set plus five inadmissible ones | admits / raises naming rank preservation | `AC-A7-08` |
+| `TEST-A7-10` | Unit | The §5.4 predicate is a **constructor** gate, evaluated at a configured `ΔQ_MIN` | the selected set at `ΔQ_MIN_GUARANTEED` and at `ΔQ_MIN_CLIP`, plus five inadmissible sets | admits at −0.1525; **raises at −1**, naming rank preservation; ratios 1.1261 / 1.0870 / 1.0000 and 1.0035 / 0.8395 / 0.5959 | `AC-A7-08`, `AC-A7-17` |
+| `TEST-A7-23` | Integration | The guarantee's falsifier reaches the per-episode record, signed | an episode with one step at `Δq = −0.2` and one at `Δq = −0.05` | `k5_below_guaranteed_min_steps == 1`, `k5_min_delta_q == −0.2`; the sign-blind clip counter is unchanged | `AC-A7-17` |
 | `TEST-A7-11` | Integration | One shared discount, its shaping twin, **and the criterion's verdict** | the six algorithm configurations and the frozen index | `γ = 0.9982` everywhere; `508.6 > 500` | `AC-A7-09` |
 | `TEST-A7-12` | Measurement | The expert per-episode exposure distributions exist and fix the budgets | the 2026-09-10 panel run | four distributions on three objects, plus per-record tail rows | `AC-A7-10` |
 | `TEST-A7-13` | Measurement | Below-standstill under A7 | the A7 grid member at the selected weights | ≤ 7.45 % | `AC-A7-11` |
@@ -1311,9 +1396,13 @@ rather than a declaration.
    it too. Once that residual is present, A7 is no worse on any ordering and
    strictly better on O3. Reported by `TEST-A7-16`, not repaired.
 3. **No admissible `w₅` opposes a fast off-corridor drive, by a factor of
-   exactly 4** (§5.5). At `w₅ = 0.15` a fully violated `K4` step costs **0.195**
+   10.26** (§5.5). At `w₅ = 0.15` a fully violated `K4` step costs **0.195**
    against **2.000** of progress at the clip, so it opposes nothing at any pace,
-   and the ratio `λ₄/(a − λ₄·ΔQ_MAX) = 4` is independent of `σ`. The only lever
+   and the ratio `λ₄/[a − λ₄·(ΔQ_MAX − ΔQ_MIN)]` is independent of `σ`. Earlier
+   revisions reported this as "exactly 4" because they evaluated it at
+   `ΔQ_MIN = 0`; correcting §5.4 does not create the limitation, it reveals that
+   it was understated 2.6-fold. Equivalently, progress consumes **92.2 %** of the
+   `k = 3` per-step budget. The only lever
    that would move it is `λ₄` relative to `a`, and reducing `λ₄` to the value
    that admits such a `w₅` costs **+1.81 pp** of below-standstill while buying an
    option that **cannot be exercised**: the channel that would have to fire is
@@ -1413,7 +1502,17 @@ rather than a declaration.
     panel maximum, a policy at or below human exposure is unconstrained on that
     channel, and the thresholded arm's differentiation there comes from the
     ordering alone (§4.5). `τ₂`'s maximum is 13.7× its own `p99`.
-15. **A7's gain on O3 does not reach the thresholded arm at these budgets.** The
+15. **§5.4's guarantee is conditional, and the condition is not proved — it is
+    monitored.** The per-step ordering is lexicographic while the compliant
+    trajectory loses no more than 0.339 m of station per step; at the full clip
+    the selected weights hold only at `K1`. Nothing in the runtime bounds the
+    backward projection — the production mission tracker projects without a jump
+    envelope — so the condition rests on measurement (0.053 m on the expert
+    panel, 6.4× of margin) and on reachability (two actions in one state differ
+    by 0.025–0.045 of `Δq`), not on a proof. `AC-A7-17` is what turns it from an
+    assumption into a checked invariant, and §14.3 pre-registers what a non-zero
+    count means.
+16. **A7's gain on O3 does not reach the thresholded arm at these budgets.** The
     reference pair accrues 10.0 units of `K4` exposure against `τ₄ = 23.386514`,
     so it ties on every cost channel and the comparison falls through to progress,
     where the shortcut wins by arriving sooner; the shortcut would need 70 of its
@@ -1492,11 +1591,13 @@ rulebook and from the reward, and may be logged as diagnostics only — plus:
 Three of these were open by design before this document was written. **Six more
 were found by an independent audit of it on 2026-09-11** and are listed beside
 them, because an `UNDER_REVIEW` document that hides them is worse than one that
-does not. Question 1 blocks approval of §5.4 and §5.5.
+does not. **Question 1 was the blocking one and was resolved on 2026-09-12**;
+the remaining five do not block approval, but two of them (questions 2 and 4)
+support the value of a weight and should close before `M4`.
 
 | # | question | status, and what each answer changes |
 |---|---|---|
-| **1** | **Does the §5.4 predicate count the progress swing once (`λ₄·ΔQ_MAX`, as written here, as `RULEBOOK-V5.1` §5.4 states it, and as `reward/scalarization.py` enforces) or twice (`2λ₄·ΔQ_MAX`, as `rulebook_v5.0` §6.3 derives it)?** | **BLOCKING**, and see §5.4's note for the evidence. The recommended answer is the **generalised swing** `λ₄·(ΔQ_MAX − ΔQ_MIN)` with `ΔQ_MIN` a **declared symbol of the contract**, valued at **−1** because that is what §4.1's clip permits — one clip expression produces both bounds, so reading `+1` as normative and the negative side as an empirical convenience is not available. At that value the shipped weights satisfy only `k = 1` (ratios 1.0035 / 0.8395 / 0.5959; today's six-level set fails all three at 0.9769 / 0.8202 / 0.6068), so **§5.4 stops being an unconditional theorem and becomes a declared, falsifiable guarantee**: it holds while the compliant trajectory's `Δq ≥ −0.1525`, i.e. while it loses no more than **0.34 m of station in one 0.1 s step**. That condition is physical, it is 6.4× outside what the logged expert ever does (`behind_peak.max_m = 0.053 m` over 217,189 steps, committed in `docs/audits/reward_calibration_2026-09-07/`), and it is **checkable at runtime** rather than assumed — a per-episode counter of steps with `Δq ≤ −0.1525`, on the diagnostic path that already exists. The alternatives and their prices are in §14.3 |
+| ~~1~~ | ~~Does the §5.4 predicate count the progress swing once or twice?~~ | **RESOLVED 2026-09-12**, user-approved. Neither: the swing is generalised to `λ₄·(ΔQ_MAX − ΔQ_MIN)` with `ΔQ_MIN` a declared symbol taking two values (§5.4), §5.4 is restated as a **conditional guarantee with a runtime falsifier** (`AC-A7-17`, `TEST-A7-23`), and no weight moves. The alternatives and their prices are kept in §14.3 as the record of why |
 | 2 | What model converts 5.0 s of arrival delay into reward units — i.e. where do `w₅ < 0.4477` and `w₅ < 0.2641` come from (§5.5)? | Not reproducible from §4 or §5; six candidate models were tried and none produces the pair, and the required `γ`-dependence lies outside the natural families. `0.2641` is the bound that constrains `w₅` at the adopted discount and is the denominator of the 72.1 % window, so this is not decorative. If it cannot be restated, it joins §14.2's not-reproduced list and the window figures are withdrawn or re-derived |
 | 3 | Which two quantities give the discount's **90.5 % / 79.7 %** share of the time preference (§4.3)? | Not reproducible; the only live version of that comparison (v5.1 §4.6, +2.05 against 0.8) gives **71.9 %** at `γ = 0.996`, and no function with a fixed denominator spans 90.5 → 79.7 across the two discounts. §4.3 now carries three reproducible grounds plus this one flagged, and the deletion of `L6` does not rest on it |
 | 4 | Is the marking placed on the shortcut's **first** 30 steps in the §5.5 reference pair? | Answered affirmatively here, on evidence: it is the only placement at which v5.1 §4.4's whole published table reproduces (§14.2). Recorded because the `γ = 0.996` margin goes **+0.5813 → −0.0141** once the placement starts past step 33, so the "stands whether or not the discount decision is taken" claim is placement-dependent at that discount and unconditional at `γ = 0.9982`. If the placement is meant to be free, the binding lower bound becomes `w₅ > 0.2212`, which `w₅ = 0.15` does not satisfy |
@@ -1533,12 +1634,14 @@ reproduced are named, not omitted.
 
 ### 14.3 The predicate: options priced, and the reading pre-registered
 
-Every option below was worked out against the code and the committed artifacts,
-and the prices are measured wherever a measurement exists.
+The first row is the **adopted** option (2026-09-12, user-approved); the rest are
+kept as the record of what it was chosen against. Every option was worked out
+against the code and the committed artifacts, and the prices are measured
+wherever a measurement exists.
 
 | option | keeps the shipped weights? | price |
 |---|---|---|
-| **Generalised swing with `ΔQ_MIN = −1` declared, §5.4 restated as a conditional guarantee plus a runtime falsifier** — *recommended* | **yes** | The specification loses a theorem and gains a declared assumption with a physical reading (0.34 m of station per step) plus a per-episode counter. No weight moves, no measured figure decays, no run is needed. Editorial cost: §5.4, §5.5, §11.3, ADR-081 and ADR-083 where they quote the `w₅` cap and the "exactly 4" ratio, since both become functions of `ΔQ_MIN` |
+| **ADOPTED — generalised swing, `ΔQ_MIN` declared with two values, §5.4 restated as a conditional guarantee plus a runtime falsifier** | **yes** | The specification loses an unconditional theorem and gains a declared condition with a physical reading (0.339 m of station per step) plus a per-episode counter. No weight moves, no measured figure decays, no run is needed. Editorial cost, all of it paid in this revision: §4.1 (both bounds declared), §5.4, §5.5, §11.3 and `ADR-083`, since the `w₅` cap and the clip-pace ratio become functions of `ΔQ_MIN` — the ratio was reported as "exactly 4" and is **10.26** at the guarantee, so the §11.3 limitation was understated 2.6-fold. Implementation cost: `ΔQ_MIN` becomes a configured field of the scalarization block, and the diagnostic path gains two per-episode fields |
 | Generalised swing with `ΔQ_MIN` taken from the expert panel (−0.0239) | yes, with the thinnest ratio at 1.1147 — better than today's 1.1121 | **Rejected**: it reads one side of one clip expression as construction and the other as measurement, inside the same inequality. The same artifact that yields 0.053 m backwards also records the *positive* side of that clip binding on 1298 of 217,189 steps at up to 3.609 m — so the projection demonstrably outruns the vehicle, and 0.053 m is a property of a human who took every fold the right way round, not of the mechanism |
 | Adopt the two-sided form and recalibrate now | **no** — needs `λ₄ < 1.1525` at `a = 2.5` | Buys the unconditional theorem for roughly half the expert return: `λ₄ = 1.25` is measured at 6.45 % below-standstill and a mean of 41.12 against 71.34, and `λ₄ ≈ 1.15` extrapolates to ≈6.8 % against the 7.45 % ceiling. Available at any time as the fallback; not something to pay before knowing it is needed |
 | Raise `a` and keep `λ₄ = 2.0` | no | Needs `a ≥ 4.195`, a 68 % move in the quantity ADR-081 calibrated, which already measured and rejected `a = 3.0` |

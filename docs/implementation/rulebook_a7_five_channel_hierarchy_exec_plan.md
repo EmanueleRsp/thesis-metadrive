@@ -182,6 +182,7 @@ Rows marked **→ spec** become text in the A7 specification document under
 | `REQ-A7-12` | Production's five channels equal the offline instrument on every step of the frozen panel to `1e-9` | Mechanism: the instrument is what every published figure was derived from, so agreement is what converts those figures from claims about a script into claims about production. This is `RB51`'s own `T-RB51-12` discipline, which passed at `0.0` divergence on four sub-rules and `5.97e-06` on `offroad` |
 | `REQ-A7-13` | The ordering battery holds under A7 in the scalar arm, and every strict-lexicographic failure is reported with the deciding channel rather than repaired | Measurement: `g3_battery.py` scores ten orderings for A7 as passing under both the scalar rule and strict lexicographic comparison. Mechanism for why failures are reported: `I2` — if any channel is non-zero with positive probability on every moving trajectory, the do-nothing trajectory is optimal under strict lexicographic comparison, and the interaction channel fires on 0.3978 % of expert steps |
 | `REQ-A7-14` | The `AB-LEARN` pre-registration is amended explicitly, before any screening run under A7 | Mechanism: `AB-LEARN` §7.5 point 3 — the freeze gate "is legitimate only because it was pre-registered", so a reward that moves must move *before* the runs that decide the hypotheses, and be recorded as having done so |
+| `REQ-A7-16` | The §5.4 predicate carries the **whole** progress swing, `λ₄·(ΔQ_MAX − ΔQ_MIN)`, with `ΔQ_MIN` a configured value rather than a literal; the guarantee it yields is declared as conditional and **falsified at runtime** by a signed per-episode counter. **→ spec** | Mechanism: the progress channel is bounded in `[−1, +1]` by one clip expression while the cost channels are bounded in `[−1, 0]`, so it contributes its whole swing to the comparison. Literature: the two-sided form reproduces Veer et al.'s `a > 2`, the one-sided form gives 1.8393. Measurement: the guarantee's threshold is 6.4× outside the expert's measured 0.053 m station loss (`docs/audits/reward_calibration_2026-09-07/`). `DEV-A7-010` |
 | `REQ-A7-15` | The limitations A7 does not remove are declared, not implied: `P11`, collide-to-escape on the scalar arm, `C50`, `D14`, and the thresholded arm's two open mechanism routes | Measurement, each with its figure in §15 |
 
 ---
@@ -1405,6 +1406,18 @@ assumed, and all three recorded in §12:
 - [ ] `reward/scalarization.py`: the new mode, the arity and **the progress index
   as declared data**, the weight set, `_validate_five_channel_weights`, the schema
   id. The five legacy modes untouched.
+- [ ] **`DEV-A7-010`: the predicate carries `λ₄·(ΔQ_MAX − ΔQ_MIN)` and reads
+  `ΔQ_MIN` from the configuration**, defaulting to `ΔQ_MIN_GUARANTEED = −0.1525`,
+  with `delta_q_min` added to `conf/scalarization/default.yaml` and to
+  `from_mapping`'s allow-list. The gate must admit the selected weights at that
+  value and **refuse them at −1**; both directions are `TEST-A7-10`. Note for the
+  implementer: the offline oracle
+  `scripts/measure_expert_rulebook_transition.py` carries *two* predicates —
+  `is_rank_preserving` (`:816`) is already two-sided, `v51_is_rank_preserving`
+  (`:903`) and `a7_is_rank_preserving` (`:542`) are one-sided — and the A7 one
+  must move with the production gate or `T-RB51-12`'s oracle discipline is lost.
+  `tests/test_scal_v14.py:179-201` pins `Δq = 0` on the compliant side, i.e. it
+  assumes exactly what this deviation corrects, and is rewritten first.
 - Tests: `TEST-A7-05`, `-07`, `-08`, `-10`, `-18`, `-19`.
 - Commands: `make gate GATE_ARGS="tests/test_scal_v15.py"`, then `make check`.
 
@@ -1421,7 +1434,13 @@ assumed, and all three recorded in §12:
   average together rather than merely unlikely to be — necessary here and not
   under `RB51` because A7 keeps four of five channel names, so a stale consumer
   produces a populated wrong table instead of an empty one.
-- Tests: `TEST-A7-01`, `-02`, `-03`, `-04`, `-06`, `-22`.
+- [ ] **`AC-A7-17`'s falsifier**: `k5_below_guaranteed_min_steps` and
+  `k5_min_delta_q` per episode, on the path that already carries
+  `l4_clip_binding_steps` — `rulebook/v2/wrapper.py`,
+  `runtime/route_adherence_diagnostics.py`, `agent/agent.py`. The existing clip
+  counter tests `abs(margin) >= 1 − 1e-9` and is **sign-blind**, so it answers a
+  different question and must not be reused. `TEST-A7-23`.
+- Tests: `TEST-A7-01`, `-02`, `-03`, `-04`, `-06`, `-22`, `-23`.
 - Expect a ripple of the same class as `RB51`'s 50 tests (§4.4). A test that
   encoded the old contract is migrated; a test that encoded a *behaviour* is a
   finding and stops the milestone.
@@ -1848,9 +1867,39 @@ clip) would make the predicate unsatisfiable rather than merely unchanged; and
 `tests/test_scal_v14.py:179-201`, the test that should have caught this, pins
 `Δq = 0` on the compliant side — it assumes exactly what is in question.
 
-**Next step:** the user's decision on question 1 of `RULEBOOK-V5.2` §14.1 — the
-recommendation is §14.3's first row — then approval of `RULEBOOK-V5.2` and
-`ADR-083`. `M3` is blocked on that approval, and so is every milestone after it.
+---
+
+**2026-09-12 — question 1 decided and the documents corrected.** The user
+approved the recommendation ("correggi la doc"). `RULEBOOK-V5.2` §4.1 now
+declares both bounds of the progress channel; §5.4 carries
+`λ₄·(ΔQ_MAX − ΔQ_MIN)` with `ΔQ_MIN` a declared symbol at two values, states
+plainly that the selected weights **fail** at `ΔQ_MIN_CLIP = −1` (ratios
+1.0035 / 0.8395 / 0.5959, and the six-level set in production fails all three),
+and restates the property as a **conditional guarantee**: lexicographic ordering
+holds while the compliant trajectory loses no more than 0.339 m of station per
+step. `AC-A7-17` and `TEST-A7-23` make that condition falsifiable at runtime
+instead of assumed; §14.3 pre-registers the reading. `ADR-083` carries the
+decision and both rejections. **No weight moved, no measured figure decayed, no
+run was needed**; `REQ-A7-16` and `DEV-A7-010` record it here.
+
+**Two corollaries changed shape and one limitation got bigger**, which is the
+honest price: the `w₅` cap and the clip-pace ratio are now functions of `ΔQ_MIN`
+(cap **0.1500** at the guarantee against the 0.384615 earlier revisions printed;
+ratio **10.26** against "exactly 4"), so §11.3's limitation was understated
+2.6-fold — progress consumes **92.2 %** of the `k = 3` per-step budget, not 80 %.
+Correcting the predicate revealed that; it did not cause it.
+
+**Two approved documents are now known to rest on the superseded form**, recorded
+and not acted on: ADR-081's five-row decision table is computed against it and no
+row survives the generalised predicate, so `σ = 0.30`'s selection argument needs
+revisiting; and `C50`'s alternative remedy (removing the negative clip) would
+make the predicate *unsatisfiable*, not leave it untouched as that row says.
+Both belong to `M8`'s reconciliation.
+
+**Next step:** the user's approval of `RULEBOOK-V5.2` and `ADR-083` as documents.
+`M3` is blocked on that approval, and so is every milestone after it. The
+remaining five questions of §14.1 do not block it; questions 2 and 4 support the
+value of a weight and should close before `M4`.
 
 ---
 
@@ -1863,6 +1912,7 @@ recommendation is §14.3's first row — then approval of `RULEBOOK-V5.2` and
 | `DEV-A7-003` | ADR-081 / `AC-RB5.1-16`: `γ = 0.996` with the criterion evaluated at `L = 199` | `γ = 0.9982` with the criterion evaluated at the measured `L = 500` | `C49`; §5.2 | Approved 2026-09-09 | the six algorithm configs, `tests/test_hydra_agent_presets.py` |
 | `DEV-A7-004` | ADR-072: the relaxable lane rules sit below progress | Reverted for those three sub-rules | v5.0's pathology was the **price**, not the placement: v5.0 charged them at `a = 2.2` per violated step, so standing still won past **37** relaxed steps against a mean Waymo mission. At `w₅ = 0.15`, 14.7× less, standing still wins only past **416** relaxed steps at full severity — twice the Waymo episode, and 848 against a mean PG mission over a 500-step episode. Re-derived today | `DEC-A7-002` | ADR-083 records the reversal |
 | `DEV-A7-005` | `AB-LEARN` `REQ-AB-009`: the reward under test is v5.1 + `SCAL-V1.4` | The reward under test becomes A7 + `SCAL-V1.5` | §6.6 | `DEC-A7-008` | `AB-LEARN` §3, §5, §7.1, §14 |
+| `DEV-A7-010` | §5.1's rank-preservation predicate carries the progress tail once, as `λ₄·ΔQ_MAX` — inherited from `RULEBOOK-V5.1` §5.4 and from what `reward/scalarization.py` enforces | The predicate is generalised to `λ₄·(ΔQ_MAX − ΔQ_MIN)`, `ΔQ_MIN` becomes a declared symbol with two values (`ΔQ_MIN_CLIP = −1`, `ΔQ_MIN_GUARANTEED = −0.1525`), and §5.4 of the specification is restated as a **conditional guarantee with a runtime falsifier** instead of an unconditional theorem. **No weight changes** | `rulebook_v5.0` §6.3 derives the same condition with `2λ` and names the asymmetry that produces it; the two-sided form reproduces both anchors v5.0 validates against (`a > 2`, `a ≥ 2.92`) and the one-sided form reproduces neither (1.8393, 2.8312); and a two-state counterexample refutes the "iff" without a knife-edge (a fully violated `K3` with `Δq = +1` scores −1.2500 against −2.0000 for a clean trajectory at `Δq = −1`). Taking `ΔQ_MIN` from the expert panel was rejected: one clip expression produces both bounds | **User-approved 2026-09-12** ("correggi la doc"), after the practical reach, the alternatives and their prices were reported | `RULEBOOK-V5.2` §4.1, §5.4, §5.5, §7, §9 (`AC-A7-17`), §10 (`TEST-A7-10` extended, `TEST-A7-23` added), §11.3, §11.15, §14.1, §14.3; `ADR-083`; `reward/scalarization.py`; `conf/scalarization/default.yaml`; the diagnostic path; `tests/test_scal_v14.py` |
 | `DEV-A7-007` | This plan's §10/`M2` and §13 name the specification file `docs/specifications/rulebook_v5.2_specification.md` | It is written as `docs/specifications/rulebook_v5.2_UNDER_REVIEW_specification.md`, and the suffix is dropped on approval | `AGENTS.md` requires the canonical filename to carry `_UNDER_REVIEW` until approval, and `rulebook_v5.0_UNDER_REVIEW_specification.md` is the precedent for keeping such a file *in* `docs/specifications/` meanwhile. This plan's own `M2` text agrees in substance — it says to "move it into `docs/specifications/` at that point" — so the two readings differ only in the filename | Decided in `M2`, 2026-09-11; reported for approval | `docs/project_index.md`; every citation of the specification path |
 | `DEV-A7-008` | §13 lists `ADR-083` as the record of "the architecture and the discount", both approved 2026-09-09/-10, which would make it `Approved` on arrival | `ADR-083` is written with status **`Proposed`** | The decisions it records are approved; **its text is not** — the user has not seen it, and marking a new document `Approved` would attribute an approval that was never given to this wording. The status line states exactly which parts carry a signature and which do not, so no evidence is lost | Decided in `M2`, 2026-09-11; reported for approval | `docs/project_index.md` Decisions row |
 | `DEV-A7-009` | §9.1 defines `AC-A7-01`…`-15` and §9.2 defines `TEST-A7-01`…`-22`, with `TEST-A7-22` mapped to `REQ-A7-11` | The specification adds one criterion, `AC-A7-16`, and decomposes the ordering fixtures as `TEST-A7-15a`…`-15g` | `REQ-A7-11` is the below-standstill ceiling and does not cover the pooling guard, so `TEST-A7-22` had no criterion to be reconciled against — a test that no acceptance criterion claims cannot close a requirement. The fixture decomposition follows the sub-case convention `RULEBOOK-V5.1` §10 already uses (`TEST-RB5.1-15b`, `-16b`, `-16c`) | Decided in `M2`, 2026-09-11; reported for approval | `RULEBOOK-V5.2` §9, §10; this plan's §8 traceability on the next pass |
@@ -1878,7 +1928,8 @@ recommendation is §14.3's first row — then approval of `RULEBOOK-V5.2` and
 | `docs/specifications/rulebook_v5.2_UNDER_REVIEW_specification.md` | **Done, `M2`, 2026-09-11** | `DEC-A7-001`; the contract `M4`–`M7` implement against, `UNDER_REVIEW` and not authoritative until approved (`DEV-A7-007`) |
 | `docs/decisions/ADR-083-progress-last-and-the-discount-at-the-measured-horizon.md` | **Done, `M2`, 2026-09-11** | The architecture and the discount; status `Proposed` (`DEV-A7-008`) |
 | `scripts/measure_expert_rulebook_transition.py` | **Done, `M1`, 2026-09-10** | Four episode exposure accumulators, `a7_reward`/`a7_is_rank_preserving`, the A7 grid, the K2/K3 argmax and co-occurrence counters, and `production_scalarization_config()` (`C54` fix) |
-| `src/thesis_rl/reward/scalarization.py` | Planned modification | The A7 mode, arity **and progress index** as declared data, the weight set, the predicate, the schema id |
+| `src/thesis_rl/reward/scalarization.py` | Planned modification | The A7 mode, arity **and progress index** as declared data, the weight set, the predicate **with `ΔQ_MIN` configured rather than a literal** (`DEV-A7-010`), the schema id |
+| `src/thesis_rl/runtime/route_adherence_diagnostics.py`, `src/thesis_rl/agent/agent.py` | Planned modification | `AC-A7-17`'s per-episode falsifier: `k5_below_guaranteed_min_steps`, `k5_min_delta_q`. Named here because `M2`'s audit found they were in no Files row |
 | `src/thesis_rl/rulebook/v2/types.py` | Planned modification | Five channels, five-margin result |
 | `src/thesis_rl/rulebook/v2/registry.py` | Planned modification | Level re-mapping, `advance_shortfall` deregistered |
 | `src/thesis_rl/rulebook/v2/aggregation.py` | Planned modification | Four cost channels; `K4`'s declared denominator unchanged |

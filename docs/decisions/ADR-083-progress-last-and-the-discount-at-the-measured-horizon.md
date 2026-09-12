@@ -262,6 +262,71 @@ measured.
 `learning_potential_gamma` equals `γ` because potential-based shaping is
 policy-invariant only when its discount is the MDP's (Ng, Harada & Russell).
 
+## The rank-preservation predicate, corrected
+
+Added 2026-09-12, after an independent audit of the `M2` documents. It is
+recorded here because it changes what the specification *claims*, and because the
+defect it corrects predates A7.
+
+`RULEBOOK-V5.1` §5.4 states the rank-preservation condition with the progress
+term counted **once**, `λ₄·ΔQ_MAX`. `rulebook_v5.0` §6.3 states the same
+condition with `2λ`, derives it symmetrically, and names the reason: the cost
+channels are bounded in `[−1, 0]` while the progress channel is bounded in
+`[−1, +1]`. Two independent checks say v5.0 is right. The two-sided form
+reproduces **both** published anchors v5.0 validates itself against — `a > 2`,
+which is Veer et al.'s own condition, at `σ = φ = 0, λ = 1`, and `a ≥ 2.92` at
+`σ = 1` (reproduced: 2.9196) — while the one-sided form reproduces neither
+(1.8393 and 2.8312). And the "iff" is refuted by a two-state counterexample that
+needs no knife-edge: at the selected weights, `K3` violated at **full** severity
+with `Δq = +1` scores **−1.2500**, against **−2.0000** for a trajectory that
+violates nothing but loses station at `Δq = −1`.
+
+**The halving was deliberate**: `scripts/measure_expert_rulebook_transition.py`
+carries both forms ninety lines apart, and the one-sided docstring says v5.0's
+channel "contributed `2 * lambda`, while here the tail is … roughly twenty times
+smaller, which is exactly why eta comes out unconstrained". That records a
+consequence, not a justification.
+
+**Decision.** Neither form. The swing is generalised to
+`λ₄·(ΔQ_MAX − ΔQ_MIN)` with `ΔQ_MIN` a declared symbol taking two values —
+`ΔQ_MIN_CLIP = −1`, what the channel permits, and
+`ΔQ_MIN_GUARANTEED = −0.1525`, what the selected weights buy — and **§5.4 is
+restated as a conditional guarantee with a runtime falsifier** rather than as an
+unconditional theorem. The guarantee: the per-step ordering is lexicographic for
+as long as the compliant trajectory loses no more than **0.339 m of station in
+one 0.1 s step**. A per-episode counter of steps below that bound
+(`AC-A7-17`) turns the condition from an assumption into a checked invariant, and
+`RULEBOOK-V5.2` §14.3 pre-registers what a non-zero count means before the number
+exists.
+
+**Rejected, and why.** Taking `ΔQ_MIN` from the expert panel (−0.0239, which
+leaves a thinnest ratio of 1.1147 and costs nothing) reads one side of one clip
+expression as normative construction and the other as empirical convenience,
+inside the same inequality — and the same artifact records the *positive* side of
+that clip binding on 0.60 % of expert steps at up to 3.609 m, so the projection
+demonstrably outruns the vehicle in both directions. Adopting the two-sided form
+and recalibrating buys the unconditional theorem for `λ₄ ≤ 1.1525`, measured at
+6.45 % below-standstill and an expert mean of 41.12 against 71.34 — roughly half
+the only positive term in the reward — and leaves untouched the ratchet of
+`RULEBOOK-V5.2` §11.5, which is the live exposure on that channel. An asymmetric
+clip `Δq ∈ [−δ, +1]` makes `ΔQ_MIN` true by construction and opens a worse
+exploit, breaking ADR-073's forward/backward compensation.
+
+**Cost, in the same breath.** No weight moves, no measured figure decays, no run
+is needed. What is paid is the strength of the claim — the specification states a
+condition where it used to state a theorem — and one correction that makes an
+existing limitation larger: the clip-pace ratio of `RULEBOOK-V5.2` §11.3 is
+**10.26** at the guarantee, not the "exactly 4" earlier revisions reported, so
+progress consumes 92.2 % rather than 80 % of the `k = 3` per-step budget.
+Correcting the predicate did not create that; it revealed it was understated.
+
+**Consequences for two documents already approved**, recorded rather than acted
+on here: ADR-081's five-row decision table (`:245-251`) was computed against the
+one-sided form and no row survives the generalised one, so `σ = 0.30`'s selection
+argument needs revisiting; and `docs/open_items.md` `C50`'s alternative remedy —
+removing the negative clip — would make the predicate **unsatisfiable** rather
+than leave it untouched as that row states.
+
 ## The budgets, and the one thing this decision refuses to decide
 
 `τ₁`–`τ₄` are fixed by the logged expert's **per-episode** exposure distribution
