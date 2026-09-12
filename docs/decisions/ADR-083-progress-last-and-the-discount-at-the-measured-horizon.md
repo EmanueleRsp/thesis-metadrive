@@ -185,11 +185,13 @@ room — 65.9 % and 72.1 % of their own effective upper bounds.
 only if doing so buys about **2.2 m/s** of extra route advance while you are on
 it (`Δq = w₅(1+σ)/λ₄ = 0.0975`, i.e. 2.17 m/s). And **no admissible `w₅` opposes
 a fast off-corridor drive**: the crossover at clip pace is 1.538462 against a cap
-of 0.384615, a ratio of `λ₄/(a − λ₄) = ` **exactly 4** in which `σ` cancels, so no
+of **0.1500** at the guarantee of the corrected predicate below, a ratio of
+`λ₄/[a − λ₄·(ΔQ_MAX − ΔQ_MIN)] = ` **10.26** in which `σ` cancels, so no
 re-tuning of the severity reaches it. That denominator *is* the rank-preservation
-tail, so "no admissible `w₅` opposes a fast off-route drive by a factor of four"
-is the same statement as "progress consumes four fifths of the per-step budget".
-Declared as a limitation rather than fixed.
+tail, so the statement is the same as "progress consumes **92.2 %** of the
+`k = 3` per-step budget". Earlier revisions of this record printed 4.00 and "four
+fifths" because they evaluated the cap at `ΔQ_MIN = 0`. Declared as a limitation
+rather than fixed.
 
 ## `φ = 0`, and why removing a constant is the conservative move here
 

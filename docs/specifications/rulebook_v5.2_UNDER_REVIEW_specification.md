@@ -937,8 +937,10 @@ wrong produces a plausible-looking wrong predicate.**
   consequence of change 1 in §5.1, not a decoration.
 - `φ` multiplies **only the priority levels below `k`**, which is `(3 − k)`. `K4`
   is not one of them. At `k = 3` there are none, so `φ` contributes nothing there.
-- `λ₄·ΔQ_MAX` is the whole progress tail, and `ΔQ_MAX = 1` holds because the clip
-  enforces it (§4.1).
+- `λ₄·(ΔQ_MAX − ΔQ_MIN)` is the whole progress tail, and **both** bounds hold
+  because one clip enforces them (§4.1). Writing only `λ₄·ΔQ_MAX` here — as every
+  revision before this one did — pins the satisfied side at `Δq = 0` and is the
+  defect this section corrects.
 
 **The trap, recorded because it was hit.** A transcription that lets `w₅` join
 the ordinary lower-level set — inside the `(1+σ)` sum **and** in the `φ` count —
